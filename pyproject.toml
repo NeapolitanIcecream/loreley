@@ -1,0 +1,17 @@
+[project]
+name = "loreley"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "dramatiq[redis]>=2.0.0",
+    "gitpython>=3.1.45",
+    "openai>=2.8.1",
+    "psycopg[binary,pool]>=3.2.12",
+    "pydantic>=2.12.4",
+    "pydantic-settings>=2.12.0",
+    "ribs>=0.8.3",
+    "rich>=14.2.0",
+    "sqlalchemy>=2.0.44",
+]
