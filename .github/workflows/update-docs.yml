@@ -17,6 +17,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.head_ref }}
 
       - name: Install Cursor CLI
         run: |
@@ -37,7 +38,7 @@ jobs:
         run: |
           cursor-agent -p "You are operating in a GitHub Actions runner.
 
-          The GitHub CLI is available as `gh` and authenticated via `GH_TOKEN`. Git is available. You have write access to repository contents and can comment on pull requests, but you must not create or edit PRs.
+          The GitHub CLI is available as 'gh' and authenticated via 'GH_TOKEN'. Git is available. You have write access to repository contents and can comment on pull requests, but you must not create or edit PRs.
 
           # Context:
           - Repo: ${{ github.repository }}
@@ -57,7 +58,7 @@ jobs:
           4) You do NOT have permission to create PRs. Instead, post or update a single natural-language PR comment (1–2 sentences) that briefly explains the docs updates and includes an inline compare link to quick-create a PR
 
           # Inputs and conventions:
-          - Use `gh pr diff` and git history to detect changes and derive incremental ranges since the last docs update.
+          - Use 'gh pr diff' and git history to detect changes and derive incremental ranges since the last docs update.
           - Do not attempt to create or edit PRs directly. Use the compare link format above.
           - Keep changes minimal and consistent with repo style. If no doc updates are necessary, make no changes and post no comment.
 
