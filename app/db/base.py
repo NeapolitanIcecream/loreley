@@ -67,4 +67,4 @@ def session_scope() -> Iterator[Session]:
         log.exception("Session rollback triggered")
         raise
     finally:
-        session.close()
+        SessionLocal.remove()

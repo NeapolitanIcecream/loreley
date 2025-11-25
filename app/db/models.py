@@ -101,7 +101,6 @@ class CommitMetadata(TimestampMixin, Base):
     )
     jobs_as_base: Mapped[list["EvolutionJob"]] = relationship(
         back_populates="base_commit",
-        cascade="all, delete-orphan",
         passive_deletes=True,
     )
 
