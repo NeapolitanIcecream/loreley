@@ -167,6 +167,43 @@ class Settings(BaseSettings):
         alias="MAPELITES_CODE_EMBEDDING_RETRY_BACKOFF_SECONDS",
     )
 
+    mapelites_summary_model: str = Field(
+        default="gpt-4.1-mini",
+        alias="MAPELITES_SUMMARY_MODEL",
+    )
+    mapelites_summary_temperature: float = Field(
+        default=0.2,
+        alias="MAPELITES_SUMMARY_TEMPERATURE",
+    )
+    mapelites_summary_max_output_tokens: int = Field(
+        default=512,
+        alias="MAPELITES_SUMMARY_MAX_OUTPUT_TOKENS",
+    )
+    mapelites_summary_source_char_limit: int = Field(
+        default=6000,
+        alias="MAPELITES_SUMMARY_SOURCE_CHAR_LIMIT",
+    )
+    mapelites_summary_max_retries: int = Field(
+        default=3,
+        alias="MAPELITES_SUMMARY_MAX_RETRIES",
+    )
+    mapelites_summary_retry_backoff_seconds: float = Field(
+        default=2.0,
+        alias="MAPELITES_SUMMARY_RETRY_BACKOFF_SECONDS",
+    )
+    mapelites_summary_embedding_model: str = Field(
+        default="text-embedding-3-small",
+        alias="MAPELITES_SUMMARY_EMBEDDING_MODEL",
+    )
+    mapelites_summary_embedding_dimensions: int | None = Field(
+        default=None,
+        alias="MAPELITES_SUMMARY_EMBEDDING_DIMENSIONS",
+    )
+    mapelites_summary_embedding_batch_size: int = Field(
+        default=16,
+        alias="MAPELITES_SUMMARY_EMBEDDING_BATCH_SIZE",
+    )
+
     @computed_field(return_type=str)
     @property
     def database_dsn(self) -> str:
