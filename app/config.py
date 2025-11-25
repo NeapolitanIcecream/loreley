@@ -84,12 +84,12 @@ class Settings(BaseSettings):
     )
     mapelites_preprocess_excluded_globs: list[str] = Field(
         default_factory=lambda: [
-            "*/tests/*",
-            "*/__pycache__/*",
-            "*/node_modules/*",
-            "*/build/*",
-            "*/dist/*",
-            "*/.git/*",
+            "tests/**",
+            "__pycache__/**",
+            "node_modules/**",
+            "build/**",
+            "dist/**",
+            ".git/**",
         ],
         alias="MAPELITES_PREPROCESS_EXCLUDED_GLOBS",
     )

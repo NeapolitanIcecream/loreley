@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-import fnmatch
 import re
 from typing import Mapping, Sequence
 
+from git import Repo
+from git.exc import BadName, GitCommandError, InvalidGitRepositoryError
 from loguru import logger
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
@@ -29,6 +30,7 @@ class ChangedFile:
 
     path: Path
     change_count: int = 0
+    content: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "path", Path(self.path))
@@ -54,9 +56,12 @@ class CodePreprocessor:
         repo_root: Path | None = None,
         *,
         settings: Settings | None = None,
+        treeish: str | None = None,
+        repo: Repo | None = None,
     ) -> None:
         self.repo_root = Path(repo_root or Path.cwd()).resolve()
         self.settings = settings or get_settings()
+        self.treeish = treeish
         self._allowed_extensions = {
             ext if ext.startswith(".") else f".{ext}"
             for ext in self.settings.mapelites_preprocess_allowed_extensions
@@ -64,7 +69,9 @@ class CodePreprocessor:
         self._allowed_filenames = {
             name for name in self.settings.mapelites_preprocess_allowed_filenames
         }
-        self._excluded_globs = tuple(self.settings.mapelites_preprocess_excluded_globs)
+        self._excluded_globs = self._prepare_excluded_globs(
+            self.settings.mapelites_preprocess_excluded_globs
+        )
         self._max_file_size_bytes = (
             max(self.settings.mapelites_preprocess_max_file_size_kb, 1) * 1024
         )
@@ -73,6 +80,22 @@ class CodePreprocessor:
             if self.settings.mapelites_preprocess_tab_width > 0
             else "\t"
         )
+        self._repo: Repo | None = None
+        self._git_prefix: Path | None = None
+        if self.treeish:
+            self._repo = repo or self._init_repo()
+            if self._repo and self._repo.working_tree_dir:
+                git_root = Path(self._repo.working_tree_dir).resolve()
+                try:
+                    self._git_prefix = self.repo_root.relative_to(git_root)
+                except ValueError:
+                    log.warning(
+                        "Cannot align repo_root={} with git root={} for treeish={}",
+                        self.repo_root,
+                        git_root,
+                        self.treeish,
+                    )
+                    self._git_prefix = None
 
     def run(self, changed_files: Sequence[ChangedFile | Mapping[str, object]]) -> list[PreprocessedFile]:
         """Return cleaned textual content for top-N changed files."""
@@ -96,37 +119,26 @@ class CodePreprocessor:
                     progress.update(task_id, advance=1)
                     continue
 
-                file_path = self._resolve_on_disk(relative_path)
-                if file_path is None:
-                    log.warning(
-                        "Skipping {} because it cannot be safely resolved under repo root",
-                        relative_path,
-                    )
-                    progress.update(task_id, advance=1)
-                    continue
-                if not file_path.exists():
-                    log.warning("Changed file no longer exists on disk: {}", relative_path)
-                    progress.update(task_id, advance=1)
-                    continue
-
-                try:
-                    if file_path.stat().st_size > self._max_file_size_bytes:
+                inline_content = candidate.content
+                if inline_content is not None:
+                    byte_size = len(inline_content.encode("utf-8"))
+                    if self._exceeds_size_limit(byte_size):
                         log.info(
-                            "Skipping {} because it exceeds {} KB",
+                            "Skipping {} because provided content exceeds {} KB",
                             relative_path,
                             self.settings.mapelites_preprocess_max_file_size_kb,
                         )
                         progress.update(task_id, advance=1)
                         continue
-                except OSError as exc:
-                    log.error("Unable to stat {}: {}", relative_path, exc)
-                    progress.update(task_id, advance=1)
-                    continue
+                    raw_text = inline_content
+                else:
+                    raw_text = self._load_text(relative_path)
 
-                try:
-                    raw_text = file_path.read_text(encoding="utf-8", errors="ignore")
-                except OSError as exc:
-                    log.error("Unable to read {}: {}", relative_path, exc)
+                if raw_text is None:
+                    log.warning(
+                        "Unable to load content for {}; skipping",
+                        relative_path,
+                    )
                     progress.update(task_id, advance=1)
                     continue
 
@@ -167,7 +179,13 @@ class CodePreprocessor:
                 continue
             if not self._is_code_file(rel_path):
                 continue
-            filtered.append(ChangedFile(path=rel_path, change_count=file.change_count))
+            filtered.append(
+                ChangedFile(
+                    path=rel_path,
+                    change_count=file.change_count,
+                    content=file.content,
+                )
+            )
 
         filtered.sort(key=lambda item: item.change_count, reverse=True)
         limit = max(self.settings.mapelites_preprocess_max_files, 0)
@@ -188,22 +206,25 @@ class CodePreprocessor:
 
         if isinstance(entry, (tuple, list)) and len(entry) == 2:
             raw_path, raw_delta = entry
-            try:
-                delta = int(raw_delta)
-            except (TypeError, ValueError):
-                delta = 0
+            if not isinstance(raw_path, (str, Path)):
+                return None
+            delta = self._coerce_int(raw_delta)
             return ChangedFile(path=Path(raw_path), change_count=delta)
 
         if isinstance(entry, Mapping):
             path_value = entry.get("path") or entry.get("file") or entry.get("filename")
             if not path_value:
                 return None
+            if not isinstance(path_value, (str, Path)):
+                return None
             change_count_value = entry.get("change_count") or entry.get("lines_changed") or entry.get("delta")
-            try:
-                change_count = int(change_count_value) if change_count_value is not None else 0
-            except (TypeError, ValueError):
-                change_count = 0
-            return ChangedFile(path=Path(path_value), change_count=change_count)
+            content_value = entry.get("content")
+            change_count = self._coerce_int(change_count_value)
+            return ChangedFile(
+                path=Path(path_value),
+                change_count=change_count,
+                content=content_value if isinstance(content_value, str) else None,
+            )
 
         return None
 
@@ -240,8 +261,26 @@ class CodePreprocessor:
     def _is_excluded(self, relative_path: Path) -> bool:
         if not self._excluded_globs:
             return False
-        unix_path = relative_path.as_posix()
-        return any(fnmatch.fnmatch(unix_path, pattern) for pattern in self._excluded_globs)
+        return any(relative_path.match(pattern) for pattern in self._excluded_globs)
+
+    def _prepare_excluded_globs(self, patterns: Sequence[str]) -> tuple[str, ...]:
+        expanded: list[str] = []
+        for raw in patterns:
+            if not raw:
+                continue
+            cleaned = raw.strip().replace("\\", "/")
+            if cleaned.startswith("./"):
+                cleaned = cleaned[2:]
+            cleaned = cleaned.lstrip("/")
+            if not cleaned:
+                continue
+            variants = {cleaned}
+            if "/" in cleaned and not cleaned.startswith("**/"):
+                variants.add(f"**/{cleaned}")
+            for variant in sorted(variants):
+                if variant not in expanded:
+                    expanded.append(variant)
+        return tuple(expanded)
 
     def _cleanup_text(self, content: str) -> str:
         normalised = content.replace("\r\n", "\n").replace("\r", "\n")
@@ -281,14 +320,109 @@ class CodePreprocessor:
             transient=True,
         )
 
+    def _init_repo(self) -> Repo | None:
+        try:
+            return Repo(self.repo_root, search_parent_directories=True)
+        except InvalidGitRepositoryError:
+            log.warning(
+                "Unable to locate git repository for repo_root={} when treeish={} requested",
+                self.repo_root,
+                self.treeish,
+            )
+            return None
+
+    def _load_text(self, relative_path: Path) -> str | None:
+        if self.treeish:
+            git_content = self._read_from_git(relative_path)
+            if git_content is not None:
+                return git_content
+        return self._read_from_disk(relative_path)
+
+    def _read_from_git(self, relative_path: Path) -> str | None:
+        if not self.treeish or not self._repo or not self._git_prefix:
+            return None
+        git_path = (self._git_prefix / relative_path).as_posix()
+        spec = f"{self.treeish}:{git_path}"
+        try:
+            size_str = self._repo.git.cat_file("-s", spec)
+            blob_size = int(size_str.strip())
+        except (GitCommandError, BadName, ValueError) as exc:
+            log.error("Unable to stat {} at {}: {}", git_path, self.treeish, exc)
+            return None
+
+        if self._exceeds_size_limit(blob_size):
+            log.info(
+                "Skipping {}@{} because it exceeds {} KB",
+                git_path,
+                self.treeish,
+                self.settings.mapelites_preprocess_max_file_size_kb,
+            )
+            return None
+
+        try:
+            return self._repo.git.show(spec)
+        except (GitCommandError, BadName) as exc:
+            log.error("Unable to read {} at {}: {}", git_path, self.treeish, exc)
+            return None
+
+    def _read_from_disk(self, relative_path: Path) -> str | None:
+        file_path = self._resolve_on_disk(relative_path)
+        if file_path is None:
+            return None
+        if not file_path.exists():
+            log.warning("Changed file no longer exists on disk: {}", relative_path)
+            return None
+        try:
+            file_size = file_path.stat().st_size
+        except OSError as exc:
+            log.error("Unable to stat {}: {}", relative_path, exc)
+            return None
+        if self._exceeds_size_limit(file_size):
+            log.info(
+                "Skipping {} because it exceeds {} KB",
+                relative_path,
+                self.settings.mapelites_preprocess_max_file_size_kb,
+            )
+            return None
+        try:
+            return file_path.read_text(encoding="utf-8", errors="ignore")
+        except OSError as exc:
+            log.error("Unable to read {}: {}", relative_path, exc)
+            return None
+
+    def _exceeds_size_limit(self, num_bytes: int) -> bool:
+        return num_bytes > self._max_file_size_bytes
+
+    @staticmethod
+    def _coerce_int(value: object | None) -> int:
+        if value is None:
+            return 0
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, (int, float)):
+            return int(value)
+        if isinstance(value, str):
+            try:
+                return int(value.strip())
+            except ValueError:
+                return 0
+        return 0
+
 
 def preprocess_changed_files(
     changed_files: Sequence[ChangedFile | Mapping[str, object]],
     *,
     repo_root: Path | None = None,
     settings: Settings | None = None,
+    treeish: str | None = None,
+    repo: Repo | None = None,
 ) -> list[PreprocessedFile]:
     """Functional wrapper for the preprocessor."""
-    preprocessor = CodePreprocessor(repo_root=repo_root, settings=settings)
+    preprocessor = CodePreprocessor(
+        repo_root=repo_root,
+        settings=settings,
+        treeish=treeish,
+        repo=repo,
+    )
     return preprocessor.run(changed_files)
 
