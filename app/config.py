@@ -40,6 +40,76 @@ class Settings(BaseSettings):
 
     metrics_retention_days: int = Field(default=30, alias="METRICS_RETENTION_DAYS")
 
+    mapelites_preprocess_max_files: int = Field(
+        default=6,
+        alias="MAPELITES_PREPROCESS_MAX_FILES",
+    )
+    mapelites_preprocess_max_file_size_kb: int = Field(
+        default=512,
+        alias="MAPELITES_PREPROCESS_MAX_FILE_SIZE_KB",
+    )
+    mapelites_preprocess_allowed_extensions: list[str] = Field(
+        default_factory=lambda: [
+            ".py",
+            ".pyi",
+            ".js",
+            ".jsx",
+            ".ts",
+            ".tsx",
+            ".go",
+            ".rs",
+            ".java",
+            ".kt",
+            ".swift",
+            ".m",
+            ".mm",
+            ".c",
+            ".cc",
+            ".cpp",
+            ".cxx",
+            ".cs",
+            ".h",
+            ".hpp",
+            ".php",
+            ".rb",
+            ".scala",
+            ".sql",
+            ".sh",
+        ],
+        alias="MAPELITES_PREPROCESS_ALLOWED_EXTENSIONS",
+    )
+    mapelites_preprocess_allowed_filenames: list[str] = Field(
+        default_factory=lambda: ["Dockerfile", "Makefile"],
+        alias="MAPELITES_PREPROCESS_ALLOWED_FILENAMES",
+    )
+    mapelites_preprocess_excluded_globs: list[str] = Field(
+        default_factory=lambda: [
+            "*/tests/*",
+            "*/__pycache__/*",
+            "*/node_modules/*",
+            "*/build/*",
+            "*/dist/*",
+            "*/.git/*",
+        ],
+        alias="MAPELITES_PREPROCESS_EXCLUDED_GLOBS",
+    )
+    mapelites_preprocess_max_blank_lines: int = Field(
+        default=2,
+        alias="MAPELITES_PREPROCESS_MAX_BLANK_LINES",
+    )
+    mapelites_preprocess_tab_width: int = Field(
+        default=4,
+        alias="MAPELITES_PREPROCESS_TAB_WIDTH",
+    )
+    mapelites_preprocess_strip_comments: bool = Field(
+        default=True,
+        alias="MAPELITES_PREPROCESS_STRIP_COMMENTS",
+    )
+    mapelites_preprocess_strip_block_comments: bool = Field(
+        default=True,
+        alias="MAPELITES_PREPROCESS_STRIP_BLOCK_COMMENTS",
+    )
+
     @computed_field(return_type=str)
     @property
     def database_dsn(self) -> str:
