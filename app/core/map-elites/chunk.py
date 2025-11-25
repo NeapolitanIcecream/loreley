@@ -126,24 +126,33 @@ class CodeChunker:
                 end = min(start + self._target_lines, total_lines)
 
             chunk_lines = lines[start:end]
-            content = "\n".join(chunk_lines).strip()
-            if content:
-                chunk_index = len(chunks)
-                chunks.append(
-                    FileChunk(
-                        file_path=file.path,
-                        chunk_id=self._build_chunk_id(file.path, chunk_index),
-                        index=chunk_index,
-                        start_line=start + 1,
-                        end_line=end,
-                        content=content,
-                        line_count=end - start,
-                        change_count=file.change_count,
+            joined = "\n".join(chunk_lines)
+            if joined.strip():
+                content = self._trim_surrounding_newlines(joined)
+                if content:
+                    chunk_index = len(chunks)
+                    chunks.append(
+                        FileChunk(
+                            file_path=file.path,
+                            chunk_id=self._build_chunk_id(file.path, chunk_index),
+                            index=chunk_index,
+                            start_line=start + 1,
+                            end_line=end,
+                            content=content,
+                            line_count=end - start,
+                            change_count=file.change_count,
+                        )
                     )
-                )
+                else:
+                    log.debug(
+                        "Discarded empty chunk for {} [{}:{}]",
+                        file.path,
+                        start,
+                        end,
+                    )
             else:
                 log.debug(
-                    "Discarded empty chunk for {} [{}:{}]",
+                    "Discarded whitespace-only chunk for {} [{}:{}]",
                     file.path,
                     start,
                     end,
@@ -222,6 +231,17 @@ class CodeChunker:
             TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
             transient=True,
         )
+
+    @staticmethod
+    def _trim_surrounding_newlines(text: str) -> str:
+        """Remove only leading/trailing empty lines while preserving indentation."""
+        start = 0
+        end = len(text)
+        while start < end and text[start] == "\n":
+            start += 1
+        while end > start and text[end - 1] == "\n":
+            end -= 1
+        return text[start:end]
 
 
 def chunk_preprocessed_files(
