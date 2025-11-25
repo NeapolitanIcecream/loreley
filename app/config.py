@@ -110,6 +110,38 @@ class Settings(BaseSettings):
         alias="MAPELITES_PREPROCESS_STRIP_BLOCK_COMMENTS",
     )
 
+    mapelites_chunk_target_lines: int = Field(
+        default=80,
+        alias="MAPELITES_CHUNK_TARGET_LINES",
+    )
+    mapelites_chunk_min_lines: int = Field(
+        default=20,
+        alias="MAPELITES_CHUNK_MIN_LINES",
+    )
+    mapelites_chunk_overlap_lines: int = Field(
+        default=8,
+        alias="MAPELITES_CHUNK_OVERLAP_LINES",
+    )
+    mapelites_chunk_max_chunks_per_file: int = Field(
+        default=64,
+        alias="MAPELITES_CHUNK_MAX_CHUNKS_PER_FILE",
+    )
+    mapelites_chunk_boundary_keywords: list[str] = Field(
+        default_factory=lambda: [
+            "def ",
+            "class ",
+            "async def ",
+            "fn ",
+            "function ",
+            "impl ",
+            "struct ",
+            "interface ",
+            "module ",
+            "export ",
+        ],
+        alias="MAPELITES_CHUNK_BOUNDARY_KEYWORDS",
+    )
+
     @computed_field(return_type=str)
     @property
     def database_dsn(self) -> str:
