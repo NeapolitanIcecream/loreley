@@ -142,6 +142,31 @@ class Settings(BaseSettings):
         alias="MAPELITES_CHUNK_BOUNDARY_KEYWORDS",
     )
 
+    mapelites_code_embedding_model: str = Field(
+        default="text-embedding-3-small",
+        alias="MAPELITES_CODE_EMBEDDING_MODEL",
+    )
+    mapelites_code_embedding_dimensions: int | None = Field(
+        default=None,
+        alias="MAPELITES_CODE_EMBEDDING_DIMENSIONS",
+    )
+    mapelites_code_embedding_batch_size: int = Field(
+        default=12,
+        alias="MAPELITES_CODE_EMBEDDING_BATCH_SIZE",
+    )
+    mapelites_code_embedding_max_chunks_per_commit: int = Field(
+        default=512,
+        alias="MAPELITES_CODE_EMBEDDING_MAX_CHUNKS_PER_COMMIT",
+    )
+    mapelites_code_embedding_max_retries: int = Field(
+        default=3,
+        alias="MAPELITES_CODE_EMBEDDING_MAX_RETRIES",
+    )
+    mapelites_code_embedding_retry_backoff_seconds: float = Field(
+        default=2.0,
+        alias="MAPELITES_CODE_EMBEDDING_RETRY_BACKOFF_SECONDS",
+    )
+
     @computed_field(return_type=str)
     @property
     def database_dsn(self) -> str:
