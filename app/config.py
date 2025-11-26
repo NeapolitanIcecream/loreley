@@ -98,6 +98,30 @@ class Settings(BaseSettings):
         default=None,
         alias="WORKER_PLANNING_SCHEMA_PATH",
     )
+    worker_coding_codex_bin: str = Field(
+        default="codex",
+        alias="WORKER_CODING_CODEX_BIN",
+    )
+    worker_coding_codex_profile: str | None = Field(
+        default=None,
+        alias="WORKER_CODING_CODEX_PROFILE",
+    )
+    worker_coding_max_attempts: int = Field(
+        default=2,
+        alias="WORKER_CODING_MAX_ATTEMPTS",
+    )
+    worker_coding_timeout_seconds: int = Field(
+        default=1800,
+        alias="WORKER_CODING_TIMEOUT_SECONDS",
+    )
+    worker_coding_extra_env: dict[str, str] = Field(
+        default_factory=dict,
+        alias="WORKER_CODING_EXTRA_ENV",
+    )
+    worker_coding_schema_path: str | None = Field(
+        default=None,
+        alias="WORKER_CODING_SCHEMA_PATH",
+    )
 
     mapelites_preprocess_max_files: int = Field(
         default=6,
