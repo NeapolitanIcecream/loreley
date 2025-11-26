@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus
 
@@ -39,6 +40,39 @@ class Settings(BaseSettings):
     db_echo: bool = Field(default=False, alias="DB_ECHO")
 
     metrics_retention_days: int = Field(default=30, alias="METRICS_RETENTION_DAYS")
+
+    worker_repo_remote_url: str | None = Field(
+        default=None,
+        alias="WORKER_REPO_REMOTE_URL",
+    )
+    worker_repo_branch: str = Field(
+        default="main",
+        alias="WORKER_REPO_BRANCH",
+    )
+    worker_repo_worktree: str = Field(
+        default_factory=lambda: str(Path.home() / ".cache" / "loreley" / "worker-repo"),
+        alias="WORKER_REPO_WORKTREE",
+    )
+    worker_repo_git_bin: str = Field(
+        default="git",
+        alias="WORKER_REPO_GIT_BIN",
+    )
+    worker_repo_fetch_depth: int | None = Field(
+        default=None,
+        alias="WORKER_REPO_FETCH_DEPTH",
+    )
+    worker_repo_clean_excludes: list[str] = Field(
+        default_factory=lambda: [".venv", ".uv", ".python-version"],
+        alias="WORKER_REPO_CLEAN_EXCLUDES",
+    )
+    worker_repo_job_branch_prefix: str = Field(
+        default="evolution/job",
+        alias="WORKER_REPO_JOB_BRANCH_PREFIX",
+    )
+    worker_repo_enable_lfs: bool = Field(
+        default=True,
+        alias="WORKER_REPO_ENABLE_LFS",
+    )
 
     mapelites_preprocess_max_files: int = Field(
         default=6,
@@ -322,6 +356,9 @@ class Settings(BaseSettings):
             "db_max_overflow": self.db_max_overflow,
             "db_pool_timeout": self.db_pool_timeout,
             "db_echo": self.db_echo,
+            "worker_repo_worktree": self.worker_repo_worktree,
+            "worker_repo_branch": self.worker_repo_branch,
+            "worker_repo_fetch_depth": self.worker_repo_fetch_depth,
         }
 
 
