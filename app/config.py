@@ -40,6 +40,262 @@ class Settings(BaseSettings):
 
     metrics_retention_days: int = Field(default=30, alias="METRICS_RETENTION_DAYS")
 
+    mapelites_preprocess_max_files: int = Field(
+        default=6,
+        alias="MAPELITES_PREPROCESS_MAX_FILES",
+    )
+    mapelites_preprocess_max_file_size_kb: int = Field(
+        default=512,
+        alias="MAPELITES_PREPROCESS_MAX_FILE_SIZE_KB",
+    )
+    mapelites_preprocess_allowed_extensions: list[str] = Field(
+        default_factory=lambda: [
+            ".py",
+            ".pyi",
+            ".js",
+            ".jsx",
+            ".ts",
+            ".tsx",
+            ".go",
+            ".rs",
+            ".java",
+            ".kt",
+            ".swift",
+            ".m",
+            ".mm",
+            ".c",
+            ".cc",
+            ".cpp",
+            ".cxx",
+            ".cs",
+            ".h",
+            ".hpp",
+            ".php",
+            ".rb",
+            ".scala",
+            ".sql",
+            ".sh",
+        ],
+        alias="MAPELITES_PREPROCESS_ALLOWED_EXTENSIONS",
+    )
+    mapelites_preprocess_allowed_filenames: list[str] = Field(
+        default_factory=lambda: ["Dockerfile", "Makefile"],
+        alias="MAPELITES_PREPROCESS_ALLOWED_FILENAMES",
+    )
+    mapelites_preprocess_excluded_globs: list[str] = Field(
+        default_factory=lambda: [
+            "tests/**",
+            "__pycache__/**",
+            "node_modules/**",
+            "build/**",
+            "dist/**",
+            ".git/**",
+        ],
+        alias="MAPELITES_PREPROCESS_EXCLUDED_GLOBS",
+    )
+    mapelites_preprocess_max_blank_lines: int = Field(
+        default=2,
+        alias="MAPELITES_PREPROCESS_MAX_BLANK_LINES",
+    )
+    mapelites_preprocess_tab_width: int = Field(
+        default=4,
+        alias="MAPELITES_PREPROCESS_TAB_WIDTH",
+    )
+    mapelites_preprocess_strip_comments: bool = Field(
+        default=True,
+        alias="MAPELITES_PREPROCESS_STRIP_COMMENTS",
+    )
+    mapelites_preprocess_strip_block_comments: bool = Field(
+        default=True,
+        alias="MAPELITES_PREPROCESS_STRIP_BLOCK_COMMENTS",
+    )
+
+    mapelites_chunk_target_lines: int = Field(
+        default=80,
+        alias="MAPELITES_CHUNK_TARGET_LINES",
+    )
+    mapelites_chunk_min_lines: int = Field(
+        default=20,
+        alias="MAPELITES_CHUNK_MIN_LINES",
+    )
+    mapelites_chunk_overlap_lines: int = Field(
+        default=8,
+        alias="MAPELITES_CHUNK_OVERLAP_LINES",
+    )
+    mapelites_chunk_max_chunks_per_file: int = Field(
+        default=64,
+        alias="MAPELITES_CHUNK_MAX_CHUNKS_PER_FILE",
+    )
+    mapelites_chunk_boundary_keywords: list[str] = Field(
+        default_factory=lambda: [
+            "def ",
+            "class ",
+            "async def ",
+            "fn ",
+            "function ",
+            "impl ",
+            "struct ",
+            "interface ",
+            "module ",
+            "export ",
+        ],
+        alias="MAPELITES_CHUNK_BOUNDARY_KEYWORDS",
+    )
+
+    mapelites_code_embedding_model: str = Field(
+        default="text-embedding-3-small",
+        alias="MAPELITES_CODE_EMBEDDING_MODEL",
+    )
+    mapelites_code_embedding_dimensions: int | None = Field(
+        default=None,
+        alias="MAPELITES_CODE_EMBEDDING_DIMENSIONS",
+    )
+    mapelites_code_embedding_batch_size: int = Field(
+        default=12,
+        alias="MAPELITES_CODE_EMBEDDING_BATCH_SIZE",
+    )
+    mapelites_code_embedding_max_chunks_per_commit: int = Field(
+        default=512,
+        alias="MAPELITES_CODE_EMBEDDING_MAX_CHUNKS_PER_COMMIT",
+    )
+    mapelites_code_embedding_max_retries: int = Field(
+        default=3,
+        alias="MAPELITES_CODE_EMBEDDING_MAX_RETRIES",
+    )
+    mapelites_code_embedding_retry_backoff_seconds: float = Field(
+        default=2.0,
+        alias="MAPELITES_CODE_EMBEDDING_RETRY_BACKOFF_SECONDS",
+    )
+
+    mapelites_summary_model: str = Field(
+        default="gpt-4.1-mini",
+        alias="MAPELITES_SUMMARY_MODEL",
+    )
+    mapelites_summary_temperature: float = Field(
+        default=0.2,
+        alias="MAPELITES_SUMMARY_TEMPERATURE",
+    )
+    mapelites_summary_max_output_tokens: int = Field(
+        default=512,
+        alias="MAPELITES_SUMMARY_MAX_OUTPUT_TOKENS",
+    )
+    mapelites_summary_source_char_limit: int = Field(
+        default=6000,
+        alias="MAPELITES_SUMMARY_SOURCE_CHAR_LIMIT",
+    )
+    mapelites_summary_max_retries: int = Field(
+        default=3,
+        alias="MAPELITES_SUMMARY_MAX_RETRIES",
+    )
+    mapelites_summary_retry_backoff_seconds: float = Field(
+        default=2.0,
+        alias="MAPELITES_SUMMARY_RETRY_BACKOFF_SECONDS",
+    )
+    mapelites_summary_embedding_model: str = Field(
+        default="text-embedding-3-small",
+        alias="MAPELITES_SUMMARY_EMBEDDING_MODEL",
+    )
+    mapelites_summary_embedding_dimensions: int | None = Field(
+        default=None,
+        alias="MAPELITES_SUMMARY_EMBEDDING_DIMENSIONS",
+    )
+    mapelites_summary_embedding_batch_size: int = Field(
+        default=16,
+        alias="MAPELITES_SUMMARY_EMBEDDING_BATCH_SIZE",
+    )
+    mapelites_dimensionality_target_dims: int = Field(
+        default=4,
+        alias="MAPELITES_DIMENSION_REDUCTION_TARGET_DIMS",
+    )
+    mapelites_dimensionality_min_fit_samples: int = Field(
+        default=32,
+        alias="MAPELITES_DIMENSION_REDUCTION_MIN_FIT_SAMPLES",
+    )
+    mapelites_dimensionality_history_size: int = Field(
+        default=4096,
+        alias="MAPELITES_DIMENSION_REDUCTION_HISTORY_SIZE",
+    )
+    mapelites_dimensionality_refit_interval: int = Field(
+        default=50,
+        alias="MAPELITES_DIMENSION_REDUCTION_REFIT_INTERVAL",
+    )
+    mapelites_dimensionality_penultimate_normalize: bool = Field(
+        default=True,
+        alias="MAPELITES_DIMENSION_REDUCTION_PENULTIMATE_NORMALIZE",
+    )
+    mapelites_feature_lower_bounds: list[float] = Field(
+        default_factory=lambda: [-6.0, -6.0, -6.0, -6.0],
+        alias="MAPELITES_FEATURE_LOWER_BOUNDS",
+    )
+    mapelites_feature_upper_bounds: list[float] = Field(
+        default_factory=lambda: [6.0, 6.0, 6.0, 6.0],
+        alias="MAPELITES_FEATURE_UPPER_BOUNDS",
+    )
+    mapelites_archive_cells_per_dim: int = Field(
+        default=32,
+        alias="MAPELITES_ARCHIVE_CELLS_PER_DIM",
+    )
+    mapelites_archive_learning_rate: float = Field(
+        default=1.0,
+        alias="MAPELITES_ARCHIVE_LEARNING_RATE",
+    )
+    mapelites_archive_threshold_min: float = Field(
+        default=float("-inf"),
+        alias="MAPELITES_ARCHIVE_THRESHOLD_MIN",
+    )
+    mapelites_archive_epsilon: float = Field(
+        default=1e-6,
+        alias="MAPELITES_ARCHIVE_EPSILON",
+    )
+    mapelites_archive_qd_score_offset: float = Field(
+        default=0.0,
+        alias="MAPELITES_ARCHIVE_QD_SCORE_OFFSET",
+    )
+    mapelites_default_island_id: str = Field(
+        default="main",
+        alias="MAPELITES_DEFAULT_ISLAND_ID",
+    )
+    mapelites_fitness_metric: str = Field(
+        default="composite_score",
+        alias="MAPELITES_FITNESS_METRIC",
+    )
+    mapelites_fitness_higher_is_better: bool = Field(
+        default=True,
+        alias="MAPELITES_FITNESS_HIGHER_IS_BETTER",
+    )
+    mapelites_fitness_floor: float = Field(
+        default=-1.0e6,
+        alias="MAPELITES_FITNESS_FLOOR",
+    )
+    mapelites_feature_clip: bool = Field(
+        default=True,
+        alias="MAPELITES_FEATURE_CLIP",
+    )
+    mapelites_sampler_inspiration_count: int = Field(
+        default=3,
+        alias="MAPELITES_SAMPLER_INSPIRATION_COUNT",
+    )
+    mapelites_sampler_neighbor_radius: int = Field(
+        default=1,
+        alias="MAPELITES_SAMPLER_NEIGHBOR_RADIUS",
+    )
+    mapelites_sampler_neighbor_max_radius: int = Field(
+        default=3,
+        alias="MAPELITES_SAMPLER_NEIGHBOR_MAX_RADIUS",
+    )
+    mapelites_sampler_fallback_sample_size: int = Field(
+        default=8,
+        alias="MAPELITES_SAMPLER_FALLBACK_SAMPLE_SIZE",
+    )
+    mapelites_sampler_default_priority: int = Field(
+        default=0,
+        alias="MAPELITES_SAMPLER_DEFAULT_PRIORITY",
+    )
+    mapelites_sampler_include_metadata: bool = Field(
+        default=True,
+        alias="MAPELITES_SAMPLER_INCLUDE_METADATA",
+    )
+
     @computed_field(return_type=str)
     @property
     def database_dsn(self) -> str:
