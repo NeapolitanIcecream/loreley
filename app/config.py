@@ -271,6 +271,30 @@ class Settings(BaseSettings):
         default=True,
         alias="MAPELITES_FEATURE_CLIP",
     )
+    mapelites_sampler_inspiration_count: int = Field(
+        default=3,
+        alias="MAPELITES_SAMPLER_INSPIRATION_COUNT",
+    )
+    mapelites_sampler_neighbor_radius: int = Field(
+        default=1,
+        alias="MAPELITES_SAMPLER_NEIGHBOR_RADIUS",
+    )
+    mapelites_sampler_neighbor_max_radius: int = Field(
+        default=3,
+        alias="MAPELITES_SAMPLER_NEIGHBOR_MAX_RADIUS",
+    )
+    mapelites_sampler_fallback_sample_size: int = Field(
+        default=8,
+        alias="MAPELITES_SAMPLER_FALLBACK_SAMPLE_SIZE",
+    )
+    mapelites_sampler_default_priority: int = Field(
+        default=0,
+        alias="MAPELITES_SAMPLER_DEFAULT_PRIORITY",
+    )
+    mapelites_sampler_include_metadata: bool = Field(
+        default=True,
+        alias="MAPELITES_SAMPLER_INCLUDE_METADATA",
+    )
 
     @computed_field(return_type=str)
     @property
