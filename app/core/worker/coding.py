@@ -198,7 +198,11 @@ class CodingAgent:
             for attempt in range(1, self.max_attempts + 1):
                 try:
                     invocation = self._invoke_codex(prompt, schema_path, worktree)
-                    output_model = self._parse_output(invocation.stdout)
+                    try:
+                        output_model = self._parse_output(invocation.stdout)
+                    except (ValidationError, json.JSONDecodeError) as exc:
+                        self._log_invalid_output(invocation, exc)
+                        raise
                     execution = self._to_domain(output_model)
                     console.log(
                         "[bold green]Coding agent[/] finished in "
@@ -244,6 +248,8 @@ class CodingAgent:
         validation = self._format_bullets(plan.validation)
         risks = self._format_bullets(plan.risks)
         notes = self._format_bullets(request.additional_notes)
+        handoff_notes = self._format_bullets(plan.handoff_notes)
+        fallback_plan_text = self._truncate(plan.fallback_plan or "None provided")
         iteration_hint = request.iteration_hint or "None provided"
 
         prompt = f"""
@@ -284,6 +290,12 @@ Iteration hint:
 
 Extra worker notes:
 {notes}
+
+Handoff notes from planning agent:
+{handoff_notes}
+
+Fallback plan if things go wrong:
+{fallback_plan_text}
 
 Detailed plan steps:
 {steps_block}
@@ -411,6 +423,20 @@ When you finish applying the plan:
 
     def _parse_output(self, payload: str) -> _CodingOutputModel:
         return _CodingOutputModel.model_validate_json(payload)
+
+    def _log_invalid_output(
+        self,
+        invocation: _CodexInvocation,
+        exc: Exception,
+    ) -> None:
+        stdout_preview = self._truncate(invocation.stdout, limit=2000) or "<empty>"
+        stderr_preview = self._truncate(invocation.stderr, limit=1000) or "<empty>"
+        log.warning(
+            "Invalid coding agent output: {} | stdout preview: {} | stderr preview: {}",
+            exc,
+            stdout_preview,
+            stderr_preview,
+        )
 
     def _to_domain(self, output: _CodingOutputModel) -> CodingPlanExecution:
         step_results = tuple(
