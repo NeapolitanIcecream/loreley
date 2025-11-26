@@ -196,3 +196,19 @@ class EvolutionJob(TimestampMixin, Base):
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return f"<EvolutionJob id={self.id} status={self.status}>"
+
+
+class MapElitesState(TimestampMixin, Base):
+    """Persisted MAP-Elites archive snapshot per island."""
+
+    __tablename__ = "map_elites_states"
+
+    island_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    snapshot: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JSONB),
+        default=dict,
+        nullable=False,
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<MapElitesState island_id={self.island_id!r}>"
