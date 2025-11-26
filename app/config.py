@@ -203,6 +203,74 @@ class Settings(BaseSettings):
         default=16,
         alias="MAPELITES_SUMMARY_EMBEDDING_BATCH_SIZE",
     )
+    mapelites_dimensionality_target_dims: int = Field(
+        default=4,
+        alias="MAPELITES_DIMENSION_REDUCTION_TARGET_DIMS",
+    )
+    mapelites_dimensionality_min_fit_samples: int = Field(
+        default=32,
+        alias="MAPELITES_DIMENSION_REDUCTION_MIN_FIT_SAMPLES",
+    )
+    mapelites_dimensionality_history_size: int = Field(
+        default=4096,
+        alias="MAPELITES_DIMENSION_REDUCTION_HISTORY_SIZE",
+    )
+    mapelites_dimensionality_refit_interval: int = Field(
+        default=50,
+        alias="MAPELITES_DIMENSION_REDUCTION_REFIT_INTERVAL",
+    )
+    mapelites_dimensionality_penultimate_normalize: bool = Field(
+        default=True,
+        alias="MAPELITES_DIMENSION_REDUCTION_PENULTIMATE_NORMALIZE",
+    )
+    mapelites_feature_lower_bounds: list[float] = Field(
+        default_factory=lambda: [-6.0, -6.0, -6.0, -6.0],
+        alias="MAPELITES_FEATURE_LOWER_BOUNDS",
+    )
+    mapelites_feature_upper_bounds: list[float] = Field(
+        default_factory=lambda: [6.0, 6.0, 6.0, 6.0],
+        alias="MAPELITES_FEATURE_UPPER_BOUNDS",
+    )
+    mapelites_archive_cells_per_dim: int = Field(
+        default=32,
+        alias="MAPELITES_ARCHIVE_CELLS_PER_DIM",
+    )
+    mapelites_archive_learning_rate: float = Field(
+        default=1.0,
+        alias="MAPELITES_ARCHIVE_LEARNING_RATE",
+    )
+    mapelites_archive_threshold_min: float = Field(
+        default=float("-inf"),
+        alias="MAPELITES_ARCHIVE_THRESHOLD_MIN",
+    )
+    mapelites_archive_epsilon: float = Field(
+        default=1e-6,
+        alias="MAPELITES_ARCHIVE_EPSILON",
+    )
+    mapelites_archive_qd_score_offset: float = Field(
+        default=0.0,
+        alias="MAPELITES_ARCHIVE_QD_SCORE_OFFSET",
+    )
+    mapelites_default_island_id: str = Field(
+        default="main",
+        alias="MAPELITES_DEFAULT_ISLAND_ID",
+    )
+    mapelites_fitness_metric: str = Field(
+        default="composite_score",
+        alias="MAPELITES_FITNESS_METRIC",
+    )
+    mapelites_fitness_higher_is_better: bool = Field(
+        default=True,
+        alias="MAPELITES_FITNESS_HIGHER_IS_BETTER",
+    )
+    mapelites_fitness_floor: float = Field(
+        default=-1.0e6,
+        alias="MAPELITES_FITNESS_FLOOR",
+    )
+    mapelites_feature_clip: bool = Field(
+        default=True,
+        alias="MAPELITES_FEATURE_CLIP",
+    )
 
     @computed_field(return_type=str)
     @property
