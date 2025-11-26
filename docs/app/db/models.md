@@ -18,3 +18,5 @@ ORM models and enums for tracking evolutionary jobs, commits, and associated met
 - **`EvolutionJob`** (`evolution_jobs` table): represents a single evolution iteration scheduled by the system.
   - Tracks current `status`, base commit, island ID, inspiration commit hashes, request `payload`, human-readable `plan_summary`, priority, scheduling/processing timestamps, and last error if any.
   - Relates back to `CommitMetadata` via `base_commit_hash`, enabling efficient queries per base commit.
+- **`MapElitesState`** (`map_elites_states` table): persists per-island snapshots of the MAP-Elites archive.
+  - Stores a JSONB `snapshot` payload containing feature bounds, PCA history/projection metadata, and the current archive entries so that `MapElitesManager` can restore state across process restarts.
