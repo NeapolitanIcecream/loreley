@@ -107,7 +107,7 @@ class WorkerRepository:
         self.clean_worktree()
 
         # Ensure the base commit is present locally.
-        self._fetch([base_commit])
+        self._ensure_commit_available(base_commit)
         self._run_git("rev-parse", "--verify", base_commit)
 
         branch_name: str | None = None
@@ -176,6 +176,7 @@ class WorkerRepository:
 
         # Keep local tracking branch aligned with origin.
         if self.branch:
+            self.clean_worktree()
             self._run_git("checkout", "-B", self.branch, f"origin/{self.branch}")
 
     def _clone(self) -> None:
@@ -282,4 +283,37 @@ class WorkerRepository:
     @staticmethod
     def _format_cmd(cmd: Sequence[str]) -> str:
         return shlex.join(cmd)
+
+    def _ensure_commit_available(self, commit_hash: str) -> None:
+        if self._has_object(commit_hash):
+            return
+
+        log.info("Commit {} missing locally; refreshing from origin", commit_hash)
+        self._fetch()
+        if self._has_object(commit_hash):
+            return
+
+        if self._is_shallow():
+            log.info("Repository is shallow; unshallowing to retrieve {}", commit_hash)
+            self._run_git("fetch", "--unshallow", "origin")
+            if self._has_object(commit_hash):
+                return
+
+        raise RepositoryError(
+            f"Commit {commit_hash} is not available locally after fetching from origin.",
+        )
+
+    def _has_object(self, obj_ref: str) -> bool:
+        try:
+            self._run_git("cat-file", "-e", f"{obj_ref}^{{commit}}")
+        except RepositoryError:
+            return False
+        return True
+
+    def _is_shallow(self) -> bool:
+        try:
+            result = self._run_git("rev-parse", "--is-shallow-repository")
+        except RepositoryError:
+            return False
+        return result.stdout.strip().lower() == "true"
 
