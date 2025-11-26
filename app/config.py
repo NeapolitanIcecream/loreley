@@ -74,6 +74,31 @@ class Settings(BaseSettings):
         alias="WORKER_REPO_ENABLE_LFS",
     )
 
+    worker_planning_codex_bin: str = Field(
+        default="codex",
+        alias="WORKER_PLANNING_CODEX_BIN",
+    )
+    worker_planning_codex_profile: str | None = Field(
+        default=None,
+        alias="WORKER_PLANNING_CODEX_PROFILE",
+    )
+    worker_planning_max_attempts: int = Field(
+        default=2,
+        alias="WORKER_PLANNING_MAX_ATTEMPTS",
+    )
+    worker_planning_timeout_seconds: int = Field(
+        default=900,
+        alias="WORKER_PLANNING_TIMEOUT_SECONDS",
+    )
+    worker_planning_extra_env: dict[str, str] = Field(
+        default_factory=dict,
+        alias="WORKER_PLANNING_EXTRA_ENV",
+    )
+    worker_planning_schema_path: str | None = Field(
+        default=None,
+        alias="WORKER_PLANNING_SCHEMA_PATH",
+    )
+
     mapelites_preprocess_max_files: int = Field(
         default=6,
         alias="MAPELITES_PREPROCESS_MAX_FILES",
