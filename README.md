@@ -10,6 +10,32 @@ PostgreSQL.
 
 ---
 
+## Relation to AlphaEvolve and Open-Source Replications
+
+Loreley is conceptually related to systems such as DeepMind's **AlphaEvolve** and open-source
+implementations like **OpenEvolve** ([GitHub](https://github.com/algorithmicsuperintelligence/openevolve))
+and **ShinkaEvolve** ([GitHub](https://github.com/SakanaAI/ShinkaEvolve)), but makes several
+deliberate design choices:
+
+- **Commit-level individuals, whole-repo evolution**  
+  Instead of treating a single file or function as the unit of evolution, Loreley uses **git
+  commits** as individuals and evolves the **entire repository**. Each job operates on a real
+  worktree, producing self-contained commits that can be inspected, tested, and integrated using
+  standard git tooling.
+
+- **Feature discovery from embeddings, not hand-crafted descriptors**  
+  Rather than relying on manually designed behavior descriptors, Loreley derives behavioural
+  features from **code and summary embeddings** (with optional dimensionality reduction such as
+  PCA). This allows the MAP-Elites search space to be learned from data, maximising generality
+  across languages, domains, and repository layouts.
+
+- **Tight integration with production infra**  
+  Loreley is structured as a long-running service with a scheduler, Dramatiq workers, and a
+  PostgreSQL-backed archive and job store, making it suitable for continuous evolution of
+  real-world codebases rather than purely benchmark-style tasks.
+
+---
+
 ## Features
 
 - **MAP-Elites–driven exploration**:  
