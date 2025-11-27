@@ -54,6 +54,31 @@ class Settings(BaseSettings):
         alias="TASKS_WORKER_TIME_LIMIT_SECONDS",
     )
 
+    scheduler_repo_root: str | None = Field(
+        default=None,
+        alias="SCHEDULER_REPO_ROOT",
+    )
+    scheduler_poll_interval_seconds: float = Field(
+        default=30.0,
+        alias="SCHEDULER_POLL_INTERVAL_SECONDS",
+    )
+    scheduler_max_unfinished_jobs: int = Field(
+        default=4,
+        alias="SCHEDULER_MAX_UNFINISHED_JOBS",
+    )
+    scheduler_schedule_batch_size: int = Field(
+        default=2,
+        alias="SCHEDULER_SCHEDULE_BATCH_SIZE",
+    )
+    scheduler_dispatch_batch_size: int = Field(
+        default=4,
+        alias="SCHEDULER_DISPATCH_BATCH_SIZE",
+    )
+    scheduler_ingest_batch_size: int = Field(
+        default=2,
+        alias="SCHEDULER_INGEST_BATCH_SIZE",
+    )
+
     worker_repo_remote_url: str | None = Field(
         default=None,
         alias="WORKER_REPO_REMOTE_URL",
@@ -476,6 +501,9 @@ class Settings(BaseSettings):
             "worker_repo_worktree": self.worker_repo_worktree,
             "worker_repo_branch": self.worker_repo_branch,
             "worker_repo_fetch_depth": self.worker_repo_fetch_depth,
+            "scheduler_max_unfinished_jobs": self.scheduler_max_unfinished_jobs,
+            "scheduler_dispatch_batch_size": self.scheduler_dispatch_batch_size,
+            "scheduler_schedule_batch_size": self.scheduler_schedule_batch_size,
         }
 
 

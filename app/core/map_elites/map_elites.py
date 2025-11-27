@@ -32,6 +32,7 @@ from .summarization_embedding import (
 
 if TYPE_CHECKING:  # pragma: no cover
     from .chunk import PreprocessedArtifact
+    from .sampler import SupportsMapElitesRecord
 
 log = logger.bind(module="map_elites.manager")
 
@@ -292,7 +293,10 @@ class MapElitesManager:
         finally:
             self._persist_island_state(effective_island, state)
 
-    def get_records(self, island_id: str | None = None) -> tuple[MapElitesRecord, ...]:
+    def get_records(
+        self,
+        island_id: str | None = None,
+    ) -> tuple["SupportsMapElitesRecord", ...]:
         """Return all elites for a given island."""
         effective_island = island_id or self._default_island
         state = self._archives.get(effective_island)

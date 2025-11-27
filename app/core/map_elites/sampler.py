@@ -25,15 +25,31 @@ __all__ = ["ScheduledSamplerJob", "MapElitesSampler"]
 
 
 class SupportsMapElitesRecord(Protocol):
-    """Protocol describing the record surface the sampler consumes."""
+    """Protocol describing the record surface the sampler consumes.
 
-    commit_hash: str
-    cell_index: int
-    fitness: float
-    measures: Sequence[float]
-    solution: Sequence[float]
-    metadata: Mapping[str, Any]
-    timestamp: float
+    All attributes are treated as read-only from the sampler's perspective.
+    """
+
+    @property
+    def commit_hash(self) -> str: ...
+
+    @property
+    def cell_index(self) -> int: ...
+
+    @property
+    def fitness(self) -> float: ...
+
+    @property
+    def measures(self) -> Sequence[float]: ...
+
+    @property
+    def solution(self) -> Sequence[float]: ...
+
+    @property
+    def metadata(self) -> Mapping[str, Any]: ...
+
+    @property
+    def timestamp(self) -> float: ...
 
 
 class SupportsMapElitesManager(Protocol):
