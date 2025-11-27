@@ -59,6 +59,10 @@ class EvolutionWorkerError(RuntimeError):
     """Raised when the evolution worker cannot complete a job."""
 
 
+class JobLockConflict(EvolutionWorkerError):
+    """Raised when a concurrent worker already locked the target job row."""
+
+
 class CommitSummaryError(RuntimeError):
     """Raised when the commit summarizer cannot produce a subject line."""
 
@@ -293,7 +297,17 @@ class EvolutionWorker:
     def run(self, job_id: str | UUID) -> EvolutionWorkerResult:
         """Execute the full evolution loop for the requested job."""
         job_uuid = self._coerce_uuid(job_id)
-        job_ctx = self._start_job(job_uuid)
+        try:
+            job_ctx = self._start_job(job_uuid)
+        except JobLockConflict:
+            console.log(
+                f"[yellow]Evolution worker[/] job={job_uuid} skipped because it is locked elsewhere.",
+            )
+            log.info("Job {} skipped due to concurrent lock", job_uuid)
+            raise
+        except Exception as exc:
+            self._mark_job_failed(job_uuid, exc)
+            raise
         checkout: CheckoutContext | None = None
         plan_response: PlanningAgentResponse | None = None
         coding_response: CodingAgentResponse | None = None
@@ -380,6 +394,7 @@ class EvolutionWorker:
                 job.last_error = None
 
                 payload = dict(job.payload or {})
+                extra_context = self._extract_mapping(payload, "extra_context") or {}
                 base_payload = self._match_record_payload(payload.get("base"))
                 inspirations_payload = self._map_inspiration_payloads(payload.get("inspirations"))
                 base_snapshot = self._load_commit_snapshot(
@@ -397,25 +412,26 @@ class EvolutionWorker:
                 )
                 goal = self._extract_goal(
                     payload=payload,
+                    extra_context=extra_context,
                     job_id=job_id,
                     default=base_snapshot.summary,
                 )
                 constraints = self._coerce_str_sequence(
                     payload.get("constraints")
                     or payload.get("guardrails")
-                    or payload.get("extra_context", {}).get("constraints"),
+                    or extra_context.get("constraints"),
                 )
                 acceptance = self._coerce_str_sequence(
                     payload.get("acceptance_criteria")
                     or payload.get("definition_of_done")
-                    or payload.get("extra_context", {}).get("acceptance_criteria"),
+                    or extra_context.get("acceptance_criteria"),
                 )
-                iteration_hint = self._extract_iteration_hint(payload)
+                iteration_hint = self._extract_iteration_hint(payload, extra_context=extra_context)
                 notes = self._coerce_str_sequence(
-                    payload.get("notes") or payload.get("extra_context", {}).get("notes"),
+                    payload.get("notes") or extra_context.get("notes"),
                 )
                 tags = self._coerce_str_sequence(
-                    payload.get("tags") or payload.get("extra_context", {}).get("tags"),
+                    payload.get("tags") or extra_context.get("tags"),
                 )
 
                 return JobContext(
@@ -433,6 +449,10 @@ class EvolutionWorker:
                     tags=tags,
                 )
         except SQLAlchemyError as exc:
+            if self._is_lock_conflict(exc):
+                raise JobLockConflict(
+                    f"Evolution job {job_id} is locked by another worker.",
+                ) from exc
             raise EvolutionWorkerError(f"Failed to start job {job_id}: {exc}") from exc
 
     def _run_planning(
@@ -765,6 +785,7 @@ class EvolutionWorker:
         self,
         *,
         payload: Mapping[str, Any],
+        extra_context: Mapping[str, Any] | None,
         job_id: UUID,
         default: str,
     ) -> str:
@@ -772,18 +793,21 @@ class EvolutionWorker:
             payload.get("goal"),
             payload.get("objective"),
             payload.get("description"),
-            payload.get("extra_context", {}).get("goal") if isinstance(payload.get("extra_context"), Mapping) else None,
+            (extra_context or {}).get("goal"),
         )
         if goal:
             return goal
         return f"Evolution job {job_id} objective: {default}"
 
-    def _extract_iteration_hint(self, payload: Mapping[str, Any]) -> str | None:
+    def _extract_iteration_hint(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        extra_context: Mapping[str, Any] | None = None,
+    ) -> str | None:
         hint = self._first_non_empty(
             payload.get("iteration_hint"),
-            payload.get("extra_context", {}).get("iteration_hint")
-            if isinstance(payload.get("extra_context"), Mapping)
-            else None,
+            (extra_context or {}).get("iteration_hint"),
         )
         if hint:
             return hint
@@ -945,6 +969,18 @@ class EvolutionWorker:
         if isinstance(value, UUID):
             return value
         return UUID(str(value))
+
+    @staticmethod
+    def _is_lock_conflict(exc: SQLAlchemyError) -> bool:
+        """Return True when the DB error indicates a NOWAIT lock conflict."""
+        orig = getattr(exc, "orig", None)
+        if not orig:
+            return False
+        pgcode = getattr(orig, "pgcode", None)
+        if pgcode == "55P03":  # PostgreSQL lock_not_available
+            return True
+        message = str(orig).lower()
+        return "could not obtain lock" in message or "database is locked" in message
 
 
 def _utc_now() -> datetime:
