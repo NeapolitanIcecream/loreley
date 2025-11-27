@@ -138,6 +138,34 @@ class Settings(BaseSettings):
         default=64,
         alias="WORKER_EVALUATOR_MAX_METRICS",
     )
+    worker_evolution_commit_model: str = Field(
+        default="gpt-4.1-mini",
+        alias="WORKER_EVOLUTION_COMMIT_MODEL",
+    )
+    worker_evolution_commit_temperature: float = Field(
+        default=0.2,
+        alias="WORKER_EVOLUTION_COMMIT_TEMPERATURE",
+    )
+    worker_evolution_commit_max_output_tokens: int = Field(
+        default=128,
+        alias="WORKER_EVOLUTION_COMMIT_MAX_OUTPUT_TOKENS",
+    )
+    worker_evolution_commit_max_retries: int = Field(
+        default=3,
+        alias="WORKER_EVOLUTION_COMMIT_MAX_RETRIES",
+    )
+    worker_evolution_commit_retry_backoff_seconds: float = Field(
+        default=2.0,
+        alias="WORKER_EVOLUTION_COMMIT_RETRY_BACKOFF_SECONDS",
+    )
+    worker_evolution_commit_author: str = Field(
+        default="Loreley Worker",
+        alias="WORKER_EVOLUTION_COMMIT_AUTHOR",
+    )
+    worker_evolution_commit_subject_max_chars: int = Field(
+        default=72,
+        alias="WORKER_EVOLUTION_COMMIT_SUBJECT_MAX_CHARS",
+    )
 
     mapelites_preprocess_max_files: int = Field(
         default=6,
