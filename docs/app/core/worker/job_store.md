@@ -1,0 +1,61 @@
+# app.core.worker.job_store
+
+Persistence adapter for the evolution worker, responsible for locking jobs, storing results, and recording job failures in the database.
+
+## Domain types and errors
+
+- **`EvolutionWorkerError`**: base runtime error used when the worker cannot complete or persist a job due to configuration, database, or repository issues.
+- **`JobLockConflict`**: raised when `start_job()` fails to obtain a NOWAIT lock on a job row, indicating that another worker is already processing the same job.
+- **`JobPreconditionError`**: raised when a job cannot start because preconditions are not satisfied (missing row, unsupported status, missing `base_commit_hash`, etc.).
+- **`LockedJob`**: dataclass snapshot of the locked `EvolutionJob` row containing the `job_id`, `base_commit_hash`, optional `island_id`, the deserialised JSON `payload`, and the tuple of `inspiration_commit_hashes`. This is used by `EvolutionWorker` to build its `JobContext`.
+
+## Serialization helpers
+
+- **`build_plan_payload(response)`**: converts a `PlanningAgentResponse` into a JSON-serialisable dict.
+  - Serialises the underlying `PlanningPlan` via `as_dict()`.
+  - Adds the planner `prompt`, raw Codex `raw_output`, CLI `command`, `stderr`, number of `attempts`, and total `duration_seconds` so downstream systems can introspect planner behaviour.
+- **`build_coding_payload(response)`**: converts a `CodingAgentResponse` into a dict that flattens both the `CodingPlanExecution` and transport metadata.
+  - Includes `implementation_summary`, final `commit_message`, detailed per-step outcomes, executed tests, recommended tests, follow-up items, notes, raw Codex output, prompt, command, stderr, attempts, and duration.
+- **`build_evaluation_payload(result)`**: converts an `EvaluationResult` into a dict containing its textual `summary`, a list of metric dicts via `metric.as_dict()`, `tests_executed`, `logs`, and an `extra` mapping.
+
+## EvolutionJobStore
+
+- **`EvolutionJobStore`**: database-facing adapter that encapsulates the lifecycle of an evolution job.
+  - Constructed with `Settings` to attach worker/application metadata when persisting results.
+  - Uses `session_scope()` and the ORM models from `app.db.models` (`EvolutionJob`, `CommitMetadata`, `Metric`, `JobStatus`) to modify rows transactionally.
+
+### Job lifecycle methods
+
+- **`start_job(job_id)`**:
+  - Acquires a row-level lock on the `EvolutionJob` using `SELECT ... FOR UPDATE NOWAIT`.
+  - Validates that the job exists, that `base_commit_hash` is present, and that the current `status` is in `{PENDING, QUEUED}`.
+  - Marks the job as `RUNNING`, records `started_at`, clears any `last_error`, and returns a `LockedJob` snapshot.
+  - Wraps SQL errors into `JobLockConflict` when they indicate a lock-not-available condition, or `EvolutionWorkerError` otherwise.
+
+- **`persist_success(job_ctx, plan, coding, evaluation, commit_hash, commit_message)`**:
+  - Updates the `EvolutionJob` row to `SUCCEEDED`, sets `completed_at`, stores the plan summary, updated job `payload` (including a compact `result` section with commit/metric/test summaries), and clears `last_error`.
+  - Inserts a new `CommitMetadata` row representing the produced commit, with parent commit hash, island ID, author/email from settings, commit message, evaluation summary, tags, and a rich `extra_context` payload that includes:
+    - Job context (goal, constraints, acceptance criteria, notes, tags, raw payload).
+    - Base and inspiration commit hashes.
+    - Detailed plan, coding, and evaluation payloads via the helper functions above.
+    - Worker metadata such as `app_name`, environment, and completion timestamp.
+  - Inserts one `Metric` row per evaluation metric for the new commit, copying numeric `value`, `unit`, `higher_is_better`, and any structured `details`.
+  - Wraps SQLAlchemy errors into `EvolutionWorkerError` so the caller can surface persistence failures cleanly.
+
+- **`mark_job_failed(job_id, message)`**:
+  - Best-effort helper that records a failure reason on an `EvolutionJob` row.
+  - If the job no longer exists or has already reached `SUCCEEDED` or `CANCELLED`, the call becomes a no-op.
+  - Otherwise sets `status` to `FAILED`, stamps `completed_at`, and stores the latest `last_error` message.
+  - Swallows and logs any SQL errors rather than propagating them, to avoid masking the original worker exception.
+
+## Lock conflict detection
+
+- **`_is_lock_conflict(exc)`**: inspects the original DB error to determine whether it represents a NOWAIT lock conflict.
+  - For PostgreSQL, checks for error code `"55P03"` (lock_not_available).
+  - Falls back to substring checks on the exception message for phrases like `"could not obtain lock"` or `"database is locked"`, covering other backends.
+
+## Time helpers
+
+- **`_utc_now()`**: returns the current UTC `datetime` and is used consistently when stamping `started_at`, `completed_at`, and worker metadata timestamps.
+
+
