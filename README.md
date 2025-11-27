@@ -10,7 +10,7 @@ Loreley is an automated MAP-Elites system that evolves entire git repositories. 
 - **Learned feature space** – behaviour descriptors come from embeddings (plus optional PCA) instead of hand-picked heuristics.
 - **Production-grade loop** – a Dramatiq/Redis worker fleet, PostgreSQL archive, and central scheduler keep the system running indefinitely.
 
-Related systems: [AlphaEvolve](https://deepmind.google) style pipelines and open-source efforts such as [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve) and [ShinkaEvolve](https://github.com/SakanaAI/ShinkaEvolve).
+Related systems: [AlphaEvolve](https://deepmind.google/blog/alphaevolve-a-gemini-powered-coding-agent-for-designing-advanced-algorithms/) style pipelines and open-source efforts such as [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve) and [ShinkaEvolve](https://github.com/SakanaAI/ShinkaEvolve).
 
 ---
 
