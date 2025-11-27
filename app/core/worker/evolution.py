@@ -657,7 +657,10 @@ class EvolutionWorker:
         commit_hash: str,
         fallback: Mapping[str, Any] | None,
     ) -> CommitSnapshot:
-        commit = session.get(CommitMetadata, commit_hash)
+        commit_stmt = select(CommitMetadata).where(
+            CommitMetadata.commit_hash == commit_hash,
+        )
+        commit = session.execute(commit_stmt).scalar_one_or_none()
         fallback_meta = self._extract_mapping(fallback, "metadata")
         extra_context: dict[str, Any] = {}
         if fallback:
