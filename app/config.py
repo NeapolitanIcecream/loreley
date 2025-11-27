@@ -122,6 +122,22 @@ class Settings(BaseSettings):
         default=None,
         alias="WORKER_CODING_SCHEMA_PATH",
     )
+    worker_evaluator_plugin: str | None = Field(
+        default=None,
+        alias="WORKER_EVALUATOR_PLUGIN",
+    )
+    worker_evaluator_python_paths: list[str] = Field(
+        default_factory=list,
+        alias="WORKER_EVALUATOR_PYTHON_PATHS",
+    )
+    worker_evaluator_timeout_seconds: int = Field(
+        default=900,
+        alias="WORKER_EVALUATOR_TIMEOUT_SECONDS",
+    )
+    worker_evaluator_max_metrics: int = Field(
+        default=64,
+        alias="WORKER_EVALUATOR_MAX_METRICS",
+    )
 
     mapelites_preprocess_max_files: int = Field(
         default=6,
