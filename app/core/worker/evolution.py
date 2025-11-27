@@ -541,12 +541,10 @@ class EvolutionWorker:
             raise EvolutionWorkerError(
                 "Checkout context is detached; cannot publish commit without a branch.",
             )
-        status = self.repository._run_git("status", "--porcelain").stdout.strip()
-        if not status:
+        if not self.repository.has_changes():
             raise EvolutionWorkerError("Coding agent produced no changes to commit.")
-        self.repository._run_git("add", "--all")
-        self.repository._run_git("commit", "-m", commit_message)
-        commit_hash = self.repository.current_commit()
+        self.repository.stage_all()
+        commit_hash = self.repository.commit(commit_message)
         self.repository.push_branch(checkout.branch_name, force_with_lease=True)
         console.log(
             f"[green]Created worker commit[/] hash={commit_hash} "

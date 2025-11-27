@@ -3,17 +3,19 @@ from __future__ import annotations
 import os
 import re
 import shlex
-import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
 from loguru import logger
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+
+from git import Repo
+from git.exc import BadName, GitCommandError, InvalidGitRepositoryError, NoSuchPathError
 
 from app.config import Settings, get_settings
 
@@ -76,6 +78,8 @@ class WorkerRepository:
 
         self._env = os.environ.copy()
         self._env.setdefault("GIT_TERMINAL_PROMPT", "0")
+        self._repo: Repo | None = None
+
         author_name = (self.settings.worker_evolution_commit_author or "").strip()
         author_email = (self.settings.worker_evolution_commit_email or "").strip()
         if author_name:
@@ -84,6 +88,12 @@ class WorkerRepository:
         if author_email:
             self._env.setdefault("GIT_AUTHOR_EMAIL", author_email)
             self._env.setdefault("GIT_COMMITTER_EMAIL", author_email)
+
+        self._git_env: dict[str, str] = {
+            key: value for key, value in self._env.items() if key.upper().startswith("GIT_")
+        }
+        if self.git_bin:
+            self._git_env.setdefault("GIT_PYTHON_GIT_EXECUTABLE", self.git_bin)
 
     @property
     def git_dir(self) -> Path:
@@ -118,15 +128,22 @@ class WorkerRepository:
         self.clean_worktree()
 
         # Ensure the base commit is present locally.
-        self._ensure_commit_available(base_commit)
-        self._run_git("rev-parse", "--verify", base_commit)
+        repo = self._get_repo()
+        self._ensure_commit_available(base_commit, repo=repo)
+        try:
+            repo.git.rev_parse("--verify", base_commit)
+        except GitCommandError as exc:
+            raise self._wrap_git_error(exc, f"Failed to verify commit {base_commit}") from exc
 
         branch_name: str | None = None
-        if create_branch and job_id:
-            branch_name = self._format_job_branch(job_id)
-            self._run_git("checkout", "-B", branch_name, base_commit)
-        else:
-            self._run_git("checkout", "--detach", base_commit)
+        try:
+            if create_branch and job_id:
+                branch_name = self._format_job_branch(job_id)
+                repo.git.checkout("-B", branch_name, base_commit)
+            else:
+                repo.git.checkout("--detach", base_commit)
+        except GitCommandError as exc:
+            raise self._wrap_git_error(exc, f"Failed to checkout commit {base_commit}") from exc
 
         job_label = str(job_id) if job_id is not None else "N/A"
         console.log(
@@ -150,17 +167,42 @@ class WorkerRepository:
         """Reset tracked files and drop untracked artifacts."""
         if not self.git_dir.exists():
             return
-        self._run_git("reset", "--hard")
-
-        clean_cmd = ["clean", "-xdf"]
-        for pattern in self.clean_excludes:
-            clean_cmd.extend(["-e", pattern])
-        self._run_git(*clean_cmd)
+        repo = self._get_repo()
+        try:
+            repo.git.reset("--hard")
+            clean_args = ["-xdf"]
+            for pattern in self.clean_excludes:
+                clean_args.extend(["-e", pattern])
+            repo.git.clean(*clean_args)
+        except GitCommandError as exc:
+            raise self._wrap_git_error(exc, "Failed to clean worker worktree") from exc
 
     def current_commit(self) -> str:
         """Return the current HEAD commit hash."""
-        result = self._run_git("rev-parse", "HEAD")
-        return result.stdout.strip()
+        repo = self._get_repo()
+        return repo.head.commit.hexsha
+
+    def has_changes(self) -> bool:
+        """Return True if the worktree contains staged or unstaged changes."""
+        repo = self._get_repo()
+        return repo.is_dirty(untracked_files=True)
+
+    def stage_all(self) -> None:
+        """Stage all tracked and untracked changes."""
+        repo = self._get_repo()
+        try:
+            repo.git.add("--all")
+        except GitCommandError as exc:
+            raise self._wrap_git_error(exc, "Failed to stage worktree changes") from exc
+
+    def commit(self, message: str) -> str:
+        """Create a commit with the staged changes and return the hash."""
+        repo = self._get_repo()
+        try:
+            repo.git.commit("-m", message)
+        except GitCommandError as exc:
+            raise self._wrap_git_error(exc, "Failed to create worker commit") from exc
+        return repo.head.commit.hexsha
 
     def push_branch(
         self,
@@ -174,11 +216,15 @@ class WorkerRepository:
         if not branch:
             raise RepositoryError("Branch name must be provided when pushing.")
         remote_name = remote.strip() or "origin"
-        args = ["push"]
+        repo = self._get_repo()
+        push_args = []
         if force_with_lease:
-            args.append("--force-with-lease")
-        args.extend([remote_name, f"{branch}:{branch}"])
-        self._run_git(*args)
+            push_args.append("--force-with-lease")
+        push_args.extend([remote_name, f"{branch}:{branch}"])
+        try:
+            repo.git.push(*push_args)
+        except GitCommandError as exc:
+            raise self._wrap_git_error(exc, f"Failed to push branch {branch}") from exc
         console.log(
             f"[green]Pushed worker branch[/] branch={branch} remote={remote_name}",
         )
@@ -195,7 +241,11 @@ class WorkerRepository:
         if not branch:
             raise RepositoryError("Branch name must be provided when deleting.")
         remote_name = remote.strip() or "origin"
-        self._run_git("push", remote_name, f":{branch}")
+        repo = self._get_repo()
+        try:
+            repo.git.push(remote_name, f":{branch}")
+        except GitCommandError as exc:
+            raise self._wrap_git_error(exc, f"Failed to delete remote branch {branch}") from exc
         console.log(
             f"[yellow]Deleted remote branch[/] branch={branch} remote={remote_name}",
         )
@@ -208,25 +258,25 @@ class WorkerRepository:
         if ttl_hours <= 0 or not prefix:
             return 0
         cutoff_ts = datetime.now(timezone.utc).timestamp() - (ttl_hours * 3600)
+        repo = self._get_repo()
         try:
-            self._fetch()
+            self._fetch(repo=repo)
         except RepositoryError as exc:
             log.warning("Skipping job branch pruning; fetch failed: {}", exc)
             return 0
 
         pattern = f"refs/remotes/origin/{prefix}/*"
         try:
-            result = self._run_git(
-                "for-each-ref",
+            output = repo.git.for_each_ref(
                 "--format=%(refname) %(committerdate:unix)",
                 pattern,
             )
-        except RepositoryError as exc:
+        except GitCommandError as exc:
             log.warning("Failed to enumerate job branches for pruning: {}", exc)
             return 0
 
         pruned = 0
-        for line in result.stdout.splitlines():
+        for line in output.splitlines():
             stripped = line.strip()
             if not stripped:
                 continue
@@ -278,58 +328,96 @@ class WorkerRepository:
         if not self.git_dir.exists():
             return
 
-        self._ensure_remote_origin()
-        self._fetch()
+        repo = self._get_repo()
+        self._ensure_remote_origin(repo=repo)
+        self._fetch(repo=repo)
         if self.enable_lfs:
-            self._sync_lfs()
+            self._sync_lfs(repo=repo)
 
         # Keep local tracking branch aligned with origin.
         if self.branch:
             self.clean_worktree()
-            self._run_git("checkout", "-B", self.branch, f"origin/{self.branch}")
+            try:
+                repo.git.checkout("-B", self.branch, f"origin/{self.branch}")
+            except GitCommandError as exc:
+                raise self._wrap_git_error(
+                    exc,
+                    f"Failed to sync local branch {self.branch}",
+                ) from exc
 
     def _clone(self) -> None:
         parent = self.worktree.parent
         parent.mkdir(parents=True, exist_ok=True)
 
-        cmd: list[str] = [self.git_bin, "clone", "--origin", "origin"]
-        if self.fetch_depth:
-            cmd.append(f"--depth={self.fetch_depth}")
+        clone_kwargs: dict[str, Any] = {}
         if self.branch:
-            cmd.extend(["--branch", self.branch])
-        cmd.extend([self.remote_url, str(self.worktree)])
-        self._run(cmd, cwd=parent)
+            clone_kwargs["branch"] = self.branch
+        if self._git_env:
+            clone_kwargs["env"] = self._git_env
+        multi_options: list[str] = []
+        if self.fetch_depth:
+            multi_options.append(f"--depth={self.fetch_depth}")
+        if multi_options:
+            clone_kwargs["multi_options"] = multi_options
 
-    def _ensure_remote_origin(self) -> None:
         try:
-            current = self._run_git("remote", "get-url", "origin").stdout.strip()
-        except RepositoryError:
-            current = None
+            repo = Repo.clone_from(
+                self.remote_url,
+                str(self.worktree),
+                **clone_kwargs,
+            )
+        except GitCommandError as exc:
+            raise self._wrap_git_error(exc, "Failed to clone worker repository") from exc
+        self._configure_repo(repo)
 
-        if not current:
-            self._run_git("remote", "add", "origin", self.remote_url)
+    def _ensure_remote_origin(self, *, repo: Repo | None = None) -> None:
+        repo = repo or self._get_repo()
+        try:
+            origin = repo.remote("origin")
+        except ValueError:
+            origin = None
+
+        if origin is None:
+            try:
+                repo.create_remote("origin", self.remote_url)
+            except GitCommandError as exc:
+                raise self._wrap_git_error(exc, "Failed to add origin remote") from exc
             return
 
+        current = origin.url
         if current == self.remote_url:
             return
 
         log.warning("Updating origin remote from {} to {}", current, self.remote_url)
-        self._run_git("remote", "set-url", "origin", self.remote_url)
-
-    def _fetch(self, refspecs: Sequence[str] | None = None) -> None:
-        args = ["fetch", "--prune", "--tags"]
-        if self.fetch_depth:
-            args.append(f"--depth={self.fetch_depth}")
-        args.append("origin")
-        if refspecs:
-            args.extend(refspecs)
-        self._run_git(*args)
-
-    def _sync_lfs(self) -> None:
         try:
-            self._run_git("lfs", "install", "--local")
-            self._run_git("lfs", "fetch", "origin")
-        except RepositoryError as exc:
+            origin.set_url(self.remote_url)
+        except GitCommandError as exc:
+            raise self._wrap_git_error(exc, "Failed to update origin remote") from exc
+
+    def _fetch(
+        self,
+        refspecs: Sequence[str] | None = None,
+        *,
+        repo: Repo | None = None,
+    ) -> None:
+        repo = repo or self._get_repo()
+        fetch_args = ["--prune", "--tags"]
+        if self.fetch_depth:
+            fetch_args.append(f"--depth={self.fetch_depth}")
+        fetch_args.append("origin")
+        if refspecs:
+            fetch_args.extend(refspecs)
+        try:
+            repo.git.fetch(*fetch_args)
+        except GitCommandError as exc:
+            raise self._wrap_git_error(exc, "Failed to fetch from origin") from exc
+
+    def _sync_lfs(self, *, repo: Repo | None = None) -> None:
+        repo = repo or self._get_repo()
+        try:
+            repo.git.lfs("install", "--local")
+            repo.git.lfs("fetch", "origin")
+        except GitCommandError as exc:
             log.warning("Git LFS sync skipped: {}", exc)
 
     def _format_job_branch(self, job_id: str | UUID) -> str:
@@ -350,46 +438,51 @@ class WorkerRepository:
             console=console,
         )
 
-    def _run_git(self, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
-        return self._run(
-            (self.git_bin, *args),
-            cwd=cwd or self.worktree,
-        )
-
-    def _run(
-        self,
-        cmd: Sequence[str],
-        *,
-        cwd: Path | None = None,
-    ) -> subprocess.CompletedProcess[str]:
-        command = tuple(str(part) for part in cmd)
-        working_dir = cwd or self.worktree
-        working_dir.mkdir(parents=True, exist_ok=True)
-
-        sanitized_cmd = self._sanitize_command(command)
-        log.debug("Executing command [{}]: {}", working_dir, sanitized_cmd)
-        result = subprocess.run(
-            command,
-            cwd=str(working_dir),
-            env=self._env,
-            check=False,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-
-        if result.returncode != 0:
-            formatted = sanitized_cmd
+    def _get_repo(self) -> Repo:
+        if self._repo and self._repo.working_tree_dir:
+            if Path(self._repo.working_tree_dir).resolve() == self.worktree:
+                return self._repo
+        if not self.git_dir.exists():
             raise RepositoryError(
-                f"Command failed with exit code {result.returncode}: "
-                f"{formatted}",
-                cmd=command,
-                returncode=result.returncode,
-                stdout=result.stdout,
-                stderr=result.stderr,
+                f"Worktree {self.worktree} is not a git repository.",
             )
+        try:
+            repo = Repo(self.worktree)
+        except (InvalidGitRepositoryError, NoSuchPathError) as exc:
+            raise RepositoryError(
+                f"Worktree {self.worktree} is not a git repository.",
+            ) from exc
+        return self._configure_repo(repo)
 
-        return result
+    def _configure_repo(self, repo: Repo) -> Repo:
+        if self._git_env:
+            repo.git.update_environment(**self._git_env)
+        self._repo = repo
+        return repo
+
+    def _wrap_git_error(self, exc: GitCommandError, context: str) -> RepositoryError:
+        command = self._command_tuple(exc.command)
+        sanitized = self._sanitize_command(command) if command else None
+        suffix = ""
+        if sanitized:
+            suffix = f": {sanitized}"
+        message = f"{context}{suffix} (exit {exc.status})"
+        status = exc.status if isinstance(exc.status, int) else None
+        return RepositoryError(
+            message,
+            cmd=command,
+            returncode=status,
+            stdout=getattr(exc, "stdout", None),
+            stderr=getattr(exc, "stderr", None),
+        )
+
+    @staticmethod
+    def _command_tuple(command: str | Sequence[str] | None) -> tuple[str, ...] | None:
+        if not command:
+            return None
+        if isinstance(command, str):
+            return (command,)
+        return tuple(str(part) for part in command)
 
     @staticmethod
     def _sanitize_command(cmd: Sequence[str]) -> str:
@@ -407,36 +500,48 @@ class WorkerRepository:
             return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
         return value
 
-    def _ensure_commit_available(self, commit_hash: str) -> None:
-        if self._has_object(commit_hash):
+    def _ensure_commit_available(
+        self,
+        commit_hash: str,
+        *,
+        repo: Repo | None = None,
+    ) -> None:
+        repo = repo or self._get_repo()
+        if self._has_object(commit_hash, repo=repo):
             return
 
         log.info("Commit {} missing locally; refreshing from origin", commit_hash)
-        self._fetch()
-        if self._has_object(commit_hash):
+        self._fetch(repo=repo)
+        if self._has_object(commit_hash, repo=repo):
             return
 
-        if self._is_shallow():
+        if self._is_shallow(repo=repo):
             log.info("Repository is shallow; unshallowing to retrieve {}", commit_hash)
-            self._run_git("fetch", "--unshallow", "origin")
-            if self._has_object(commit_hash):
-                return
+            try:
+                repo.git.fetch("--unshallow", "origin")
+            except GitCommandError as exc:
+                raise self._wrap_git_error(exc, "Failed to unshallow repository") from exc
+            else:
+                if self._has_object(commit_hash, repo=repo):
+                    return
 
         raise RepositoryError(
             f"Commit {commit_hash} is not available locally after fetching from origin.",
         )
 
-    def _has_object(self, obj_ref: str) -> bool:
+    def _has_object(self, obj_ref: str, *, repo: Repo | None = None) -> bool:
+        repo = repo or self._get_repo()
         try:
-            self._run_git("cat-file", "-e", f"{obj_ref}^{{commit}}")
-        except RepositoryError:
+            repo.commit(obj_ref)
+        except (BadName, GitCommandError, ValueError):
             return False
         return True
 
-    def _is_shallow(self) -> bool:
+    def _is_shallow(self, *, repo: Repo | None = None) -> bool:
+        repo = repo or self._get_repo()
         try:
-            result = self._run_git("rev-parse", "--is-shallow-repository")
-        except RepositoryError:
+            result = repo.git.rev_parse("--is-shallow-repository")
+        except GitCommandError:
             return False
-        return result.stdout.strip().lower() == "true"
+        return result.strip().lower() == "true"
 
