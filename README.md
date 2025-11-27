@@ -1,231 +1,104 @@
 ## Loreley
 
-Loreley is an automated code evolution system built around a MAP-Elites search over git commits.  
-It continuously samples promising changes from a codebase, asks external agents to implement and
-evaluate them, and maintains an archive of high-quality, behaviorally diverse solutions.
-
-The project is designed for long-running, production-style deployments: configuration is
-centralised and workers communicate via a Redis-backed Dramatiq queue while persisting state in
-PostgreSQL.
+Loreley is an automated MAP-Elites system that evolves entire git repositories. It continuously samples promising commits, asks external agents to implement and evaluate them, and stores the best-performing variants for later reuse.
 
 ---
 
-## Relation to AlphaEvolve and Open-Source Replications
+## Key Concepts
 
-Loreley is conceptually related to systems such as DeepMind's **AlphaEvolve** and open-source
-implementations like **OpenEvolve** ([GitHub](https://github.com/algorithmicsuperintelligence/openevolve))
-and **ShinkaEvolve** ([GitHub](https://github.com/SakanaAI/ShinkaEvolve)), but makes several
-deliberate design choices:
+- **Whole-repo evolution** – each individual is a real git commit, so outputs stay debuggable and integrable with normal tooling.
+- **Learned feature space** – behaviour descriptors come from embeddings (plus optional PCA) instead of hand-picked heuristics.
+- **Production-grade loop** – a Dramatiq/Redis worker fleet, PostgreSQL archive, and central scheduler keep the system running indefinitely.
 
-- **Commit-level individuals, whole-repo evolution**  
-  Instead of treating a single file or function as the unit of evolution, Loreley uses **git
-  commits** as individuals and evolves the **entire repository**. Each job operates on a real
-  worktree, producing self-contained commits that can be inspected, tested, and integrated using
-  standard git tooling.
-
-- **Feature discovery from embeddings, not hand-crafted descriptors**  
-  Rather than relying on manually designed behavior descriptors, Loreley derives behavioural
-  features from **code and summary embeddings** (with optional dimensionality reduction such as
-  PCA). This allows the MAP-Elites search space to be learned from data, maximising generality
-  across languages, domains, and repository layouts.
-
-- **Tight integration with production infra**  
-  Loreley is structured as a long-running service with a scheduler, Dramatiq workers, and a
-  PostgreSQL-backed archive and job store, making it suitable for continuous evolution of
-  real-world codebases rather than purely benchmark-style tasks.
+Related systems: [AlphaEvolve](https://deepmind.google) style pipelines and open-source efforts such as [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve) and [ShinkaEvolve](https://github.com/SakanaAI/ShinkaEvolve).
 
 ---
 
-## Features
+## What Ships With Loreley
 
-- **MAP-Elites–driven exploration**:  
-  - Extracts features from code changes via preprocessing, chunking, code/summary embeddings, and
-    dimensionality reduction.  
-  - Maintains per-island archives of elite commits, optimising a configurable fitness metric while
-    encouraging behavioural diversity.
-
-- **End-to-end evolution pipeline**:  
-  - Schedules evolution jobs from the MAP-Elites archive.  
-  - Delegates planning, coding, and evaluation to external tools and plugins.  
-  - Ingests evaluated commits back into the archive with full provenance.
-
-- **Robust orchestration and workers**:  
-  - A central scheduler orchestrates ingest → dispatch → measure → schedule loops.  
-  - Dramatiq workers consume jobs from Redis and run evolution iterations in a controlled,
-    single-threaded environment.
-
-- **Observability and safety**:  
-  - Structured logging with Loguru and Rich, with careful redaction of secrets (database URLs,
-    Redis credentials, etc.).  
-  - Detailed metrics and job metadata stored in PostgreSQL for inspection and analysis.
+- `app.config` – a single `Settings` object (pydantic-settings) for logging, database, Redis/Dramatiq, scheduler, worker repos, and MAP-Elites knobs.
+- `app.db` – SQLAlchemy engine/session helpers plus ORM models for commits, metrics, and job state.
+- `app.core.map_elites` – preprocessing, chunking, embeddings, dimensionality reduction, and `MapElitesManager`.
+- `app.core.worker` – worktree lifecycle plus planning/coding/evaluation orchestration used by Dramatiq actors.
+- `app.tasks` – Redis broker definition and the `run_evolution_job(job_id)` actor.
+- `app.scheduler` – `EvolutionScheduler` that ingests, dispatches, measures, and schedules jobs.
+- `script/run_scheduler.py`, `script/run_worker.py` – CLI shims that wire up logging, settings, and entrypoints.
+- `docs/` – focused guides for configuration, scheduler behaviour, and worker operations.
 
 ---
 
-## High-level Architecture
+## Requirements & Tooling
 
-- **Configuration (`app.config`)**  
-  Central `Settings` class (backed by `pydantic-settings` and environment variables) controlling:
-  - Application environment and logging.  
-  - PostgreSQL database connection.  
-  - Redis / Dramatiq task queue (URL or host/port/db/password, namespace, queue name, retry and
-    time-limit policy).  
-  - Scheduler behaviour (poll interval, batch sizes, capacity limits, target repo root).  
-  - Worker repository layout (remote URL, branch, worktree, Git LFS, job branch TTL, etc.).  
-  - External planning / coding agents, evaluator plugin, and MAP-Elites pipeline settings
-    (preprocessing, chunking, embedding, dimensionality reduction, feature bounds, fitness,
-    archive/grid configuration, and sampler options).
+- Python 3.11+
+- [`uv`](https://github.com/astral-sh/uv) for dependency management
+- PostgreSQL + Redis (Dramatiq broker)
+- Git (worktrees, LFS optional)
+- Access to configured external planning/coding/evaluation agents
 
-- **Database layer (`app.db`)**  
-  - `base`: SQLAlchemy engine and session factory using `Settings.database_dsn`, plus helpers for
-    safe DSN logging and a scoped session context manager.  
-  - `models`: ORM models for commits, metrics, evolution jobs, and MAP-Elites state.
-
-- **MAP-Elites core (`app.core.map_elites`)**  
-  - Preprocessing and chunking of changed code files.  
-  - Code and summary embeddings, optional dimensionality reduction (e.g. via PCA).  
-  - `MapElitesManager` to maintain per-island archives in the database, ingest new commits, and
-    expose query helpers.
-
-- **Worker core (`app.core.worker`)**  
-  - Git worktree management for the worker repository.  
-  - Planning, coding, evaluation, and evolution orchestration logic used by the Dramatiq actor.
-
-- **Task queue (`app.tasks`)**  
-  - `broker`: configuration of the global Dramatiq Redis broker, with sanitised connection logging.  
-  - `workers`: Dramatiq actors, in particular `run_evolution_job(job_id: str)`, which runs a single
-    evolution job via `EvolutionWorker` with robust error handling and logging.
-
-- **Scheduler (`app.scheduler.main`)**  
-  - `EvolutionScheduler` couples the MAP-Elites archive, PostgreSQL job store, and Dramatiq queue.  
-  - Periodically: ingests newly succeeded jobs, dispatches pending jobs, measures capacity, and
-    schedules new jobs from MAP-Elites when allowed.
-
-- **Scripts (`script/`)**  
-  - `run_scheduler.py`: thin CLI wrapper that configures logging and delegates to
-    `app.scheduler.main.main`.  
-  - `run_worker.py`: CLI wrapper that configures logging, initialises the Redis broker, imports
-    `app.tasks.workers`, and runs a single-threaded Dramatiq worker.
-
-For module-level details, see the documentation under `docs/app` and `docs/script`.
+Logging uses Loguru with Rich renderers; secrets such as database or Redis URLs are redacted automatically.
 
 ---
 
-## Requirements
-
-- Python 3.11+ (recommended)  
-- `uv` for environment and dependency management  
-- PostgreSQL database  
-- Redis instance for Dramatiq  
-- Git installed and accessible on `PATH`  
-- Access to the external planning, coding, and evaluation tools configured via environment
-  variables (see `docs/app/config.md`).
-
----
-
-## Installation
-
-Clone the repository and create the environment using `uv`:
+## Quick Start
 
 ```bash
 git clone <YOUR_FORK_OR_ORIGIN_URL> loreley
 cd loreley
-
-# Create a virtual environment and install dependencies from pyproject.toml / uv.lock
-uv sync
+uv sync          # installs according to pyproject.toml / uv.lock
 ```
 
-If you prefer to use an existing environment:
+If you already have an environment, pin dependencies without creating a workspace:
 
 ```bash
 uv sync --no-workspace
 ```
 
-> `uv` will honour the pinned dependencies in `uv.lock` when available.
+### Configure
+
+All runtime settings come from environment variables consumed by `app.config.Settings`. Common examples:
+
+- `APP_NAME`, `ENVIRONMENT`, `LOG_LEVEL`
+- `DATABASE_URL` (or individual `DB_*`)
+- `TASKS_REDIS_URL` / (host, port, db, password) + `TASKS_REDIS_NAMESPACE`, `TASKS_QUEUE_NAME`
+- Scheduler knobs: `SCHEDULER_REPO_ROOT`, `SCHEDULER_POLL_INTERVAL_SECONDS`, `SCHEDULER_MAX_UNFINISHED_JOBS`, etc.
+- Worker repo knobs: `WORKER_REPO_REMOTE_URL`, `WORKER_REPO_BRANCH`, `WORKER_REPO_WORKTREE`, `WORKER_REPO_ENABLE_LFS`, etc.
+- MAP-Elites controls: `MAPELITES_*` for preprocessing, embeddings, dimensionality reduction, bounds, resolution, and fitness metrics.
+
+See `docs/app/config.md` for the exhaustive list.
 
 ---
 
-## Configuration
+## Running Loreley
 
-Loreley is configured entirely via environment variables, loaded into `app.config.Settings`
-using `pydantic-settings`. Typical configuration is done via a `.env` file or your process
-manager.
+- **Scheduler loop**
 
-- **Core settings (examples)**:
-  - `APP_NAME`, `ENVIRONMENT`, `LOG_LEVEL`  
-  - `DATABASE_URL` *or* individual `DB_*` fields  
-  - `TASKS_REDIS_URL` *or* (`TASKS_REDIS_HOST`, `TASKS_REDIS_PORT`, `TASKS_REDIS_DB`,
-    `TASKS_REDIS_PASSWORD`), plus `TASKS_REDIS_NAMESPACE`, `TASKS_QUEUE_NAME`  
-  - `SCHEDULER_REPO_ROOT`, `SCHEDULER_POLL_INTERVAL_SECONDS`,
-    `SCHEDULER_MAX_UNFINISHED_JOBS`, `SCHEDULER_SCHEDULE_BATCH_SIZE`,
-    `SCHEDULER_DISPATCH_BATCH_SIZE`, `SCHEDULER_INGEST_BATCH_SIZE`  
-  - `WORKER_REPO_REMOTE_URL`, `WORKER_REPO_BRANCH`, `WORKER_REPO_WORKTREE`, `WORKER_REPO_ENABLE_LFS`,
-    and other `WORKER_REPO_*` options  
-  - `MAPELITES_*` settings to control preprocessing, embeddings, dimensionality reduction,
-    feature bounds, archive resolution, fitness metric, and sampler behaviour.
+  ```bash
+  uv run python script/run_scheduler.py        # continuous loop
+  uv run python script/run_scheduler.py --once # single tick
+  uv run python -m app.scheduler.main [--once]
+  ```
 
-Refer to `docs/app/config.md` for the full list and semantics of all configuration fields.
+- **Worker process**
 
----
+  ```bash
+  uv run python script/run_worker.py
+  ```
 
-## Running the System
+  The worker configures Loguru/Rich, initialises the Redis broker defined in `app.tasks.broker`, imports `app.tasks.workers`, and launches a single-threaded Dramatiq worker bound to `TASKS_QUEUE_NAME`.
 
-### Run the evolution scheduler
-
-Run the continuous scheduler loop:
-
-```bash
-uv run python script/run_scheduler.py
-```
-
-Run a single scheduler tick (useful for cron jobs or smoke tests):
-
-```bash
-uv run python script/run_scheduler.py --once
-```
-
-Alternatively, you can invoke the module directly:
-
-```bash
-uv run python -m app.scheduler.main
-uv run python -m app.scheduler.main --once
-```
-
-See `docs/script/run_scheduler.md` for more details on behaviour and logging.
-
-### Run a worker process
-
-Start a single-process, single-threaded Dramatiq worker:
-
-```bash
-uv run python script/run_worker.py
-```
-
-The worker will:
-
-- Configure Loguru based on `LOG_LEVEL`.  
-- Initialise the Redis broker from `app.tasks.broker`.  
-- Import `app.tasks.workers` so that `run_evolution_job` is registered.  
-- Start a Dramatiq `Worker` bound to the configured queue (`TASKS_QUEUE_NAME`).
-
-See `docs/script/run_worker.md` for configuration details and operational notes.
+Refer to `docs/script/run_scheduler.md` and `docs/script/run_worker.md` for deeper operational guidance.
 
 ---
 
-## Project Layout (Overview)
+## Project Layout
 
-- `app/` – application code
-  - `config.py` – central configuration (`Settings`, `get_settings()`).  
-  - `core/map_elites/` – MAP-Elites implementation and related utilities.  
-  - `core/worker/` – worker-side repository, planning, coding, evaluation, and evolution logic.  
-  - `db/` – SQLAlchemy engine, session helpers, and ORM models.  
-  - `scheduler/` – evolution scheduler orchestration loop and CLI entrypoint.  
-  - `tasks/` – Dramatiq broker setup and worker actors.
-- `script/` – CLI wrapper scripts for scheduler and worker.  
-- `docs/` – module-level documentation and usage guides.  
-- `pyproject.toml` / `uv.lock` – dependency and environment definitions.
+- `app/` – core services (`config`, `db`, `core/map_elites`, `core/worker`, `scheduler`, `tasks`)
+- `script/` – CLI shims (`run_scheduler.py`, `run_worker.py`)
+- `docs/` – module-level docs under `docs/app` and `docs/script`
+- `pyproject.toml`, `uv.lock` – dependency definitions for `uv`
 
 ---
 
 ## License
 
-This project is licensed under the terms of the license specified in `LICENSE`.
+See `LICENSE` for details.
