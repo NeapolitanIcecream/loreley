@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 from uuid import UUID
 
 from loguru import logger
 from rich.console import Console
 from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.core.worker.coding import (
@@ -37,32 +34,26 @@ from app.core.worker.planning import (
     PlanningPlan,
 )
 from app.core.worker.commit_summary import CommitSummarizer, CommitSummaryError
+from app.core.worker.job_store import (
+    EvolutionJobStore,
+    EvolutionWorkerError,
+    JobLockConflict,
+    JobPreconditionError,
+    build_plan_payload,
+)
 from app.core.worker.repository import CheckoutContext, WorkerRepository, RepositoryError
 from app.db.base import session_scope
-from app.db.models import CommitMetadata, EvolutionJob, JobStatus, Metric
+from app.db.models import CommitMetadata, Metric
 
 console = Console()
 log = logger.bind(module="worker.evolution")
 
 __all__ = [
     "EvolutionWorker",
-    "EvolutionWorkerError",
     "EvolutionWorkerResult",
     "CommitSummarizer",
     "CommitSummaryError",
 ]
-
-
-class EvolutionWorkerError(RuntimeError):
-    """Raised when the evolution worker cannot complete a job."""
-
-
-class JobLockConflict(EvolutionWorkerError):
-    """Raised when a concurrent worker already locked the target job row."""
-
-
-class JobPreconditionError(EvolutionWorkerError):
-    """Raised when a job cannot start due to invalid or missing preconditions."""
 
 
 @dataclass(slots=True)
@@ -131,6 +122,7 @@ class EvolutionWorker:
         coding_agent: CodingAgent | None = None,
         evaluator: Evaluator | None = None,
         summarizer: CommitSummarizer | None = None,
+        job_store: EvolutionJobStore | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         self.repository = repository or WorkerRepository(self.settings)
@@ -138,6 +130,7 @@ class EvolutionWorker:
         self.coding_agent = coding_agent or CodingAgent(self.settings)
         self.evaluator = evaluator or Evaluator(self.settings)
         self.summarizer = summarizer or CommitSummarizer(settings=self.settings)
+        self.job_store = job_store or EvolutionJobStore(settings=self.settings)
 
     def run(self, job_id: str | UUID) -> EvolutionWorkerResult:
         """Execute the full evolution loop for the requested job."""
@@ -192,7 +185,7 @@ class EvolutionWorker:
                 plan=plan_response,
                 candidate_commit=candidate_commit,
             )
-            self._persist_success(
+            self.job_store.persist_success(
                 job_ctx=job_ctx,
                 plan=plan_response,
                 coding=coding_response,
@@ -222,90 +215,54 @@ class EvolutionWorker:
     # Internal orchestration helpers -------------------------------------
 
     def _start_job(self, job_id: UUID) -> JobContext:
-        try:
-            with session_scope() as session:
-                job_stmt = (
-                    select(EvolutionJob)
-                    .where(EvolutionJob.id == job_id)
-                    .with_for_update(nowait=True)
-                )
-                job = session.execute(job_stmt).scalar_one_or_none()
-                if not job:
-                    raise JobPreconditionError(f"Evolution job {job_id} does not exist.")
-                if not job.base_commit_hash:
-                    raise EvolutionWorkerError("Evolution job is missing base_commit_hash.")
+        locked_job = self.job_store.start_job(job_id)
+        payload = dict(locked_job.payload or {})
+        extra_context = self._extract_mapping(payload, "extra_context") or {}
+        base_payload = self._match_record_payload(payload.get("base"))
+        inspirations_payload = self._map_inspiration_payloads(payload.get("inspirations"))
+        base_snapshot = self._load_commit_snapshot(
+            commit_hash=locked_job.base_commit_hash,
+            fallback=base_payload,
+        )
+        inspiration_snapshots = tuple(
+            self._load_commit_snapshot(
+                commit_hash=commit_hash,
+                fallback=inspirations_payload.get(commit_hash),
+            )
+            for commit_hash in locked_job.inspiration_commit_hashes
+        )
+        goal = self._extract_goal(
+            payload=payload,
+            extra_context=extra_context,
+            job_id=job_id,
+            default=base_snapshot.summary,
+        )
+        constraints = self._coerce_str_sequence(
+            payload.get("constraints") or payload.get("guardrails") or extra_context.get("constraints"),
+        )
+        acceptance = self._coerce_str_sequence(
+            payload.get("acceptance_criteria")
+            or payload.get("definition_of_done")
+            or extra_context.get("acceptance_criteria"),
+        )
+        iteration_hint = self._extract_iteration_hint(payload, extra_context=extra_context)
+        notes = self._coerce_str_sequence(payload.get("notes") or extra_context.get("notes"))
+        tags = self._coerce_str_sequence(payload.get("tags") or extra_context.get("tags"))
 
-                allowed_statuses = {JobStatus.PENDING, JobStatus.QUEUED}
-                if job.status not in allowed_statuses:
-                    raise JobPreconditionError(
-                        f"Evolution job {job_id} is {job.status} and cannot run.",
-                    )
-
-                job.status = JobStatus.RUNNING
-                job.started_at = _utc_now()
-                job.last_error = None
-
-                payload = dict(job.payload or {})
-                extra_context = self._extract_mapping(payload, "extra_context") or {}
-                base_payload = self._match_record_payload(payload.get("base"))
-                inspirations_payload = self._map_inspiration_payloads(payload.get("inspirations"))
-                base_snapshot = self._load_commit_snapshot(
-                    session=session,
-                    commit_hash=job.base_commit_hash,
-                    fallback=base_payload,
-                )
-                inspiration_snapshots = tuple(
-                    self._load_commit_snapshot(
-                        session=session,
-                        commit_hash=commit_hash,
-                        fallback=inspirations_payload.get(commit_hash),
-                    )
-                    for commit_hash in tuple(job.inspiration_commit_hashes or [])
-                )
-                goal = self._extract_goal(
-                    payload=payload,
-                    extra_context=extra_context,
-                    job_id=job_id,
-                    default=base_snapshot.summary,
-                )
-                constraints = self._coerce_str_sequence(
-                    payload.get("constraints")
-                    or payload.get("guardrails")
-                    or extra_context.get("constraints"),
-                )
-                acceptance = self._coerce_str_sequence(
-                    payload.get("acceptance_criteria")
-                    or payload.get("definition_of_done")
-                    or extra_context.get("acceptance_criteria"),
-                )
-                iteration_hint = self._extract_iteration_hint(payload, extra_context=extra_context)
-                notes = self._coerce_str_sequence(
-                    payload.get("notes") or extra_context.get("notes"),
-                )
-                tags = self._coerce_str_sequence(
-                    payload.get("tags") or extra_context.get("tags"),
-                )
-
-                return JobContext(
-                    job_id=job_id,
-                    base_commit_hash=job.base_commit_hash,
-                    island_id=job.island_id,
-                    payload=payload,
-                    base_snapshot=base_snapshot,
-                    inspiration_snapshots=inspiration_snapshots,
-                    goal=goal,
-                    constraints=constraints,
-                    acceptance_criteria=acceptance,
-                    iteration_hint=iteration_hint,
-                    notes=notes,
-                    tags=tags,
-                )
-        except SQLAlchemyError as exc:
-            if self._is_lock_conflict(exc):
-                raise JobLockConflict(
-                    f"Evolution job {job_id} is locked by another worker.",
-                ) from exc
-            raise EvolutionWorkerError(f"Failed to start job {job_id}: {exc}") from exc
+        return JobContext(
+            job_id=locked_job.job_id,
+            base_commit_hash=locked_job.base_commit_hash,
+            island_id=locked_job.island_id,
+            payload=payload,
+            base_snapshot=base_snapshot,
+            inspiration_snapshots=inspiration_snapshots,
+            goal=goal,
+            constraints=constraints,
+            acceptance_criteria=acceptance,
+            iteration_hint=iteration_hint,
+            notes=notes,
+            tags=tags,
+        )
 
     def _run_planning(
         self,
@@ -410,7 +367,7 @@ class EvolutionWorker:
                 "acceptance_criteria": list(job_ctx.acceptance_criteria),
                 "notes": list(job_ctx.notes),
             },
-            "plan": self._plan_payload(plan),
+            "plan": build_plan_payload(plan),
         }
         try:
             context = EvaluationContext(
@@ -427,86 +384,6 @@ class EvolutionWorker:
         except EvaluationError as exc:
             raise EvolutionWorkerError(f"Evaluator failed for job {job_ctx.job_id}: {exc}") from exc
 
-    def _persist_success(
-        self,
-        *,
-        job_ctx: JobContext,
-        plan: PlanningAgentResponse,
-        coding: CodingAgentResponse,
-        evaluation: EvaluationResult,
-        commit_hash: str,
-        commit_message: str,
-    ) -> None:
-        commit_extra = {
-            "job": {
-                "id": str(job_ctx.job_id),
-                "island_id": job_ctx.island_id,
-                "goal": job_ctx.goal,
-                "constraints": list(job_ctx.constraints),
-                "acceptance_criteria": list(job_ctx.acceptance_criteria),
-                "notes": list(job_ctx.notes),
-                "tags": list(job_ctx.tags),
-                "payload": job_ctx.payload,
-            },
-            "base_commit": job_ctx.base_snapshot.commit_hash,
-            "inspirations": [snapshot.commit_hash for snapshot in job_ctx.inspiration_snapshots],
-            "plan": self._plan_payload(plan),
-            "coding": self._coding_payload(coding),
-            "evaluation": self._evaluation_payload(evaluation),
-            "worker": {
-                "app_name": self.settings.app_name,
-                "environment": self.settings.environment,
-                "completed_at": _utc_now().isoformat(),
-            },
-        }
-        job_payload = dict(job_ctx.payload)
-        job_payload["result"] = {
-            "commit_hash": commit_hash,
-            "plan_summary": plan.plan.summary,
-            "tests_executed": list(coding.execution.tests_executed),
-            "tests_recommended": list(coding.execution.tests_recommended),
-            "evaluation_summary": evaluation.summary,
-            "metrics": [metric.as_dict() for metric in evaluation.metrics],
-        }
-
-        try:
-            with session_scope() as session:
-                job = session.get(EvolutionJob, job_ctx.job_id)
-                if not job:
-                    raise EvolutionWorkerError(
-                        f"Evolution job {job_ctx.job_id} disappeared during persistence.",
-                    )
-                job.status = JobStatus.SUCCEEDED
-                job.completed_at = _utc_now()
-                job.plan_summary = plan.plan.summary
-                job.payload = job_payload
-                job.last_error = None
-
-                metadata = CommitMetadata(
-                    commit_hash=commit_hash,
-                    parent_commit_hash=job_ctx.base_commit_hash,
-                    island_id=job_ctx.island_id,
-                    author=self.settings.worker_evolution_commit_author,
-                    message=commit_message,
-                    evaluation_summary=evaluation.summary,
-                    tags=list(job_ctx.tags),
-                    extra_context=commit_extra,
-                )
-                session.add(metadata)
-                for metric in evaluation.metrics:
-                    session.add(
-                        Metric(
-                            commit_hash=commit_hash,
-                            name=metric.name,
-                            value=metric.value,
-                            unit=metric.unit,
-                            higher_is_better=metric.higher_is_better,
-                            details=dict(metric.details or {}),
-                        )
-                    )
-        except SQLAlchemyError as exc:
-            raise EvolutionWorkerError(f"Failed to persist results for job {job_ctx.job_id}: {exc}") from exc
-
     def _prune_job_branches(self) -> None:
         try:
             pruned = self.repository.prune_stale_job_branches()
@@ -521,32 +398,27 @@ class EvolutionWorker:
     def _mark_job_failed(self, job_id: UUID, exc: Exception) -> None:
         message = str(exc)
         console.log(f"[bold red]Evolution worker[/] job={job_id} failed: {message}")
-        try:
-            with session_scope() as session:
-                job = session.get(EvolutionJob, job_id)
-                if not job:
-                    return
-                if job.status in {JobStatus.SUCCEEDED, JobStatus.CANCELLED}:
-                    return
-                job.status = JobStatus.FAILED
-                job.completed_at = _utc_now()
-                job.last_error = message
-        except SQLAlchemyError as db_exc:
-            log.error("Failed to record failure for job {}: {}", job_id, db_exc)
+        self.job_store.mark_job_failed(job_id, message)
 
     # Data extraction utilities -------------------------------------------
 
     def _load_commit_snapshot(
         self,
         *,
-        session: Session,
         commit_hash: str,
         fallback: Mapping[str, Any] | None,
     ) -> CommitSnapshot:
-        commit_stmt = select(CommitMetadata).where(
-            CommitMetadata.commit_hash == commit_hash,
-        )
-        commit = session.execute(commit_stmt).scalar_one_or_none()
+        commit: CommitMetadata | None
+        metric_rows: Sequence[Metric] = ()
+        with session_scope() as session:
+            commit_stmt = select(CommitMetadata).where(
+                CommitMetadata.commit_hash == commit_hash,
+            )
+            commit = session.execute(commit_stmt).scalar_one_or_none()
+            if commit:
+                metric_rows = session.scalars(
+                    select(Metric).where(Metric.commit_hash == commit_hash)
+                ).all()
         fallback_meta = self._extract_mapping(fallback, "metadata")
         extra_context: dict[str, Any] = {}
         if fallback:
@@ -577,9 +449,6 @@ class EvolutionWorker:
         highlights = self._extract_highlights(*highlights_sources)
         metrics: list[CommitMetric] = []
         if commit:
-            metric_rows = session.scalars(
-                select(Metric).where(Metric.commit_hash == commit_hash)
-            ).all()
             metrics.extend(self._metric_from_row(row) for row in metric_rows)
         elif fallback_meta:
             metrics.extend(self._metrics_from_payload(fallback_meta.get("metrics")))
@@ -710,56 +579,6 @@ class EvolutionWorker:
                 mapping[commit_hash] = dict(item)
         return mapping
 
-    def _plan_payload(self, response: PlanningAgentResponse) -> dict[str, Any]:
-        plan_dict = response.plan.as_dict()
-        plan_dict.update(
-            {
-                "prompt": response.prompt,
-                "raw_output": response.raw_output,
-                "command": list(response.command),
-                "stderr": response.stderr,
-                "attempts": response.attempts,
-                "duration_seconds": response.duration_seconds,
-            }
-        )
-        return plan_dict
-
-    def _coding_payload(self, response: CodingAgentResponse) -> dict[str, Any]:
-        execution = response.execution
-        return {
-            "implementation_summary": execution.implementation_summary,
-            "commit_message": execution.commit_message,
-            "step_results": [
-                {
-                    "step_id": step.step_id,
-                    "status": step.status.value,
-                    "summary": step.summary,
-                    "files": list(step.files),
-                    "commands": list(step.commands),
-                }
-                for step in execution.step_results
-            ],
-            "tests_executed": list(execution.tests_executed),
-            "tests_recommended": list(execution.tests_recommended),
-            "follow_up_items": list(execution.follow_up_items),
-            "notes": list(execution.notes),
-            "raw_output": response.raw_output,
-            "prompt": response.prompt,
-            "command": list(response.command),
-            "stderr": response.stderr,
-            "attempts": response.attempts,
-            "duration_seconds": response.duration_seconds,
-        }
-
-    def _evaluation_payload(self, result: EvaluationResult) -> dict[str, Any]:
-        return {
-            "summary": result.summary,
-            "metrics": [metric.as_dict() for metric in result.metrics],
-            "tests_executed": list(result.tests_executed),
-            "logs": list(result.logs),
-            "extra": dict(result.extra or {}),
-        }
-
     def _extract_mapping(self, payload: Mapping[str, Any] | None, key: str) -> Mapping[str, Any] | None:
         if not payload:
             return None
@@ -830,20 +649,3 @@ class EvolutionWorker:
         if isinstance(value, UUID):
             return value
         return UUID(str(value))
-
-    @staticmethod
-    def _is_lock_conflict(exc: SQLAlchemyError) -> bool:
-        """Return True when the DB error indicates a NOWAIT lock conflict."""
-        orig = getattr(exc, "orig", None)
-        if not orig:
-            return False
-        pgcode = getattr(orig, "pgcode", None)
-        if pgcode == "55P03":  # PostgreSQL lock_not_available
-            return True
-        message = str(orig).lower()
-        return "could not obtain lock" in message or "database is locked" in message
-
-
-def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
-
