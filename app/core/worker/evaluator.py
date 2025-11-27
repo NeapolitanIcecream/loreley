@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import inspect
 import sys
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+import multiprocessing
+import traceback
 from dataclasses import dataclass, field
 from importlib import import_module
 from pathlib import Path
 from time import monotonic
-from typing import Any, Callable, Mapping, Protocol, Sequence
+from typing import Any, Callable, Mapping, Protocol, Sequence, cast
 
 from loguru import logger
 from rich.console import Console
@@ -133,18 +134,7 @@ class Evaluator:
         )
 
         start = monotonic()
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(plugin, context)
-            try:
-                payload = future.result(timeout=self.timeout)
-            except FuturesTimeout as exc:
-                future.cancel()
-                raise EvaluationError(
-                    f"Evaluation plugin timed out after {self.timeout}s.",
-                ) from exc
-            except Exception as exc:
-                raise EvaluationError("Evaluation plugin raised an exception.") from exc
-
+        payload = self._execute_with_timeout(plugin, context)
         result = self._coerce_result(payload)
         duration = monotonic() - start
         console.log(
@@ -172,7 +162,8 @@ class Evaluator:
             )
 
         self._prepare_pythonpath()
-        target = self._import_object(self.plugin_ref)
+        module_name, attr_path = self._split_reference(self.plugin_ref)
+        target = self._import_object(module_name, attr_path)
         callable_plugin = self._resolve_callable(target)
         self._plugin_callable = callable_plugin
         return callable_plugin
@@ -186,20 +177,27 @@ class Evaluator:
                 sys.path.insert(0, entry_str)
         self._pythonpath_ready = True
 
-    def _import_object(self, ref: str) -> Any:
-        module_name, attr_name = self._split_reference(ref)
+    @staticmethod
+    def _import_object(module_name: str, attr_path: str) -> Any:
         try:
             module = import_module(module_name)
         except ModuleNotFoundError as exc:
             raise EvaluationError(
                 f"Could not import evaluator module {module_name!r}.",
             ) from exc
-        try:
-            return getattr(module, attr_name)
-        except AttributeError as exc:
-            raise EvaluationError(
-                f"Module {module_name!r} does not expose attribute {attr_name!r}.",
-            ) from exc
+        target: Any = module
+        for part in attr_path.split("."):
+            if not part:
+                raise EvaluationError(
+                    f"Invalid evaluator attribute reference {attr_path!r}.",
+                )
+            try:
+                target = getattr(target, part)
+            except AttributeError as exc:
+                raise EvaluationError(
+                    f"Module {module_name!r} does not expose attribute {attr_path!r}.",
+                ) from exc
+        return target
 
     @staticmethod
     def _split_reference(ref: str) -> tuple[str, str]:
@@ -207,25 +205,82 @@ class Evaluator:
             module_name, attr_name = ref.split(":", 1)
             return module_name, attr_name
         module_name, _, attr_name = ref.rpartition(".")
-        if not module_name:
+        if not module_name or not attr_name:
             raise EvaluationError(
                 f"Invalid evaluator reference {ref!r}. "
                 "Use 'module:attr' or 'module.attr'.",
             )
         return module_name, attr_name
 
-    def _resolve_callable(self, target: Any) -> EvaluationCallable:
+    @staticmethod
+    def _resolve_callable(target: Any) -> EvaluationCallable:
         candidate = target
         if inspect.isclass(candidate):
             instance = candidate()
-            return self._resolve_callable(instance)
+            return Evaluator._resolve_callable(instance)
         if hasattr(candidate, "evaluate") and callable(candidate.evaluate):
             return candidate.evaluate  # type: ignore[return-value]
         if callable(candidate):
-            return candidate
+            return cast(EvaluationCallable, candidate)
         raise EvaluationError(
             "Evaluator plugin must be callable or expose an 'evaluate' method.",
         )
+
+    def _execute_with_timeout(
+        self,
+        plugin: EvaluationCallable,
+        context: EvaluationContext,
+    ) -> Any:
+        ctx = multiprocessing.get_context("spawn")
+        queue: multiprocessing.Queue[Any] = ctx.Queue()
+        inline_callable = None if self.plugin_ref else plugin
+        process = ctx.Process(
+            target=_plugin_subprocess_entry,
+            args=(
+                self.plugin_ref,
+                inline_callable,
+                tuple(str(path) for path in self.python_paths),
+                context,
+                queue,
+            ),
+        )
+        process.start()
+        process.join(self.timeout)
+
+        if process.is_alive():
+            process.terminate()
+            process.join(5)
+            raise EvaluationError(
+                f"Evaluation plugin timed out after {self.timeout}s.",
+            )
+
+        try:
+            status, payload = queue.get_nowait()
+        except Exception as exc:
+            if process.exitcode and process.exitcode != 0:
+                raise EvaluationError(
+                    f"Evaluation plugin exited with status {process.exitcode}.",
+                ) from exc
+            raise EvaluationError(
+                "Evaluation plugin did not return any result.",
+            ) from exc
+        finally:
+            queue.close()
+
+        if status == "ok":
+            return payload
+
+        message = payload.get("message", "Evaluation plugin failed.")
+        traceback_text = payload.get("traceback")
+        log.error(
+            "Evaluation plugin error job={} commit={}: {}",
+            context.job_id,
+            context.candidate_commit_hash,
+            message,
+        )
+        if traceback_text:
+            log.error("Evaluation plugin traceback:\n{}", traceback_text)
+        raise EvaluationError(message)
 
     def _coerce_result(self, payload: Any) -> EvaluationResult:
         if isinstance(payload, EvaluationResult):
@@ -373,4 +428,40 @@ class Evaluator:
             raise EvaluationError(
                 f"Worktree path {context.worktree} is not a directory.",
             )
+
+
+def _plugin_subprocess_entry(
+    plugin_ref: str | None,
+    inline_callable: EvaluationCallable | None,
+    python_paths: Sequence[str],
+    context: EvaluationContext,
+    queue: multiprocessing.Queue[Any],
+) -> None:
+    try:
+        for entry in python_paths:
+            entry_str = str(entry)
+            if entry_str and entry_str not in sys.path:
+                sys.path.insert(0, entry_str)
+
+        if inline_callable is not None:
+            plugin = inline_callable
+        else:
+            if not plugin_ref:
+                raise EvaluationError("Evaluator plugin reference is not configured.")
+            module_name, attr_path = Evaluator._split_reference(plugin_ref)
+            target = Evaluator._import_object(module_name, attr_path)
+            plugin = Evaluator._resolve_callable(target)
+
+        payload = plugin(context)
+        queue.put(("ok", payload))
+    except Exception as exc:  # pragma: no cover - defensive isolation
+        queue.put(
+            (
+                "error",
+                {
+                    "message": f"Evaluation plugin raised an exception: {exc}",
+                    "traceback": traceback.format_exc(),
+                },
+            )
+        )
 
