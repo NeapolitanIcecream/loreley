@@ -41,6 +41,19 @@ class Settings(BaseSettings):
 
     metrics_retention_days: int = Field(default=30, alias="METRICS_RETENTION_DAYS")
 
+    tasks_redis_url: str | None = Field(default=None, alias="TASKS_REDIS_URL")
+    tasks_redis_host: str = Field(default="localhost", alias="TASKS_REDIS_HOST")
+    tasks_redis_port: int = Field(default=6379, alias="TASKS_REDIS_PORT")
+    tasks_redis_db: int = Field(default=0, alias="TASKS_REDIS_DB")
+    tasks_redis_password: str | None = Field(default=None, alias="TASKS_REDIS_PASSWORD")
+    tasks_redis_namespace: str = Field(default="loreley", alias="TASKS_REDIS_NAMESPACE")
+    tasks_queue_name: str = Field(default="loreley.evolution", alias="TASKS_QUEUE_NAME")
+    tasks_worker_max_retries: int = Field(default=0, alias="TASKS_WORKER_MAX_RETRIES")
+    tasks_worker_time_limit_seconds: int = Field(
+        default=3600,
+        alias="TASKS_WORKER_TIME_LIMIT_SECONDS",
+    )
+
     worker_repo_remote_url: str | None = Field(
         default=None,
         alias="WORKER_REPO_REMOTE_URL",
@@ -457,6 +470,9 @@ class Settings(BaseSettings):
             "db_max_overflow": self.db_max_overflow,
             "db_pool_timeout": self.db_pool_timeout,
             "db_echo": self.db_echo,
+            "tasks_redis_host": self.tasks_redis_host,
+            "tasks_redis_port": self.tasks_redis_port,
+            "tasks_queue_name": self.tasks_queue_name,
             "worker_repo_worktree": self.worker_repo_worktree,
             "worker_repo_branch": self.worker_repo_branch,
             "worker_repo_fetch_depth": self.worker_repo_fetch_depth,
