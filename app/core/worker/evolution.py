@@ -256,6 +256,12 @@ Respond with a single subject line without surrounding quotes.
             return f"{cleaned[: self._subject_limit - 1].rstrip()}…"
         return cleaned
 
+    def coerce_subject(self, text: str | None, *, default: str) -> str:
+        """Clamp arbitrary text into a valid git subject."""
+        baseline = " ".join((text or "").split()).strip()
+        candidate = baseline or default.strip()
+        return self._normalise_subject(candidate or default)
+
     def _truncate(self, text: str, limit: int | None = None) -> str:
         active = limit or self._truncate_limit
         snippet = (text or "").strip()
@@ -352,13 +358,18 @@ class EvolutionWorker:
     def _start_job(self, job_id: UUID) -> JobContext:
         try:
             with session_scope() as session:
-                job = session.get(EvolutionJob, job_id)
+                job_stmt = (
+                    select(EvolutionJob)
+                    .where(EvolutionJob.id == job_id)
+                    .with_for_update(nowait=True)
+                )
+                job = session.execute(job_stmt).scalar_one_or_none()
                 if not job:
                     raise EvolutionWorkerError(f"Evolution job {job_id} does not exist.")
                 if not job.base_commit_hash:
                     raise EvolutionWorkerError("Evolution job is missing base_commit_hash.")
 
-                allowed_statuses = {JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING}
+                allowed_statuses = {JobStatus.PENDING, JobStatus.QUEUED}
                 if job.status not in allowed_statuses:
                     raise EvolutionWorkerError(
                         f"Evolution job {job_id} is {job.status} and cannot run.",
@@ -484,8 +495,10 @@ class EvolutionWorker:
                 or plan.plan.summary
                 or f"Evolution job {job_ctx.job_id}"
             )
-            cleaned = " ".join(fallback.split()).strip()
-            return cleaned or f"Evolution job {job_ctx.job_id}"
+            return self.summarizer.coerce_subject(
+                fallback,
+                default=f"Evolution job {job_ctx.job_id}",
+            )
 
     def _create_commit(
         self,
