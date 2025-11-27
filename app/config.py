@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus
 
@@ -39,6 +40,140 @@ class Settings(BaseSettings):
     db_echo: bool = Field(default=False, alias="DB_ECHO")
 
     metrics_retention_days: int = Field(default=30, alias="METRICS_RETENTION_DAYS")
+
+    worker_repo_remote_url: str | None = Field(
+        default=None,
+        alias="WORKER_REPO_REMOTE_URL",
+    )
+    worker_repo_branch: str = Field(
+        default="main",
+        alias="WORKER_REPO_BRANCH",
+    )
+    worker_repo_worktree: str = Field(
+        default_factory=lambda: str(Path.home() / ".cache" / "loreley" / "worker-repo"),
+        alias="WORKER_REPO_WORKTREE",
+    )
+    worker_repo_git_bin: str = Field(
+        default="git",
+        alias="WORKER_REPO_GIT_BIN",
+    )
+    worker_repo_fetch_depth: int | None = Field(
+        default=None,
+        alias="WORKER_REPO_FETCH_DEPTH",
+    )
+    worker_repo_clean_excludes: list[str] = Field(
+        default_factory=lambda: [".venv", ".uv", ".python-version"],
+        alias="WORKER_REPO_CLEAN_EXCLUDES",
+    )
+    worker_repo_job_branch_prefix: str = Field(
+        default="evolution/job",
+        alias="WORKER_REPO_JOB_BRANCH_PREFIX",
+    )
+    worker_repo_enable_lfs: bool = Field(
+        default=True,
+        alias="WORKER_REPO_ENABLE_LFS",
+    )
+    worker_repo_job_branch_ttl_hours: int = Field(
+        default=168,
+        alias="WORKER_REPO_JOB_BRANCH_TTL_HOURS",
+    )
+
+    worker_planning_codex_bin: str = Field(
+        default="codex",
+        alias="WORKER_PLANNING_CODEX_BIN",
+    )
+    worker_planning_codex_profile: str | None = Field(
+        default=None,
+        alias="WORKER_PLANNING_CODEX_PROFILE",
+    )
+    worker_planning_max_attempts: int = Field(
+        default=2,
+        alias="WORKER_PLANNING_MAX_ATTEMPTS",
+    )
+    worker_planning_timeout_seconds: int = Field(
+        default=900,
+        alias="WORKER_PLANNING_TIMEOUT_SECONDS",
+    )
+    worker_planning_extra_env: dict[str, str] = Field(
+        default_factory=dict,
+        alias="WORKER_PLANNING_EXTRA_ENV",
+    )
+    worker_planning_schema_path: str | None = Field(
+        default=None,
+        alias="WORKER_PLANNING_SCHEMA_PATH",
+    )
+    worker_coding_codex_bin: str = Field(
+        default="codex",
+        alias="WORKER_CODING_CODEX_BIN",
+    )
+    worker_coding_codex_profile: str | None = Field(
+        default=None,
+        alias="WORKER_CODING_CODEX_PROFILE",
+    )
+    worker_coding_max_attempts: int = Field(
+        default=2,
+        alias="WORKER_CODING_MAX_ATTEMPTS",
+    )
+    worker_coding_timeout_seconds: int = Field(
+        default=1800,
+        alias="WORKER_CODING_TIMEOUT_SECONDS",
+    )
+    worker_coding_extra_env: dict[str, str] = Field(
+        default_factory=dict,
+        alias="WORKER_CODING_EXTRA_ENV",
+    )
+    worker_coding_schema_path: str | None = Field(
+        default=None,
+        alias="WORKER_CODING_SCHEMA_PATH",
+    )
+    worker_evaluator_plugin: str | None = Field(
+        default=None,
+        alias="WORKER_EVALUATOR_PLUGIN",
+    )
+    worker_evaluator_python_paths: list[str] = Field(
+        default_factory=list,
+        alias="WORKER_EVALUATOR_PYTHON_PATHS",
+    )
+    worker_evaluator_timeout_seconds: int = Field(
+        default=900,
+        alias="WORKER_EVALUATOR_TIMEOUT_SECONDS",
+    )
+    worker_evaluator_max_metrics: int = Field(
+        default=64,
+        alias="WORKER_EVALUATOR_MAX_METRICS",
+    )
+    worker_evolution_commit_model: str = Field(
+        default="gpt-4.1-mini",
+        alias="WORKER_EVOLUTION_COMMIT_MODEL",
+    )
+    worker_evolution_commit_temperature: float = Field(
+        default=0.2,
+        alias="WORKER_EVOLUTION_COMMIT_TEMPERATURE",
+    )
+    worker_evolution_commit_max_output_tokens: int = Field(
+        default=128,
+        alias="WORKER_EVOLUTION_COMMIT_MAX_OUTPUT_TOKENS",
+    )
+    worker_evolution_commit_max_retries: int = Field(
+        default=3,
+        alias="WORKER_EVOLUTION_COMMIT_MAX_RETRIES",
+    )
+    worker_evolution_commit_retry_backoff_seconds: float = Field(
+        default=2.0,
+        alias="WORKER_EVOLUTION_COMMIT_RETRY_BACKOFF_SECONDS",
+    )
+    worker_evolution_commit_author: str = Field(
+        default="Loreley Worker",
+        alias="WORKER_EVOLUTION_COMMIT_AUTHOR",
+    )
+    worker_evolution_commit_email: str = Field(
+        default="worker@loreley.local",
+        alias="WORKER_EVOLUTION_COMMIT_EMAIL",
+    )
+    worker_evolution_commit_subject_max_chars: int = Field(
+        default=72,
+        alias="WORKER_EVOLUTION_COMMIT_SUBJECT_MAX_CHARS",
+    )
 
     mapelites_preprocess_max_files: int = Field(
         default=6,
@@ -322,6 +457,9 @@ class Settings(BaseSettings):
             "db_max_overflow": self.db_max_overflow,
             "db_pool_timeout": self.db_pool_timeout,
             "db_echo": self.db_echo,
+            "worker_repo_worktree": self.worker_repo_worktree,
+            "worker_repo_branch": self.worker_repo_branch,
+            "worker_repo_fetch_depth": self.worker_repo_fetch_depth,
         }
 
 
