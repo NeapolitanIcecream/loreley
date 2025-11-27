@@ -7,6 +7,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
+from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
 from loguru import logger
@@ -73,6 +74,14 @@ class WorkerRepository:
 
         self._env = os.environ.copy()
         self._env.setdefault("GIT_TERMINAL_PROMPT", "0")
+        author_name = (self.settings.worker_evolution_commit_author or "").strip()
+        author_email = (self.settings.worker_evolution_commit_email or "").strip()
+        if author_name:
+            self._env.setdefault("GIT_AUTHOR_NAME", author_name)
+            self._env.setdefault("GIT_COMMITTER_NAME", author_name)
+        if author_email:
+            self._env.setdefault("GIT_AUTHOR_EMAIL", author_email)
+            self._env.setdefault("GIT_COMMITTER_EMAIL", author_email)
 
     @property
     def git_dir(self) -> Path:
@@ -150,6 +159,28 @@ class WorkerRepository:
         """Return the current HEAD commit hash."""
         result = self._run_git("rev-parse", "HEAD")
         return result.stdout.strip()
+
+    def push_branch(
+        self,
+        branch_name: str,
+        *,
+        remote: str = "origin",
+        force_with_lease: bool = False,
+    ) -> None:
+        """Publish the current branch to the configured remote."""
+        branch = branch_name.strip()
+        if not branch:
+            raise RepositoryError("Branch name must be provided when pushing.")
+        remote_name = remote.strip() or "origin"
+        args = ["push"]
+        if force_with_lease:
+            args.append("--force-with-lease")
+        args.extend([remote_name, f"{branch}:{branch}"])
+        self._run_git(*args)
+        console.log(
+            f"[green]Pushed worker branch[/] branch={branch} remote={remote_name}",
+        )
+        log.info("Pushed branch {} to {}", branch, remote_name)
 
     # Internal helpers -----------------------------------------------------
 
@@ -257,7 +288,8 @@ class WorkerRepository:
         working_dir = cwd or self.worktree
         working_dir.mkdir(parents=True, exist_ok=True)
 
-        log.debug("Executing command [{}]: {}", working_dir, self._format_cmd(command))
+        sanitized_cmd = self._sanitize_command(command)
+        log.debug("Executing command [{}]: {}", working_dir, sanitized_cmd)
         result = subprocess.run(
             command,
             cwd=str(working_dir),
@@ -269,9 +301,10 @@ class WorkerRepository:
         )
 
         if result.returncode != 0:
+            formatted = sanitized_cmd
             raise RepositoryError(
                 f"Command failed with exit code {result.returncode}: "
-                f"{self._format_cmd(command)}",
+                f"{formatted}",
                 cmd=command,
                 returncode=result.returncode,
                 stdout=result.stdout,
@@ -281,8 +314,20 @@ class WorkerRepository:
         return result
 
     @staticmethod
-    def _format_cmd(cmd: Sequence[str]) -> str:
-        return shlex.join(cmd)
+    def _sanitize_command(cmd: Sequence[str]) -> str:
+        sanitized = [WorkerRepository._sanitize_value(part) for part in cmd]
+        return shlex.join(sanitized)
+
+    @staticmethod
+    def _sanitize_value(value: str) -> str:
+        parsed = urlsplit(value)
+        if parsed.username or parsed.password:
+            host = parsed.hostname or ""
+            if parsed.port:
+                host = f"{host}:{parsed.port}"
+            netloc = f"***@{host}"
+            return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
+        return value
 
     def _ensure_commit_available(self, commit_hash: str) -> None:
         if self._has_object(commit_hash):

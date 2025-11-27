@@ -162,6 +162,10 @@ class Settings(BaseSettings):
         default="Loreley Worker",
         alias="WORKER_EVOLUTION_COMMIT_AUTHOR",
     )
+    worker_evolution_commit_email: str = Field(
+        default="worker@loreley.local",
+        alias="WORKER_EVOLUTION_COMMIT_EMAIL",
+    )
     worker_evolution_commit_subject_max_chars: int = Field(
         default=72,
         alias="WORKER_EVOLUTION_COMMIT_SUBJECT_MAX_CHARS",
