@@ -9,6 +9,7 @@ from importlib import import_module
 from pathlib import Path
 from time import monotonic
 from typing import Any, Callable, Mapping, Protocol, Sequence, cast
+from queue import Empty
 
 from loguru import logger
 from rich.console import Console
@@ -232,7 +233,7 @@ class Evaluator:
         context: EvaluationContext,
     ) -> Any:
         ctx = multiprocessing.get_context("spawn")
-        queue: multiprocessing.Queue[Any] = ctx.Queue()
+        result_queue: multiprocessing.Queue[Any] = ctx.Queue()
         inline_callable = None if self.plugin_ref else plugin
         process = ctx.Process(
             target=_plugin_subprocess_entry,
@@ -241,7 +242,7 @@ class Evaluator:
                 inline_callable,
                 tuple(str(path) for path in self.python_paths),
                 context,
-                queue,
+                result_queue,
             ),
         )
         process.start()
@@ -254,9 +255,10 @@ class Evaluator:
                 f"Evaluation plugin timed out after {self.timeout}s.",
             )
 
+        queue_wait_seconds = max(1.0, min(5.0, self.timeout * 0.1))
         try:
-            status, payload = queue.get_nowait()
-        except Exception as exc:
+            status, payload = result_queue.get(timeout=queue_wait_seconds)
+        except Empty as exc:
             if process.exitcode and process.exitcode != 0:
                 raise EvaluationError(
                     f"Evaluation plugin exited with status {process.exitcode}.",
@@ -264,8 +266,16 @@ class Evaluator:
             raise EvaluationError(
                 "Evaluation plugin did not return any result.",
             ) from exc
+        except Exception as exc:
+            if process.exitcode and process.exitcode != 0:
+                raise EvaluationError(
+                    f"Evaluation plugin exited with status {process.exitcode}.",
+                ) from exc
+            raise EvaluationError(
+                "Evaluation plugin returned an unreadable payload.",
+            ) from exc
         finally:
-            queue.close()
+            result_queue.close()
 
         if status == "ok":
             return payload

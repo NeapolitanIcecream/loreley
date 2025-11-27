@@ -40,7 +40,7 @@ from app.core.worker.planning import (
     PlanningError,
     PlanningPlan,
 )
-from app.core.worker.repository import CheckoutContext, WorkerRepository
+from app.core.worker.repository import CheckoutContext, WorkerRepository, RepositoryError
 from app.db.base import session_scope
 from app.db.models import CommitMetadata, EvolutionJob, JobStatus, Metric
 
@@ -61,6 +61,10 @@ class EvolutionWorkerError(RuntimeError):
 
 class JobLockConflict(EvolutionWorkerError):
     """Raised when a concurrent worker already locked the target job row."""
+
+
+class JobPreconditionError(EvolutionWorkerError):
+    """Raised when a job cannot start due to invalid or missing preconditions."""
 
 
 class CommitSummaryError(RuntimeError):
@@ -305,6 +309,12 @@ class EvolutionWorker:
             )
             log.info("Job {} skipped due to concurrent lock", job_uuid)
             raise
+        except JobPreconditionError as exc:
+            console.log(
+                f"[yellow]Evolution worker[/] job={job_uuid} cannot start: {exc}",
+            )
+            log.warning("Job {} skipped due to precondition failure: {}", job_uuid, exc)
+            raise
         except Exception as exc:
             self._mark_job_failed(job_uuid, exc)
             raise
@@ -349,6 +359,7 @@ class EvolutionWorker:
                 commit_hash=candidate_commit,
                 commit_message=commit_message,
             )
+            self._prune_job_branches()
             console.log(
                 f"[bold green]Evolution worker[/] job={job_uuid} "
                 f"produced commit={candidate_commit}",
@@ -379,13 +390,13 @@ class EvolutionWorker:
                 )
                 job = session.execute(job_stmt).scalar_one_or_none()
                 if not job:
-                    raise EvolutionWorkerError(f"Evolution job {job_id} does not exist.")
+                    raise JobPreconditionError(f"Evolution job {job_id} does not exist.")
                 if not job.base_commit_hash:
                     raise EvolutionWorkerError("Evolution job is missing base_commit_hash.")
 
                 allowed_statuses = {JobStatus.PENDING, JobStatus.QUEUED}
                 if job.status not in allowed_statuses:
-                    raise EvolutionWorkerError(
+                    raise JobPreconditionError(
                         f"Evolution job {job_id} is {job.status} and cannot run.",
                     )
 
@@ -536,7 +547,7 @@ class EvolutionWorker:
         self.repository._run_git("add", "--all")
         self.repository._run_git("commit", "-m", commit_message)
         commit_hash = self.repository.current_commit()
-        self.repository.push_branch(checkout.branch_name)
+        self.repository.push_branch(checkout.branch_name, force_with_lease=True)
         console.log(
             f"[green]Created worker commit[/] hash={commit_hash} "
             f"branch={checkout.branch_name or 'detached'}",
@@ -656,6 +667,17 @@ class EvolutionWorker:
                     )
         except SQLAlchemyError as exc:
             raise EvolutionWorkerError(f"Failed to persist results for job {job_ctx.job_id}: {exc}") from exc
+
+    def _prune_job_branches(self) -> None:
+        try:
+            pruned = self.repository.prune_stale_job_branches()
+            if pruned:
+                console.log(
+                    f"[yellow]Evolution worker[/] pruned {pruned} stale job branch"
+                    f"{'es' if pruned != 1 else ''}.",
+                )
+        except RepositoryError as exc:
+            log.warning("Skipping job branch pruning: {}", exc)
 
     def _mark_job_failed(self, job_id: UUID, exc: Exception) -> None:
         message = str(exc)

@@ -5,6 +5,7 @@ import re
 import shlex
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 from urllib.parse import urlsplit, urlunsplit
@@ -71,6 +72,7 @@ class WorkerRepository:
         self.clean_excludes = tuple(self.settings.worker_repo_clean_excludes)
         self.job_branch_prefix = self.settings.worker_repo_job_branch_prefix.strip("/")
         self.enable_lfs = self.settings.worker_repo_enable_lfs
+        self.job_branch_ttl_hours = max(0, int(self.settings.worker_repo_job_branch_ttl_hours))
 
         self._env = os.environ.copy()
         self._env.setdefault("GIT_TERMINAL_PROMPT", "0")
@@ -181,6 +183,82 @@ class WorkerRepository:
             f"[green]Pushed worker branch[/] branch={branch} remote={remote_name}",
         )
         log.info("Pushed branch {} to {}", branch, remote_name)
+
+    def delete_remote_branch(
+        self,
+        branch_name: str,
+        *,
+        remote: str = "origin",
+    ) -> None:
+        """Remove a remote branch without touching local history."""
+        branch = branch_name.strip()
+        if not branch:
+            raise RepositoryError("Branch name must be provided when deleting.")
+        remote_name = remote.strip() or "origin"
+        self._run_git("push", remote_name, f":{branch}")
+        console.log(
+            f"[yellow]Deleted remote branch[/] branch={branch} remote={remote_name}",
+        )
+        log.info("Deleted remote branch {} from {}", branch, remote_name)
+
+    def prune_stale_job_branches(self) -> int:
+        """Delete remote job branches that exceeded their retention window."""
+        prefix = self.job_branch_prefix
+        ttl_hours = self.job_branch_ttl_hours
+        if ttl_hours <= 0 or not prefix:
+            return 0
+        cutoff_ts = datetime.now(timezone.utc).timestamp() - (ttl_hours * 3600)
+        try:
+            self._fetch()
+        except RepositoryError as exc:
+            log.warning("Skipping job branch pruning; fetch failed: {}", exc)
+            return 0
+
+        pattern = f"refs/remotes/origin/{prefix}/*"
+        try:
+            result = self._run_git(
+                "for-each-ref",
+                "--format=%(refname) %(committerdate:unix)",
+                pattern,
+            )
+        except RepositoryError as exc:
+            log.warning("Failed to enumerate job branches for pruning: {}", exc)
+            return 0
+
+        pruned = 0
+        for line in result.stdout.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            ref_name, _, ts_part = stripped.partition(" ")
+            if not ts_part:
+                continue
+            try:
+                commit_ts = int(ts_part)
+            except ValueError:
+                continue
+            if commit_ts >= cutoff_ts:
+                continue
+            branch = ref_name.replace("refs/remotes/origin/", "", 1)
+            if not branch.startswith(prefix):
+                continue
+            try:
+                self.delete_remote_branch(branch)
+                pruned += 1
+            except RepositoryError as exc:
+                log.warning("Failed to delete stale job branch {}: {}", branch, exc)
+
+        if pruned:
+            console.log(
+                f"[yellow]Pruned {pruned} stale job branch"
+                f"{'es' if pruned != 1 else ''} (>={ttl_hours}h old)[/]",
+            )
+            log.info(
+                "Pruned {} stale job branches older than {}h",
+                pruned,
+                ttl_hours,
+            )
+        return pruned
 
     # Internal helpers -----------------------------------------------------
 

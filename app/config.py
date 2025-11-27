@@ -73,6 +73,10 @@ class Settings(BaseSettings):
         default=True,
         alias="WORKER_REPO_ENABLE_LFS",
     )
+    worker_repo_job_branch_ttl_hours: int = Field(
+        default=168,
+        alias="WORKER_REPO_JOB_BRANCH_TTL_HOURS",
+    )
 
     worker_planning_codex_bin: str = Field(
         default="codex",
