@@ -32,6 +32,9 @@ uv run python -m app.scheduler.main        # continuous loop
 uv run python -m app.scheduler.main --once # single tick (cron / smoke tests)
 ```
 
+For details about the dedicated CLI wrapper script (including logging setup and
+recommended usage), see `docs/script/run_scheduler.md`.
+
 Running the module imports `app.tasks.workers`, so the Dramatiq broker is configured before the first dispatch. Rich console output summarises each tick, while Loguru records detailed diagnostics for ingestion, scheduling, and dispatching. This makes the scheduler easy to supervise either interactively or under a process manager. 
 
 

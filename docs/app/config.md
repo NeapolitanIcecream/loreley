@@ -5,7 +5,7 @@ Centralised configuration for the Loreley application, backed by `pydantic-setti
 ## Settings
 
 - **`Settings`**: `BaseSettings` subclass that loads core application configuration.
-  - **Environment**: `app_name`, `environment`, `log_level`.
+  - **Environment**: `app_name`, `environment`, `log_level`. `log_level` controls the global Loguru log level used across long-running processes (including the scheduler, workers, and their CLI wrappers); see the scripts documentation under `docs/script` for concrete examples.
   - **Database**: either a raw `DATABASE_URL` or individual `DB_*` fields (scheme, host, port, username, password, database name, pool options, echo flag).
   - **Metrics**: `metrics_retention_days` controls how long metrics are retained.
   - **Task queue**: `TASKS_REDIS_URL`, `TASKS_REDIS_HOST`, `TASKS_REDIS_PORT`, `TASKS_REDIS_DB`, `TASKS_REDIS_PASSWORD`, `TASKS_REDIS_NAMESPACE`, `TASKS_QUEUE_NAME`, `TASKS_WORKER_MAX_RETRIES`, and `TASKS_WORKER_TIME_LIMIT_SECONDS` configure the Dramatiq Redis broker connection details, logical namespace, queue routing, retry policy, and actor time limits used by `app.tasks.broker` and `app.tasks.workers`. When `TASKS_REDIS_URL` is set and includes credentials, only a sanitised `scheme://host:port/db` form is logged, never the raw URL or password. `TASKS_WORKER_TIME_LIMIT_SECONDS` is interpreted in seconds and converted to Dramatiq's millisecond `time_limit`: values `<= 0` disable the time limit (no hard cap on actor runtime), while positive values enforce a per-job wall-clock limit.
