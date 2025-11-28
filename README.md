@@ -96,6 +96,22 @@ Refer to `docs/script/run_scheduler.md` and `docs/script/run_worker.md` for deep
 - `script/` – CLI shims (`run_scheduler.py`, `run_worker.py`)
 - `docs/` – module-level docs under `docs/app` and `docs/script`
 - `pyproject.toml`, `uv.lock` – dependency definitions for `uv`
+- `examples/` – self-contained optimisation examples used for testing and demos
+
+---
+
+## Examples
+
+- **`examples/circle-packing`** – a geometric optimisation benchmark based on the classical
+  [circle packing](https://en.wikipedia.org/wiki/Circle_packing) problem. The example defines:
+  - a simple solution interface in `solution.py` that returns a set of equal-radius circles
+    inside the unit square;
+  - an evaluator plugin in `evaluate.py` that checks geometric validity (no overlap, inside
+    bounds) and reports packing density and related metrics.
+
+  You can wire this into the worker by pointing
+  `WORKER_EVALUATOR_PYTHON_PATHS` at `examples/circle-packing` and setting
+  `WORKER_EVALUATOR_PLUGIN=evaluate:plugin`, then letting MAP-Elites evolve better packings.
 
 ---
 
