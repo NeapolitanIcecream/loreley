@@ -13,6 +13,7 @@ High-level manager that runs the MAP-Elites pipeline on git commits and maintain
 
 - **`MapElitesManager`**: orchestrates preprocessing, chunking, embedding, dimensionality reduction, archive updates, and persistence.
   - Configured via `Settings` map-elites options: preprocessing, chunking, code/summary embeddings, dimensionality reduction, feature bounds, archive grid, fitness metric, and default island identifiers.
+  - Accepts an optional `experiment_id` at construction time; when provided, all persisted `MapElitesState` rows are scoped by `(experiment_id, island_id)`, allowing multiple experiments to maintain independent archives even when they share island identifiers. When omitted, archive state is kept purely in-memory.
   - `ingest(commit_hash, changed_files, metrics, island_id, repo_root, treeish, metadata, fitness_override)` runs the full pipeline for a commit: loads and preprocesses changed files, chunks them, derives code and summary embeddings, reduces them to the behaviour space, resolves a scalar fitness from metrics or overrides, and attempts to insert the result into the island's `GridArchive`.
   - Tracks per-island PCA history and projection so that new embeddings are consistent with previous ones, logging detailed progress and warnings with `loguru`.
   - Serialises archive state to and from the `MapElitesState` table using helper methods that convert numpy arrays and custom objects into JSON-compatible payloads.

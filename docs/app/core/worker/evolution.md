@@ -6,7 +6,7 @@ Autonomous evolution worker that orchestrates planning, coding, evaluation, repo
 
 - **`CommitSnapshot`**: immutable snapshot of commit-related data used to build planning context (`commit_hash`, derived `summary`, optional `evaluation_summary`, a tuple of text `highlights`, a tuple of `CommitMetric` instances, and an `extra_context` dict that may include both DB and MAP-Elites metadata). Exposes `to_planning_context()` to convert into a `CommitPlanningContext`.
 - **`JobContext`**: in-memory representation of a locked evolution job containing:
-  - `job_id`, `base_commit_hash`, optional `island_id`, and the raw job `payload`.
+  - `job_id`, `base_commit_hash`, optional `island_id`, optional `experiment_id` and `repository_id`, and the raw job `payload`.
   - `base_snapshot` and `inspiration_snapshots` that wrap DB records and/or MAP-Elites payloads.
   - user-facing `goal`, `constraints`, `acceptance_criteria`, optional `iteration_hint`, free-form `notes`, and `tags`, all normalised to tuples of strings.
 - **`EvolutionWorkerResult`**: structured success payload returned from `EvolutionWorker.run()`, combining the `job_id`, `base_commit_hash`, resulting `candidate_commit_hash`, the full `PlanningAgentResponse`, `CodingAgentResponse`, `EvaluationResult`, `CheckoutContext`, and the final `commit_message` used for the worker commit.

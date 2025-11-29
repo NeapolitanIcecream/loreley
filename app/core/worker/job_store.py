@@ -14,7 +14,7 @@ from app.core.worker.coding import CodingAgentResponse
 from app.core.worker.evaluator import EvaluationResult
 from app.core.worker.planning import PlanningAgentResponse
 from app.db.base import session_scope
-from app.db.models import CommitMetadata, EvolutionJob, JobStatus, Metric
+from app.db.models import CommitMetadata, EvolutionJob, Experiment, JobStatus, Metric
 
 if TYPE_CHECKING:
     from app.core.worker.evolution import JobContext
@@ -180,6 +180,16 @@ class EvolutionJobStore:
     ) -> None:
         """Persist successful worker execution artifacts."""
 
+        experiment_extra: dict[str, Any] | None = None
+        if job_ctx.experiment_id or job_ctx.repository_id:
+            # A minimal experiment block is always included so downstream
+            # consumers can rely on its presence. Richer metadata is attached
+            # below once we have a DB session available.
+            experiment_extra = {
+                "id": str(job_ctx.experiment_id) if job_ctx.experiment_id else None,
+                "repository_id": str(job_ctx.repository_id) if job_ctx.repository_id else None,
+            }
+
         commit_extra = {
             "job": {
                 "id": str(job_ctx.job_id),
@@ -193,10 +203,7 @@ class EvolutionJobStore:
                 "tags": list(job_ctx.tags),
                 "payload": job_ctx.payload,
             },
-            "experiment": {
-                "id": str(job_ctx.experiment_id) if job_ctx.experiment_id else None,
-                "repository_id": str(job_ctx.repository_id) if job_ctx.repository_id else None,
-            },
+            "experiment": experiment_extra or {},
             "base_commit": job_ctx.base_snapshot.commit_hash,
             "inspirations": [snapshot.commit_hash for snapshot in job_ctx.inspiration_snapshots],
             "plan": build_plan_payload(plan),
@@ -230,6 +237,26 @@ class EvolutionJobStore:
                 job.plan_summary = plan.plan.summary
                 job.payload = job_payload
                 job.last_error = None
+
+                # Where possible, enrich the experiment block in extra_context
+                # with stable identifiers such as config hash and repository slug.
+                if job_ctx.experiment_id:
+                    experiment_row = session.get(Experiment, job_ctx.experiment_id)
+                    if experiment_row is not None:
+                        repository = experiment_row.repository
+                        experiment_payload = dict(commit_extra.get("experiment") or {})
+                        experiment_payload.update(
+                            {
+                                "id": str(experiment_row.id),
+                                "repository_id": str(experiment_row.repository_id),
+                                "name": experiment_row.name,
+                                "config_hash": experiment_row.config_hash,
+                                "repository_slug": getattr(repository, "slug", None)
+                                if repository is not None
+                                else None,
+                            }
+                        )
+                        commit_extra["experiment"] = experiment_payload
 
                 metadata = CommitMetadata(
                     commit_hash=commit_hash,

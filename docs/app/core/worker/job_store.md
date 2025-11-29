@@ -7,7 +7,7 @@ Persistence adapter for the evolution worker, responsible for locking jobs, stor
 - **`EvolutionWorkerError`**: base runtime error used when the worker cannot complete or persist a job due to configuration, database, or repository issues.
 - **`JobLockConflict`**: raised when `start_job()` fails to obtain a NOWAIT lock on a job row, indicating that another worker is already processing the same job.
 - **`JobPreconditionError`**: raised when a job cannot start because preconditions are not satisfied (missing row, unsupported status, missing `base_commit_hash`, etc.).
-- **`LockedJob`**: dataclass snapshot of the locked `EvolutionJob` row containing the `job_id`, `base_commit_hash`, optional `island_id`, the deserialised JSON `payload`, and the tuple of `inspiration_commit_hashes`. This is used by `EvolutionWorker` to build its `JobContext`.
+- **`LockedJob`**: dataclass snapshot of the locked `EvolutionJob` row containing the `job_id`, `base_commit_hash`, optional `island_id`, optional `experiment_id` and `repository_id`, the deserialised JSON `payload`, and the tuple of `inspiration_commit_hashes`. This is used by `EvolutionWorker` to build its `JobContext`.
 
 ## Serialization helpers
 
@@ -35,10 +35,11 @@ Persistence adapter for the evolution worker, responsible for locking jobs, stor
 - **`persist_success(job_ctx, plan, coding, evaluation, commit_hash, commit_message)`**:
   - Updates the `EvolutionJob` row to `SUCCEEDED`, sets `completed_at`, stores the plan summary, updated job `payload` (including a compact `result` section with commit/metric/test summaries), and clears `last_error`.
   - Inserts a new `CommitMetadata` row representing the produced commit, with parent commit hash, island ID, author/email from settings, commit message, evaluation summary, tags, and a rich `extra_context` payload that includes:
-    - Job context (goal, constraints, acceptance criteria, notes, tags, raw payload).
-    - Base and inspiration commit hashes.
-    - Detailed plan, coding, and evaluation payloads via the helper functions above.
-    - Worker metadata such as `app_name`, environment, and completion timestamp.
+  - Job context (goal, constraints, acceptance criteria, notes, tags, raw payload) plus the resolved `experiment_id` and `repository_id` for the job when available.
+  - An `experiment` block containing stable experiment metadata such as `id`, `repository_id`, `name`, `config_hash`, and `repository_slug` when the experiment can be resolved from the database.
+  - Base and inspiration commit hashes.
+  - Detailed plan, coding, and evaluation payloads via the helper functions above.
+  - Worker metadata such as `app_name`, environment, and completion timestamp.
   - Inserts one `Metric` row per evaluation metric for the new commit, copying numeric `value`, `unit`, `higher_is_better`, and any structured `details`.
   - Wraps SQLAlchemy errors into `EvolutionWorkerError` so the caller can surface persistence failures cleanly.
 

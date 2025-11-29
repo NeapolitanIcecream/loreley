@@ -5,14 +5,14 @@ Central orchestration loop that keeps the Loreley evolution pipeline moving by c
 ## EvolutionScheduler
 
 - **Purpose**: continuously monitors unfinished jobs (`pending`, `queued`, `running`), schedules new work from the MAP-Elites archive when capacity allows, dispatches pending jobs to the Dramatiq `run_evolution_job` actor, and backfills the archive with freshly evaluated commits.
-- **Construction**: `EvolutionScheduler(settings=None)` loads `app.config.Settings`, resolves the target repository root (preferring `SCHEDULER_REPO_ROOT` and falling back to `WORKER_REPO_WORKTREE`), initialises a `git` repository handle, and wires `MapElitesManager` + `MapElitesSampler` with the same settings.
+- **Construction**: `EvolutionScheduler(settings=None)` loads `app.config.Settings`, resolves the target repository root (preferring `SCHEDULER_REPO_ROOT` and falling back to `WORKER_REPO_WORKTREE`), initialises a `git` repository handle, derives a `Repository`/`Experiment` pair via `app.core.experiments.get_or_create_experiment()`, and wires `MapElitesManager` (scoped to that `experiment_id`) plus `MapElitesSampler` with the same settings.
 - **Lifecycle**:
   1. `tick()` runs the ingest → dispatch → measure → schedule pipeline and logs a concise summary for observability. Each stage is isolated so failures are logged and do not crash the loop.
   2. `run_forever()` installs `SIGINT`/`SIGTERM` handlers, runs `tick()` at the configured poll interval, and keeps looping until interrupted.
   3. `--once` CLI flag runs a single tick and exits, useful for cron jobs or tests.
-- **Job scheduling**: enforces `SCHEDULER_MAX_UNFINISHED_JOBS` as an upper bound. When capacity exists it calls `MapElitesSampler.schedule_job()`, immediately flips new rows to `QUEUED`, and pushes them to Dramatiq.
+- **Job scheduling**: enforces `SCHEDULER_MAX_UNFINISHED_JOBS` as an upper bound. When capacity exists it calls `MapElitesSampler.schedule_job(experiment_id=experiment.id)`, immediately flips new rows to `QUEUED`, and pushes them to Dramatiq, ensuring that all scheduled jobs are tagged with the same experiment as the running scheduler instance.
 - **Dispatching**: batches of pending jobs (ordered by priority, then schedule time) are sent to Dramatiq according to `SCHEDULER_DISPATCH_BATCH_SIZE`, ensuring legacy jobs drain before creating more.
-- **MAP-Elites maintenance**: after jobs succeed, the scheduler gathers their resulting commit hash, fetches the diff from git, and calls `MapElitesManager.ingest(...)`. Ingestion results (status, delta, placement) are stored back into each job's JSON payload under `payload["ingestion"]["map_elites"]` for auditability and retry tracking.
+- **MAP-Elites maintenance**: after jobs succeed, the scheduler gathers their resulting commit hash, fetches the diff from git, and calls `MapElitesManager.ingest(...)`. Ingestion results (status, delta, placement) are stored back into each job's JSON payload under `payload["ingestion"]["map_elites"]` for auditability and retry tracking, and ingestion metadata includes the `experiment_id`/`repository_id` associated with the originating job.
 
 ## Configuration
 
