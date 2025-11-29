@@ -12,12 +12,8 @@ from typing import TYPE_CHECKING, Any, Mapping, Sequence, cast
 import numpy as np
 from loguru import logger
 from ribs.archives import GridArchive
-from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
 
 from app.config import Settings, get_settings
-from app.db.base import session_scope
-from app.db.models import MapElitesState
 from .chunk import ChunkedFile, chunk_preprocessed_files
 from .code_embedding import CommitCodeEmbedding, embed_chunked_files
 from .dimension_reduction import (
@@ -27,6 +23,13 @@ from .dimension_reduction import (
     reduce_commit_embeddings,
 )
 from .preprocess import ChangedFile, PreprocessedFile, preprocess_changed_files
+from .snapshot import (
+    SnapshotBackend,
+    apply_snapshot,
+    build_snapshot,
+    build_snapshot_backend,
+    to_list,
+)
 from .summarization_embedding import (
     CommitSummaryEmbedding,
     summarize_preprocessed_files,
@@ -142,6 +145,8 @@ class MapElitesManager:
             else:
                 exp_id = uuid.UUID(str(experiment_id))
         self._experiment_id: uuid.UUID | None = exp_id
+        # Backend that knows how to load and persist archive snapshots.
+        self._snapshot_backend: SnapshotBackend = build_snapshot_backend(self._experiment_id)
 
     def ingest(
         self,
@@ -437,15 +442,15 @@ class MapElitesManager:
     ) -> tuple[MapElitesRecord, ...]:
         if not data:
             return ()
-        indices = self._to_list(data.get("index"))
+        indices = to_list(data.get("index"))
         if not indices:
             return ()
-        objectives = self._to_list(data.get("objective"))
-        measures = self._to_list(data.get("measures"))
-        solutions = self._to_list(data.get("solution"))
-        commit_hashes = self._to_list(data.get("commit_hash"))
-        metadata_entries = self._to_list(data.get("metadata"))
-        timestamps = self._to_list(data.get("timestamp"))
+        objectives = to_list(data.get("objective"))
+        measures = to_list(data.get("measures"))
+        solutions = to_list(data.get("solution"))
+        commit_hashes = to_list(data.get("commit_hash"))
+        metadata_entries = to_list(data.get("metadata"))
+        timestamps = to_list(data.get("timestamp"))
         records: list[MapElitesRecord] = []
         for idx, cell_index in enumerate(indices):
             commit_hash = str(commit_hashes[idx]) if idx < len(commit_hashes) else ""
@@ -501,9 +506,14 @@ class MapElitesManager:
             lower_bounds=self._lower_template.copy(),
             upper_bounds=self._upper_template.copy(),
         )
-        snapshot = self._load_snapshot(island_id)
+        snapshot = self._snapshot_backend.load(island_id)
         if snapshot:
-            self._apply_snapshot(state, snapshot, island_id)
+            apply_snapshot(
+                state=state,
+                snapshot=snapshot,
+                island_id=island_id,
+                commit_to_island=self._commit_to_island,
+            )
         self._archives[island_id] = state
         log.info(
             "Initialized MAP-Elites archive for island {} (cells={} dims={})",
@@ -645,291 +655,14 @@ class MapElitesManager:
             final_embedding=final_embedding,
         )
 
-    def _load_snapshot(self, island_id: str) -> dict[str, Any] | None:
-        """Load a persisted snapshot for the given island and experiment, if any."""
-
-        if self._experiment_id is None:
-            # Persistence is disabled when no experiment is configured.
-            return None
-
-        try:
-            with session_scope() as session:
-                stmt = select(MapElitesState).where(
-                    MapElitesState.experiment_id == self._experiment_id,
-                    MapElitesState.island_id == island_id,
-                )
-                state = session.execute(stmt).scalar_one_or_none()
-                if not state or not state.snapshot:
-                    return None
-                return dict(state.snapshot)
-        except SQLAlchemyError as exc:
-            log.error(
-                "Failed to load MAP-Elites snapshot for experiment {} island {}: {}",
-                self._experiment_id,
-                island_id,
-                exc,
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            log.error(
-                "Unexpected error while loading snapshot for experiment {} island {}: {}",
-                self._experiment_id,
-                island_id,
-                exc,
-            )
-        return None
-
-    def _apply_snapshot(
-        self,
-        state: IslandState,
-        snapshot: Mapping[str, Any],
-        island_id: str,
-    ) -> None:
-        lower_bounds = snapshot.get("lower_bounds")
-        upper_bounds = snapshot.get("upper_bounds")
-        if isinstance(lower_bounds, Sequence):
-            state.lower_bounds = np.asarray(lower_bounds, dtype=np.float64)
-        if isinstance(upper_bounds, Sequence):
-            state.upper_bounds = np.asarray(upper_bounds, dtype=np.float64)
-
-        history_payload = snapshot.get("history") or []
-        if history_payload:
-            state.history = self._deserialize_history(history_payload)
-
-        projection_payload = snapshot.get("projection")
-        if projection_payload:
-            state.projection = self._deserialize_projection(projection_payload)
-
-        state.index_to_commit.clear()
-        state.commit_to_index.clear()
-        self._purge_island_commit_mappings(island_id)
-        archive_entries = snapshot.get("archive") or []
-        if archive_entries:
-            self._restore_archive_entries(state, archive_entries, island_id)
-
     def _persist_island_state(self, island_id: str, state: IslandState | None) -> None:
         """Persist the current archive snapshot for an island, if enabled."""
 
-        if not state or self._experiment_id is None:
+        if not state:
             return
 
-        snapshot = self._build_snapshot(island_id, state)
-        try:
-            with session_scope() as session:
-                stmt = select(MapElitesState).where(
-                    MapElitesState.experiment_id == self._experiment_id,
-                    MapElitesState.island_id == island_id,
-                )
-                existing = session.execute(stmt).scalar_one_or_none()
-                if existing:
-                    existing.snapshot = snapshot
-                else:
-                    session.add(
-                        MapElitesState(
-                            experiment_id=self._experiment_id,
-                            island_id=island_id,
-                            snapshot=snapshot,
-                        )
-                    )
-        except SQLAlchemyError as exc:
-            log.error(
-                "Failed to persist MAP-Elites snapshot for experiment {} island {}: {}",
-                self._experiment_id,
-                island_id,
-                exc,
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            log.error(
-                "Unexpected error while persisting snapshot for experiment {} island {}: {}",
-                self._experiment_id,
-                island_id,
-                exc,
-            )
-
-    def _build_snapshot(self, island_id: str, state: IslandState) -> dict[str, Any]:
-        return {
-            "island_id": island_id,
-            "lower_bounds": state.lower_bounds.tolist(),
-            "upper_bounds": state.upper_bounds.tolist(),
-            "history": self._serialize_history(state.history),
-            "projection": self._serialize_projection(state.projection),
-            "archive": self._serialize_archive(state.archive),
-        }
-
-    @staticmethod
-    def _serialize_history(
-        history: Sequence[PenultimateEmbedding],
-    ) -> list[dict[str, Any]]:
-        payload: list[dict[str, Any]] = []
-        for entry in history:
-            payload.append(
-                {
-                    "commit_hash": entry.commit_hash,
-                    "vector": [float(value) for value in entry.vector],
-                    "code_dimensions": entry.code_dimensions,
-                    "summary_dimensions": entry.summary_dimensions,
-                    "code_model": entry.code_model,
-                    "summary_model": entry.summary_model,
-                    "summary_embedding_model": entry.summary_embedding_model,
-                }
-            )
-        return payload
-
-    @staticmethod
-    def _deserialize_history(
-        payload: Sequence[Mapping[str, Any]],
-    ) -> tuple[PenultimateEmbedding, ...]:
-        history: list[PenultimateEmbedding] = []
-        for item in payload:
-            vector_values = cast(Sequence[float], item.get("vector") or [])
-            vector = tuple(float(value) for value in vector_values)
-            history.append(
-                PenultimateEmbedding(
-                    commit_hash=str(item.get("commit_hash", "")),
-                    vector=vector,
-                    code_dimensions=int(item.get("code_dimensions", 0)),
-                    summary_dimensions=int(item.get("summary_dimensions", 0)),
-                    code_model=item.get("code_model"),
-                    summary_model=item.get("summary_model"),
-                    summary_embedding_model=item.get("summary_embedding_model"),
-                )
-            )
-        return tuple(history)
-
-    @staticmethod
-    def _serialize_projection(projection: PCAProjection | None) -> dict[str, Any] | None:
-        if not projection:
-            return None
-        return {
-            "feature_count": projection.feature_count,
-            "components": [[float(value) for value in row] for row in projection.components],
-            "mean": [float(value) for value in projection.mean],
-            "explained_variance_ratio": [
-                float(value) for value in projection.explained_variance_ratio
-            ],
-            "sample_count": projection.sample_count,
-            "fitted_at": projection.fitted_at,
-        }
-
-    @staticmethod
-    def _deserialize_projection(payload: Mapping[str, Any] | None) -> PCAProjection | None:
-        if not payload:
-            return None
-        components_payload = cast(Sequence[Sequence[float]], payload.get("components") or [])
-        components = tuple(
-            tuple(float(value) for value in row) for row in components_payload
-        )
-        mean_raw = cast(Sequence[float], payload.get("mean") or [])
-        mean = tuple(float(value) for value in mean_raw)
-        explained_raw = cast(Sequence[float], payload.get("explained_variance_ratio") or [])
-        explained = tuple(float(value) for value in explained_raw)
-        return PCAProjection(
-            feature_count=int(payload.get("feature_count", len(mean))),
-            components=components,
-            mean=mean,
-            explained_variance_ratio=explained,
-            sample_count=int(payload.get("sample_count", 0)),
-            fitted_at=float(payload.get("fitted_at", time.time())),
-        )
-
-    def _serialize_archive(self, archive: GridArchive) -> list[dict[str, Any]]:
-        data = archive.data()
-        if archive.empty or not isinstance(data, dict):
-            return []
-        indices = self._to_list(data.get("index"))
-        if not indices:
-            return []
-        objectives = self._to_list(data.get("objective"))
-        measures = self._to_list(data.get("measures"))
-        solutions = self._to_list(data.get("solution"))
-        commit_hashes = self._to_list(data.get("commit_hash"))
-        metadata_entries = self._to_list(data.get("metadata"))
-        timestamps = self._to_list(data.get("timestamp"))
-
-        entries: list[dict[str, Any]] = []
-        for idx, cell_index in enumerate(indices):
-            entry = {
-                "index": int(cell_index),
-                "objective": float(objectives[idx]) if idx < len(objectives) else 0.0,
-                "measures": self._array_to_list(measures[idx]) if idx < len(measures) else [],
-                "solution": self._array_to_list(solutions[idx]) if idx < len(solutions) else [],
-                "commit_hash": str(commit_hashes[idx]) if idx < len(commit_hashes) else "",
-                "metadata": (
-                    self._coerce_metadata(metadata_entries[idx])
-                    if idx < len(metadata_entries)
-                    else {}
-                ),
-                "timestamp": float(timestamps[idx]) if idx < len(timestamps) else time.time(),
-            }
-            entries.append(entry)
-        return entries
-
-    def _restore_archive_entries(
-        self,
-        state: IslandState,
-        entries: Sequence[Mapping[str, Any]],
-        island_id: str,
-    ) -> None:
-        archive = state.archive
-        for entry in entries:
-            solution_values = self._array_to_list(entry.get("solution"))
-            measures_values = self._array_to_list(entry.get("measures"))
-            if not solution_values or not measures_values:
-                continue
-            solution = np.asarray(solution_values, dtype=np.float64)
-            measures = np.asarray(measures_values, dtype=np.float64)
-            solution_batch = solution.reshape(1, -1)
-            measures_batch = measures.reshape(1, -1)
-            objective = np.asarray(
-                [float(entry.get("objective", 0.0))],
-                dtype=np.float64,
-            )
-            commit_hash = str(entry.get("commit_hash", ""))
-            metadata = self._coerce_metadata(entry.get("metadata"))
-            timestamp_value = float(entry.get("timestamp", time.time()))
-            archive.add(
-                solution_batch,
-                objective,
-                measures_batch,
-                commit_hash=np.asarray([commit_hash], dtype=object),
-                metadata=np.asarray([metadata], dtype=object),
-                timestamp=np.asarray([timestamp_value], dtype=np.float64),
-            )
-            stored_index = entry.get("index")
-            if stored_index is not None:
-                cell_index = int(stored_index)
-            else:
-                cell_index = int(np.asarray(archive.index_of(measures_batch)).item())
-            state.index_to_commit[cell_index] = commit_hash
-            if commit_hash:
-                state.commit_to_index[commit_hash] = cell_index
-                self._commit_to_island[commit_hash] = island_id
-
-    def _purge_island_commit_mappings(self, island_id: str) -> None:
-        for commit, mapped_island in tuple(self._commit_to_island.items()):
-            if mapped_island == island_id:
-                self._commit_to_island.pop(commit, None)
-
-    @staticmethod
-    def _array_to_list(values: Any) -> list[float]:
-        if values is None:
-            return []
-        if isinstance(values, np.ndarray):
-            return values.astype(float).tolist()
-        if isinstance(values, (list, tuple)):
-            return [float(value) for value in values]
-        return [float(values)]
-
-    @staticmethod
-    def _to_list(values: Any) -> list[Any]:
-        if values is None:
-            return []
-        if isinstance(values, np.ndarray):
-            return values.tolist()
-        if isinstance(values, list):
-            return values
-        if isinstance(values, tuple):
-            return list(values)
-        return [values]
+        snapshot = build_snapshot(island_id, state)
+        self._snapshot_backend.save(island_id, snapshot)
 
     @staticmethod
     def _maybe_float(value: Any) -> float | None:

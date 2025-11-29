@@ -26,4 +26,4 @@ ORM models and enums for tracking evolutionary jobs, commits, and associated met
   - Relates back to `CommitMetadata` via `base_commit_hash` and to `Experiment` via `experiment_id`, enabling efficient queries per base commit or experiment.
 - **`MapElitesState`** (`map_elites_states` table): persists per-experiment, per-island snapshots of the MAP-Elites archive.
   - Uses a composite primary key `(experiment_id, island_id)` so that multiple experiments can maintain independent archives even when they share island identifiers.
-  - Stores a JSONB `snapshot` payload containing feature bounds, PCA history/projection metadata, and the current archive entries so that `MapElitesManager` can restore state across process restarts for a given experiment.
+  - Stores a JSONB `snapshot` payload containing feature bounds, PCA history/projection metadata, and the current archive entries so that `app.core.map_elites.snapshot` and `MapElitesManager` can restore state across process restarts for a given experiment.
