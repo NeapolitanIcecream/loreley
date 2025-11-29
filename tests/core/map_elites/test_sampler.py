@@ -91,7 +91,16 @@ def test_schedule_job_with_and_without_records(monkeypatch, settings: Settings) 
     records = [FakeRecord(commit_hash=f"c{i}", cell_index=i) for i in range(4)]
     sampler = MapElitesSampler(manager=FakeManager(records), settings=settings)
 
-    def fake_persist_job(self, *, island_id, base, inspirations, payload, priority):  # type: ignore[unused-argument]
+    def fake_persist_job(  # type: ignore[unused-argument]
+        self,
+        *,
+        island_id,
+        base,
+        inspirations,
+        payload,
+        priority,
+        experiment_id,
+    ):
         return SimpleNamespace(id=uuid4())
 
     monkeypatch.setattr(MapElitesSampler, "_persist_job", fake_persist_job)

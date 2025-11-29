@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from pathlib import Path
 import math
 import time
+import uuid
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Sequence, cast
 
 import numpy as np
 from loguru import logger
 from ribs.archives import GridArchive
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.config import Settings, get_settings
@@ -119,6 +121,7 @@ class MapElitesManager:
         *,
         settings: Settings | None = None,
         repo_root: Path | None = None,
+        experiment_id: uuid.UUID | str | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         self.repo_root = Path(repo_root or Path.cwd()).resolve()
@@ -129,6 +132,16 @@ class MapElitesManager:
         self._archives: dict[str, IslandState] = {}
         self._commit_to_island: dict[str, str] = {}
         self._default_island = self.settings.mapelites_default_island_id or "default"
+        # When provided, this experiment_id is used to scope persisted snapshots
+        # in the map_elites_states table. If omitted, state persistence is disabled
+        # and archives are kept in-memory only.
+        exp_id: uuid.UUID | None = None
+        if experiment_id is not None:
+            if isinstance(experiment_id, uuid.UUID):
+                exp_id = experiment_id
+            else:
+                exp_id = uuid.UUID(str(experiment_id))
+        self._experiment_id: uuid.UUID | None = exp_id
 
     def ingest(
         self,
@@ -633,16 +646,36 @@ class MapElitesManager:
         )
 
     def _load_snapshot(self, island_id: str) -> dict[str, Any] | None:
+        """Load a persisted snapshot for the given island and experiment, if any."""
+
+        if self._experiment_id is None:
+            # Persistence is disabled when no experiment is configured.
+            return None
+
         try:
             with session_scope() as session:
-                state = session.get(MapElitesState, island_id)
+                stmt = select(MapElitesState).where(
+                    MapElitesState.experiment_id == self._experiment_id,
+                    MapElitesState.island_id == island_id,
+                )
+                state = session.execute(stmt).scalar_one_or_none()
                 if not state or not state.snapshot:
                     return None
                 return dict(state.snapshot)
         except SQLAlchemyError as exc:
-            log.error("Failed to load MAP-Elites snapshot for {}: {}", island_id, exc)
+            log.error(
+                "Failed to load MAP-Elites snapshot for experiment {} island {}: {}",
+                self._experiment_id,
+                island_id,
+                exc,
+            )
         except Exception as exc:  # pragma: no cover - defensive
-            log.error("Unexpected error while loading snapshot for {}: {}", island_id, exc)
+            log.error(
+                "Unexpected error while loading snapshot for experiment {} island {}: {}",
+                self._experiment_id,
+                island_id,
+                exc,
+            )
         return None
 
     def _apply_snapshot(
@@ -674,20 +707,43 @@ class MapElitesManager:
             self._restore_archive_entries(state, archive_entries, island_id)
 
     def _persist_island_state(self, island_id: str, state: IslandState | None) -> None:
-        if not state:
+        """Persist the current archive snapshot for an island, if enabled."""
+
+        if not state or self._experiment_id is None:
             return
+
         snapshot = self._build_snapshot(island_id, state)
         try:
             with session_scope() as session:
-                existing = session.get(MapElitesState, island_id)
+                stmt = select(MapElitesState).where(
+                    MapElitesState.experiment_id == self._experiment_id,
+                    MapElitesState.island_id == island_id,
+                )
+                existing = session.execute(stmt).scalar_one_or_none()
                 if existing:
                     existing.snapshot = snapshot
                 else:
-                    session.add(MapElitesState(island_id=island_id, snapshot=snapshot))
+                    session.add(
+                        MapElitesState(
+                            experiment_id=self._experiment_id,
+                            island_id=island_id,
+                            snapshot=snapshot,
+                        )
+                    )
         except SQLAlchemyError as exc:
-            log.error("Failed to persist MAP-Elites snapshot for {}: {}", island_id, exc)
+            log.error(
+                "Failed to persist MAP-Elites snapshot for experiment {} island {}: {}",
+                self._experiment_id,
+                island_id,
+                exc,
+            )
         except Exception as exc:  # pragma: no cover - defensive
-            log.error("Unexpected error while persisting snapshot for {}: {}", island_id, exc)
+            log.error(
+                "Unexpected error while persisting snapshot for experiment {} island {}: {}",
+                self._experiment_id,
+                island_id,
+                exc,
+            )
 
     def _build_snapshot(self, island_id: str, state: IslandState) -> dict[str, Any]:
         return {

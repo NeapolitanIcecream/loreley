@@ -85,6 +85,8 @@ class JobContext:
     job_id: UUID
     base_commit_hash: str
     island_id: str | None
+    experiment_id: UUID | None
+    repository_id: UUID | None
     payload: dict[str, Any]
     base_snapshot: CommitSnapshot
     inspiration_snapshots: tuple[CommitSnapshot, ...]
@@ -253,6 +255,8 @@ class EvolutionWorker:
             job_id=locked_job.job_id,
             base_commit_hash=locked_job.base_commit_hash,
             island_id=locked_job.island_id,
+            experiment_id=locked_job.experiment_id,
+            repository_id=locked_job.repository_id,
             payload=payload,
             base_snapshot=base_snapshot,
             inspiration_snapshots=inspiration_snapshots,
@@ -362,6 +366,8 @@ class EvolutionWorker:
             "job": {
                 "id": str(job_ctx.job_id),
                 "island_id": job_ctx.island_id,
+                "experiment_id": str(job_ctx.experiment_id) if job_ctx.experiment_id else None,
+                "repository_id": str(job_ctx.repository_id) if job_ctx.repository_id else None,
                 "goal": job_ctx.goal,
                 "constraints": list(job_ctx.constraints),
                 "acceptance_criteria": list(job_ctx.acceptance_criteria),

@@ -126,6 +126,7 @@ class MapElitesSampler:
         island_id: str | None = None,
         payload_overrides: Mapping[str, Any] | None = None,
         priority: int | None = None,
+        experiment_id: UUID | str | None = None,
     ) -> ScheduledSamplerJob | None:
         """Select base/inspiration commits and persist an EvolutionJob."""
         effective_island = island_id or self._default_island
@@ -149,12 +150,20 @@ class MapElitesSampler:
                 **dict(payload_overrides),
             }
 
+        exp_id: UUID | None = None
+        if experiment_id is not None:
+            if isinstance(experiment_id, UUID):
+                exp_id = experiment_id
+            else:
+                exp_id = UUID(str(experiment_id))
+
         job = self._persist_job(
             island_id=effective_island,
             base=base_record,
             inspirations=inspirations,
             payload=payload,
             priority=priority,
+            experiment_id=exp_id,
         )
         if not job:
             return None
@@ -310,12 +319,14 @@ class MapElitesSampler:
         inspirations: Sequence[SupportsMapElitesRecord],
         payload: Mapping[str, Any],
         priority: int | None,
+        experiment_id: UUID | None,
     ) -> EvolutionJob | None:
         job_priority = self._default_priority if priority is None else priority
         job = EvolutionJob(
             status=JobStatus.PENDING,
             base_commit_hash=base.commit_hash,
             island_id=island_id,
+            experiment_id=experiment_id,
             inspiration_commit_hashes=[record.commit_hash for record in inspirations],
             payload=dict(payload),
             priority=job_priority,

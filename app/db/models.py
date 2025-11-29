@@ -52,6 +52,88 @@ class JobStatus(str, enum.Enum):
     CANCELLED = "cancelled"
 
 
+class Repository(TimestampMixin, Base):
+    """Source code repository tracked by Loreley."""
+
+    __tablename__ = "repositories"
+    __table_args__ = (
+        UniqueConstraint("slug", name="uq_repositories_slug"),
+        Index("ix_repositories_slug", "slug"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    slug: Mapped[str] = mapped_column(String(255), nullable=False)
+    remote_url: Mapped[str | None] = mapped_column(String(1024))
+    root_path: Mapped[str | None] = mapped_column(String(1024))
+    extra: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JSONB),
+        default=dict,
+        nullable=False,
+    )
+
+    experiments: Mapped[list["Experiment"]] = relationship(
+        back_populates="repository",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<Repository slug={self.slug!r}>"
+
+
+class Experiment(TimestampMixin, Base):
+    """Single experiment run configuration within a repository."""
+
+    __tablename__ = "experiments"
+    __table_args__ = (
+        UniqueConstraint("repository_id", "config_hash", name="uq_experiments_repo_config"),
+        Index("ix_experiments_repository_id", "repository_id"),
+        Index("ix_experiments_config_hash", "config_hash"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    repository_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("repositories.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    config_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str | None] = mapped_column(String(255))
+    config_snapshot: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JSONB),
+        default=dict,
+        nullable=False,
+    )
+    status: Mapped[str | None] = mapped_column(String(32))
+
+    repository: Mapped["Repository"] = relationship(
+        back_populates="experiments",
+    )
+    jobs: Mapped[list["EvolutionJob"]] = relationship(
+        back_populates="experiment",
+        passive_deletes=True,
+    )
+    commits: Mapped[list["CommitMetadata"]] = relationship(
+        back_populates="experiment",
+        passive_deletes=True,
+    )
+    map_elites_states: Mapped[list["MapElitesState"]] = relationship(
+        back_populates="experiment",
+        passive_deletes=True,
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<Experiment id={self.id} repository_id={self.repository_id} hash={self.config_hash[:8]!r}>"
+
+
 class CommitMetadata(TimestampMixin, Base):
     """Git commit metadata captured during evolution."""
 
@@ -80,6 +162,12 @@ class CommitMetadata(TimestampMixin, Base):
         String(64),
         nullable=True,
     )
+    experiment_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("experiments.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     author: Mapped[str | None] = mapped_column(String(128))
     message: Mapped[str | None] = mapped_column(Text)
     evaluation_summary: Mapped[str | None] = mapped_column(Text)
@@ -103,9 +191,16 @@ class CommitMetadata(TimestampMixin, Base):
         back_populates="base_commit",
         passive_deletes=True,
     )
+    experiment: Mapped["Experiment | None"] = relationship(
+        back_populates="commits",
+        foreign_keys=[experiment_id],
+    )
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
-        return f"<CommitMetadata commit_hash={self.commit_hash!r} island={self.island_id!r}>"
+        return (
+            f"<CommitMetadata commit_hash={self.commit_hash!r} "
+            f"island={self.island_id!r} experiment_id={self.experiment_id!r}>"
+        )
 
 
 class Metric(TimestampMixin, Base):
@@ -172,6 +267,12 @@ class EvolutionJob(TimestampMixin, Base):
         nullable=True,
     )
     island_id: Mapped[str | None] = mapped_column(String(64))
+    experiment_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("experiments.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     inspiration_commit_hashes: Mapped[list[str]] = mapped_column(
         MutableList.as_mutable(ARRAY(String(64))),
         default=list,
@@ -193,6 +294,10 @@ class EvolutionJob(TimestampMixin, Base):
         back_populates="jobs_as_base",
         foreign_keys=[base_commit_hash],
     )
+    experiment: Mapped["Experiment | None"] = relationship(
+        back_populates="jobs",
+        foreign_keys=[experiment_id],
+    )
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return f"<EvolutionJob id={self.id} status={self.status}>"
@@ -203,6 +308,11 @@ class MapElitesState(TimestampMixin, Base):
 
     __tablename__ = "map_elites_states"
 
+    experiment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("experiments.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
     island_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     snapshot: Mapped[dict[str, Any]] = mapped_column(
         MutableDict.as_mutable(JSONB),
@@ -210,5 +320,12 @@ class MapElitesState(TimestampMixin, Base):
         nullable=False,
     )
 
+    experiment: Mapped["Experiment"] = relationship(
+        back_populates="map_elites_states",
+    )
+
     def __repr__(self) -> str:  # pragma: no cover - repr helper
-        return f"<MapElitesState island_id={self.island_id!r}>"
+        return (
+            f"<MapElitesState experiment_id={self.experiment_id!r} "
+            f"island_id={self.island_id!r}>"
+        )

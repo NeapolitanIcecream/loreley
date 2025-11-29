@@ -52,6 +52,8 @@ class LockedJob:
     job_id: UUID
     base_commit_hash: str
     island_id: str | None
+    experiment_id: UUID | None
+    repository_id: UUID | None
     payload: dict[str, Any]
     inspiration_commit_hashes: tuple[str, ...]
 
@@ -147,10 +149,17 @@ class EvolutionJobStore:
                 job.started_at = _utc_now()
                 job.last_error = None
 
+                experiment = getattr(job, "experiment", None)
+                repository_id = None
+                if experiment is not None:
+                    repository_id = getattr(experiment, "repository_id", None)
+
                 return LockedJob(
                     job_id=job.id,
                     base_commit_hash=job.base_commit_hash,
                     island_id=job.island_id,
+                    experiment_id=job.experiment_id,
+                    repository_id=repository_id,
                     payload=dict(job.payload or {}),
                     inspiration_commit_hashes=tuple(job.inspiration_commit_hashes or []),
                 )
@@ -175,12 +184,18 @@ class EvolutionJobStore:
             "job": {
                 "id": str(job_ctx.job_id),
                 "island_id": job_ctx.island_id,
+                "experiment_id": str(job_ctx.experiment_id) if job_ctx.experiment_id else None,
+                "repository_id": str(job_ctx.repository_id) if job_ctx.repository_id else None,
                 "goal": job_ctx.goal,
                 "constraints": list(job_ctx.constraints),
                 "acceptance_criteria": list(job_ctx.acceptance_criteria),
                 "notes": list(job_ctx.notes),
                 "tags": list(job_ctx.tags),
                 "payload": job_ctx.payload,
+            },
+            "experiment": {
+                "id": str(job_ctx.experiment_id) if job_ctx.experiment_id else None,
+                "repository_id": str(job_ctx.repository_id) if job_ctx.repository_id else None,
             },
             "base_commit": job_ctx.base_snapshot.commit_hash,
             "inspirations": [snapshot.commit_hash for snapshot in job_ctx.inspiration_snapshots],
@@ -220,6 +235,7 @@ class EvolutionJobStore:
                     commit_hash=commit_hash,
                     parent_commit_hash=job_ctx.base_commit_hash,
                     island_id=job_ctx.island_id,
+                    experiment_id=job_ctx.experiment_id,
                     author=self.settings.worker_evolution_commit_author,
                     message=commit_message,
                     evaluation_summary=evaluation.summary,

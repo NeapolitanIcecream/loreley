@@ -19,6 +19,7 @@ from rich.console import Console
 from sqlalchemy import func, select
 
 from app.config import Settings, get_settings
+from app.core.experiments import ExperimentError, get_or_create_experiment
 from app.core.map_elites.map_elites import MapElitesManager
 from app.core.map_elites.preprocess import ChangedFile
 from app.core.map_elites.sampler import MapElitesSampler, ScheduledSamplerJob
@@ -49,6 +50,8 @@ class JobSnapshot:
     job_id: UUID
     base_commit_hash: str | None
     island_id: str | None
+    experiment_id: UUID | None
+    repository_id: UUID | None
     payload: dict[str, Any]
     completed_at: datetime | None
 
@@ -61,7 +64,18 @@ class EvolutionScheduler:
         self.console = console
         self.repo_root = self._resolve_repo_root()
         self._repo = self._init_repo()
-        self.manager = MapElitesManager(settings=self.settings, repo_root=self.repo_root)
+        try:
+            self.repository, self.experiment = get_or_create_experiment(
+                settings=self.settings,
+                repo_root=self.repo_root,
+            )
+        except ExperimentError as exc:
+            raise SchedulerError(str(exc)) from exc
+        self.manager = MapElitesManager(
+            settings=self.settings,
+            repo_root=self.repo_root,
+            experiment_id=self.experiment.id,
+        )
         self.sampler = MapElitesSampler(manager=self.manager, settings=self.settings)
         self._stop_requested = False
         self._total_scheduled_jobs = 0
@@ -73,11 +87,12 @@ class EvolutionScheduler:
 
         interval = max(1.0, float(self.settings.scheduler_poll_interval_seconds))
         self.console.log(
-            "[bold green]Scheduler online[/] repo={} interval={}s max_unfinished={}".format(
+            "[bold green]Scheduler online[/] repo={} experiment={} interval={}s max_unfinished={}".format(
                 self.repo_root,
+                getattr(self.experiment, "id", None),
                 interval,
                 self.settings.scheduler_max_unfinished_jobs,
-            )
+            ),
         )
         self._install_signal_handlers()
         while not self._stop_requested:
@@ -205,7 +220,7 @@ class EvolutionScheduler:
 
     def _schedule_single_job(self) -> ScheduledSamplerJob | None:
         try:
-            scheduled = self.sampler.schedule_job()
+            scheduled = self.sampler.schedule_job(experiment_id=self.experiment.id)
         except Exception as exc:  # pragma: no cover - defensive
             self.console.log(f"[bold red]Sampler failed[/] reason={exc}")
             log.exception("Sampler failed to create a job: {}", exc)
@@ -305,6 +320,7 @@ class EvolutionScheduler:
 
     def _jobs_requiring_ingestion(self, *, limit: int) -> list[JobSnapshot]:
         batch_limit = max(limit * 4, 32)
+        snapshots: list[JobSnapshot] = []
         with session_scope() as session:
             stmt = (
                 select(EvolutionJob)
@@ -313,28 +329,36 @@ class EvolutionScheduler:
                 .limit(batch_limit)
             )
             rows = list(session.execute(stmt).scalars())
-        snapshots: list[JobSnapshot] = []
-        for job in rows:
-            payload = self._coerce_payload(job.payload)
-            state = self._current_ingestion_state(payload)
-            status = state.get("status")
-            if status in {"succeeded", "skipped"}:
-                continue
-            result = self._extract_result_block(payload)
-            commit_hash = (result.get("commit_hash") or "").strip()
-            if not commit_hash:
-                continue
-            snapshots.append(
-                JobSnapshot(
-                    job_id=job.id,
-                    base_commit_hash=job.base_commit_hash,
-                    island_id=job.island_id,
-                    payload=payload,
-                    completed_at=job.completed_at,
+            for job in rows:
+                payload = self._coerce_payload(job.payload)
+                state = self._current_ingestion_state(payload)
+                status = state.get("status")
+                if status in {"succeeded", "skipped"}:
+                    continue
+                result = self._extract_result_block(payload)
+                commit_hash = (result.get("commit_hash") or "").strip()
+                if not commit_hash:
+                    continue
+
+                experiment_id = getattr(job, "experiment_id", None)
+                repository_id = None
+                experiment = getattr(job, "experiment", None)
+                if experiment is not None:
+                    repository_id = getattr(experiment, "repository_id", None)
+
+                snapshots.append(
+                    JobSnapshot(
+                        job_id=job.id,
+                        base_commit_hash=job.base_commit_hash,
+                        island_id=job.island_id,
+                        experiment_id=experiment_id,
+                        repository_id=repository_id,
+                        payload=payload,
+                        completed_at=job.completed_at,
+                    )
                 )
-            )
-            if len(snapshots) >= limit:
-                break
+                if len(snapshots) >= limit:
+                    break
         return snapshots
 
     def _ingest_snapshot(self, snapshot: JobSnapshot) -> bool:
@@ -450,6 +474,8 @@ class EvolutionScheduler:
                 "id": str(snapshot.job_id),
                 "base_commit": snapshot.base_commit_hash,
                 "island_id": snapshot.island_id,
+                "experiment_id": str(snapshot.experiment_id) if snapshot.experiment_id else None,
+                "repository_id": str(snapshot.repository_id) if snapshot.repository_id else None,
                 "completed_at": snapshot.completed_at.isoformat() if snapshot.completed_at else None,
             },
             "context": context,
