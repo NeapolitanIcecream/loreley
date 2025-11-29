@@ -1,0 +1,3 @@
+[submodule "examples/circle-packing"]
+	path = examples/circle-packing
+	url = https://github.com/NeapolitanIcecream/circle-packing.git
