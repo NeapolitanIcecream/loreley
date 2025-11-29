@@ -64,6 +64,7 @@ class EvolutionScheduler:
         self.manager = MapElitesManager(settings=self.settings, repo_root=self.repo_root)
         self.sampler = MapElitesSampler(manager=self.manager, settings=self.settings)
         self._stop_requested = False
+        self._total_scheduled_jobs = 0
 
     # Public API ------------------------------------------------------------
 
@@ -106,11 +107,26 @@ class EvolutionScheduler:
             "schedule",
             lambda: self._schedule_jobs(unfinished),
         )
+        self._total_scheduled_jobs += stats["scheduled"]
         stats["unfinished"] = unfinished + stats["scheduled"]
         self.console.log(
             "[bold magenta]Scheduler tick[/] ingested={ingested} dispatched={dispatched} "
             "scheduled={scheduled} unfinished={unfinished}".format(**stats),
         )
+
+        max_total = getattr(self.settings, "scheduler_max_total_jobs", None)
+        if max_total is not None and max_total > 0:
+            if self._total_scheduled_jobs >= max_total and stats["unfinished"] == 0:
+                self.console.log(
+                    "[bold yellow]Scheduler reached max total jobs and all jobs finished; shutting down[/] "
+                    f"limit={max_total}",
+                )
+                log.info(
+                    "Scheduler stopping after reaching max_total_jobs={} (total_scheduled={})",
+                    max_total,
+                    self._total_scheduled_jobs,
+                )
+                self.stop()
         return stats
 
     def stop(self) -> None:
@@ -160,6 +176,23 @@ class EvolutionScheduler:
             return 0
         batch = max(1, int(self.settings.scheduler_schedule_batch_size))
         target = min(capacity, batch)
+
+        max_total = getattr(self.settings, "scheduler_max_total_jobs", None)
+        if max_total is not None and max_total > 0:
+            remaining_total = max_total - self._total_scheduled_jobs
+            if remaining_total <= 0:
+                self.console.log(
+                    "[yellow]Scheduler global job limit reached; no new jobs will be scheduled[/] "
+                    f"limit={max_total}",
+                )
+                log.info(
+                    "Global scheduler job limit reached: max_total_jobs={} (total_scheduled={})",
+                    max_total,
+                    self._total_scheduled_jobs,
+                )
+                return 0
+            target = min(target, remaining_total)
+
         scheduled_ids: list[UUID] = []
         for _ in range(target):
             job = self._schedule_single_job()

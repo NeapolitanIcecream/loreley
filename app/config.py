@@ -76,6 +76,10 @@ class Settings(BaseSettings):
         default=4,
         alias="SCHEDULER_MAX_UNFINISHED_JOBS",
     )
+    scheduler_max_total_jobs: int | None = Field(
+        default=None,
+        alias="SCHEDULER_MAX_TOTAL_JOBS",
+    )
     scheduler_schedule_batch_size: int = Field(
         default=2,
         alias="SCHEDULER_SCHEDULE_BATCH_SIZE",
@@ -514,6 +518,7 @@ class Settings(BaseSettings):
             "scheduler_max_unfinished_jobs": self.scheduler_max_unfinished_jobs,
             "scheduler_dispatch_batch_size": self.scheduler_dispatch_batch_size,
             "scheduler_schedule_batch_size": self.scheduler_schedule_batch_size,
+            "scheduler_max_total_jobs": self.scheduler_max_total_jobs,
         }
 
 
