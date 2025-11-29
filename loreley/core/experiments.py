@@ -53,29 +53,67 @@ def _normalise_remote_url(raw: str) -> str:
     if not url:
         return ""
 
-    # Convert scp-style SSH URL into a proper URL for parsing.
+    # Convert scp-style SSH URL (git@github.com:owner/repo.git) into a proper
+    # URL so that urlparse can handle it. We preserve the username for SSH
+    # remotes (git@) but strip credentials for HTTPS.
     if "://" not in url and "@" in url and ":" in url.split("@", 1)[1]:
         user_host, path = url.split(":", 1)
         url = f"ssh://{user_host}/{path}"
 
     parsed = urlparse(url)
-    host = parsed.hostname or ""
-    if parsed.port:
-        host = f"{host}:{parsed.port}"
     scheme = parsed.scheme or "ssh"
+    host = parsed.hostname or ""
     path = parsed.path or ""
 
-    # Drop username/password, query and fragment for storage and hashing.
-    return urlunparse((scheme, host, path, "", "", ""))
+    # Decide whether to keep the username in the canonical form.
+    # - For HTTPS/HTTP we drop any username to avoid leaking credentials.
+    # - For SSH-style remotes we keep the username (e.g. git@github.com).
+    username = parsed.username or ""
+    if scheme in ("http", "https"):
+        userinfo = ""
+    else:
+        userinfo = f"{username}@" if username else ""
+
+    netloc = host
+    if parsed.port:
+        netloc = f"{netloc}:{parsed.port}"
+    if userinfo:
+        netloc = f"{userinfo}{netloc}"
+
+    # Drop password, query and fragment for storage and hashing.
+    return urlunparse((scheme, netloc, path, "", "", ""))
 
 
 def _build_slug_from_source(source: str) -> str:
     """Normalise an arbitrary source string into a repository slug."""
 
-    text = source.strip().lower()
-    if text.endswith(".git"):
-        text = text[: -len(".git")]
-    slug = re.sub(r"[^a-z0-9._/-]+", "-", text).strip("-")
+    text = source.strip()
+    if not text:
+        return "default"
+
+    # Try to interpret the source as a URL (including scp-style SSH).
+    candidate = text
+    if "://" not in candidate and "@" in candidate and ":" in candidate.split("@", 1)[1]:
+        user_host, path = candidate.split(":", 1)
+        candidate = f"ssh://{user_host}/{path}"
+
+    parsed = urlparse(candidate)
+    host = parsed.hostname
+    path = parsed.path or ""
+
+    if host:
+        # URL-like input: build slug from host + path.
+        if path.endswith(".git"):
+            path = path[: -len(".git")]
+        base = f"{host}{path}"
+    else:
+        # Fallback: treat as a plain path or arbitrary string.
+        base = text
+        if base.endswith(".git"):
+            base = base[: -len(".git")]
+
+    base = base.lower()
+    slug = re.sub(r"[^a-z0-9._/-]+", "-", base).strip("-")
     return slug or "default"
 
 
