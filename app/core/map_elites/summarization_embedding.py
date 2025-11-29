@@ -84,7 +84,19 @@ class SummaryEmbedder:
         client: OpenAI | None = None,
     ) -> None:
         self.settings = settings or get_settings()
-        self._client = client or OpenAI()
+        if client is not None:
+            self._client = client
+        else:
+            client_kwargs: dict[str, object] = {}
+            if self.settings.openai_api_key:
+                client_kwargs["api_key"] = self.settings.openai_api_key
+            if self.settings.openai_base_url:
+                client_kwargs["base_url"] = self.settings.openai_base_url
+            self._client = (
+                OpenAI(**client_kwargs)  # type: ignore[call-arg]
+                if client_kwargs
+                else OpenAI()
+            )
         self._summary_model = self.settings.mapelites_summary_model
         self._summary_temperature = self.settings.mapelites_summary_temperature
         self._summary_max_tokens = max(

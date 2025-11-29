@@ -27,6 +27,16 @@ class Settings(BaseSettings):
     environment: str = Field(default="development", alias="APP_ENV")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
+    # OpenAI-compatible API configuration
+    openai_api_key: str | None = Field(
+        default=None,
+        alias="OPENAI_API_KEY",
+    )
+    openai_base_url: str | None = Field(
+        default=None,
+        alias="OPENAI_BASE_URL",
+    )
+
     database_url: str | None = Field(default=None, alias="DATABASE_URL")
     db_scheme: str = Field(default="postgresql+psycopg", alias="DB_SCHEME")
     db_host: str = Field(default="localhost", alias="DB_HOST")
