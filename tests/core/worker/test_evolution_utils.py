@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Any, Mapping, Sequence
 from uuid import uuid4
 
-from app.config import Settings
-from app.core.worker.evolution import EvolutionWorker
+from loreley.config import Settings
+from loreley.core.worker.evolution import EvolutionWorker
 
 
 class _DummyRepo:

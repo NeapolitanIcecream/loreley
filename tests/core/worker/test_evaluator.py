@@ -5,8 +5,8 @@ from typing import Any, Mapping
 
 import pytest
 
-from app.config import Settings
-from app.core.worker.evaluator import (
+from loreley.config import Settings
+from loreley.core.worker.evaluator import (
     EvaluationContext,
     EvaluationError,
     EvaluationMetric,

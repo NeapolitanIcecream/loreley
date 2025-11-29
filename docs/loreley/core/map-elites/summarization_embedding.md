@@ -1,0 +1,20 @@
+# loreley.core.map-elites.summarization_embedding
+
+Summary-level embedding utilities that turn preprocessed code into structured natural-language summaries and a commit-level embedding vector for the Map-Elites pipeline.
+
+## Data structures
+
+- **`FileSummary`**: immutable record describing one file-level summary (repository-relative `path`, approximate `change_count`, and the generated markdown `summary` text). The path is normalised to a `pathlib.Path`.
+- **`SummaryEmbedding`**: embedding derived from a `FileSummary`, containing the original `file_summary`, its numeric `vector`, and a scalar `weight` used during aggregation.
+- **`CommitSummaryEmbedding`**: commit-level representation bundling all `SummaryEmbedding` instances, the final aggregated `vector`, the `summary_model` and `embedding_model` names, `dimensions`, and a `file_count` convenience property.
+
+## Embedder
+
+- **`SummaryEmbedder`**: orchestrates summarisation of preprocessed files and embedding of the resulting summaries.
+  - Configured via `Settings` Map-Elites summary options (`MAPELITES_SUMMARY_*`) controlling the LLM model, temperature, maximum output tokens, source excerpt character limit, and retry/backoff behaviour, and summary embedding options (`MAPELITES_SUMMARY_EMBEDDING_*`) controlling the embedding model, optional output dimensions, and batch size.
+  - `run(files)` skips empty input, calls `_summarize_files` to build `FileSummary` objects with a `rich` progress spinner and `loguru` debug/warning logs, then calls `_embed_summaries` to batch summaries through the OpenAI embeddings API, weighting them by change count or summary length.
+  - Aggregates per-file vectors into a single commit-level vector using `_weighted_average`, after sorting entries by path for stable output; returns a `CommitSummaryEmbedding` or `None` if no usable summaries or embeddings were produced.
+
+## Convenience API
+
+- **`summarize_preprocessed_files(files, settings=None, client=None)`**: helper that constructs a `SummaryEmbedder` (optionally injecting custom settings or OpenAI client) and returns a `CommitSummaryEmbedding` for the supplied `PreprocessedFile` sequence, or `None` when there is nothing to summarise or embed.

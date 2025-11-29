@@ -2,11 +2,11 @@ from __future__ import annotations
 
 """Entry script for running the Loreley evolution scheduler.
 
-This is a thin wrapper around ``app.scheduler.main`` that:
+This is a thin wrapper around ``loreley.scheduler.main`` that:
 
 - Initialises application settings.
 - Configures Loguru logging level based on ``Settings.log_level``.
-- Delegates CLI parsing and control flow to ``app.scheduler.main.main``.
+- Delegates CLI parsing and control flow to ``loreley.scheduler.main.main``.
 
 Usage (with uv):
 
@@ -20,8 +20,8 @@ from typing import Sequence
 from loguru import logger
 from rich.console import Console
 
-from app.config import get_settings
-from app.scheduler.main import main as scheduler_main
+from loreley.config import get_settings
+from loreley.scheduler.main import main as scheduler_main
 
 console = Console()
 
@@ -52,7 +52,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """CLI entrypoint for the scheduler wrapper."""
 
     _configure_logging()
-    # Delegate argument parsing and control flow to app.scheduler.main.
+    # Delegate argument parsing and control flow to loreley.scheduler.main.
     return int(scheduler_main(argv))
 
 

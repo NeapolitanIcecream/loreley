@@ -4,16 +4,16 @@ from typing import Sequence
 
 import pytest
 
-from app.config import Settings
-from app.core.map_elites.code_embedding import CommitCodeEmbedding
-from app.core.map_elites.dimension_reduction import (
+from loreley.config import Settings
+from loreley.core.map_elites.code_embedding import CommitCodeEmbedding
+from loreley.core.map_elites.dimension_reduction import (
     DimensionReducer,
     FinalEmbedding,
     PCAProjection,
     PenultimateEmbedding,
     reduce_commit_embeddings,
 )
-from app.core.map_elites.summarization_embedding import CommitSummaryEmbedding
+from loreley.core.map_elites.summarization_embedding import CommitSummaryEmbedding
 
 
 def _make_penultimate(vector: Sequence[float], commit_hash: str = "c") -> PenultimateEmbedding:

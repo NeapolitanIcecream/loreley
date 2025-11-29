@@ -7,8 +7,8 @@ import uuid
 
 import numpy as np
 
-from app.core.map_elites.dimension_reduction import PCAProjection, PenultimateEmbedding
-from app.core.map_elites.snapshot import (
+from loreley.core.map_elites.dimension_reduction import PCAProjection, PenultimateEmbedding
+from loreley.core.map_elites.snapshot import (
     DatabaseSnapshotBackend,
     NullSnapshotBackend,
     apply_snapshot,

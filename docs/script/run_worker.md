@@ -5,9 +5,9 @@ process.
 
 ## Purpose
 
-- Configure global Loguru logging based on `app.config.Settings.log_level`.
-- Initialise the global Dramatiq Redis broker (`app.tasks.broker.broker`).
-- Import `app.tasks.workers` so that the `run_evolution_job` actor is
+- Configure global Loguru logging based on `loreley.config.Settings.log_level`.
+- Initialise the global Dramatiq Redis broker (`loreley.tasks.broker.broker`).
+- Import `loreley.tasks.workers` so that the `run_evolution_job` actor is
   registered.
 - Start a single-threaded Dramatiq `Worker` bound to the configured queue.
 
@@ -17,8 +17,8 @@ On startup the script:
 
 1. Calls `get_settings()` to load `Settings`.
 2. Configures Loguru to log to stderr using `LOG_LEVEL` as the threshold.
-3. Imports `app.tasks.broker` (which constructs and registers the Redis
-   broker) and `app.tasks.workers` (which defines the `run_evolution_job`
+3. Imports `loreley.tasks.broker` (which constructs and registers the Redis
+   broker) and `loreley.tasks.workers` (which defines the `run_evolution_job`
    actor and its queue settings).
 4. Logs a short “worker online” message including `TASKS_QUEUE_NAME` and
    `WORKER_REPO_WORKTREE`.
@@ -44,11 +44,11 @@ uv run python script/run_worker.py
 The worker will begin consuming messages for the queue specified by
 `TASKS_QUEUE_NAME` (default: `loreley.evolution`) in a single process with a
 single worker thread. Jobs are expected to be created and dispatched by the
-scheduler (`app.scheduler.main`).
+scheduler (`loreley.scheduler.main`).
 
 ## Configuration
 
-The script uses `app.config.Settings` for:
+The script uses `loreley.config.Settings` for:
 
 - **Logging**
   - `LOG_LEVEL`: global Loguru level for worker logs.
@@ -57,13 +57,13 @@ The script uses `app.config.Settings` for:
     `TASKS_REDIS_DB`, `TASKS_REDIS_PASSWORD`, `TASKS_REDIS_NAMESPACE`).
   - `TASKS_QUEUE_NAME`: queue name for the `run_evolution_job` actor.
   - `TASKS_WORKER_MAX_RETRIES`, `TASKS_WORKER_TIME_LIMIT_SECONDS`: consumed
-    by `app.tasks.workers` when configuring the actor.
+    by `loreley.tasks.workers` when configuring the actor.
 - **Worker repository**
   - `WORKER_REPO_REMOTE_URL`, `WORKER_REPO_BRANCH`, `WORKER_REPO_WORKTREE`,
     and related `WORKER_REPO_*` options used by
-    `app.core.worker.repository.WorkerRepository`.
+    `loreley.core.worker.repository.WorkerRepository`.
 
-For a full description of these settings, see `docs/app/config.md` and the
-worker module documentation in `docs/app/tasks/workers.md`.
+For a full description of these settings, see `docs/loreley/config.md` and the
+worker module documentation in `docs/loreley/tasks/workers.md`.
 
 

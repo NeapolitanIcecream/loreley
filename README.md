@@ -16,12 +16,12 @@ Related systems: [AlphaEvolve](https://deepmind.google/blog/alphaevolve-a-gemini
 
 ## What Ships With Loreley
 
-- `app.config` – a single `Settings` object (pydantic-settings) for logging, database, Redis/Dramatiq, scheduler, worker repos, and MAP-Elites knobs.
-- `app.db` – SQLAlchemy engine/session helpers plus ORM models for commits, metrics, and job state.
-- `app.core.map_elites` – preprocessing, chunking, embeddings, dimensionality reduction, and `MapElitesManager`.
-- `app.core.worker` – worktree lifecycle plus planning/coding/evaluation orchestration used by Dramatiq actors.
-- `app.tasks` – Redis broker definition and the `run_evolution_job(job_id)` actor.
-- `app.scheduler` – `EvolutionScheduler` that ingests, dispatches, measures, and schedules jobs.
+- `loreley.config` – a single `Settings` object (pydantic-settings) for logging, database, Redis/Dramatiq, scheduler, worker repos, and MAP-Elites knobs.
+- `loreley.db` – SQLAlchemy engine/session helpers plus ORM models for commits, metrics, and job state.
+- `loreley.core.map_elites` – preprocessing, chunking, embeddings, dimensionality reduction, and `MapElitesManager`.
+- `loreley.core.worker` – worktree lifecycle plus planning/coding/evaluation orchestration used by Dramatiq actors.
+- `loreley.tasks` – Redis broker definition and the `run_evolution_job(job_id)` actor.
+- `loreley.scheduler` – `EvolutionScheduler` that ingests, dispatches, measures, and schedules jobs.
 - `script/run_scheduler.py`, `script/run_worker.py` – CLI shims that wire up logging, settings, and entrypoints.
 - `docs/` – focused guides for configuration, scheduler behaviour, and worker operations.
 
@@ -55,7 +55,7 @@ uv sync --no-workspace
 
 ### Configure
 
-All runtime settings come from environment variables consumed by `app.config.Settings`. Common examples:
+All runtime settings come from environment variables consumed by `loreley.config.Settings`. Common examples:
 
 - `APP_NAME`, `ENVIRONMENT`, `LOG_LEVEL`
 - `DATABASE_URL` (or individual `DB_*`)
@@ -64,7 +64,7 @@ All runtime settings come from environment variables consumed by `app.config.Set
 - Worker repo knobs: `WORKER_REPO_REMOTE_URL`, `WORKER_REPO_BRANCH`, `WORKER_REPO_WORKTREE`, `WORKER_REPO_ENABLE_LFS`, etc.
 - MAP-Elites controls: `MAPELITES_*` for preprocessing, embeddings, dimensionality reduction, bounds, resolution, and fitness metrics.
 
-See `docs/app/config.md` for the exhaustive list.
+See `docs/loreley/config.md` for the exhaustive list.
 
 ---
 
@@ -75,7 +75,7 @@ See `docs/app/config.md` for the exhaustive list.
   ```bash
   uv run python script/run_scheduler.py        # continuous loop
   uv run python script/run_scheduler.py --once # single tick
-  uv run python -m app.scheduler.main [--once]
+  uv run python -m loreley.scheduler.main [--once]
   ```
 
 - **Worker process**
@@ -84,7 +84,7 @@ See `docs/app/config.md` for the exhaustive list.
   uv run python script/run_worker.py
   ```
 
-  The worker configures Loguru/Rich, initialises the Redis broker defined in `app.tasks.broker`, imports `app.tasks.workers`, and launches a single-threaded Dramatiq worker bound to `TASKS_QUEUE_NAME`.
+  The worker configures Loguru/Rich, initialises the Redis broker defined in `loreley.tasks.broker`, imports `loreley.tasks.workers`, and launches a single-threaded Dramatiq worker bound to `TASKS_QUEUE_NAME`.
 
 Refer to `docs/script/run_scheduler.md` and `docs/script/run_worker.md` for deeper operational guidance.
 
@@ -92,9 +92,9 @@ Refer to `docs/script/run_scheduler.md` and `docs/script/run_worker.md` for deep
 
 ## Project Layout
 
-- `app/` – core services (`config`, `db`, `core/map_elites`, `core/worker`, `scheduler`, `tasks`)
+- `loreley/` – core services (`config`, `db`, `core/map_elites`, `core/worker`, `scheduler`, `tasks`)
 - `script/` – CLI shims (`run_scheduler.py`, `run_worker.py`)
-- `docs/` – module-level docs under `docs/app` and `docs/script`
+- `docs/` – module-level docs under `docs/loreley` and `docs/script`
 - `pyproject.toml`, `uv.lock` – dependency definitions for `uv`
 - `examples/` – self-contained optimisation examples used for testing and demos
 

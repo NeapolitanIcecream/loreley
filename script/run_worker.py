@@ -5,8 +5,8 @@ from __future__ import annotations
 This script:
 
 - Loads application settings and configures Loguru logging.
-- Initialises the Dramatiq Redis broker defined in ``app.tasks.broker``.
-- Imports ``app.tasks.workers`` so that the ``run_evolution_job`` actor is registered.
+- Initialises the Dramatiq Redis broker defined in ``loreley.tasks.broker``.
+- Imports ``loreley.tasks.workers`` so that the ``run_evolution_job`` actor is registered.
 - Starts a single Dramatiq worker bound to the configured queue using a
   single-threaded worker pool.
 
@@ -23,9 +23,9 @@ from dramatiq import Worker
 from loguru import logger
 from rich.console import Console
 
-from app.config import get_settings
-from app.tasks.broker import broker  # noqa: F401 - ensure broker is initialised
-import app.tasks.workers as _workers  # noqa: F401  - register actors
+from loreley.config import get_settings
+from loreley.tasks.broker import broker  # noqa: F401 - ensure broker is initialised
+import loreley.tasks.workers as _workers  # noqa: F401  - register actors
 
 console = Console()
 log = logger.bind(module="script.run_worker")

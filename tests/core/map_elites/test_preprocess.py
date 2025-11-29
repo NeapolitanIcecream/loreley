@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from app.config import Settings
-from app.core.map_elites.preprocess import (
+from loreley.config import Settings
+from loreley.core.map_elites.preprocess import (
     ChangedFile,
     CodePreprocessor,
     preprocess_changed_files,
@@ -89,7 +89,7 @@ def test_is_code_file_and_is_excluded(tmp_path: Path, settings: Settings) -> Non
 
     assert preprocessor._is_excluded(Path("tests/test_file.py"))  # type: ignore[attr-defined]
     assert preprocessor._is_excluded(Path("build/output.py"))  # type: ignore[attr-defined]
-    assert not preprocessor._is_excluded(Path("src/app.py"))  # type: ignore[attr-defined]
+    assert not preprocessor._is_excluded(Path("src/loreley.py"))  # type: ignore[attr-defined]
 
 
 def test_cleanup_text_strips_comments_tabs_and_excess_blank_lines(

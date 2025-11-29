@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from app.config import Settings
-from app.core.experiments import (
+from loreley.config import Settings
+from loreley.core.experiments import (
     _build_slug_from_source,
     build_experiment_config_snapshot,
     hash_experiment_config,

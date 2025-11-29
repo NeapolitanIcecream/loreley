@@ -7,8 +7,8 @@ from uuid import uuid4
 import numpy as np
 from types import SimpleNamespace
 
-from app.config import Settings
-from app.core.map_elites.sampler import MapElitesSampler
+from loreley.config import Settings
+from loreley.core.map_elites.sampler import MapElitesSampler
 
 
 @dataclass(slots=True)

@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from app.config import Settings
-from app.core.map_elites.chunk import CodeChunker, chunk_preprocessed_files
+from loreley.config import Settings
+from loreley.core.map_elites.chunk import CodeChunker, chunk_preprocessed_files
 
 
 def make_chunker(settings: Settings | None = None) -> CodeChunker:
