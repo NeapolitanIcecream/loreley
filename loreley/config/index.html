@@ -45,9 +45,23 @@
     <a href="./" class="dropdown-item active" aria-current="page">Configuration</a>
 </li>
                                     
+  <li class="dropdown-submenu">
+    <a href="#" class="dropdown-item">Scheduler</a>
+    <ul class="dropdown-menu">
+            
 <li>
-    <a href="../scheduler/main/" class="dropdown-item">Scheduler</a>
+    <a href="../scheduler/main/" class="dropdown-item">Overview</a>
 </li>
+            
+<li>
+    <a href="../scheduler/job_scheduler/" class="dropdown-item">Job scheduling</a>
+</li>
+            
+<li>
+    <a href="../scheduler/ingestion/" class="dropdown-item">Ingestion</a>
+</li>
+    </ul>
+  </li>
                                     
   <li class="dropdown-submenu">
     <a href="#" class="dropdown-item">Database</a>
@@ -239,6 +253,7 @@
 <li><strong>Map-Elites dimensionality reduction</strong>: <code>MAPELITES_DIMENSION_REDUCTION_*</code> options controlling how penultimate code/summary embeddings are normalised, the target feature dimensions, minimum sample count for fitting PCA, rolling history size, and refit cadence, used by <code>loreley.core.map-elites.dimension_reduction.DimensionReducer</code>.</li>
 <li><strong>Map-Elites feature bounds and archive</strong>: <code>MAPELITES_FEATURE_*</code> and <code>MAPELITES_ARCHIVE_*</code> options defining the search space for behaviour features (lower/upper bounds) and the grid resolution and learning parameters for the underlying MAP-Elites archive, used by <code>loreley.core.map-elites.map-elites.MapElitesManager</code>.</li>
 <li><strong>Map-Elites fitness and sampling</strong>: <code>MAPELITES_FITNESS_*</code> and <code>MAPELITES_SAMPLER_*</code> options that configure which metric to optimise, how to treat fitness direction/floor, and how new jobs are drawn from the archive (inspiration count, neighbour radius, fallback sampling, default priority, and whether to include metadata), used by <code>loreley.core.map-elites.map-elites.MapElitesManager</code> and <code>loreley.core.map-elites.sampler.MapElitesSampler</code>.</li>
+<li><strong>Map-Elites experiment root commit</strong>: <code>MAPELITES_EXPERIMENT_ROOT_COMMIT</code> optionally pins a specific git commit hash as the logical root for a given experiment. When set, the scheduler ensures this commit is recorded in the <code>commits</code> table and ingested into each relevant MAP-Elites island archive before scheduling any evolution jobs, so all subsequent jobs branch from a well-defined starting point.</li>
 <li><strong><code>database_dsn</code></strong>: computed property that returns a SQLAlchemy-compatible DSN, preferring <code>DATABASE_URL</code> when set and otherwise building one from the individual DB fields (with credentials URL-encoded).</li>
 <li><strong><code>export_safe()</code></strong>: helper that returns a dict of non-sensitive configuration values suitable for logging.</li>
 </ul>

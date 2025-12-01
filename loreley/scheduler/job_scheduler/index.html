@@ -8,7 +8,7 @@
         
         
         <link rel="shortcut icon" href="../../../img/favicon.ico">
-        <title>Broker - Loreley</title>
+        <title>Job scheduling - Loreley</title>
         <link href="../../../css/bootstrap.min.css" rel="stylesheet">
         <link href="../../../css/fontawesome.min.css" rel="stylesheet">
         <link href="../../../css/brands.min.css" rel="stylesheet">
@@ -50,15 +50,15 @@
     <ul class="dropdown-menu">
             
 <li>
-    <a href="../../scheduler/main/" class="dropdown-item">Overview</a>
+    <a href="../main/" class="dropdown-item">Overview</a>
 </li>
             
 <li>
-    <a href="../../scheduler/job_scheduler/" class="dropdown-item">Job scheduling</a>
+    <a href="./" class="dropdown-item active" aria-current="page">Job scheduling</a>
 </li>
             
 <li>
-    <a href="../../scheduler/ingestion/" class="dropdown-item">Ingestion</a>
+    <a href="../ingestion/" class="dropdown-item">Ingestion</a>
 </li>
     </ul>
   </li>
@@ -154,11 +154,11 @@
     <ul class="dropdown-menu">
             
 <li>
-    <a href="./" class="dropdown-item active" aria-current="page">Broker</a>
+    <a href="../../tasks/broker/" class="dropdown-item">Broker</a>
 </li>
             
 <li>
-    <a href="../workers/" class="dropdown-item">Workers</a>
+    <a href="../../tasks/workers/" class="dropdown-item">Workers</a>
 </li>
     </ul>
   </li>
@@ -186,12 +186,12 @@
                             </a>
                         </li>
                             <li class="nav-item">
-                                <a rel="prev" href="../../core/worker/job_store/" class="nav-link">
+                                <a rel="prev" href="../main/" class="nav-link">
                                     <i class="fa fa-arrow-left"></i> Previous
                                 </a>
                             </li>
                             <li class="nav-item">
-                                <a rel="next" href="../workers/" class="nav-link">
+                                <a rel="next" href="../ingestion/" class="nav-link">
                                     Next <i class="fa fa-arrow-right"></i>
                                 </a>
                             </li>
@@ -213,9 +213,13 @@
     <div id="toc-collapse" class="navbar-collapse collapse card bg-body-tertiary">
         <ul class="nav flex-column">
             
-            <li class="nav-item" data-bs-level="1"><a href="#loreleytasksbroker" class="nav-link">loreley.tasks.broker</a>
+            <li class="nav-item" data-bs-level="1"><a href="#loreleyschedulerjob_scheduler" class="nav-link">loreley.scheduler.job_scheduler</a>
               <ul class="nav flex-column">
-            <li class="nav-item" data-bs-level="2"><a href="#public-api" class="nav-link">Public API</a>
+            <li class="nav-item" data-bs-level="2"><a href="#jobscheduler" class="nav-link">JobScheduler</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#interaction-with-evolutionscheduler" class="nav-link">Interaction with EvolutionScheduler</a>
               <ul class="nav flex-column">
               </ul>
             </li>
@@ -226,23 +230,78 @@
 </div></div>
                     <div class="col-md-9" role="main">
 
-<h1 id="loreleytasksbroker">loreley.tasks.broker<a class="headerlink" href="#loreleytasksbroker" title="Permanent link">&para;</a></h1>
-<p>Helpers for configuring the Dramatiq Redis broker used by Loreley workers.</p>
-<h2 id="public-api">Public API<a class="headerlink" href="#public-api" title="Permanent link">&para;</a></h2>
+<h1 id="loreleyschedulerjob_scheduler">loreley.scheduler.job_scheduler<a class="headerlink" href="#loreleyschedulerjob_scheduler" title="Permanent link">&para;</a></h1>
+<p>Job production and dispatch logic extracted from the central evolution scheduler.</p>
+<p>The <code>JobScheduler</code> class keeps all concerns related to <strong>how many</strong> jobs can be
+scheduled, <strong>which</strong> jobs should be dispatched next, and <strong>when</strong> they are
+submitted to the Dramatiq worker queue.</p>
+<h2 id="jobscheduler">JobScheduler<a class="headerlink" href="#jobscheduler" title="Permanent link">&para;</a></h2>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">loreley.scheduler.job_scheduler</span><span class="w"> </span><span class="kn">import</span> <span class="n">JobScheduler</span>
+</code></pre></div>
+
 <ul>
-<li>
-<p><strong><code>build_redis_broker(settings: Settings | None = None) -&gt; RedisBroker</code></strong><br />
-  Constructs a <code>RedisBroker</code> instance from the <code>Settings</code> object. It prefers <code>TASKS_REDIS_URL</code> when set and otherwise falls back to the individual <code>TASKS_REDIS_HOST</code>, <code>TASKS_REDIS_PORT</code>, <code>TASKS_REDIS_DB</code>, and <code>TASKS_REDIS_PASSWORD</code> fields, always attaching <code>TASKS_REDIS_NAMESPACE</code> as the Dramatiq namespace.</p>
+<li><strong>Purpose</strong>: encapsulate database interaction and Dramatiq calls for
+  scheduling and dispatching evolution jobs, so that the main
+  <code>EvolutionScheduler</code> can focus on orchestration.</li>
+<li><strong>Construction</strong>: created by <code>EvolutionScheduler</code> with:</li>
+<li>a shared <code>Settings</code> instance,</li>
+<li>the interactive <code>rich</code> console,</li>
+<li>the experiment-scoped <code>MapElitesSampler</code>,</li>
+<li>the current <code>experiment_id</code>.</li>
+</ul>
+<h3 id="measuring-unfinished-work">Measuring unfinished work<a class="headerlink" href="#measuring-unfinished-work" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong><code>count_unfinished_jobs()</code></strong>:</li>
+<li>Counts all jobs whose status is one of <code>PENDING</code>, <code>QUEUED</code>, or <code>RUNNING</code>.</li>
+<li>Used by the main scheduler loop to decide how much new work (if any) can
+    safely be created this tick.</li>
+</ul>
+<h3 id="scheduling-new-jobs">Scheduling new jobs<a class="headerlink" href="#scheduling-new-jobs" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong><code>schedule_jobs(unfinished_jobs: int, *, total_scheduled_jobs: int) -&gt; int</code></strong>:</li>
+<li>Enforces <code>SCHEDULER_MAX_UNFINISHED_JOBS</code> as an upper bound across
+    <code>PENDING</code>/<code>QUEUED</code>/<code>RUNNING</code> jobs.</li>
+<li>Respects the optional <code>SCHEDULER_MAX_TOTAL_JOBS</code> global cap using the
+    <code>total_scheduled_jobs</code> counter maintained by <code>EvolutionScheduler</code>.</li>
+<li>Requests new work from MAP-Elites via
+    <code>MapElitesSampler.schedule_job(experiment_id=experiment_id)</code>.</li>
+<li>Immediately transitions any newly created jobs to <code>QUEUED</code> and pushes them
+    to Dramatiq using the private <code>_enqueue_jobs(...)</code> helper.</li>
+<li>Returns the number of jobs scheduled during this tick.</li>
+</ul>
+<p>If the sampler indicates that no archive cell currently wants new work, the
+console logs a short <code>[yellow]Sampler returned no job[/]</code> message and no rows
+are touched in the database.</p>
+<h3 id="dispatching-pending-jobs">Dispatching pending jobs<a class="headerlink" href="#dispatching-pending-jobs" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong><code>dispatch_pending_jobs() -&gt; int</code></strong>:</li>
+<li>Selects up to <code>SCHEDULER_DISPATCH_BATCH_SIZE</code> jobs with status <code>PENDING</code>,
+    ordered by:<ol>
+<li><code>priority</code> (descending),</li>
+<li><code>scheduled_at</code> (ascending),</li>
+<li><code>created_at</code> (ascending),
+so that higher-priority and older jobs drain first.</li>
+</ol>
 </li>
-<li>
-<p><strong><code>setup_broker(settings: Settings | None = None) -&gt; RedisBroker</code></strong><br />
-  Wraps <code>build_redis_broker()</code> and calls <code>dramatiq.set_broker(...)</code> so that Dramatiq actors use the configured Redis broker. It logs a sanitised representation of the Redis connection (scheme, host, port, and DB index) along with the logical namespace, explicitly avoiding logging any credentials from <code>TASKS_REDIS_URL</code> or <code>TASKS_REDIS_PASSWORD</code>.</p>
-</li>
-<li>
-<p><strong><code>broker</code></strong><br />
-  A module-level <code>RedisBroker</code> instance created eagerly by calling <code>setup_broker()</code> at import time. Importing <code>loreley.tasks.broker</code> is therefore sufficient to configure the global Dramatiq broker; this side effect is relied on by <code>loreley.tasks.workers</code> when running worker processes.</p>
-</li>
-</ul></div>
+<li>Uses a <code>SELECT ... FOR UPDATE</code> window to safely promote eligible jobs to
+    <code>QUEUED</code> and stamp their <code>scheduled_at</code> time.</li>
+<li>Sends each queued job id to the Dramatiq <code>run_evolution_job</code> actor.</li>
+<li>Returns the number of jobs successfully dispatched this tick.</li>
+</ul>
+<p>Any failures while enqueuing individual jobs are logged with Loguru and
+surfaced on the Rich console, but do not prevent other jobs from being
+dispatched.</p>
+<h2 id="interaction-with-evolutionscheduler">Interaction with EvolutionScheduler<a class="headerlink" href="#interaction-with-evolutionscheduler" title="Permanent link">&para;</a></h2>
+<p><code>EvolutionScheduler.tick()</code> calls into <code>JobScheduler</code> as follows:</p>
+<ol>
+<li><code>count_unfinished_jobs()</code> to measure current load.</li>
+<li><code>schedule_jobs(...)</code> to request new work from MAP-Elites, honouring both
+   capacity and global job limits.</li>
+<li><code>dispatch_pending_jobs()</code> to move ready jobs into the worker queue.</li>
+</ol>
+<p>This separation keeps the scheduler loop simple and makes it easier to test
+and evolve the job pipeline independently of the rest of the orchestration
+logic.</p></div>
             </div>
         </div>
 

@@ -8,7 +8,7 @@
         
         
         <link rel="shortcut icon" href="../../../img/favicon.ico">
-        <title>Scheduler - Loreley</title>
+        <title>Overview - Loreley</title>
         <link href="../../../css/bootstrap.min.css" rel="stylesheet">
         <link href="../../../css/fontawesome.min.css" rel="stylesheet">
         <link href="../../../css/brands.min.css" rel="stylesheet">
@@ -45,9 +45,23 @@
     <a href="../../config/" class="dropdown-item">Configuration</a>
 </li>
                                     
+  <li class="dropdown-submenu">
+    <a href="#" class="dropdown-item">Scheduler</a>
+    <ul class="dropdown-menu">
+            
 <li>
-    <a href="./" class="dropdown-item active" aria-current="page">Scheduler</a>
+    <a href="./" class="dropdown-item active" aria-current="page">Overview</a>
 </li>
+            
+<li>
+    <a href="../job_scheduler/" class="dropdown-item">Job scheduling</a>
+</li>
+            
+<li>
+    <a href="../ingestion/" class="dropdown-item">Ingestion</a>
+</li>
+    </ul>
+  </li>
                                     
   <li class="dropdown-submenu">
     <a href="#" class="dropdown-item">Database</a>
@@ -177,7 +191,7 @@
                                 </a>
                             </li>
                             <li class="nav-item">
-                                <a rel="next" href="../../db/base/" class="nav-link">
+                                <a rel="next" href="../job_scheduler/" class="nav-link">
                                     Next <i class="fa fa-arrow-right"></i>
                                 </a>
                             </li>
@@ -225,14 +239,21 @@
 <h2 id="evolutionscheduler">EvolutionScheduler<a class="headerlink" href="#evolutionscheduler" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Purpose</strong>: continuously monitors unfinished jobs (<code>pending</code>, <code>queued</code>, <code>running</code>), schedules new work from the MAP-Elites archive when capacity allows, dispatches pending jobs to the Dramatiq <code>run_evolution_job</code> actor, and backfills the archive with freshly evaluated commits.</li>
-<li><strong>Construction</strong>: <code>EvolutionScheduler(settings=None)</code> loads <code>loreley.config.Settings</code>, resolves the target repository root (preferring <code>SCHEDULER_REPO_ROOT</code> and falling back to <code>WORKER_REPO_WORKTREE</code>), initialises a <code>git</code> repository handle, derives a <code>Repository</code>/<code>Experiment</code> pair via <code>loreley.core.experiments.get_or_create_experiment()</code>, and wires <code>MapElitesManager</code> (scoped to that <code>experiment_id</code>) plus <code>MapElitesSampler</code> with the same settings.</li>
+<li><strong>Construction</strong>: <code>EvolutionScheduler(settings=None)</code> loads <code>loreley.config.Settings</code>, resolves the target repository root (preferring <code>SCHEDULER_REPO_ROOT</code> and falling back to <code>WORKER_REPO_WORKTREE</code>), initialises a <code>git</code> repository handle, derives a <code>Repository</code>/<code>Experiment</code> pair via <code>loreley.core.experiments.get_or_create_experiment()</code>, wires <code>MapElitesManager</code> (scoped to that <code>experiment_id</code>) plus <code>MapElitesSampler</code> with the same settings, and, when <code>MAPELITES_EXPERIMENT_ROOT_COMMIT</code> is set, delegates root-commit registration and ingestion to <code>loreley.scheduler.ingestion.MapElitesIngestion</code>.</li>
 <li><strong>Lifecycle</strong>:</li>
 <li><code>tick()</code> runs the ingest → dispatch → measure → schedule pipeline and logs a concise summary for observability. Each stage is isolated so failures are logged and do not crash the loop.</li>
 <li><code>run_forever()</code> installs <code>SIGINT</code>/<code>SIGTERM</code> handlers, runs <code>tick()</code> at the configured poll interval, and keeps looping until interrupted.</li>
 <li><code>--once</code> CLI flag runs a single tick and exits, useful for cron jobs or tests.</li>
-<li><strong>Job scheduling</strong>: enforces <code>SCHEDULER_MAX_UNFINISHED_JOBS</code> as an upper bound. When capacity exists it calls <code>MapElitesSampler.schedule_job(experiment_id=experiment.id)</code>, immediately flips new rows to <code>QUEUED</code>, and pushes them to Dramatiq, ensuring that all scheduled jobs are tagged with the same experiment as the running scheduler instance.</li>
-<li><strong>Dispatching</strong>: batches of pending jobs (ordered by priority, then schedule time) are sent to Dramatiq according to <code>SCHEDULER_DISPATCH_BATCH_SIZE</code>, ensuring legacy jobs drain before creating more.</li>
-<li><strong>MAP-Elites maintenance</strong>: after jobs succeed, the scheduler gathers their resulting commit hash, fetches the diff from git, and calls <code>MapElitesManager.ingest(...)</code>. Ingestion results (status, delta, placement) are stored back into each job's JSON payload under <code>payload["ingestion"]["map_elites"]</code> for auditability and retry tracking, and ingestion metadata includes the <code>experiment_id</code>/<code>repository_id</code> associated with the originating job.</li>
+<li><strong>Job scheduling &amp; dispatching</strong>: the scheduler delegates all capacity calculations, MAP-Elites sampling, and Dramatiq job submission to <code>loreley.scheduler.job_scheduler.JobScheduler</code>, which:</li>
+<li>counts unfinished jobs in the database,</li>
+<li>enforces <code>SCHEDULER_MAX_UNFINISHED_JOBS</code> and the optional <code>SCHEDULER_MAX_TOTAL_JOBS</code> cap,</li>
+<li>calls <code>MapElitesSampler.schedule_job(experiment_id=experiment.id)</code> to produce new work, and</li>
+<li>marks rows as <code>QUEUED</code> and sends them to the <code>run_evolution_job</code> actor in priority order.</li>
+<li><strong>MAP-Elites maintenance</strong>: ingestion of succeeded jobs is handled by <code>loreley.scheduler.ingestion.MapElitesIngestion</code>, which:</li>
+<li>scans for <code>SUCCEEDED</code> jobs that have not yet been fully ingested,</li>
+<li>extracts their <code>result.commit_hash</code>, fetches the corresponding git commit, and computes per-file change counts,</li>
+<li>calls <code>MapElitesManager.ingest(...)</code> with metrics and contextual metadata, and</li>
+<li>writes a detailed ingestion status block back under <code>payload["ingestion"]["map_elites"]</code> (including attempts, delta, placement, and any error messages).</li>
 </ul>
 <h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
 <p>The scheduler consumes the following <code>Settings</code> fields (all exposed as environment variables):</p>
@@ -243,6 +264,7 @@
 <li><code>SCHEDULER_SCHEDULE_BATCH_SIZE</code>: maximum number of new jobs sampled from MAP-Elites per tick (bounded by the unused capacity).</li>
 <li><code>SCHEDULER_DISPATCH_BATCH_SIZE</code>: number of pending jobs promoted to <code>QUEUED</code> and sent to Dramatiq per tick.</li>
 <li><code>SCHEDULER_INGEST_BATCH_SIZE</code>: number of newly succeeded jobs ingested into MAP-Elites per tick.</li>
+<li><code>MAPELITES_EXPERIMENT_ROOT_COMMIT</code>: optional git commit hash used as the logical root for the current experiment. When set, the scheduler records a <code>CommitMetadata</code> row (if one does not already exist) and ingests that commit into each known MAP-Elites island archive so that the first scheduled jobs have a stable baseline to branch from.</li>
 </ul>
 <h2 id="cli-usage">CLI usage<a class="headerlink" href="#cli-usage" title="Permanent link">&para;</a></h2>
 <div class="codehilite"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>loreley.scheduler.main<span class="w">        </span><span class="c1"># continuous loop</span>
@@ -251,7 +273,12 @@ uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </sp
 
 <p>For details about the dedicated CLI wrapper script (including logging setup and
 recommended usage), see <code>docs/script/run_scheduler.md</code>.</p>
-<p>Running the module imports <code>loreley.tasks.workers</code>, so the Dramatiq broker is configured before the first dispatch. Rich console output summarises each tick, while Loguru records detailed diagnostics for ingestion, scheduling, and dispatching. This makes the scheduler easy to supervise either interactively or under a process manager. </p></div>
+<p>Running the module imports <code>loreley.tasks.workers</code>, so the Dramatiq broker is configured before the first dispatch. Rich console output summarises each tick, while Loguru records detailed diagnostics for ingestion, scheduling, and dispatching via the dedicated <code>job_scheduler</code> and <code>ingestion</code> helper classes. This makes the scheduler easy to supervise either interactively or under a process manager. </p>
+<p>For more detailed information about these helper modules, see:</p>
+<ul>
+<li><code>loreley.scheduler.job_scheduler.JobScheduler</code> — job production and dispatch pipeline.</li>
+<li><code>loreley.scheduler.ingestion.MapElitesIngestion</code> — result ingestion, root-commit initialisation, and MAP-Elites maintenance.</li>
+</ul></div>
             </div>
         </div>
 
