@@ -7,53 +7,32 @@ import signal
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
-from uuid import UUID
 
 from git import Repo
 from git.exc import BadName, GitCommandError, InvalidGitRepositoryError, NoSuchPathError
 from loguru import logger
 from rich.console import Console
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from loreley.config import Settings, get_settings
 from loreley.core.experiments import ExperimentError, get_or_create_experiment
 from loreley.core.map_elites.map_elites import MapElitesManager
-from loreley.core.map_elites.preprocess import ChangedFile
-from loreley.core.map_elites.sampler import MapElitesSampler, ScheduledSamplerJob
+from loreley.core.map_elites.sampler import MapElitesSampler
 from loreley.db.base import session_scope
-from loreley.db.models import CommitMetadata, EvolutionJob, JobStatus, MapElitesState, Metric
-from loreley.tasks.workers import run_evolution_job
+from loreley.db.models import CommitMetadata, Metric
+from loreley.scheduler.ingestion import MapElitesIngestion
+from loreley.scheduler.job_scheduler import JobScheduler
 
 console = Console()
 log = logger.bind(module="scheduler.main")
 
 __all__ = ["EvolutionScheduler", "main"]
 
-_UNFINISHED_STATUSES = (
-    JobStatus.PENDING,
-    JobStatus.QUEUED,
-    JobStatus.RUNNING,
-)
-
 
 class SchedulerError(RuntimeError):
     """Raised when the scheduler cannot continue."""
-
-
-@dataclass(slots=True, frozen=True)
-class JobSnapshot:
-    """Immutable view of a job that completed and awaits ingestion."""
-
-    job_id: UUID
-    base_commit_hash: str | None
-    island_id: str | None
-    experiment_id: UUID | None
-    repository_id: UUID | None
-    payload: dict[str, Any]
-    completed_at: datetime | None
 
 
 class EvolutionScheduler:
@@ -78,6 +57,21 @@ class EvolutionScheduler:
             experiment_id=self.experiment.id,
         )
         self.sampler = MapElitesSampler(manager=self.manager, settings=self.settings)
+        self.job_scheduler = JobScheduler(
+            settings=self.settings,
+            console=self.console,
+            sampler=self.sampler,
+            experiment_id=self.experiment.id,
+        )
+        self.ingestion = MapElitesIngestion(
+            settings=self.settings,
+            console=self.console,
+            repo_root=self.repo_root,
+            repo=self._repo,
+            manager=self.manager,
+            experiment=self.experiment,
+            repository=self.repository,
+        )
         self._stop_requested = False
         self._total_scheduled_jobs = 0
 
@@ -85,7 +79,7 @@ class EvolutionScheduler:
         # archive and database both contain a stable starting point before any
         # evolution jobs run.
         if self._root_commit_hash:
-            self._initialise_root_commit(self._root_commit_hash)
+            self.ingestion.initialise_root_commit(self._root_commit_hash)
 
     # Public API ------------------------------------------------------------
 
@@ -122,12 +116,15 @@ class EvolutionScheduler:
         """Execute a full scheduler cycle."""
 
         stats: dict[str, int] = {}
-        stats["ingested"] = self._run_stage("ingest", self._ingest_completed_jobs)
-        stats["dispatched"] = self._run_stage("dispatch", self._dispatch_pending_jobs)
-        unfinished = self._run_stage("measure", self._count_unfinished_jobs)
+        stats["ingested"] = self._run_stage("ingest", self.ingestion.ingest_completed_jobs)
+        stats["dispatched"] = self._run_stage("dispatch", self.job_scheduler.dispatch_pending_jobs)
+        unfinished = self._run_stage("measure", self.job_scheduler.count_unfinished_jobs)
         stats["scheduled"] = self._run_stage(
             "schedule",
-            lambda: self._schedule_jobs(unfinished),
+            lambda: self.job_scheduler.schedule_jobs(
+                unfinished_jobs=unfinished,
+                total_scheduled_jobs=self._total_scheduled_jobs,
+            ),
         )
         self._total_scheduled_jobs += stats["scheduled"]
         stats["unfinished"] = unfinished + stats["scheduled"]
@@ -180,343 +177,6 @@ class EvolutionScheduler:
             log.exception("Scheduler stage {} failed: {}", label, exc)
             return 0
 
-    # Scheduling ------------------------------------------------------------
-
-    def _count_unfinished_jobs(self) -> int:
-        with session_scope() as session:
-            stmt = (
-                select(func.count(EvolutionJob.id))
-                .where(EvolutionJob.status.in_(_UNFINISHED_STATUSES))
-            )
-            return int(session.execute(stmt).scalar_one())
-
-    def _schedule_jobs(self, unfinished_jobs: int) -> int:
-        max_jobs = max(0, int(self.settings.scheduler_max_unfinished_jobs))
-        if max_jobs == 0:
-            return 0
-        capacity = max(0, max_jobs - unfinished_jobs)
-        if capacity <= 0:
-            return 0
-        batch = max(1, int(self.settings.scheduler_schedule_batch_size))
-        target = min(capacity, batch)
-
-        max_total = getattr(self.settings, "scheduler_max_total_jobs", None)
-        if max_total is not None and max_total > 0:
-            remaining_total = max_total - self._total_scheduled_jobs
-            if remaining_total <= 0:
-                self.console.log(
-                    "[yellow]Scheduler global job limit reached; no new jobs will be scheduled[/] "
-                    f"limit={max_total}",
-                )
-                log.info(
-                    "Global scheduler job limit reached: max_total_jobs={} (total_scheduled={})",
-                    max_total,
-                    self._total_scheduled_jobs,
-                )
-                return 0
-            target = min(target, remaining_total)
-
-        scheduled_ids: list[UUID] = []
-        for _ in range(target):
-            job = self._schedule_single_job()
-            if not job:
-                break
-            scheduled_ids.append(job.job_id)
-        if scheduled_ids:
-            self._enqueue_jobs(scheduled_ids)
-        return len(scheduled_ids)
-
-    def _schedule_single_job(self) -> ScheduledSamplerJob | None:
-        try:
-            scheduled = self.sampler.schedule_job(experiment_id=self.experiment.id)
-        except Exception as exc:  # pragma: no cover - defensive
-            self.console.log(f"[bold red]Sampler failed[/] reason={exc}")
-            log.exception("Sampler failed to create a job: {}", exc)
-            return None
-        if not scheduled:
-            self.console.log("[yellow]Sampler returned no job[/]")
-            return None
-        self.console.log(
-            f"[green]Scheduled job[/] id={scheduled.job_id} island={scheduled.island_id} "
-            f"base={scheduled.base_commit_hash}",
-        )
-        return scheduled
-
-    def _dispatch_pending_jobs(self) -> int:
-        batch = max(0, int(self.settings.scheduler_dispatch_batch_size))
-        if batch == 0:
-            return 0
-        pending = self._fetch_pending_job_ids(limit=batch)
-        if not pending:
-            return 0
-        ready = self._mark_jobs_queued(pending)
-        dispatched = 0
-        for job_id in ready:
-            try:
-                run_evolution_job.send(str(job_id))
-                dispatched += 1
-            except Exception as exc:  # pragma: no cover - defensive
-                self.console.log(
-                    f"[bold red]Failed to enqueue job[/] id={job_id} reason={exc}",
-                )
-                log.exception("Failed to enqueue job {}: {}", job_id, exc)
-        if dispatched:
-            self.console.log(f"[cyan]Dispatched {dispatched} job(s) to Dramatiq[/]")
-        return dispatched
-
-    def _fetch_pending_job_ids(self, *, limit: int) -> list[UUID]:
-        with session_scope() as session:
-            stmt = (
-                select(EvolutionJob.id)
-                .where(EvolutionJob.status == JobStatus.PENDING)
-                .order_by(
-                    EvolutionJob.priority.desc(),
-                    EvolutionJob.scheduled_at.asc(),
-                    EvolutionJob.created_at.asc(),
-                )
-                .limit(limit)
-            )
-            return list(session.execute(stmt).scalars())
-
-    def _mark_jobs_queued(self, job_ids: Sequence[UUID]) -> list[UUID]:
-        ready: list[UUID] = []
-        if not job_ids:
-            return ready
-        now = datetime.now(timezone.utc)
-        with session_scope() as session:
-            stmt = (
-                select(EvolutionJob)
-                .where(EvolutionJob.id.in_(job_ids))
-                .with_for_update()
-            )
-            for job in session.execute(stmt).scalars():
-                if job.status != JobStatus.PENDING:
-                    continue
-                job.status = JobStatus.QUEUED
-                job.scheduled_at = job.scheduled_at or now
-                ready.append(job.id)
-        return ready
-
-    def _enqueue_jobs(self, job_ids: Sequence[UUID]) -> None:
-        if not job_ids:
-            return
-        queued = self._mark_jobs_queued(job_ids)
-        for job_id in queued:
-            try:
-                run_evolution_job.send(str(job_id))
-                self.console.log(
-                    f"[bold green]Queued job[/] id={job_id}",
-                )
-            except Exception as exc:  # pragma: no cover - defensive
-                self.console.log(
-                    f"[bold red]Failed to enqueue job[/] id={job_id} reason={exc}",
-                )
-                log.exception("Failed to enqueue scheduled job {}: {}", job_id, exc)
-
-    # Ingestion -------------------------------------------------------------
-
-    def _ingest_completed_jobs(self) -> int:
-        batch = max(0, int(self.settings.scheduler_ingest_batch_size))
-        if batch == 0:
-            return 0
-        snapshots = self._jobs_requiring_ingestion(limit=batch)
-        ingested = 0
-        for snapshot in snapshots:
-            if self._ingest_snapshot(snapshot):
-                ingested += 1
-        return ingested
-
-    def _jobs_requiring_ingestion(self, *, limit: int) -> list[JobSnapshot]:
-        batch_limit = max(limit * 4, 32)
-        snapshots: list[JobSnapshot] = []
-        with session_scope() as session:
-            stmt = (
-                select(EvolutionJob)
-                .where(EvolutionJob.status == JobStatus.SUCCEEDED)
-                .order_by(EvolutionJob.completed_at.asc())
-                .limit(batch_limit)
-            )
-            rows = list(session.execute(stmt).scalars())
-            for job in rows:
-                payload = self._coerce_payload(job.payload)
-                state = self._current_ingestion_state(payload)
-                status = state.get("status")
-                if status in {"succeeded", "skipped"}:
-                    continue
-                result = self._extract_result_block(payload)
-                commit_hash = (result.get("commit_hash") or "").strip()
-                if not commit_hash:
-                    continue
-
-                experiment_id = getattr(job, "experiment_id", None)
-                repository_id = None
-                experiment = getattr(job, "experiment", None)
-                if experiment is not None:
-                    repository_id = getattr(experiment, "repository_id", None)
-
-                snapshots.append(
-                    JobSnapshot(
-                        job_id=job.id,
-                        base_commit_hash=job.base_commit_hash,
-                        island_id=job.island_id,
-                        experiment_id=experiment_id,
-                        repository_id=repository_id,
-                        payload=payload,
-                        completed_at=job.completed_at,
-                    )
-                )
-                if len(snapshots) >= limit:
-                    break
-        return snapshots
-
-    def _ingest_snapshot(self, snapshot: JobSnapshot) -> bool:
-        result = self._extract_result_block(snapshot.payload)
-        commit_hash = (result.get("commit_hash") or "").strip()
-        if not commit_hash:
-            return False
-        try:
-            self._ensure_commit_available(commit_hash)
-        except SchedulerError as exc:
-            self._record_ingestion_state(
-                snapshot,
-                status="failed",
-                reason=str(exc),
-            )
-            return False
-        changed_files = self._collect_changed_files(commit_hash)
-        if not changed_files:
-            self._record_ingestion_state(
-                snapshot,
-                status="skipped",
-                reason="No changed files detected for commit.",
-            )
-            return False
-        metadata = self._build_ingestion_metadata(snapshot, result)
-        metrics = result.get("metrics") or []
-        try:
-            insertion = self.manager.ingest(
-                commit_hash=commit_hash,
-                changed_files=changed_files,
-                metrics=metrics,
-                island_id=snapshot.island_id,
-                repo_root=self.repo_root,
-                treeish=commit_hash,
-                metadata=metadata,
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            self._record_ingestion_state(
-                snapshot,
-                status="failed",
-                reason=str(exc),
-            )
-            self.console.log(
-                f"[bold red]MAP-Elites ingest failed[/] job={snapshot.job_id} reason={exc}",
-            )
-            log.exception("Failed to ingest commit {} for job {}: {}", commit_hash, snapshot.job_id, exc)
-            return False
-        if insertion.record:
-            self.console.log(
-                f"[green]Updated archive[/] job={snapshot.job_id} commit={commit_hash} "
-                f"cell={insertion.record.cell_index} Δ={insertion.delta:.4f}",
-            )
-        else:
-            self.console.log(
-                f"[yellow]Archive unchanged[/] job={snapshot.job_id} commit={commit_hash} status={insertion.status}",
-            )
-        state_payload = {
-            "status": "succeeded" if insertion.inserted else "skipped",
-            "delta": insertion.delta,
-            "status_code": insertion.status,
-            "message": insertion.message,
-            "record": self._record_to_payload(insertion.record),
-        }
-        self._record_ingestion_state(snapshot, **state_payload)
-        return bool(insertion.record)
-
-    def _record_ingestion_state(
-        self,
-        snapshot: JobSnapshot,
-        *,
-        status: str,
-        reason: str | None = None,
-        delta: float | None = None,
-        status_code: int | None = None,
-        message: str | None = None,
-        record: Mapping[str, Any] | None = None,
-    ) -> None:
-        payload = snapshot.payload
-        state = self._current_ingestion_state(payload)
-        state["attempts"] = int(state.get("attempts", 0)) + 1
-        state["status"] = status
-        state["last_attempt_at"] = self._now_iso()
-        state["reason"] = reason
-        state["delta"] = delta
-        state["status_code"] = status_code
-        state["message"] = message
-        if record is not None:
-            state["record"] = dict(record)
-        payload.setdefault("ingestion", {})["map_elites"] = {k: v for k, v in state.items() if v is not None}
-        self._persist_payload(snapshot.job_id, payload)
-
-    def _persist_payload(self, job_id: UUID, payload: Mapping[str, Any]) -> None:
-        with session_scope() as session:
-            job = session.get(EvolutionJob, job_id)
-            if not job:
-                return
-            job.payload = dict(payload)
-
-    def _build_ingestion_metadata(
-        self,
-        snapshot: JobSnapshot,
-        result: Mapping[str, Any],
-    ) -> dict[str, Any]:
-        context = {
-            "goal": snapshot.payload.get("goal"),
-            "constraints": snapshot.payload.get("constraints"),
-            "acceptance_criteria": snapshot.payload.get("acceptance_criteria"),
-            "tags": snapshot.payload.get("tags"),
-            "notes": snapshot.payload.get("notes"),
-        }
-        return {
-            "job": {
-                "id": str(snapshot.job_id),
-                "base_commit": snapshot.base_commit_hash,
-                "island_id": snapshot.island_id,
-                "experiment_id": str(snapshot.experiment_id) if snapshot.experiment_id else None,
-                "repository_id": str(snapshot.repository_id) if snapshot.repository_id else None,
-                "completed_at": snapshot.completed_at.isoformat() if snapshot.completed_at else None,
-            },
-            "context": context,
-            "result": {
-                "plan_summary": result.get("plan_summary"),
-                "evaluation_summary": result.get("evaluation_summary"),
-                "tests_executed": result.get("tests_executed"),
-                "tests_recommended": result.get("tests_recommended"),
-            },
-        }
-
-    def _record_to_payload(self, record: Any) -> dict[str, Any] | None:
-        if record is None:
-            return None
-        return {
-            "commit_hash": record.commit_hash,
-            "cell_index": record.cell_index,
-            "fitness": record.fitness,
-            "island_id": record.island_id,
-            "timestamp": record.timestamp,
-        }
-
-    def _current_ingestion_state(self, payload: Mapping[str, Any]) -> dict[str, Any]:
-        ingestion = payload.get("ingestion") or {}
-        state = ingestion.get("map_elites") or {}
-        return dict(state)
-
-    def _extract_result_block(self, payload: Mapping[str, Any]) -> dict[str, Any]:
-        result = payload.get("result")
-        if isinstance(result, Mapping):
-            return dict(result)
-        return {}
-
     # Git helpers -----------------------------------------------------------
 
     def _resolve_repo_root(self) -> Path:
@@ -545,187 +205,6 @@ class EvolutionScheduler:
             raise SchedulerError(f"Cannot fetch commit {commit_hash}: {exc}") from exc
         except BadName as exc:
             raise SchedulerError(f"Commit {commit_hash} not found after fetch.") from exc
-
-    def _collect_changed_files(self, commit_hash: str) -> list[ChangedFile]:
-        commit = self._repo.commit(commit_hash)
-        stats = commit.stats
-        files = stats.files or {}
-        changed: list[ChangedFile] = []
-        for path, info in files.items():
-            change_count = int(info.get("lines") or (info.get("insertions", 0) + info.get("deletions", 0)) or 1)
-            changed.append(ChangedFile(path=Path(path), change_count=change_count))
-        return changed
-
-    # Root commit initialisation --------------------------------------------
-
-    def _initialise_root_commit(self, commit_hash: str) -> None:
-        """Ensure the configured root commit is present in DB and archives.
-
-        This helper is idempotent and safe to call on every scheduler startup.
-        Failures are logged but do not prevent the scheduler from running.
-        """
-
-        try:
-            self._ensure_commit_available(commit_hash)
-        except SchedulerError as exc:
-            self.console.log(
-                f"[bold red]Failed to initialise root commit[/] commit={commit_hash} reason={exc}",
-            )
-            log.error("Failed to initialise root commit {}: {}", commit_hash, exc)
-            return
-
-        try:
-            self._ensure_root_commit_metadata(commit_hash)
-            self._ensure_root_commit_ingested(commit_hash)
-        except Exception as exc:  # pragma: no cover - defensive
-            self.console.log(
-                f"[bold red]Root commit initialisation failed[/] commit={commit_hash} reason={exc}",
-            )
-            log.exception("Root commit initialisation failed for {}: {}", commit_hash, exc)
-
-    def _ensure_root_commit_metadata(self, commit_hash: str) -> None:
-        """Create or update CommitMetadata for the root commit."""
-
-        git_commit = self._repo.commit(commit_hash)
-        parent_hash = git_commit.parents[0].hexsha if git_commit.parents else None
-        author = getattr(getattr(git_commit, "author", None), "name", None)
-        message = getattr(git_commit, "message", None)
-
-        with session_scope() as session:
-            stmt = select(CommitMetadata).where(CommitMetadata.commit_hash == commit_hash)
-            existing = session.execute(stmt).scalar_one_or_none()
-            default_island = self.settings.mapelites_default_island_id or "main"
-
-            if existing:
-                updated = False
-                if existing.experiment_id is None and self.experiment is not None:
-                    existing.experiment_id = self.experiment.id
-                    updated = True
-                if existing.island_id is None:
-                    existing.island_id = default_island
-                    updated = True
-                if updated:
-                    self.console.log(
-                        "[cyan]Updated root commit metadata[/] commit={} experiment={} island={}".format(
-                            commit_hash,
-                            existing.experiment_id,
-                            existing.island_id,
-                        ),
-                    )
-                return
-
-            extra_context: dict[str, Any] = {
-                "root_commit": True,
-                "experiment": {
-                    "id": str(self.experiment.id),
-                    "repository_id": str(self.repository.id),
-                    "name": getattr(self.experiment, "name", None),
-                    "config_hash": getattr(self.experiment, "config_hash", None),
-                    "repository_slug": getattr(self.repository, "slug", None),
-                },
-            }
-
-            metadata = CommitMetadata(
-                commit_hash=commit_hash,
-                parent_commit_hash=parent_hash,
-                island_id=default_island,
-                experiment_id=self.experiment.id,
-                author=author,
-                message=message,
-                evaluation_summary=None,
-                tags=[],
-                extra_context=extra_context,
-            )
-            session.add(metadata)
-            self.console.log(
-                "[bold green]Registered root commit[/] commit={} experiment={} island={}".format(
-                    commit_hash,
-                    self.experiment.id,
-                    default_island,
-                ),
-            )
-            log.info(
-                "Registered root commit {} for experiment {} on island {}",
-                commit_hash,
-                self.experiment.id,
-                default_island,
-            )
-
-    def _ensure_root_commit_ingested(self, commit_hash: str) -> None:
-        """Insert the root commit into each known island's MAP-Elites archive."""
-
-        # Discover islands that already have persisted state for this experiment.
-        islands: set[str] = set()
-        with session_scope() as session:
-            stmt = select(MapElitesState.island_id).where(
-                MapElitesState.experiment_id == self.experiment.id,
-            )
-            islands.update(session.scalars(stmt).all())
-
-        default_island = self.settings.mapelites_default_island_id or "main"
-        islands.add(default_island)
-
-        for island_id in sorted(islands):
-            records = self.manager.get_records(island_id)
-            if any(record.commit_hash == commit_hash for record in records):
-                continue
-
-            changed_files = self._collect_changed_files(commit_hash)
-            if not changed_files:
-                self.console.log(
-                    "[yellow]Skipping root commit ingestion; no changed files[/] commit={} island={}".format(
-                        commit_hash,
-                        island_id,
-                    ),
-                )
-                continue
-
-            try:
-                insertion = self.manager.ingest(
-                    commit_hash=commit_hash,
-                    changed_files=changed_files,
-                    metrics=None,
-                    island_id=island_id,
-                    repo_root=self.repo_root,
-                    treeish=commit_hash,
-                    metadata={
-                        "root_commit": True,
-                        "experiment_id": str(self.experiment.id),
-                        "repository_id": str(self.repository.id),
-                        "island_id": island_id,
-                    },
-                )
-            except Exception as exc:  # pragma: no cover - defensive
-                self.console.log(
-                    f"[bold red]Failed to ingest root commit[/] commit={commit_hash} island={island_id} reason={exc}",
-                )
-                log.exception(
-                    "Failed to ingest root commit {} for experiment {} island {}: {}",
-                    commit_hash,
-                    self.experiment.id,
-                    island_id,
-                    exc,
-                )
-                continue
-
-            if insertion.record:
-                self.console.log(
-                    "[green]Initialised root commit in archive[/] commit={} island={} cell={} Δ={:.4f}".format(
-                        commit_hash,
-                        island_id,
-                        insertion.record.cell_index,
-                        insertion.delta,
-                    ),
-                )
-            else:
-                self.console.log(
-                    "[yellow]Root commit did not improve archive[/] commit={} island={} status={}".format(
-                        commit_hash,
-                        island_id,
-                        insertion.status,
-                    ),
-                )
-
     # Best-branch helpers ----------------------------------------------------
 
     def _create_best_fitness_branch_if_possible(self) -> None:
@@ -932,19 +411,6 @@ class EvolutionScheduler:
         )
 
         return branch_name
-
-    # Misc helpers ----------------------------------------------------------
-
-    @staticmethod
-    def _coerce_payload(payload: Mapping[str, Any] | None) -> dict[str, Any]:
-        if not payload:
-            return {}
-        return dict(payload)
-
-    @staticmethod
-    def _now_iso() -> str:
-        return datetime.now(timezone.utc).isoformat()
-
 
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entrypoint."""
