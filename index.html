@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+    <head>
+        <meta charset="utf-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="description" content="Automated MAP-Elites system that evolves entire git repositories.">
+        
+        
+        <link rel="shortcut icon" href="img/favicon.ico">
+        <title>Loreley</title>
+        <link href="css/bootstrap.min.css" rel="stylesheet">
+        <link href="css/fontawesome.min.css" rel="stylesheet">
+        <link href="css/brands.min.css" rel="stylesheet">
+        <link href="css/solid.min.css" rel="stylesheet">
+        <link href="css/v4-font-face.min.css" rel="stylesheet">
+        <link href="css/base.css" rel="stylesheet">
+        <link id="hljs-light" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" >
+        <link id="hljs-dark" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github-dark.min.css" disabled>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+        <script>hljs.highlightAll();</script> 
+    </head>
+
+    <body class="homepage">
+        <div class="navbar fixed-top navbar-expand-lg navbar-dark bg-primary">
+            <div class="container">
+                <a class="navbar-brand" href=".">Loreley</a>
+                <!-- Expander button -->
+                <button type="button" class="navbar-toggler" data-bs-toggle="collapse" data-bs-target="#navbar-collapse" aria-controls="navbar-collapse" aria-expanded="false" aria-label="Toggle navigation">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+
+                <!-- Expanded navigation -->
+                <div id="navbar-collapse" class="navbar-collapse collapse">
+                        <!-- Main navigation -->
+                        <ul class="nav navbar-nav">
+                            <li class="nav-item">
+                                <a href="." class="nav-link active" aria-current="page">Home</a>
+                            </li>
+                            <li class="nav-item dropdown">
+                                <a href="#" class="nav-link dropdown-toggle" role="button" data-bs-toggle="dropdown"  aria-expanded="false">Loreley</a>
+                                <ul class="dropdown-menu">
+                                    
+<li>
+    <a href="loreley/config/" class="dropdown-item">Configuration</a>
+</li>
+                                    
+<li>
+    <a href="loreley/scheduler/main/" class="dropdown-item">Scheduler</a>
+</li>
+                                    
+  <li class="dropdown-submenu">
+    <a href="#" class="dropdown-item">Database</a>
+    <ul class="dropdown-menu">
+            
+<li>
+    <a href="loreley/db/base/" class="dropdown-item">Engine & sessions</a>
+</li>
+            
+<li>
+    <a href="loreley/db/models/" class="dropdown-item">Models</a>
+</li>
+    </ul>
+  </li>
+                                    
+  <li class="dropdown-submenu">
+    <a href="#" class="dropdown-item">MAP-Elites</a>
+    <ul class="dropdown-menu">
+            
+<li>
+    <a href="loreley/core/map-elites/map-elites/" class="dropdown-item">Overview</a>
+</li>
+            
+<li>
+    <a href="loreley/core/map-elites/preprocess/" class="dropdown-item">Preprocessing</a>
+</li>
+            
+<li>
+    <a href="loreley/core/map-elites/chunk/" class="dropdown-item">Chunking</a>
+</li>
+            
+<li>
+    <a href="loreley/core/map-elites/code_embedding/" class="dropdown-item">Code embeddings</a>
+</li>
+            
+<li>
+    <a href="loreley/core/map-elites/dimension_reduction/" class="dropdown-item">Dimensionality reduction</a>
+</li>
+            
+<li>
+    <a href="loreley/core/map-elites/sampler/" class="dropdown-item">Sampler</a>
+</li>
+            
+<li>
+    <a href="loreley/core/map-elites/snapshot/" class="dropdown-item">Snapshots</a>
+</li>
+            
+<li>
+    <a href="loreley/core/map-elites/summarization_embedding/" class="dropdown-item">Summary embeddings</a>
+</li>
+    </ul>
+  </li>
+                                    
+  <li class="dropdown-submenu">
+    <a href="#" class="dropdown-item">Worker pipeline</a>
+    <ul class="dropdown-menu">
+            
+<li>
+    <a href="loreley/core/worker/repository/" class="dropdown-item">Repository</a>
+</li>
+            
+<li>
+    <a href="loreley/core/worker/planning/" class="dropdown-item">Planning</a>
+</li>
+            
+<li>
+    <a href="loreley/core/worker/coding/" class="dropdown-item">Coding</a>
+</li>
+            
+<li>
+    <a href="loreley/core/worker/evaluator/" class="dropdown-item">Evaluation</a>
+</li>
+            
+<li>
+    <a href="loreley/core/worker/evolution/" class="dropdown-item">Evolution loop</a>
+</li>
+            
+<li>
+    <a href="loreley/core/worker/commit_summary/" class="dropdown-item">Commit summaries</a>
+</li>
+            
+<li>
+    <a href="loreley/core/worker/job_store/" class="dropdown-item">Job store</a>
+</li>
+    </ul>
+  </li>
+                                    
+  <li class="dropdown-submenu">
+    <a href="#" class="dropdown-item">Tasks</a>
+    <ul class="dropdown-menu">
+            
+<li>
+    <a href="loreley/tasks/broker/" class="dropdown-item">Broker</a>
+</li>
+            
+<li>
+    <a href="loreley/tasks/workers/" class="dropdown-item">Workers</a>
+</li>
+    </ul>
+  </li>
+                                </ul>
+                            </li>
+                            <li class="nav-item dropdown">
+                                <a href="#" class="nav-link dropdown-toggle" role="button" data-bs-toggle="dropdown"  aria-expanded="false">Operations</a>
+                                <ul class="dropdown-menu">
+                                    
+<li>
+    <a href="script/run_scheduler/" class="dropdown-item">Running the scheduler</a>
+</li>
+                                    
+<li>
+    <a href="script/run_worker/" class="dropdown-item">Running the worker</a>
+</li>
+                                </ul>
+                            </li>
+                        </ul>
+
+                    <ul class="nav navbar-nav ms-md-auto">
+                        <li class="nav-item">
+                            <a href="#" class="nav-link" data-bs-toggle="modal" data-bs-target="#mkdocs_search_modal">
+                                <i class="fa fa-search"></i> Search
+                            </a>
+                        </li>
+                            <li class="nav-item">
+                                <a rel="prev" class="nav-link disabled">
+                                    <i class="fa fa-arrow-left"></i> Previous
+                                </a>
+                            </li>
+                            <li class="nav-item">
+                                <a rel="next" href="loreley/config/" class="nav-link">
+                                    Next <i class="fa fa-arrow-right"></i>
+                                </a>
+                            </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="container">
+            <div class="row">
+                    <div class="col-md-3"><div class="navbar-expand-md bs-sidebar hidden-print affix" role="complementary">
+    <div class="navbar-header">
+        <button type="button" class="navbar-toggler collapsed" data-bs-toggle="collapse" data-bs-target="#toc-collapse" title="Table of Contents">
+            <span class="fa fa-angle-down"></span>
+        </button>
+    </div>
+
+    
+    <div id="toc-collapse" class="navbar-collapse collapse card bg-body-tertiary">
+        <ul class="nav flex-column">
+            
+            <li class="nav-item" data-bs-level="1"><a href="#loreley" class="nav-link">Loreley</a>
+              <ul class="nav flex-column">
+            <li class="nav-item" data-bs-level="2"><a href="#why-loreley" class="nav-link">Why Loreley?</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#architecture-at-a-glance" class="nav-link">Architecture at a Glance</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#getting-started" class="nav-link">Getting Started</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#documentation-map" class="nav-link">Documentation Map</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#next-steps" class="nav-link">Next Steps</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+              </ul>
+            </li>
+        </ul>
+    </div>
+</div></div>
+                    <div class="col-md-9" role="main">
+
+<h1 id="loreley">Loreley<a class="headerlink" href="#loreley" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p>Automated MAP-Elites for entire git repositories.</p>
+</blockquote>
+<p>Loreley is an automated MAP-Elites system that evolves whole git repositories instead of single files or scripts. It continuously samples promising commits, asks external agents to implement and evaluate them, and archives the best-performing variants so they can be reused later.</p>
+<p>If you are new to the project, start with the high‑level ideas below and then follow the links into the focused module guides under <code>docs/loreley</code> and <code>docs/script</code>.</p>
+<hr />
+<h2 id="why-loreley">Why Loreley?<a class="headerlink" href="#why-loreley" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Whole-repo evolution</strong> – each individual is a real git commit, so results remain debuggable and compatible with normal tooling.</li>
+<li><strong>Learned behaviour space</strong> – behaviour descriptors come from embeddings (optionally reduced with PCA) instead of hand‑picked heuristics.</li>
+<li><strong>Production-ready loop</strong> – a Dramatiq/Redis worker fleet, PostgreSQL archive, and central scheduler keep the system running indefinitely.</li>
+</ul>
+<hr />
+<h2 id="architecture-at-a-glance">Architecture at a Glance<a class="headerlink" href="#architecture-at-a-glance" title="Permanent link">&para;</a></h2>
+<p>Loreley is split into a few key areas:</p>
+<ul>
+<li><strong>Configuration</strong> – <code>loreley.config.Settings</code> centralises environment‑driven configuration for logging, database, Redis/Dramatiq, scheduler, worker repositories, and MAP‑Elites knobs.<br />
+  See: <a href="loreley/config/">Configuration</a></li>
+<li><strong>Database</strong> – <code>loreley.db</code> defines the SQLAlchemy engine/session helpers and ORM models for repositories, experiments, jobs, metrics, and archive state.<br />
+  See: <a href="loreley/db/base/">DB base</a>, <a href="loreley/db/models/">DB models</a></li>
+<li><strong>MAP-Elites core</strong> – <code>loreley.core.map_elites</code> handles preprocessing, chunking, embeddings, dimensionality reduction, archive management, sampling, and snapshots.<br />
+  See: <a href="loreley/core/map-elites/map-elites/">MAP‑Elites overview</a> and the linked sub‑pages below.</li>
+<li><strong>Worker pipeline</strong> – <code>loreley.core.worker</code> manages worktrees, planning, coding, evaluation, evolution commits, and commit summaries.<br />
+  See: worker module pages under <code>loreley/core/worker/</code>.</li>
+<li><strong>Scheduler</strong> – <code>loreley.scheduler.main.EvolutionScheduler</code> runs the ingest → dispatch → measure → schedule loop that keeps the archive and job store in sync.<br />
+  See: <a href="loreley/scheduler/main/">Scheduler</a></li>
+<li><strong>Tasks &amp; scripts</strong> – <code>loreley.tasks</code> exposes the Dramatiq broker and actors, while <code>script/run_scheduler.py</code> and <code>script/run_worker.py</code> are CLI wrappers.<br />
+  See: <a href="loreley/tasks/broker/">Tasks broker</a>, <a href="loreley/tasks/workers/">Tasks workers</a>, <a href="script/run_scheduler/">Running the scheduler</a>, <a href="script/run_worker/">Running the worker</a></li>
+</ul>
+<hr />
+<h2 id="getting-started">Getting Started<a class="headerlink" href="#getting-started" title="Permanent link">&para;</a></h2>
+<h3 id="1-requirements">1. Requirements<a class="headerlink" href="#1-requirements" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Python 3.11+</li>
+<li><a href="https://github.com/astral-sh/uv"><code>uv</code></a> for dependency management</li>
+<li>PostgreSQL and Redis</li>
+<li>Git (including worktrees; LFS optional)</li>
+</ul>
+<h3 id="2-install-dependencies">2. Install dependencies<a class="headerlink" href="#2-install-dependencies" title="Permanent link">&para;</a></h3>
+<div class="codehilite"><pre><span></span><code>git<span class="w"> </span>clone<span class="w"> </span>&lt;YOUR_FORK_OR_ORIGIN_URL&gt;<span class="w"> </span>loreley
+<span class="nb">cd</span><span class="w"> </span>loreley
+uv<span class="w"> </span>sync<span class="w">          </span><span class="c1"># install dependencies from pyproject.toml / uv.lock</span>
+</code></pre></div>
+
+<p>If you already have an environment, you can pin dependencies without creating a workspace:</p>
+<div class="codehilite"><pre><span></span><code>uv<span class="w"> </span>sync<span class="w"> </span>--no-workspace
+</code></pre></div>
+
+<h3 id="3-configure-loreley">3. Configure Loreley<a class="headerlink" href="#3-configure-loreley" title="Permanent link">&para;</a></h3>
+<p>All runtime configuration is provided via environment variables and loaded by <code>loreley.config.Settings</code>. Common examples:</p>
+<ul>
+<li><code>APP_NAME</code>, <code>ENVIRONMENT</code>, <code>LOG_LEVEL</code></li>
+<li><code>DATABASE_URL</code> (or individual <code>DB_*</code> fields)</li>
+<li><code>TASKS_REDIS_URL</code> / <code>TASKS_REDIS_HOST</code> / <code>TASKS_REDIS_PORT</code> / <code>TASKS_REDIS_DB</code> / <code>TASKS_REDIS_PASSWORD</code> / <code>TASKS_REDIS_NAMESPACE</code></li>
+<li><code>TASKS_QUEUE_NAME</code>, <code>TASKS_WORKER_MAX_RETRIES</code>, <code>TASKS_WORKER_TIME_LIMIT_SECONDS</code></li>
+<li><code>SCHEDULER_*</code> and <code>WORKER_REPO_*</code> settings for the scheduler and worker repositories</li>
+<li><code>MAPELITES_*</code> settings for preprocessing, embeddings, dimensionality reduction, bounds, archive, fitness, and sampling</li>
+</ul>
+<p>See <a href="loreley/config/">Configuration</a> for the exhaustive list.</p>
+<h3 id="4-run-the-scheduler">4. Run the scheduler<a class="headerlink" href="#4-run-the-scheduler" title="Permanent link">&para;</a></h3>
+<p>The scheduler drives ingestion, scheduling, dispatch, and archive maintenance:</p>
+<div class="codehilite"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_scheduler.py<span class="w">        </span><span class="c1"># continuous loop</span>
+uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_scheduler.py<span class="w"> </span>--once<span class="w"> </span><span class="c1"># single tick</span>
+</code></pre></div>
+
+<p>See <a href="script/run_scheduler/">Running the scheduler</a> and <a href="loreley/scheduler/main/">Scheduler internals</a> for more detail.</p>
+<h3 id="5-run-the-worker">5. Run the worker<a class="headerlink" href="#5-run-the-worker" title="Permanent link">&para;</a></h3>
+<p>A worker process consumes jobs from Dramatiq, applies planning/coding/evaluation, and pushes results back into the database:</p>
+<div class="codehilite"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_worker.py
+</code></pre></div>
+
+<p>See <a href="script/run_worker/">Running the worker</a> and the worker module pages under <code>loreley/core/worker/</code> for operational and implementation details.</p>
+<hr />
+<h2 id="documentation-map">Documentation Map<a class="headerlink" href="#documentation-map" title="Permanent link">&para;</a></h2>
+<p>Use this index as a quick map of the rest of the documentation:</p>
+<ul>
+<li><strong>Configuration</strong></li>
+<li><a href="loreley/config/">Global settings</a></li>
+<li><strong>Database</strong></li>
+<li><a href="loreley/db/base/">Engine and sessions</a></li>
+<li><a href="loreley/db/models/">ORM models</a></li>
+<li><strong>MAP-Elites core</strong></li>
+<li><a href="loreley/core/map-elites/map-elites/">Overview &amp; archive</a></li>
+<li><a href="loreley/core/map-elites/preprocess/">Preprocessing</a></li>
+<li><a href="loreley/core/map-elites/chunk/">Chunking</a></li>
+<li><a href="loreley/core/map-elites/code_embedding/">Code embeddings</a></li>
+<li><a href="loreley/core/map-elites/dimension_reduction/">Dimensionality reduction</a></li>
+<li><a href="loreley/core/map-elites/sampler/">Sampler</a></li>
+<li><a href="loreley/core/map-elites/snapshot/">Snapshots</a></li>
+<li><a href="loreley/core/map-elites/summarization_embedding/">Summary embeddings</a></li>
+<li><strong>Worker pipeline</strong></li>
+<li><a href="loreley/core/worker/planning/">Planning agent</a></li>
+<li><a href="loreley/core/worker/coding/">Coding agent</a></li>
+<li><a href="loreley/core/worker/evaluator/">Evaluator</a></li>
+<li><a href="loreley/core/worker/evolution/">Evolution loop</a></li>
+<li><a href="loreley/core/worker/commit_summary/">Commit summaries</a></li>
+<li><a href="loreley/core/worker/job_store/">Job store</a></li>
+<li><a href="loreley/core/worker/repository/">Worker repository</a></li>
+<li><strong>Scheduler &amp; tasks</strong></li>
+<li><a href="loreley/scheduler/main/">Scheduler</a></li>
+<li><a href="loreley/tasks/broker/">Tasks broker</a></li>
+<li><a href="loreley/tasks/workers/">Tasks workers</a></li>
+<li><strong>Operational scripts</strong></li>
+<li><a href="script/run_scheduler/">Run scheduler script</a></li>
+<li><a href="script/run_worker/">Run worker script</a></li>
+</ul>
+<hr />
+<h2 id="next-steps">Next Steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Start by configuring a small test repository and running the scheduler/worker pair locally.</li>
+<li>Once the basic loop works, plug in a custom evaluator (for example, based on the circle packing example) and tune <code>MAPELITES_*</code> settings.</li>
+<li>When you are ready for production, point the scheduler at a long‑lived repository clone and supervise both processes with your preferred process manager.</li>
+</ul></div>
+            </div>
+        </div>
+
+        <footer class="col-md-12">
+            <hr>
+            <p>Documentation built with <a href="https://www.mkdocs.org/">MkDocs</a>.</p>
+        </footer>
+        <script src="js/bootstrap.bundle.min.js"></script>
+        <script>
+            var base_url = ".",
+                shortcuts = {"help": 191, "next": 78, "previous": 80, "search": 83};
+        </script>
+        <script src="js/base.js"></script>
+        <script src="search/main.js"></script>
+
+        <div class="modal" id="mkdocs_search_modal" tabindex="-1" role="dialog" aria-labelledby="searchModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h4 class="modal-title" id="searchModalLabel">Search</h4>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>From here you can search these documents. Enter your search terms below.</p>
+                <form>
+                    <div class="form-group">
+                        <input type="search" class="form-control" placeholder="Search..." id="mkdocs-search-query" title="Type search term here">
+                    </div>
+                </form>
+                <div id="mkdocs-search-results" data-no-results-text="No results found"></div>
+            </div>
+            <div class="modal-footer">
+            </div>
+        </div>
+    </div>
+</div><div class="modal" id="mkdocs_keyboard_modal" tabindex="-1" role="dialog" aria-labelledby="keyboardModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h4 class="modal-title" id="keyboardModalLabel">Keyboard Shortcuts</h4>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th style="width: 20%;">Keys</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="help shortcut"><kbd>?</kbd></td>
+                    <td>Open this help</td>
+                  </tr>
+                  <tr>
+                    <td class="next shortcut"><kbd>n</kbd></td>
+                    <td>Next page</td>
+                  </tr>
+                  <tr>
+                    <td class="prev shortcut"><kbd>p</kbd></td>
+                    <td>Previous page</td>
+                  </tr>
+                  <tr>
+                    <td class="search shortcut"><kbd>s</kbd></td>
+                    <td>Search</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="modal-footer">
+            </div>
+        </div>
+    </div>
+</div>
+
+    </body>
+</html>
+
+<!--
+MkDocs version : 1.6.1
+Build Date UTC : 2025-12-01 07:59:06.298320+00:00
+-->

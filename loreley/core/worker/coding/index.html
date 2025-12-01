@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+    <head>
+        <meta charset="utf-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        
+        
+        
+        <link rel="shortcut icon" href="../../../../img/favicon.ico">
+        <title>Coding - Loreley</title>
+        <link href="../../../../css/bootstrap.min.css" rel="stylesheet">
+        <link href="../../../../css/fontawesome.min.css" rel="stylesheet">
+        <link href="../../../../css/brands.min.css" rel="stylesheet">
+        <link href="../../../../css/solid.min.css" rel="stylesheet">
+        <link href="../../../../css/v4-font-face.min.css" rel="stylesheet">
+        <link href="../../../../css/base.css" rel="stylesheet">
+        <link id="hljs-light" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" >
+        <link id="hljs-dark" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github-dark.min.css" disabled>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+        <script>hljs.highlightAll();</script> 
+    </head>
+
+    <body>
+        <div class="navbar fixed-top navbar-expand-lg navbar-dark bg-primary">
+            <div class="container">
+                <a class="navbar-brand" href="../../../..">Loreley</a>
+                <!-- Expander button -->
+                <button type="button" class="navbar-toggler" data-bs-toggle="collapse" data-bs-target="#navbar-collapse" aria-controls="navbar-collapse" aria-expanded="false" aria-label="Toggle navigation">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+
+                <!-- Expanded navigation -->
+                <div id="navbar-collapse" class="navbar-collapse collapse">
+                        <!-- Main navigation -->
+                        <ul class="nav navbar-nav">
+                            <li class="nav-item">
+                                <a href="../../../.." class="nav-link">Home</a>
+                            </li>
+                            <li class="nav-item dropdown">
+                                <a href="#" class="nav-link dropdown-toggle active" aria-current="page" role="button" data-bs-toggle="dropdown"  aria-expanded="false">Loreley</a>
+                                <ul class="dropdown-menu">
+                                    
+<li>
+    <a href="../../../config/" class="dropdown-item">Configuration</a>
+</li>
+                                    
+<li>
+    <a href="../../../scheduler/main/" class="dropdown-item">Scheduler</a>
+</li>
+                                    
+  <li class="dropdown-submenu">
+    <a href="#" class="dropdown-item">Database</a>
+    <ul class="dropdown-menu">
+            
+<li>
+    <a href="../../../db/base/" class="dropdown-item">Engine & sessions</a>
+</li>
+            
+<li>
+    <a href="../../../db/models/" class="dropdown-item">Models</a>
+</li>
+    </ul>
+  </li>
+                                    
+  <li class="dropdown-submenu">
+    <a href="#" class="dropdown-item">MAP-Elites</a>
+    <ul class="dropdown-menu">
+            
+<li>
+    <a href="../../map-elites/map-elites/" class="dropdown-item">Overview</a>
+</li>
+            
+<li>
+    <a href="../../map-elites/preprocess/" class="dropdown-item">Preprocessing</a>
+</li>
+            
+<li>
+    <a href="../../map-elites/chunk/" class="dropdown-item">Chunking</a>
+</li>
+            
+<li>
+    <a href="../../map-elites/code_embedding/" class="dropdown-item">Code embeddings</a>
+</li>
+            
+<li>
+    <a href="../../map-elites/dimension_reduction/" class="dropdown-item">Dimensionality reduction</a>
+</li>
+            
+<li>
+    <a href="../../map-elites/sampler/" class="dropdown-item">Sampler</a>
+</li>
+            
+<li>
+    <a href="../../map-elites/snapshot/" class="dropdown-item">Snapshots</a>
+</li>
+            
+<li>
+    <a href="../../map-elites/summarization_embedding/" class="dropdown-item">Summary embeddings</a>
+</li>
+    </ul>
+  </li>
+                                    
+  <li class="dropdown-submenu">
+    <a href="#" class="dropdown-item">Worker pipeline</a>
+    <ul class="dropdown-menu">
+            
+<li>
+    <a href="../repository/" class="dropdown-item">Repository</a>
+</li>
+            
+<li>
+    <a href="../planning/" class="dropdown-item">Planning</a>
+</li>
+            
+<li>
+    <a href="./" class="dropdown-item active" aria-current="page">Coding</a>
+</li>
+            
+<li>
+    <a href="../evaluator/" class="dropdown-item">Evaluation</a>
+</li>
+            
+<li>
+    <a href="../evolution/" class="dropdown-item">Evolution loop</a>
+</li>
+            
+<li>
+    <a href="../commit_summary/" class="dropdown-item">Commit summaries</a>
+</li>
+            
+<li>
+    <a href="../job_store/" class="dropdown-item">Job store</a>
+</li>
+    </ul>
+  </li>
+                                    
+  <li class="dropdown-submenu">
+    <a href="#" class="dropdown-item">Tasks</a>
+    <ul class="dropdown-menu">
+            
+<li>
+    <a href="../../../tasks/broker/" class="dropdown-item">Broker</a>
+</li>
+            
+<li>
+    <a href="../../../tasks/workers/" class="dropdown-item">Workers</a>
+</li>
+    </ul>
+  </li>
+                                </ul>
+                            </li>
+                            <li class="nav-item dropdown">
+                                <a href="#" class="nav-link dropdown-toggle" role="button" data-bs-toggle="dropdown"  aria-expanded="false">Operations</a>
+                                <ul class="dropdown-menu">
+                                    
+<li>
+    <a href="../../../../script/run_scheduler/" class="dropdown-item">Running the scheduler</a>
+</li>
+                                    
+<li>
+    <a href="../../../../script/run_worker/" class="dropdown-item">Running the worker</a>
+</li>
+                                </ul>
+                            </li>
+                        </ul>
+
+                    <ul class="nav navbar-nav ms-md-auto">
+                        <li class="nav-item">
+                            <a href="#" class="nav-link" data-bs-toggle="modal" data-bs-target="#mkdocs_search_modal">
+                                <i class="fa fa-search"></i> Search
+                            </a>
+                        </li>
+                            <li class="nav-item">
+                                <a rel="prev" href="../planning/" class="nav-link">
+                                    <i class="fa fa-arrow-left"></i> Previous
+                                </a>
+                            </li>
+                            <li class="nav-item">
+                                <a rel="next" href="../evaluator/" class="nav-link">
+                                    Next <i class="fa fa-arrow-right"></i>
+                                </a>
+                            </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="container">
+            <div class="row">
+                    <div class="col-md-3"><div class="navbar-expand-md bs-sidebar hidden-print affix" role="complementary">
+    <div class="navbar-header">
+        <button type="button" class="navbar-toggler collapsed" data-bs-toggle="collapse" data-bs-target="#toc-collapse" title="Table of Contents">
+            <span class="fa fa-angle-down"></span>
+        </button>
+    </div>
+
+    
+    <div id="toc-collapse" class="navbar-collapse collapse card bg-body-tertiary">
+        <ul class="nav flex-column">
+            
+            <li class="nav-item" data-bs-level="1"><a href="#loreleycoreworkercoding" class="nav-link">loreley.core.worker.coding</a>
+              <ul class="nav flex-column">
+            <li class="nav-item" data-bs-level="2"><a href="#domain-types" class="nav-link">Domain types</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#json-schema-and-validation" class="nav-link">JSON schema and validation</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#coding-agent" class="nav-link">Coding agent</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#exceptions-and-helpers" class="nav-link">Exceptions and helpers</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+              </ul>
+            </li>
+        </ul>
+    </div>
+</div></div>
+                    <div class="col-md-9" role="main">
+
+<h1 id="loreleycoreworkercoding">loreley.core.worker.coding<a class="headerlink" href="#loreleycoreworkercoding" title="Permanent link">&para;</a></h1>
+<p>Execution engine for Loreley's autonomous worker, responsible for driving the Codex-based coding agent that applies a planning agent's plan to a real git worktree.</p>
+<h2 id="domain-types">Domain types<a class="headerlink" href="#domain-types" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong><code>CodingError</code></strong>: custom runtime error raised when the coding agent cannot successfully execute the plan (invalid schema, Codex failures, bad working directory, timeouts, etc.).</li>
+<li><strong><code>StepExecutionStatus</code></strong>: string <code>Enum</code> describing how each plan step was handled (<code>COMPLETED</code>, <code>PARTIAL</code>, or <code>SKIPPED</code>).</li>
+<li><strong><code>CodingStepReport</code></strong>: dataclass capturing the outcome of a single step (<code>step_id</code>, <code>status</code>, human-readable <code>summary</code>, and optional <code>files</code> / <code>commands</code> touched by that step).</li>
+<li><strong><code>CodingPlanExecution</code></strong>: aggregate result for the whole run, including the overall <code>implementation_summary</code>, optional <code>commit_message</code>, tuple of <code>step_results</code>, <code>tests_executed</code>, <code>tests_recommended</code>, <code>follow_up_items</code>, and <code>notes</code>.</li>
+<li><strong><code>CodingAgentRequest</code></strong>: input payload given to the coding agent (<code>goal</code>, <code>plan</code> from <code>PlanningPlan</code>, <code>base_commit</code>, optional <code>constraints</code>, <code>acceptance_criteria</code>, <code>iteration_hint</code>, and <code>additional_notes</code>); normalises all sequence fields to tuples in <code>__post_init__</code>.</li>
+<li><strong><code>CodingAgentResponse</code></strong>: envelope returned from the agent combining the structured <code>execution</code>, raw Codex <code>raw_output</code>, rendered <code>prompt</code>, executed CLI <code>command</code>, captured <code>stderr</code>, number of <code>attempts</code>, and total <code>duration_seconds</code>.</li>
+</ul>
+<h2 id="json-schema-and-validation">JSON schema and validation<a class="headerlink" href="#json-schema-and-validation" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong><code>CODING_OUTPUT_SCHEMA</code></strong>: JSON schema describing the expected Codex output (top-level <code>implementation_summary</code>, optional <code>commit_message</code>, array of <code>step_results</code>, plus optional <code>tests_executed</code>, <code>tests_recommended</code>, <code>follow_up_items</code>, and <code>notes</code>), used to validate the CLI response.</li>
+<li><strong><code>_StepResultModel</code></strong> / <strong><code>_CodingOutputModel</code></strong>: internal frozen <code>pydantic</code> models that validate the JSON payload against <code>CODING_OUTPUT_SCHEMA</code> and provide a typed bridge into the domain dataclasses.</li>
+<li><strong><code>_CodexInvocation</code></strong>: frozen dataclass summarising a single Codex run (<code>command</code>, <code>stdout</code>, <code>stderr</code>, <code>duration_seconds</code>) which is logged for debugging and observability.</li>
+</ul>
+<h2 id="coding-agent">Coding agent<a class="headerlink" href="#coding-agent" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong><code>CodingAgent</code></strong>: high-level orchestrator that turns a <code>CodingAgentRequest</code> and <code>PlanningPlan</code> into a sequence of edits by calling the external Codex CLI.</li>
+<li>Configured via <code>loreley.config.Settings</code> worker coding options (<code>WORKER_CODING_CODEX_BIN</code>, <code>WORKER_CODING_CODEX_PROFILE</code>, <code>WORKER_CODING_MAX_ATTEMPTS</code>, <code>WORKER_CODING_TIMEOUT_SECONDS</code>, <code>WORKER_CODING_EXTRA_ENV</code>, <code>WORKER_CODING_SCHEMA_PATH</code>) and an internal <code>_truncate_limit</code> for long text.</li>
+<li><strong><code>implement(request, *, working_dir)</code></strong>: validates that <code>working_dir</code> is a git repository, renders a detailed natural-language prompt describing the goal, constraints, acceptance criteria, plan steps, focus metrics, guardrails, validation bullets, risks, additional notes, handoff notes, and any fallback plan, materialises the JSON schema (either from <code>WORKER_CODING_SCHEMA_PATH</code> or a temporary file based on <code>CODING_OUTPUT_SCHEMA</code>), and then calls <code>codex exec</code> with the prompt and schema.</li>
+<li>Retries the Codex invocation up to <code>max_attempts</code> times when the process fails, the JSON is invalid, or schema validation errors occur, logging warnings via <code>loguru</code> and showing concise progress output with <code>rich</code>.</li>
+<li>On success, parses the JSON into <code>_CodingOutputModel</code>, converts it into a <code>CodingPlanExecution</code>, and returns a <code>CodingAgentResponse</code>; on repeated failure or timeout, raises <code>CodingError</code> with a descriptive message.</li>
+<li>Merges any <code>WORKER_CODING_EXTRA_ENV</code> values into the subprocess environment and enforces bounded prompt and log sizes via <code>_truncate</code>.</li>
+</ul>
+<h2 id="exceptions-and-helpers">Exceptions and helpers<a class="headerlink" href="#exceptions-and-helpers" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong><code>_validate_workdir()</code></strong>: internal helper that ensures <code>working_dir</code> exists, is a directory, and contains a <code>.git</code> folder before any external commands are run.</li>
+<li><strong><code>_materialise_schema()</code></strong>: writes <code>CODING_OUTPUT_SCHEMA</code> to a temporary JSON file when no schema override is configured, returning the path and an optional handle for later cleanup.</li>
+<li><strong><code>_invoke_codex()</code></strong>: constructs the <code>codex exec</code> command, runs it with appropriate timeout and environment, logs the exit status and duration, and wraps stdout/stderr in a <code>_CodexInvocation</code>, raising <code>CodingError</code> on failures or empty output.</li>
+<li><strong><code>_parse_output()</code></strong>, <strong><code>_log_invalid_output()</code></strong>, <strong><code>_to_domain()</code></strong>, <strong><code>_format_plan_step()</code></strong>, <strong><code>_format_bullets()</code></strong>, and <strong><code>_truncate()</code></strong>: utilities that format human-readable prompt sections, enforce length limits, convert the raw JSON model into domain types, and provide rich logging when Codex output cannot be validated.</li>
+</ul></div>
+            </div>
+        </div>
+
+        <footer class="col-md-12">
+            <hr>
+            <p>Documentation built with <a href="https://www.mkdocs.org/">MkDocs</a>.</p>
+        </footer>
+        <script src="../../../../js/bootstrap.bundle.min.js"></script>
+        <script>
+            var base_url = "../../../..",
+                shortcuts = {"help": 191, "next": 78, "previous": 80, "search": 83};
+        </script>
+        <script src="../../../../js/base.js"></script>
+        <script src="../../../../search/main.js"></script>
+
+        <div class="modal" id="mkdocs_search_modal" tabindex="-1" role="dialog" aria-labelledby="searchModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h4 class="modal-title" id="searchModalLabel">Search</h4>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>From here you can search these documents. Enter your search terms below.</p>
+                <form>
+                    <div class="form-group">
+                        <input type="search" class="form-control" placeholder="Search..." id="mkdocs-search-query" title="Type search term here">
+                    </div>
+                </form>
+                <div id="mkdocs-search-results" data-no-results-text="No results found"></div>
+            </div>
+            <div class="modal-footer">
+            </div>
+        </div>
+    </div>
+</div><div class="modal" id="mkdocs_keyboard_modal" tabindex="-1" role="dialog" aria-labelledby="keyboardModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h4 class="modal-title" id="keyboardModalLabel">Keyboard Shortcuts</h4>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th style="width: 20%;">Keys</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="help shortcut"><kbd>?</kbd></td>
+                    <td>Open this help</td>
+                  </tr>
+                  <tr>
+                    <td class="next shortcut"><kbd>n</kbd></td>
+                    <td>Next page</td>
+                  </tr>
+                  <tr>
+                    <td class="prev shortcut"><kbd>p</kbd></td>
+                    <td>Previous page</td>
+                  </tr>
+                  <tr>
+                    <td class="search shortcut"><kbd>s</kbd></td>
+                    <td>Search</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="modal-footer">
+            </div>
+        </div>
+    </div>
+</div>
+
+    </body>
+</html>

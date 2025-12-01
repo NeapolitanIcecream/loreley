@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+    <head>
+        <meta charset="utf-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        
+        
+        
+        <link rel="shortcut icon" href="../../../../img/favicon.ico">
+        <title>Job store - Loreley</title>
+        <link href="../../../../css/bootstrap.min.css" rel="stylesheet">
+        <link href="../../../../css/fontawesome.min.css" rel="stylesheet">
+        <link href="../../../../css/brands.min.css" rel="stylesheet">
+        <link href="../../../../css/solid.min.css" rel="stylesheet">
+        <link href="../../../../css/v4-font-face.min.css" rel="stylesheet">
+        <link href="../../../../css/base.css" rel="stylesheet">
+        <link id="hljs-light" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" >
+        <link id="hljs-dark" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github-dark.min.css" disabled>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+        <script>hljs.highlightAll();</script> 
+    </head>
+
+    <body>
+        <div class="navbar fixed-top navbar-expand-lg navbar-dark bg-primary">
+            <div class="container">
+                <a class="navbar-brand" href="../../../..">Loreley</a>
+                <!-- Expander button -->
+                <button type="button" class="navbar-toggler" data-bs-toggle="collapse" data-bs-target="#navbar-collapse" aria-controls="navbar-collapse" aria-expanded="false" aria-label="Toggle navigation">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+
+                <!-- Expanded navigation -->
+                <div id="navbar-collapse" class="navbar-collapse collapse">
+                        <!-- Main navigation -->
+                        <ul class="nav navbar-nav">
+                            <li class="nav-item">
+                                <a href="../../../.." class="nav-link">Home</a>
+                            </li>
+                            <li class="nav-item dropdown">
+                                <a href="#" class="nav-link dropdown-toggle active" aria-current="page" role="button" data-bs-toggle="dropdown"  aria-expanded="false">Loreley</a>
+                                <ul class="dropdown-menu">
+                                    
+<li>
+    <a href="../../../config/" class="dropdown-item">Configuration</a>
+</li>
+                                    
+<li>
+    <a href="../../../scheduler/main/" class="dropdown-item">Scheduler</a>
+</li>
+                                    
+  <li class="dropdown-submenu">
+    <a href="#" class="dropdown-item">Database</a>
+    <ul class="dropdown-menu">
+            
+<li>
+    <a href="../../../db/base/" class="dropdown-item">Engine & sessions</a>
+</li>
+            
+<li>
+    <a href="../../../db/models/" class="dropdown-item">Models</a>
+</li>
+    </ul>
+  </li>
+                                    
+  <li class="dropdown-submenu">
+    <a href="#" class="dropdown-item">MAP-Elites</a>
+    <ul class="dropdown-menu">
+            
+<li>
+    <a href="../../map-elites/map-elites/" class="dropdown-item">Overview</a>
+</li>
+            
+<li>
+    <a href="../../map-elites/preprocess/" class="dropdown-item">Preprocessing</a>
+</li>
+            
+<li>
+    <a href="../../map-elites/chunk/" class="dropdown-item">Chunking</a>
+</li>
+            
+<li>
+    <a href="../../map-elites/code_embedding/" class="dropdown-item">Code embeddings</a>
+</li>
+            
+<li>
+    <a href="../../map-elites/dimension_reduction/" class="dropdown-item">Dimensionality reduction</a>
+</li>
+            
+<li>
+    <a href="../../map-elites/sampler/" class="dropdown-item">Sampler</a>
+</li>
+            
+<li>
+    <a href="../../map-elites/snapshot/" class="dropdown-item">Snapshots</a>
+</li>
+            
+<li>
+    <a href="../../map-elites/summarization_embedding/" class="dropdown-item">Summary embeddings</a>
+</li>
+    </ul>
+  </li>
+                                    
+  <li class="dropdown-submenu">
+    <a href="#" class="dropdown-item">Worker pipeline</a>
+    <ul class="dropdown-menu">
+            
+<li>
+    <a href="../repository/" class="dropdown-item">Repository</a>
+</li>
+            
+<li>
+    <a href="../planning/" class="dropdown-item">Planning</a>
+</li>
+            
+<li>
+    <a href="../coding/" class="dropdown-item">Coding</a>
+</li>
+            
+<li>
+    <a href="../evaluator/" class="dropdown-item">Evaluation</a>
+</li>
+            
+<li>
+    <a href="../evolution/" class="dropdown-item">Evolution loop</a>
+</li>
+            
+<li>
+    <a href="../commit_summary/" class="dropdown-item">Commit summaries</a>
+</li>
+            
+<li>
+    <a href="./" class="dropdown-item active" aria-current="page">Job store</a>
+</li>
+    </ul>
+  </li>
+                                    
+  <li class="dropdown-submenu">
+    <a href="#" class="dropdown-item">Tasks</a>
+    <ul class="dropdown-menu">
+            
+<li>
+    <a href="../../../tasks/broker/" class="dropdown-item">Broker</a>
+</li>
+            
+<li>
+    <a href="../../../tasks/workers/" class="dropdown-item">Workers</a>
+</li>
+    </ul>
+  </li>
+                                </ul>
+                            </li>
+                            <li class="nav-item dropdown">
+                                <a href="#" class="nav-link dropdown-toggle" role="button" data-bs-toggle="dropdown"  aria-expanded="false">Operations</a>
+                                <ul class="dropdown-menu">
+                                    
+<li>
+    <a href="../../../../script/run_scheduler/" class="dropdown-item">Running the scheduler</a>
+</li>
+                                    
+<li>
+    <a href="../../../../script/run_worker/" class="dropdown-item">Running the worker</a>
+</li>
+                                </ul>
+                            </li>
+                        </ul>
+
+                    <ul class="nav navbar-nav ms-md-auto">
+                        <li class="nav-item">
+                            <a href="#" class="nav-link" data-bs-toggle="modal" data-bs-target="#mkdocs_search_modal">
+                                <i class="fa fa-search"></i> Search
+                            </a>
+                        </li>
+                            <li class="nav-item">
+                                <a rel="prev" href="../commit_summary/" class="nav-link">
+                                    <i class="fa fa-arrow-left"></i> Previous
+                                </a>
+                            </li>
+                            <li class="nav-item">
+                                <a rel="next" href="../../../tasks/broker/" class="nav-link">
+                                    Next <i class="fa fa-arrow-right"></i>
+                                </a>
+                            </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="container">
+            <div class="row">
+                    <div class="col-md-3"><div class="navbar-expand-md bs-sidebar hidden-print affix" role="complementary">
+    <div class="navbar-header">
+        <button type="button" class="navbar-toggler collapsed" data-bs-toggle="collapse" data-bs-target="#toc-collapse" title="Table of Contents">
+            <span class="fa fa-angle-down"></span>
+        </button>
+    </div>
+
+    
+    <div id="toc-collapse" class="navbar-collapse collapse card bg-body-tertiary">
+        <ul class="nav flex-column">
+            
+            <li class="nav-item" data-bs-level="1"><a href="#loreleycoreworkerjob_store" class="nav-link">loreley.core.worker.job_store</a>
+              <ul class="nav flex-column">
+            <li class="nav-item" data-bs-level="2"><a href="#domain-types-and-errors" class="nav-link">Domain types and errors</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#serialization-helpers" class="nav-link">Serialization helpers</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#evolutionjobstore" class="nav-link">EvolutionJobStore</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#lock-conflict-detection" class="nav-link">Lock conflict detection</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#time-helpers" class="nav-link">Time helpers</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+              </ul>
+            </li>
+        </ul>
+    </div>
+</div></div>
+                    <div class="col-md-9" role="main">
+
+<h1 id="loreleycoreworkerjob_store">loreley.core.worker.job_store<a class="headerlink" href="#loreleycoreworkerjob_store" title="Permanent link">&para;</a></h1>
+<p>Persistence adapter for the evolution worker, responsible for locking jobs, storing results, and recording job failures in the database.</p>
+<h2 id="domain-types-and-errors">Domain types and errors<a class="headerlink" href="#domain-types-and-errors" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong><code>EvolutionWorkerError</code></strong>: base runtime error used when the worker cannot complete or persist a job due to configuration, database, or repository issues.</li>
+<li><strong><code>JobLockConflict</code></strong>: raised when <code>start_job()</code> fails to obtain a NOWAIT lock on a job row, indicating that another worker is already processing the same job.</li>
+<li><strong><code>JobPreconditionError</code></strong>: raised when a job cannot start because preconditions are not satisfied (missing row, unsupported status, missing <code>base_commit_hash</code>, etc.).</li>
+<li><strong><code>LockedJob</code></strong>: dataclass snapshot of the locked <code>EvolutionJob</code> row containing the <code>job_id</code>, <code>base_commit_hash</code>, optional <code>island_id</code>, optional <code>experiment_id</code> and <code>repository_id</code>, the deserialised JSON <code>payload</code>, and the tuple of <code>inspiration_commit_hashes</code>. This is used by <code>EvolutionWorker</code> to build its <code>JobContext</code>.</li>
+</ul>
+<h2 id="serialization-helpers">Serialization helpers<a class="headerlink" href="#serialization-helpers" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong><code>build_plan_payload(response)</code></strong>: converts a <code>PlanningAgentResponse</code> into a JSON-serialisable dict.</li>
+<li>Serialises the underlying <code>PlanningPlan</code> via <code>as_dict()</code>.</li>
+<li>Adds the planner <code>prompt</code>, raw Codex <code>raw_output</code>, CLI <code>command</code>, <code>stderr</code>, number of <code>attempts</code>, and total <code>duration_seconds</code> so downstream systems can introspect planner behaviour.</li>
+<li><strong><code>build_coding_payload(response)</code></strong>: converts a <code>CodingAgentResponse</code> into a dict that flattens both the <code>CodingPlanExecution</code> and transport metadata.</li>
+<li>Includes <code>implementation_summary</code>, final <code>commit_message</code>, detailed per-step outcomes, executed tests, recommended tests, follow-up items, notes, raw Codex output, prompt, command, stderr, attempts, and duration.</li>
+<li><strong><code>build_evaluation_payload(result)</code></strong>: converts an <code>EvaluationResult</code> into a dict containing its textual <code>summary</code>, a list of metric dicts via <code>metric.as_dict()</code>, <code>tests_executed</code>, <code>logs</code>, and an <code>extra</code> mapping.</li>
+</ul>
+<h2 id="evolutionjobstore">EvolutionJobStore<a class="headerlink" href="#evolutionjobstore" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong><code>EvolutionJobStore</code></strong>: database-facing adapter that encapsulates the lifecycle of an evolution job.</li>
+<li>Constructed with <code>Settings</code> to attach worker/application metadata when persisting results.</li>
+<li>Uses <code>session_scope()</code> and the ORM models from <code>loreley.db.models</code> (<code>EvolutionJob</code>, <code>CommitMetadata</code>, <code>Metric</code>, <code>JobStatus</code>) to modify rows transactionally.</li>
+</ul>
+<h3 id="job-lifecycle-methods">Job lifecycle methods<a class="headerlink" href="#job-lifecycle-methods" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong><code>start_job(job_id)</code></strong>:</li>
+<li>Acquires a row-level lock on the <code>EvolutionJob</code> using <code>SELECT ... FOR UPDATE NOWAIT</code>.</li>
+<li>Validates that the job exists, that <code>base_commit_hash</code> is present, and that the current <code>status</code> is in <code>{PENDING, QUEUED}</code>.</li>
+<li>Marks the job as <code>RUNNING</code>, records <code>started_at</code>, clears any <code>last_error</code>, and returns a <code>LockedJob</code> snapshot.</li>
+<li>
+<p>Wraps SQL errors into <code>JobLockConflict</code> when they indicate a lock-not-available condition, or <code>EvolutionWorkerError</code> otherwise.</p>
+</li>
+<li>
+<p><strong><code>persist_success(job_ctx, plan, coding, evaluation, commit_hash, commit_message)</code></strong>:</p>
+</li>
+<li>Updates the <code>EvolutionJob</code> row to <code>SUCCEEDED</code>, sets <code>completed_at</code>, stores the plan summary, updated job <code>payload</code> (including a compact <code>result</code> section with commit/metric/test summaries), and clears <code>last_error</code>.</li>
+<li>Inserts a new <code>CommitMetadata</code> row representing the produced commit, with parent commit hash, island ID, author/email from settings, commit message, evaluation summary, tags, and a rich <code>extra_context</code> payload that includes:</li>
+<li>Job context (goal, constraints, acceptance criteria, notes, tags, raw payload) plus the resolved <code>experiment_id</code> and <code>repository_id</code> for the job when available.</li>
+<li>An <code>experiment</code> block containing stable experiment metadata such as <code>id</code>, <code>repository_id</code>, <code>name</code>, <code>config_hash</code>, and <code>repository_slug</code> when the experiment can be resolved from the database.</li>
+<li>Base and inspiration commit hashes.</li>
+<li>Detailed plan, coding, and evaluation payloads via the helper functions above.</li>
+<li>Worker metadata such as <code>app_name</code>, environment, and completion timestamp.</li>
+<li>Inserts one <code>Metric</code> row per evaluation metric for the new commit, copying numeric <code>value</code>, <code>unit</code>, <code>higher_is_better</code>, and any structured <code>details</code>.</li>
+<li>
+<p>Wraps SQLAlchemy errors into <code>EvolutionWorkerError</code> so the caller can surface persistence failures cleanly.</p>
+</li>
+<li>
+<p><strong><code>mark_job_failed(job_id, message)</code></strong>:</p>
+</li>
+<li>Best-effort helper that records a failure reason on an <code>EvolutionJob</code> row.</li>
+<li>If the job no longer exists or has already reached <code>SUCCEEDED</code> or <code>CANCELLED</code>, the call becomes a no-op.</li>
+<li>Otherwise sets <code>status</code> to <code>FAILED</code>, stamps <code>completed_at</code>, and stores the latest <code>last_error</code> message.</li>
+<li>Swallows and logs any SQL errors rather than propagating them, to avoid masking the original worker exception.</li>
+</ul>
+<h2 id="lock-conflict-detection">Lock conflict detection<a class="headerlink" href="#lock-conflict-detection" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong><code>_is_lock_conflict(exc)</code></strong>: inspects the original DB error to determine whether it represents a NOWAIT lock conflict.</li>
+<li>For PostgreSQL, checks for error code <code>"55P03"</code> (lock_not_available).</li>
+<li>Falls back to substring checks on the exception message for phrases like <code>"could not obtain lock"</code> or <code>"database is locked"</code>, covering other backends.</li>
+</ul>
+<h2 id="time-helpers">Time helpers<a class="headerlink" href="#time-helpers" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong><code>_utc_now()</code></strong>: returns the current UTC <code>datetime</code> and is used consistently when stamping <code>started_at</code>, <code>completed_at</code>, and worker metadata timestamps.</li>
+</ul></div>
+            </div>
+        </div>
+
+        <footer class="col-md-12">
+            <hr>
+            <p>Documentation built with <a href="https://www.mkdocs.org/">MkDocs</a>.</p>
+        </footer>
+        <script src="../../../../js/bootstrap.bundle.min.js"></script>
+        <script>
+            var base_url = "../../../..",
+                shortcuts = {"help": 191, "next": 78, "previous": 80, "search": 83};
+        </script>
+        <script src="../../../../js/base.js"></script>
+        <script src="../../../../search/main.js"></script>
+
+        <div class="modal" id="mkdocs_search_modal" tabindex="-1" role="dialog" aria-labelledby="searchModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h4 class="modal-title" id="searchModalLabel">Search</h4>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>From here you can search these documents. Enter your search terms below.</p>
+                <form>
+                    <div class="form-group">
+                        <input type="search" class="form-control" placeholder="Search..." id="mkdocs-search-query" title="Type search term here">
+                    </div>
+                </form>
+                <div id="mkdocs-search-results" data-no-results-text="No results found"></div>
+            </div>
+            <div class="modal-footer">
+            </div>
+        </div>
+    </div>
+</div><div class="modal" id="mkdocs_keyboard_modal" tabindex="-1" role="dialog" aria-labelledby="keyboardModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h4 class="modal-title" id="keyboardModalLabel">Keyboard Shortcuts</h4>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th style="width: 20%;">Keys</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="help shortcut"><kbd>?</kbd></td>
+                    <td>Open this help</td>
+                  </tr>
+                  <tr>
+                    <td class="next shortcut"><kbd>n</kbd></td>
+                    <td>Next page</td>
+                  </tr>
+                  <tr>
+                    <td class="prev shortcut"><kbd>p</kbd></td>
+                    <td>Previous page</td>
+                  </tr>
+                  <tr>
+                    <td class="search shortcut"><kbd>s</kbd></td>
+                    <td>Search</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="modal-footer">
+            </div>
+        </div>
+    </div>
+</div>
+
+    </body>
+</html>
