@@ -354,11 +354,64 @@ def _print_environment_summary() -> None:
     )
 
 
-def _run_scheduler(once: bool) -> int:
+def _reset_database() -> None:
+    """Initialise the Loreley database by clearing all existing records.
+
+    This will TRUNCATE all ORM-managed tables on the configured ``DATABASE_URL``
+    while preserving the schema itself.
+    """
+
+    _apply_base_env()
+    _ensure_repo_on_sys_path()
+
+    console.log("[bold yellow]Resetting Loreley database (TRUNCATE ALL TABLES)…[/]")
+
+    try:
+        # Import after environment is configured so that the engine is initialised
+        # with the correct DATABASE_URL.
+        from sqlalchemy import text
+
+        from loreley.db.base import Base, engine, ensure_database_schema
+
+        # Ensure schema exists so that all metadata tables are present.
+        ensure_database_schema()
+
+        # Collect all ORM table names and truncate them in one CASCADE statement.
+        table_names = [table.name for table in Base.metadata.sorted_tables]
+        if not table_names:
+            console.log(
+                "[bold yellow]No ORM tables found to truncate – schema appears empty.[/]",
+            )
+            return
+
+        truncate_sql = "TRUNCATE TABLE {} RESTART IDENTITY CASCADE;".format(
+            ", ".join(f'"{name}"' for name in table_names),
+        )
+
+        with engine.begin() as connection:
+            connection.execute(text(truncate_sql))
+
+        console.log(
+            "[bold green]Database reset complete[/] truncated_tables={}".format(
+                ", ".join(table_names),
+            ),
+        )
+        log.info("Database reset complete for tables: {}", ", ".join(table_names))
+    except Exception as exc:  # pragma: no cover - defensive
+        console.log(
+            "[bold red]Database reset failed[/] reason={}".format(exc),
+        )
+        log.exception("Database reset failed: {}", exc)
+        raise
+
+
+def _run_scheduler(once: bool, init_db: bool) -> int:
     """Run the Loreley evolution scheduler."""
 
     _apply_base_env()
     _ensure_repo_on_sys_path()
+    if init_db:
+        _reset_database()
     _print_environment_summary()
     # Import after environment is configured so that Settings and DB are
     # initialised correctly. The core worker/scheduler pipeline is responsible
@@ -407,6 +460,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Execute a single scheduling tick and exit.",
     )
+    scheduler_parser.add_argument(
+        "--init-db",
+        action="store_true",
+        help="Initialise the DATABASE_URL by clearing all existing Loreley tables "
+        "before running the scheduler.",
+    )
 
     subparsers.add_parser(
         "worker",
@@ -416,7 +475,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "scheduler":
-        return _run_scheduler(once=bool(args.once))
+        return _run_scheduler(once=bool(args.once), init_db=bool(args.init_db))
     if args.command == "worker":
         return _run_worker()
 
