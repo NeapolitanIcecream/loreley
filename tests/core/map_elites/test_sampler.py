@@ -44,7 +44,7 @@ def make_sampler(settings: Settings, records: Sequence[FakeRecord]) -> MapElites
 
     manager = FakeManager(records)
     rng = np.random.default_rng(1234)
-    # MapElitesSampler 接受 random.Random，这里用简单 wrapper
+    # MapElitesSampler accepts random.Random; we use a simple wrapper here
     import random
 
     python_rng = random.Random(1234)

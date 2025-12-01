@@ -76,7 +76,7 @@ def test_build_penultimate_concatenates_and_normalises(settings: Settings) -> No
     assert penultimate.summary_model == "summary-model"
     assert penultimate.summary_embedding_model == "emb-model"
 
-    # 当不提供任何 embedding 时返回 None
+    # When no embeddings are provided, return None
     empty = reducer.build_penultimate(commit_hash="empty")
     assert empty is None
 

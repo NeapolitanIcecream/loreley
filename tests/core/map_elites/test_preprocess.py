@@ -51,7 +51,7 @@ def test_coerce_changed_file_variants(tmp_path: Path, settings: Settings) -> Non
         {
             "file": "mapped.py",
             "change_count": "7",
-            "content": 123,  # 非字符串内容应被丢弃
+            "content": 123,  # Non-string content should be discarded
         }
     )
     assert isinstance(mapping, ChangedFile)

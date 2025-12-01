@@ -5,7 +5,7 @@ Central orchestration loop that keeps the Loreley evolution pipeline moving by c
 ## EvolutionScheduler
 
 - **Purpose**: continuously monitors unfinished jobs (`pending`, `queued`, `running`), schedules new work from the MAP-Elites archive when capacity allows, dispatches pending jobs to the Dramatiq `run_evolution_job` actor, and backfills the archive with freshly evaluated commits.
-- **Construction**: `EvolutionScheduler(settings=None)` loads `loreley.config.Settings`, resolves the target repository root (preferring `SCHEDULER_REPO_ROOT` and falling back to `WORKER_REPO_WORKTREE`), initialises a `git` repository handle, derives a `Repository`/`Experiment` pair via `loreley.core.experiments.get_or_create_experiment()`, and wires `MapElitesManager` (scoped to that `experiment_id`) plus `MapElitesSampler` with the same settings.
+- **Construction**: `EvolutionScheduler(settings=None)` loads `loreley.config.Settings`, resolves the target repository root (preferring `SCHEDULER_REPO_ROOT` and falling back to `WORKER_REPO_WORKTREE`), initialises a `git` repository handle, derives a `Repository`/`Experiment` pair via `loreley.core.experiments.get_or_create_experiment()`, wires `MapElitesManager` (scoped to that `experiment_id`) plus `MapElitesSampler` with the same settings, and, when `MAPELITES_EXPERIMENT_ROOT_COMMIT` is set, ensures that the configured root commit is present in the `commits` table and ingested into each relevant MAP-Elites island archive before any jobs are scheduled.
 - **Lifecycle**:
   1. `tick()` runs the ingest → dispatch → measure → schedule pipeline and logs a concise summary for observability. Each stage is isolated so failures are logged and do not crash the loop.
   2. `run_forever()` installs `SIGINT`/`SIGTERM` handlers, runs `tick()` at the configured poll interval, and keeps looping until interrupted.
@@ -24,6 +24,7 @@ The scheduler consumes the following `Settings` fields (all exposed as environme
 - `SCHEDULER_SCHEDULE_BATCH_SIZE`: maximum number of new jobs sampled from MAP-Elites per tick (bounded by the unused capacity).
 - `SCHEDULER_DISPATCH_BATCH_SIZE`: number of pending jobs promoted to `QUEUED` and sent to Dramatiq per tick.
 - `SCHEDULER_INGEST_BATCH_SIZE`: number of newly succeeded jobs ingested into MAP-Elites per tick.
+- `MAPELITES_EXPERIMENT_ROOT_COMMIT`: optional git commit hash used as the logical root for the current experiment. When set, the scheduler records a `CommitMetadata` row (if one does not already exist) and ingests that commit into each known MAP-Elites island archive so that the first scheduled jobs have a stable baseline to branch from.
 
 ## CLI usage
 

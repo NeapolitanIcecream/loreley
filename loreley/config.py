@@ -64,6 +64,12 @@ class Settings(BaseSettings):
         alias="TASKS_WORKER_TIME_LIMIT_SECONDS",
     )
 
+    # Experiment / evolution configuration
+    mapelites_experiment_root_commit: str | None = Field(
+        default=None,
+        alias="MAPELITES_EXPERIMENT_ROOT_COMMIT",
+    )
+
     scheduler_repo_root: str | None = Field(
         default=None,
         alias="SCHEDULER_REPO_ROOT",
@@ -502,6 +508,7 @@ class Settings(BaseSettings):
         return {
             "app_name": self.app_name,
             "environment": self.environment,
+            "mapelites_experiment_root_commit": self.mapelites_experiment_root_commit,
             "db_host": self.db_host,
             "db_port": self.db_port,
             "db_name": self.db_name,

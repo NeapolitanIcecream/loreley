@@ -19,7 +19,7 @@ def test_looks_like_boundary_heuristics(settings: Settings) -> None:
     assert chunker._looks_like_boundary("class Bar:", "class Bar:")  # type: ignore[attr-defined]
     assert chunker._looks_like_boundary("something:", "something:")  # type: ignore[attr-defined]
 
-    # 非顶格缩进的普通代码行不应被视为边界
+    # A normally indented line that is not flush-left should not be treated as a boundary
     assert not chunker._looks_like_boundary("x = 1", "    x = 1")  # type: ignore[attr-defined]
 
 
@@ -60,7 +60,7 @@ def test_chunk_file_overlap_and_max_chunks(settings: Settings) -> None:
     assert 1 <= len(chunks) <= settings.mapelites_chunk_max_chunks_per_file
 
     for first, second in zip(chunks, chunks[1:]):
-        # 验证重叠窗口逻辑：后一段起始行不早于前一段起始行
+        # Validate overlapping window logic: each subsequent chunk must start on or before the previous chunk's end line
         assert second.start_line <= second.end_line
         assert second.start_line <= first.end_line
 

@@ -24,7 +24,7 @@ from loreley.core.map_elites.map_elites import MapElitesManager
 from loreley.core.map_elites.preprocess import ChangedFile
 from loreley.core.map_elites.sampler import MapElitesSampler, ScheduledSamplerJob
 from loreley.db.base import session_scope
-from loreley.db.models import CommitMetadata, EvolutionJob, JobStatus, Metric
+from loreley.db.models import CommitMetadata, EvolutionJob, JobStatus, MapElitesState, Metric
 from loreley.tasks.workers import run_evolution_job
 
 console = Console()
@@ -64,6 +64,7 @@ class EvolutionScheduler:
         self.console = console
         self.repo_root = self._resolve_repo_root()
         self._repo = self._init_repo()
+        self._root_commit_hash = (self.settings.mapelites_experiment_root_commit or "").strip() or None
         try:
             self.repository, self.experiment = get_or_create_experiment(
                 settings=self.settings,
@@ -79,6 +80,12 @@ class EvolutionScheduler:
         self.sampler = MapElitesSampler(manager=self.manager, settings=self.settings)
         self._stop_requested = False
         self._total_scheduled_jobs = 0
+
+        # Optionally initialise an explicit experiment root commit so that the
+        # archive and database both contain a stable starting point before any
+        # evolution jobs run.
+        if self._root_commit_hash:
+            self._initialise_root_commit(self._root_commit_hash)
 
     # Public API ------------------------------------------------------------
 
@@ -548,6 +555,176 @@ class EvolutionScheduler:
             change_count = int(info.get("lines") or (info.get("insertions", 0) + info.get("deletions", 0)) or 1)
             changed.append(ChangedFile(path=Path(path), change_count=change_count))
         return changed
+
+    # Root commit initialisation --------------------------------------------
+
+    def _initialise_root_commit(self, commit_hash: str) -> None:
+        """Ensure the configured root commit is present in DB and archives.
+
+        This helper is idempotent and safe to call on every scheduler startup.
+        Failures are logged but do not prevent the scheduler from running.
+        """
+
+        try:
+            self._ensure_commit_available(commit_hash)
+        except SchedulerError as exc:
+            self.console.log(
+                f"[bold red]Failed to initialise root commit[/] commit={commit_hash} reason={exc}",
+            )
+            log.error("Failed to initialise root commit {}: {}", commit_hash, exc)
+            return
+
+        try:
+            self._ensure_root_commit_metadata(commit_hash)
+            self._ensure_root_commit_ingested(commit_hash)
+        except Exception as exc:  # pragma: no cover - defensive
+            self.console.log(
+                f"[bold red]Root commit initialisation failed[/] commit={commit_hash} reason={exc}",
+            )
+            log.exception("Root commit initialisation failed for {}: {}", commit_hash, exc)
+
+    def _ensure_root_commit_metadata(self, commit_hash: str) -> None:
+        """Create or update CommitMetadata for the root commit."""
+
+        git_commit = self._repo.commit(commit_hash)
+        parent_hash = git_commit.parents[0].hexsha if git_commit.parents else None
+        author = getattr(getattr(git_commit, "author", None), "name", None)
+        message = getattr(git_commit, "message", None)
+
+        with session_scope() as session:
+            stmt = select(CommitMetadata).where(CommitMetadata.commit_hash == commit_hash)
+            existing = session.execute(stmt).scalar_one_or_none()
+            default_island = self.settings.mapelites_default_island_id or "main"
+
+            if existing:
+                updated = False
+                if existing.experiment_id is None and self.experiment is not None:
+                    existing.experiment_id = self.experiment.id
+                    updated = True
+                if existing.island_id is None:
+                    existing.island_id = default_island
+                    updated = True
+                if updated:
+                    self.console.log(
+                        "[cyan]Updated root commit metadata[/] commit={} experiment={} island={}".format(
+                            commit_hash,
+                            existing.experiment_id,
+                            existing.island_id,
+                        ),
+                    )
+                return
+
+            extra_context: dict[str, Any] = {
+                "root_commit": True,
+                "experiment": {
+                    "id": str(self.experiment.id),
+                    "repository_id": str(self.repository.id),
+                    "name": getattr(self.experiment, "name", None),
+                    "config_hash": getattr(self.experiment, "config_hash", None),
+                    "repository_slug": getattr(self.repository, "slug", None),
+                },
+            }
+
+            metadata = CommitMetadata(
+                commit_hash=commit_hash,
+                parent_commit_hash=parent_hash,
+                island_id=default_island,
+                experiment_id=self.experiment.id,
+                author=author,
+                message=message,
+                evaluation_summary=None,
+                tags=[],
+                extra_context=extra_context,
+            )
+            session.add(metadata)
+            self.console.log(
+                "[bold green]Registered root commit[/] commit={} experiment={} island={}".format(
+                    commit_hash,
+                    self.experiment.id,
+                    default_island,
+                ),
+            )
+            log.info(
+                "Registered root commit {} for experiment {} on island {}",
+                commit_hash,
+                self.experiment.id,
+                default_island,
+            )
+
+    def _ensure_root_commit_ingested(self, commit_hash: str) -> None:
+        """Insert the root commit into each known island's MAP-Elites archive."""
+
+        # Discover islands that already have persisted state for this experiment.
+        islands: set[str] = set()
+        with session_scope() as session:
+            stmt = select(MapElitesState.island_id).where(
+                MapElitesState.experiment_id == self.experiment.id,
+            )
+            islands.update(session.scalars(stmt).all())
+
+        default_island = self.settings.mapelites_default_island_id or "main"
+        islands.add(default_island)
+
+        for island_id in sorted(islands):
+            records = self.manager.get_records(island_id)
+            if any(record.commit_hash == commit_hash for record in records):
+                continue
+
+            changed_files = self._collect_changed_files(commit_hash)
+            if not changed_files:
+                self.console.log(
+                    "[yellow]Skipping root commit ingestion; no changed files[/] commit={} island={}".format(
+                        commit_hash,
+                        island_id,
+                    ),
+                )
+                continue
+
+            try:
+                insertion = self.manager.ingest(
+                    commit_hash=commit_hash,
+                    changed_files=changed_files,
+                    metrics=None,
+                    island_id=island_id,
+                    repo_root=self.repo_root,
+                    treeish=commit_hash,
+                    metadata={
+                        "root_commit": True,
+                        "experiment_id": str(self.experiment.id),
+                        "repository_id": str(self.repository.id),
+                        "island_id": island_id,
+                    },
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                self.console.log(
+                    f"[bold red]Failed to ingest root commit[/] commit={commit_hash} island={island_id} reason={exc}",
+                )
+                log.exception(
+                    "Failed to ingest root commit {} for experiment {} island {}: {}",
+                    commit_hash,
+                    self.experiment.id,
+                    island_id,
+                    exc,
+                )
+                continue
+
+            if insertion.record:
+                self.console.log(
+                    "[green]Initialised root commit in archive[/] commit={} island={} cell={} Δ={:.4f}".format(
+                        commit_hash,
+                        island_id,
+                        insertion.record.cell_index,
+                        insertion.delta,
+                    ),
+                )
+            else:
+                self.console.log(
+                    "[yellow]Root commit did not improve archive[/] commit={} island={} status={}".format(
+                        commit_hash,
+                        island_id,
+                        insertion.status,
+                    ),
+                )
 
     # Best-branch helpers ----------------------------------------------------
 
