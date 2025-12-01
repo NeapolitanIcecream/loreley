@@ -9,6 +9,7 @@ This module is responsible for:
 
 import hashlib
 import json
+import math
 import re
 from pathlib import Path
 from typing import Any, Mapping
@@ -40,6 +41,27 @@ __all__ = [
 
 class ExperimentError(RuntimeError):
     """Raised when the repository/experiment context cannot be resolved."""
+
+
+def _coerce_json_compatible(value: Any) -> Any:
+    """Return a JSON-serialisable representation of the given value.
+
+    PostgreSQL JSONB does not accept NaN/Infinity values, but some Settings
+    defaults (e.g. mapelites_archive_threshold_min=-inf) rely on them
+    internally. For persistence we coerce all non-finite floats to null to
+    keep snapshots JSON-compatible without affecting runtime behaviour.
+    """
+
+    if isinstance(value, float):
+        if math.isfinite(value):
+            return value
+        # Represent NaN/±inf as JSON null.
+        return None
+    if isinstance(value, Mapping):
+        return {str(k): _coerce_json_compatible(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_coerce_json_compatible(v) for v in value]
+    return value
 
 
 def _normalise_remote_url(raw: str) -> str:
@@ -231,7 +253,7 @@ def build_experiment_config_snapshot(settings: Settings) -> dict[str, Any]:
     snapshot: dict[str, Any] = {}
     for key, value in payload.items():
         if key.startswith(prefixes):
-            snapshot[key] = value
+            snapshot[key] = _coerce_json_compatible(value)
     return snapshot
 
 

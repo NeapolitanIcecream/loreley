@@ -248,8 +248,9 @@ def _run_scheduler(once: bool) -> int:
     _apply_base_env()
     _ensure_repo_on_sys_path()
     _print_environment_summary()
-
-    # Import after environment is configured so that Settings and DB are initialised correctly.
+    # Import after environment is configured so that Settings and DB are
+    # initialised correctly. The core worker/scheduler pipeline is responsible
+    # for ensuring the database schema exists.
     from script.run_scheduler import main as scheduler_main
 
     argv: list[str] = []
@@ -268,9 +269,9 @@ def _run_worker() -> int:
     _apply_base_env()
     _ensure_repo_on_sys_path()
     _print_environment_summary()
-
-    # Import after environment is configured so that Settings, Redis broker, and DB
-    # are initialised with the values defined above.
+    # Import after environment is configured so that Settings, Redis broker, and
+    # DB are initialised with the values defined above. The core worker module
+    # takes care of schema initialisation.
     from script.run_worker import main as worker_main
 
     console.log("[bold green]Starting worker[/] …")

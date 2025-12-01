@@ -7,11 +7,17 @@ from rich.console import Console
 from loreley.config import Settings, get_settings
 from loreley.core.worker.evolution import EvolutionWorker, EvolutionWorkerResult
 from loreley.core.worker.job_store import EvolutionWorkerError, JobLockConflict, JobPreconditionError
+from loreley.db.base import ensure_database_schema
 from loreley.tasks.broker import broker  # noqa: F401 - ensure broker is initialised
 
 console = Console()
 log = logger.bind(module="tasks.workers")
 settings = get_settings()
+
+# Ensure that the core Loreley tables exist before any jobs are processed.
+# This integrates the schema-initialisation flow into the core worker/scheduler
+# pipeline instead of relying on example scripts.
+ensure_database_schema()
 
 __all__ = ["run_evolution_job"]
 

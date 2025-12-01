@@ -68,3 +68,29 @@ def session_scope() -> Iterator[Session]:
         raise
     finally:
         SessionLocal.remove()
+
+
+def ensure_database_schema() -> None:
+    """Ensure that all Loreley database tables exist.
+
+    This helper imports the ORM models and issues ``CREATE TABLE IF NOT EXISTS``
+    statements for all metadata. It is safe to call multiple times.
+    """
+
+    try:
+        # Import models so that all ORM tables are registered on ``Base.metadata``.
+        import loreley.db.models  # noqa: F401  # pylint: disable=unused-import
+
+        Base.metadata.create_all(bind=engine)
+        console.log(
+            "[green]Database schema ready[/] url={}".format(
+                settings.database_dsn,
+            ),
+        )
+        log.info("Database schema ensured for {}", _sanitize_dsn(settings.database_dsn))
+    except Exception as exc:  # pragma: no cover - defensive
+        console.log(
+            "[bold red]Failed to ensure database schema[/] reason={}".format(exc),
+        )
+        log.exception("Failed to ensure database schema: {}", exc)
+        raise
