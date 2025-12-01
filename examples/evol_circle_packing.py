@@ -21,6 +21,7 @@ and git remote setup. OPENAI_API_KEY is always read from the environment.
 """
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -46,7 +47,7 @@ LOG_LEVEL: str = "INFO"
 # Loreley requires PostgreSQL because the ORM models use Postgres-specific
 # types (JSONB, ARRAY, UUID). Adjust credentials/host/db name as needed.
 
-DATABASE_URL: str = "postgresql+psycopg://postgres:postgres@localhost:5432/loreley"
+DATABASE_URL: str = "postgresql+psycopg://loreley:loreley@localhost:5432/circle_packing"
 
 # --- Redis / Dramatiq broker -----------------------------------------------
 
@@ -76,8 +77,9 @@ WORKER_REPO_WORKTREE: Path = REPO_ROOT / ".cache" / "loreley" / "worker-repo"
 
 # --- Scheduler configuration ------------------------------------------------
 
-# If None, the scheduler will default to WORKER_REPO_WORKTREE as its repo root.
-SCHEDULER_REPO_ROOT: Path | None = None
+# Use the circle-packing example repository itself as the scheduler repo root
+# so that it always sees a valid git worktree, independent of the worker clone.
+SCHEDULER_REPO_ROOT: Path | None = REPO_ROOT
 
 # Poll interval (seconds) between scheduler ticks in continuous mode.
 SCHEDULER_POLL_INTERVAL_SECONDS: float = 30.0
@@ -174,9 +176,9 @@ def _apply_base_env() -> None:
 
     # Evaluator for circle-packing.
     if WORKER_EVALUATOR_PYTHON_PATHS:
-        # Join with the OS-specific path separator; a single element will remain unchanged.
-        joined_paths = os.pathsep.join(WORKER_EVALUATOR_PYTHON_PATHS)
-        _set_env_if_unset("WORKER_EVALUATOR_PYTHON_PATHS", joined_paths)
+        # Encode as JSON so that pydantic's list[str] env parsing can consume it directly.
+        paths_payload = json.dumps(WORKER_EVALUATOR_PYTHON_PATHS)
+        _set_env_if_unset("WORKER_EVALUATOR_PYTHON_PATHS", paths_payload)
     _set_env_if_unset("WORKER_EVALUATOR_PLUGIN", WORKER_EVALUATOR_PLUGIN)
 
     # MAP-Elites.
