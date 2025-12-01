@@ -18,3 +18,8 @@ dependencies = [
     "scikit-learn>=1.7.2",
     "sqlalchemy>=2.0.44",
 ]
+
+[dependency-groups]
+dev = [
+    "mkdocs-material>=9.7.0",
+]

@@ -1,0 +1,44 @@
+site_name: Loreley
+site_description: Automated MAP-Elites system that evolves entire git repositories.
+
+theme:
+  name: mkdocs
+
+nav:
+  - Home: index.md
+  - Loreley:
+      - Configuration: loreley/config.md
+      - Scheduler: loreley/scheduler/main.md
+      - Database:
+          - Engine & sessions: loreley/db/base.md
+          - Models: loreley/db/models.md
+      - MAP-Elites:
+          - Overview: loreley/core/map-elites/map-elites.md
+          - Preprocessing: loreley/core/map-elites/preprocess.md
+          - Chunking: loreley/core/map-elites/chunk.md
+          - Code embeddings: loreley/core/map-elites/code_embedding.md
+          - Dimensionality reduction: loreley/core/map-elites/dimension_reduction.md
+          - Sampler: loreley/core/map-elites/sampler.md
+          - Snapshots: loreley/core/map-elites/snapshot.md
+          - Summary embeddings: loreley/core/map-elites/summarization_embedding.md
+      - Worker pipeline:
+          - Repository: loreley/core/worker/repository.md
+          - Planning: loreley/core/worker/planning.md
+          - Coding: loreley/core/worker/coding.md
+          - Evaluation: loreley/core/worker/evaluator.md
+          - Evolution loop: loreley/core/worker/evolution.md
+          - Commit summaries: loreley/core/worker/commit_summary.md
+          - Job store: loreley/core/worker/job_store.md
+      - Tasks:
+          - Broker: loreley/tasks/broker.md
+          - Workers: loreley/tasks/workers.md
+  - Operations:
+      - Running the scheduler: script/run_scheduler.md
+      - Running the worker: script/run_worker.md
+
+markdown_extensions:
+  - admonition
+  - codehilite
+  - tables
+  - toc:
+      permalink: true
