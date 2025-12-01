@@ -189,11 +189,18 @@ def _apply_base_env() -> None:
 
 
 def _ensure_repo_on_sys_path() -> None:
-    """Ensure the Loreley repository root is importable as a top-level package."""
+    """Ensure the Loreley project root and example repo are importable."""
 
-    root_str = str(REPO_ROOT)
-    if root_str not in sys.path:
-        sys.path.insert(0, root_str)
+    # Project root (contains the ``loreley`` package and ``script`` entrypoints).
+    project_root = Path(__file__).resolve().parents[1]
+    project_root_str = str(project_root)
+    if project_root_str not in sys.path:
+        sys.path.insert(0, project_root_str)
+
+    # Example repo root (circle-packing directory, for evaluator plugins, etc.).
+    example_root_str = str(REPO_ROOT)
+    if example_root_str not in sys.path:
+        sys.path.insert(0, example_root_str)
 
 
 def _print_environment_summary() -> None:
