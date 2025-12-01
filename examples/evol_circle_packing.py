@@ -108,6 +108,7 @@ MAPELITES_FITNESS_METRIC: str = "packing_density"
 
 # Give this experiment a dedicated island ID.
 MAPELITES_DEFAULT_ISLAND_ID: str = "circle_packing"
+MAPELITES_EXPERIMENT_ROOT_COMMIT: str | None = "f662decc"
 
 
 # --- Model / LLM configuration (see loreley.config.Settings) ----------------
@@ -213,6 +214,10 @@ def _apply_base_env() -> None:
     # MAP-Elites.
     _set_env_if_unset("MAPELITES_FITNESS_METRIC", MAPELITES_FITNESS_METRIC)
     _set_env_if_unset("MAPELITES_DEFAULT_ISLAND_ID", MAPELITES_DEFAULT_ISLAND_ID)
+    _set_env_if_unset(
+        "MAPELITES_EXPERIMENT_ROOT_COMMIT",
+        MAPELITES_EXPERIMENT_ROOT_COMMIT,
+    )
 
     # Model / LLM configuration.
     _set_env_if_unset("WORKER_EVOLUTION_COMMIT_MODEL", WORKER_EVOLUTION_COMMIT_MODEL)
@@ -341,9 +346,10 @@ def _print_environment_summary() -> None:
         ),
     )
     console.log(
-        "[green]MAP-Elites[/] fitness_metric={} island_id={}".format(
+        "[green]MAP-Elites[/] fitness_metric={} island_id={} root_commit={}".format(
             os.getenv("MAPELITES_FITNESS_METRIC", "<unset>"),
             os.getenv("MAPELITES_DEFAULT_ISLAND_ID", "<unset>"),
+            os.getenv("MAPELITES_EXPERIMENT_ROOT_COMMIT", "<unset>"),
         ),
     )
 
