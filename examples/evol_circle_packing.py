@@ -110,6 +110,35 @@ MAPELITES_FITNESS_METRIC: str = "packing_density"
 MAPELITES_DEFAULT_ISLAND_ID: str = "circle_packing"
 
 
+# --- Model / LLM configuration (see loreley.config.Settings) ----------------
+
+# Evolution commit message model.
+WORKER_EVOLUTION_COMMIT_MODEL: str = "gpt-4.1-mini"
+WORKER_EVOLUTION_COMMIT_TEMPERATURE: float = 0.2
+WORKER_EVOLUTION_COMMIT_MAX_OUTPUT_TOKENS: int = 128
+WORKER_EVOLUTION_COMMIT_MAX_RETRIES: int = 3
+WORKER_EVOLUTION_COMMIT_RETRY_BACKOFF_SECONDS: float = 2.0
+
+# Code embedding model used for MAP-Elites preprocessing.
+MAPELITES_CODE_EMBEDDING_MODEL: str = "text-embedding-3-small"
+MAPELITES_CODE_EMBEDDING_DIMENSIONS: int | None = None
+MAPELITES_CODE_EMBEDDING_BATCH_SIZE: int = 12
+MAPELITES_CODE_EMBEDDING_MAX_CHUNKS_PER_COMMIT: int = 512
+MAPELITES_CODE_EMBEDDING_MAX_RETRIES: int = 3
+MAPELITES_CODE_EMBEDDING_RETRY_BACKOFF_SECONDS: float = 2.0
+
+# Natural-language summary model used for MAP-Elites.
+MAPELITES_SUMMARY_MODEL: str = "gpt-4.1-mini"
+MAPELITES_SUMMARY_TEMPERATURE: float = 0.2
+MAPELITES_SUMMARY_MAX_OUTPUT_TOKENS: int = 512
+MAPELITES_SUMMARY_SOURCE_CHAR_LIMIT: int = 6000
+MAPELITES_SUMMARY_MAX_RETRIES: int = 3
+MAPELITES_SUMMARY_RETRY_BACKOFF_SECONDS: float = 2.0
+MAPELITES_SUMMARY_EMBEDDING_MODEL: str = "text-embedding-3-small"
+MAPELITES_SUMMARY_EMBEDDING_DIMENSIONS: int | None = None
+MAPELITES_SUMMARY_EMBEDDING_BATCH_SIZE: int = 16
+
+
 # --- Optional OpenAI-compatible API base URL -------------------------------
 # OPENAI_API_KEY is intentionally NOT hard-coded; it is always read from the
 # environment at runtime. If you need a custom base URL (e.g. Azure or a
@@ -184,6 +213,83 @@ def _apply_base_env() -> None:
     # MAP-Elites.
     _set_env_if_unset("MAPELITES_FITNESS_METRIC", MAPELITES_FITNESS_METRIC)
     _set_env_if_unset("MAPELITES_DEFAULT_ISLAND_ID", MAPELITES_DEFAULT_ISLAND_ID)
+
+    # Model / LLM configuration.
+    _set_env_if_unset("WORKER_EVOLUTION_COMMIT_MODEL", WORKER_EVOLUTION_COMMIT_MODEL)
+    _set_env_if_unset(
+        "WORKER_EVOLUTION_COMMIT_TEMPERATURE",
+        WORKER_EVOLUTION_COMMIT_TEMPERATURE,
+    )
+    _set_env_if_unset(
+        "WORKER_EVOLUTION_COMMIT_MAX_OUTPUT_TOKENS",
+        WORKER_EVOLUTION_COMMIT_MAX_OUTPUT_TOKENS,
+    )
+    _set_env_if_unset(
+        "WORKER_EVOLUTION_COMMIT_MAX_RETRIES",
+        WORKER_EVOLUTION_COMMIT_MAX_RETRIES,
+    )
+    _set_env_if_unset(
+        "WORKER_EVOLUTION_COMMIT_RETRY_BACKOFF_SECONDS",
+        WORKER_EVOLUTION_COMMIT_RETRY_BACKOFF_SECONDS,
+    )
+
+    _set_env_if_unset("MAPELITES_CODE_EMBEDDING_MODEL", MAPELITES_CODE_EMBEDDING_MODEL)
+    if MAPELITES_CODE_EMBEDDING_DIMENSIONS is not None:
+        _set_env_if_unset(
+            "MAPELITES_CODE_EMBEDDING_DIMENSIONS",
+            MAPELITES_CODE_EMBEDDING_DIMENSIONS,
+        )
+    _set_env_if_unset(
+        "MAPELITES_CODE_EMBEDDING_BATCH_SIZE",
+        MAPELITES_CODE_EMBEDDING_BATCH_SIZE,
+    )
+    _set_env_if_unset(
+        "MAPELITES_CODE_EMBEDDING_MAX_CHUNKS_PER_COMMIT",
+        MAPELITES_CODE_EMBEDDING_MAX_CHUNKS_PER_COMMIT,
+    )
+    _set_env_if_unset(
+        "MAPELITES_CODE_EMBEDDING_MAX_RETRIES",
+        MAPELITES_CODE_EMBEDDING_MAX_RETRIES,
+    )
+    _set_env_if_unset(
+        "MAPELITES_CODE_EMBEDDING_RETRY_BACKOFF_SECONDS",
+        MAPELITES_CODE_EMBEDDING_RETRY_BACKOFF_SECONDS,
+    )
+
+    _set_env_if_unset("MAPELITES_SUMMARY_MODEL", MAPELITES_SUMMARY_MODEL)
+    _set_env_if_unset(
+        "MAPELITES_SUMMARY_TEMPERATURE",
+        MAPELITES_SUMMARY_TEMPERATURE,
+    )
+    _set_env_if_unset(
+        "MAPELITES_SUMMARY_MAX_OUTPUT_TOKENS",
+        MAPELITES_SUMMARY_MAX_OUTPUT_TOKENS,
+    )
+    _set_env_if_unset(
+        "MAPELITES_SUMMARY_SOURCE_CHAR_LIMIT",
+        MAPELITES_SUMMARY_SOURCE_CHAR_LIMIT,
+    )
+    _set_env_if_unset(
+        "MAPELITES_SUMMARY_MAX_RETRIES",
+        MAPELITES_SUMMARY_MAX_RETRIES,
+    )
+    _set_env_if_unset(
+        "MAPELITES_SUMMARY_RETRY_BACKOFF_SECONDS",
+        MAPELITES_SUMMARY_RETRY_BACKOFF_SECONDS,
+    )
+    _set_env_if_unset(
+        "MAPELITES_SUMMARY_EMBEDDING_MODEL",
+        MAPELITES_SUMMARY_EMBEDDING_MODEL,
+    )
+    if MAPELITES_SUMMARY_EMBEDDING_DIMENSIONS is not None:
+        _set_env_if_unset(
+            "MAPELITES_SUMMARY_EMBEDDING_DIMENSIONS",
+            MAPELITES_SUMMARY_EMBEDDING_DIMENSIONS,
+        )
+    _set_env_if_unset(
+        "MAPELITES_SUMMARY_EMBEDDING_BATCH_SIZE",
+        MAPELITES_SUMMARY_EMBEDDING_BATCH_SIZE,
+    )
 
     # OpenAI-compatible model endpoint (API key remains external).
     if OPENAI_BASE_URL is not None:
