@@ -8,7 +8,10 @@ nav:
   - Home: index.md
   - Loreley:
       - Configuration: loreley/config.md
-      - Scheduler: loreley/scheduler/main.md
+      - Scheduler:
+          - Overview: loreley/scheduler/main.md
+          - Job scheduling: loreley/scheduler/job_scheduler.md
+          - Ingestion: loreley/scheduler/ingestion.md
       - Database:
           - Engine & sessions: loreley/db/base.md
           - Models: loreley/db/models.md

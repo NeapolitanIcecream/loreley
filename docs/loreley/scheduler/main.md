@@ -5,14 +5,21 @@ Central orchestration loop that keeps the Loreley evolution pipeline moving by c
 ## EvolutionScheduler
 
 - **Purpose**: continuously monitors unfinished jobs (`pending`, `queued`, `running`), schedules new work from the MAP-Elites archive when capacity allows, dispatches pending jobs to the Dramatiq `run_evolution_job` actor, and backfills the archive with freshly evaluated commits.
-- **Construction**: `EvolutionScheduler(settings=None)` loads `loreley.config.Settings`, resolves the target repository root (preferring `SCHEDULER_REPO_ROOT` and falling back to `WORKER_REPO_WORKTREE`), initialises a `git` repository handle, derives a `Repository`/`Experiment` pair via `loreley.core.experiments.get_or_create_experiment()`, wires `MapElitesManager` (scoped to that `experiment_id`) plus `MapElitesSampler` with the same settings, and, when `MAPELITES_EXPERIMENT_ROOT_COMMIT` is set, ensures that the configured root commit is present in the `commits` table and ingested into each relevant MAP-Elites island archive before any jobs are scheduled.
+- **Construction**: `EvolutionScheduler(settings=None)` loads `loreley.config.Settings`, resolves the target repository root (preferring `SCHEDULER_REPO_ROOT` and falling back to `WORKER_REPO_WORKTREE`), initialises a `git` repository handle, derives a `Repository`/`Experiment` pair via `loreley.core.experiments.get_or_create_experiment()`, wires `MapElitesManager` (scoped to that `experiment_id`) plus `MapElitesSampler` with the same settings, and, when `MAPELITES_EXPERIMENT_ROOT_COMMIT` is set, delegates root-commit registration and ingestion to `loreley.scheduler.ingestion.MapElitesIngestion`.
 - **Lifecycle**:
   1. `tick()` runs the ingest → dispatch → measure → schedule pipeline and logs a concise summary for observability. Each stage is isolated so failures are logged and do not crash the loop.
   2. `run_forever()` installs `SIGINT`/`SIGTERM` handlers, runs `tick()` at the configured poll interval, and keeps looping until interrupted.
   3. `--once` CLI flag runs a single tick and exits, useful for cron jobs or tests.
-- **Job scheduling**: enforces `SCHEDULER_MAX_UNFINISHED_JOBS` as an upper bound. When capacity exists it calls `MapElitesSampler.schedule_job(experiment_id=experiment.id)`, immediately flips new rows to `QUEUED`, and pushes them to Dramatiq, ensuring that all scheduled jobs are tagged with the same experiment as the running scheduler instance.
-- **Dispatching**: batches of pending jobs (ordered by priority, then schedule time) are sent to Dramatiq according to `SCHEDULER_DISPATCH_BATCH_SIZE`, ensuring legacy jobs drain before creating more.
-- **MAP-Elites maintenance**: after jobs succeed, the scheduler gathers their resulting commit hash, fetches the diff from git, and calls `MapElitesManager.ingest(...)`. Ingestion results (status, delta, placement) are stored back into each job's JSON payload under `payload["ingestion"]["map_elites"]` for auditability and retry tracking, and ingestion metadata includes the `experiment_id`/`repository_id` associated with the originating job.
+- **Job scheduling & dispatching**: the scheduler delegates all capacity calculations, MAP-Elites sampling, and Dramatiq job submission to `loreley.scheduler.job_scheduler.JobScheduler`, which:
+  - counts unfinished jobs in the database,
+  - enforces `SCHEDULER_MAX_UNFINISHED_JOBS` and the optional `SCHEDULER_MAX_TOTAL_JOBS` cap,
+  - calls `MapElitesSampler.schedule_job(experiment_id=experiment.id)` to produce new work, and
+  - marks rows as `QUEUED` and sends them to the `run_evolution_job` actor in priority order.
+- **MAP-Elites maintenance**: ingestion of succeeded jobs is handled by `loreley.scheduler.ingestion.MapElitesIngestion`, which:
+  - scans for `SUCCEEDED` jobs that have not yet been fully ingested,
+  - extracts their `result.commit_hash`, fetches the corresponding git commit, and computes per-file change counts,
+  - calls `MapElitesManager.ingest(...)` with metrics and contextual metadata, and
+  - writes a detailed ingestion status block back under `payload["ingestion"]["map_elites"]` (including attempts, delta, placement, and any error messages).
 
 ## Configuration
 
@@ -36,6 +43,11 @@ uv run python -m loreley.scheduler.main --once # single tick (cron / smoke tests
 For details about the dedicated CLI wrapper script (including logging setup and
 recommended usage), see `docs/script/run_scheduler.md`.
 
-Running the module imports `loreley.tasks.workers`, so the Dramatiq broker is configured before the first dispatch. Rich console output summarises each tick, while Loguru records detailed diagnostics for ingestion, scheduling, and dispatching. This makes the scheduler easy to supervise either interactively or under a process manager. 
+Running the module imports `loreley.tasks.workers`, so the Dramatiq broker is configured before the first dispatch. Rich console output summarises each tick, while Loguru records detailed diagnostics for ingestion, scheduling, and dispatching via the dedicated `job_scheduler` and `ingestion` helper classes. This makes the scheduler easy to supervise either interactively or under a process manager. 
+
+For more detailed information about these helper modules, see:
+
+- `loreley.scheduler.job_scheduler.JobScheduler` — job production and dispatch pipeline.
+- `loreley.scheduler.ingestion.MapElitesIngestion` — result ingestion, root-commit initialisation, and MAP-Elites maintenance.
 
 
