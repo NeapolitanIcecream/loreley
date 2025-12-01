@@ -21,8 +21,10 @@ from sqlalchemy import select
 from loreley.config import Settings
 from loreley.core.map_elites.map_elites import MapElitesManager
 from loreley.core.map_elites.preprocess import ChangedFile
+from loreley.core.worker.evaluator import EvaluationContext, EvaluationError, Evaluator
+from loreley.core.worker.repository import RepositoryError, WorkerRepository
 from loreley.db.base import session_scope
-from loreley.db.models import CommitMetadata, EvolutionJob, JobStatus, MapElitesState
+from loreley.db.models import CommitMetadata, EvolutionJob, JobStatus, MapElitesState, Metric
 
 log = logger.bind(module="scheduler.ingestion")
 
@@ -89,6 +91,7 @@ class MapElitesIngestion:
 
         try:
             self._ensure_root_commit_metadata(commit_hash)
+            self._ensure_root_commit_evaluated(commit_hash)
             self._ensure_root_commit_ingested(commit_hash)
         except Exception as exc:  # pragma: no cover - defensive
             self.console.log(
@@ -318,6 +321,154 @@ class MapElitesIngestion:
 
     # Root commit initialisation --------------------------------------------
 
+    def _ensure_root_commit_evaluated(self, commit_hash: str) -> None:
+        """Run a one-off evaluation for the root commit to populate metrics.
+
+        This helper is idempotent: if any Metric rows already exist for the
+        commit, the evaluation step is skipped. Failures are logged but do not
+        prevent the scheduler from running.
+        """
+
+        # Skip evaluation when metrics already exist for this commit.
+        with session_scope() as session:
+            existing = session.execute(
+                select(Metric.id).where(Metric.commit_hash == commit_hash)
+            ).scalar_one_or_none()
+            if existing is not None:
+                return
+
+        # Prepare a detached checkout of the root commit using the worker repo.
+        try:
+            worker_repo = WorkerRepository(self.settings)
+        except RepositoryError as exc:
+            self.console.log(
+                "[yellow]Skipping root commit evaluation; worker repository is not configured[/] "
+                f"commit={commit_hash} reason={exc}",
+            )
+            log.warning(
+                "Skipping root commit evaluation for {} because worker repository "
+                "could not be initialised: {}",
+                commit_hash,
+                exc,
+            )
+            return
+
+        try:
+            checkout = worker_repo.checkout_for_job(
+                job_id=None,
+                base_commit=commit_hash,
+                create_branch=False,
+            )
+        except RepositoryError as exc:
+            self.console.log(
+                "[yellow]Skipping root commit evaluation; checkout failed[/] "
+                f"commit={commit_hash} reason={exc}",
+            )
+            log.warning(
+                "Skipping root commit evaluation for {} because checkout failed: {}",
+                commit_hash,
+                exc,
+            )
+            return
+
+        goal = f"Baseline evaluation for root commit {commit_hash}"
+        default_island = self.settings.mapelites_default_island_id or "main"
+        payload: dict[str, Any] = {
+            "job": {
+                "id": None,
+                "island_id": default_island,
+                "experiment_id": str(self.experiment.id),
+                "repository_id": str(self.repository.id) if self.repository is not None else None,
+                "goal": goal,
+                "constraints": [],
+                "acceptance_criteria": [],
+                "notes": [],
+            },
+            "plan": {
+                "summary": goal,
+            },
+        }
+
+        evaluator = Evaluator(self.settings)
+        context = EvaluationContext(
+            worktree=checkout.worktree,
+            base_commit_hash=None,
+            candidate_commit_hash=commit_hash,
+            job_id=None,
+            goal=goal,
+            payload=payload,
+            plan_summary=goal,
+            metadata={
+                "root_commit": True,
+                "experiment_id": str(self.experiment.id),
+                "repository_id": str(self.repository.id) if self.repository is not None else None,
+            },
+        )
+
+        try:
+            result = evaluator.evaluate(context)
+        except EvaluationError as exc:
+            self.console.log(
+                f"[bold red]Root commit evaluation failed[/] commit={commit_hash} reason={exc}",
+            )
+            log.error("Root commit evaluation failed for {}: {}", commit_hash, exc)
+            return
+
+        metrics_payload = [metric.as_dict() for metric in result.metrics]
+
+        with session_scope() as session:
+            commit_row = session.execute(
+                select(CommitMetadata).where(CommitMetadata.commit_hash == commit_hash)
+            ).scalar_one_or_none()
+            if commit_row is not None:
+                commit_row.evaluation_summary = result.summary
+                extra = dict(commit_row.extra_context or {})
+                root_eval = dict(extra.get("root_evaluation") or {})
+                root_eval.update(
+                    {
+                        "summary": result.summary,
+                        "metrics": metrics_payload,
+                    }
+                )
+                extra["root_evaluation"] = root_eval
+                commit_row.extra_context = extra
+
+            for metric in result.metrics:
+                existing_metric = session.execute(
+                    select(Metric).where(
+                        Metric.commit_hash == commit_hash,
+                        Metric.name == metric.name,
+                    )
+                ).scalar_one_or_none()
+                if existing_metric:
+                    existing_metric.value = float(metric.value)
+                    existing_metric.unit = metric.unit
+                    existing_metric.higher_is_better = bool(metric.higher_is_better)
+                    existing_metric.details = dict(metric.details or {})
+                else:
+                    session.add(
+                        Metric(
+                            commit_hash=commit_hash,
+                            name=metric.name,
+                            value=metric.value,
+                            unit=metric.unit,
+                            higher_is_better=metric.higher_is_better,
+                            details=dict(metric.details or {}),
+                        )
+                    )
+
+        self.console.log(
+            "[green]Evaluated root commit[/] commit={} metrics={}".format(
+                commit_hash,
+                len(metrics_payload),
+            ),
+        )
+        log.info(
+            "Root commit evaluation completed for {} with {} metrics",
+            commit_hash,
+            len(metrics_payload),
+        )
+
     def _ensure_root_commit_metadata(self, commit_hash: str) -> None:
         """Create or update CommitMetadata for the root commit."""
 
@@ -400,6 +551,26 @@ class MapElitesIngestion:
         default_island = self.settings.mapelites_default_island_id or "main"
         islands.add(default_island)
 
+        # Load any persisted metrics for the root commit so that MAP-Elites can
+        # derive a meaningful fitness value instead of falling back to the
+        # configured floor.
+        metrics_payload: Sequence[Mapping[str, Any]] | None = None
+        with session_scope() as session:
+            metric_rows = session.scalars(
+                select(Metric).where(Metric.commit_hash == commit_hash)
+            ).all()
+            if metric_rows:
+                metrics_payload = [
+                    {
+                        "name": row.name,
+                        "value": row.value,
+                        "unit": row.unit,
+                        "higher_is_better": row.higher_is_better,
+                        "details": dict(row.details or {}),
+                    }
+                    for row in metric_rows
+                ]
+
         for island_id in sorted(islands):
             records = self.manager.get_records(island_id)
             if any(record.commit_hash == commit_hash for record in records):
@@ -419,7 +590,7 @@ class MapElitesIngestion:
                 insertion = self.manager.ingest(
                     commit_hash=commit_hash,
                     changed_files=changed_files,
-                    metrics=None,
+                    metrics=metrics_payload,
                     island_id=island_id,
                     repo_root=self.repo_root,
                     treeish=commit_hash,
