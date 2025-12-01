@@ -17,6 +17,9 @@ Commit summarisation utilities used by the evolution worker to derive concise gi
     - `WORKER_EVOLUTION_COMMIT_RETRY_BACKOFF_SECONDS`: linear backoff applied between retries.
     - `WORKER_EVOLUTION_COMMIT_SUBJECT_MAX_CHARS`: hard character limit for subject lines (minimum 32).
   - Lazily initialises an `OpenAI` client and applies a local `_truncate_limit` when building prompts to keep context sizes reasonable.
+  - Respects the global OpenAI API surface setting `OPENAI_API_SPEC`:
+    - `"responses"` (default) uses the unified Responses API (`client.responses.create`) with an `instructions` string and full prompt as `input`.
+    - `"chat_completions"` uses the Chat Completions API (`client.chat.completions.create`), mapping the same instruction text to a `system` message and the prompt to a `user` message, extracting the assistant's reply from the first choice.
 
 ### Subject generation
 
@@ -27,7 +30,7 @@ Commit summarisation utilities used by the evolution worker to derive concise gi
     - Coding execution summary, per-step outcomes (step IDs, statuses, summaries), and the list of tests executed.
     - The coding agent's own suggested `commit_message` as a fallback hint.
   - Calls the `OpenAI` responses API with the configured model, temperature, and token limit, plus an `instructions` string that asks for a single imperative git subject no longer than 72 characters.
-  - Retries up to `_max_retries` times on `OpenAIError` or `CommitSummaryError`, waiting for `retry_backoff * attempt` seconds between attempts.
+  - Retries up to `_max_retries` times on `OpenAIError` or `CommitSummaryError`, waiting for `retry_backoff * attempt` seconds between attempts, regardless of whether Responses or Chat Completions is selected.
   - On success, strips and normalises whitespace, then enforces the subject character limit via `_normalise_subject()`, logging the attempt count via `loguru`.
   - On exhausting retries, raises `CommitSummaryError` with a descriptive message including the number of attempts.
 

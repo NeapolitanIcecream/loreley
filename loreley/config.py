@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote_plus
 
 from loguru import logger
@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     openai_base_url: str | None = Field(
         default=None,
         alias="OPENAI_BASE_URL",
+    )
+    openai_api_spec: Literal["responses", "chat_completions"] = Field(
+        default="responses",
+        alias="OPENAI_API_SPEC",
     )
 
     database_url: str | None = Field(default=None, alias="DATABASE_URL")

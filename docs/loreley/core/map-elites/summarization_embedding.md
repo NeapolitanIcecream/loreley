@@ -12,7 +12,10 @@ Summary-level embedding utilities that turn preprocessed code into structured na
 
 - **`SummaryEmbedder`**: orchestrates summarisation of preprocessed files and embedding of the resulting summaries.
   - Configured via `Settings` Map-Elites summary options (`MAPELITES_SUMMARY_*`) controlling the LLM model, temperature, maximum output tokens, source excerpt character limit, and retry/backoff behaviour, and summary embedding options (`MAPELITES_SUMMARY_EMBEDDING_*`) controlling the embedding model, optional output dimensions, and batch size.
-  - `run(files)` skips empty input, calls `_summarize_files` to build `FileSummary` objects with a `rich` progress spinner and `loguru` debug/warning logs, then calls `_embed_summaries` to batch summaries through the OpenAI embeddings API, weighting them by change count or summary length.
+  - Uses the global OpenAI API configuration from `loreley.config.Settings` (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_API_SPEC`) when constructing the shared `OpenAI` client. `OPENAI_API_SPEC` selects whether summarisation uses:
+    - the unified **Responses API** (`client.responses.create`, default), passing `_SUMMARY_INSTRUCTIONS` as `instructions` and the file prompt as `input`; or
+    - the classic **Chat Completions API** (`client.chat.completions.create`), mapping `_SUMMARY_INSTRUCTIONS` to a `system` message and the file prompt to a `user` message while keeping temperature and token limits aligned.
+  - `run(files)` skips empty input, calls `_summarize_files` to build `FileSummary` objects with a `rich` progress spinner and `loguru` debug/warning logs (using either Responses or Chat Completions under the hood), then calls `_embed_summaries` to batch summaries through the OpenAI embeddings API, weighting them by change count or summary length.
   - Aggregates per-file vectors into a single commit-level vector using `_weighted_average`, after sorting entries by path for stable output; returns a `CommitSummaryEmbedding` or `None` if no usable summaries or embeddings were produced.
 
 ## Convenience API

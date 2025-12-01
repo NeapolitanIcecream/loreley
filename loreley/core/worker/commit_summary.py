@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import textwrap
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 from openai import OpenAI, OpenAIError
@@ -58,6 +58,7 @@ class CommitSummarizer:
         )
         self._subject_limit = max(32, self.settings.worker_evolution_commit_subject_max_chars)
         self._truncate_limit = 1200
+        self._api_spec = self.settings.openai_api_spec
 
     def generate(
         self,
@@ -72,17 +73,30 @@ class CommitSummarizer:
         while attempt < self._max_retries:
             attempt += 1
             try:
-                response = self._client.responses.create(
-                    model=self._model,
-                    input=prompt,
-                    temperature=self._temperature,
-                    max_output_tokens=self._max_tokens,
-                    instructions=(
-                        "Respond with a single concise git commit subject line "
-                        "in imperative mood (<=72 characters)."
-                    ),
+                instructions = (
+                    "Respond with a single concise git commit subject line "
+                    "in imperative mood (<=72 characters)."
                 )
-                subject = (response.output_text or "").strip()
+                if self._api_spec == "responses":
+                    response = self._client.responses.create(
+                        model=self._model,
+                        input=prompt,
+                        temperature=self._temperature,
+                        max_output_tokens=self._max_tokens,
+                        instructions=instructions,
+                    )
+                    subject = (response.output_text or "").strip()
+                else:
+                    response = self._client.chat.completions.create(
+                        model=self._model,
+                        messages=[
+                            {"role": "system", "content": instructions},
+                            {"role": "user", "content": prompt},
+                        ],
+                        temperature=self._temperature,
+                        max_tokens=self._max_tokens,
+                    )
+                    subject = self._extract_chat_completion_text(response).strip()
                 if not subject:
                     raise CommitSummaryError("Commit summarizer returned empty output.")
                 cleaned = self._normalise_subject(subject)
@@ -188,3 +202,28 @@ Respond with a single subject line without surrounding quotes.
         if len(snippet) <= active:
             return snippet
         return f"{snippet[:active]}…"
+
+    @staticmethod
+    def _extract_chat_completion_text(response: Any) -> str:
+        """Extract assistant text content from a chat completion response."""
+
+        choices = getattr(response, "choices", None)
+        if not choices:
+            return ""
+        first = choices[0]
+        message = getattr(first, "message", None)
+        if message is None:
+            return ""
+        content = getattr(message, "content", None)
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for part in content:
+                text = getattr(part, "text", None)
+                if text:
+                    parts.append(str(text))
+                elif isinstance(part, str):
+                    parts.append(part)
+            return "".join(parts)
+        return str(content or "")

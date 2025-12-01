@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import time
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Sequence
 
 from loguru import logger
 from openai import OpenAI, OpenAIError
@@ -119,6 +119,7 @@ class SummaryEmbedder:
             1,
             self.settings.mapelites_summary_embedding_batch_size,
         )
+        self._api_spec = self.settings.openai_api_spec
 
     def run(self, files: Sequence[PreprocessedFile]) -> CommitSummaryEmbedding | None:
         """Return commit-level summary embedding for supplied files."""
@@ -187,14 +188,26 @@ class SummaryEmbedder:
         while True:
             attempt += 1
             try:
-                response = self._client.responses.create(
-                    model=self._summary_model,
-                    instructions=_SUMMARY_INSTRUCTIONS,
-                    input=payload,
-                    temperature=self._summary_temperature,
-                    max_output_tokens=self._summary_max_tokens,
-                )
-                text = (response.output_text or "").strip()
+                if self._api_spec == "responses":
+                    response = self._client.responses.create(
+                        model=self._summary_model,
+                        instructions=_SUMMARY_INSTRUCTIONS,
+                        input=payload,
+                        temperature=self._summary_temperature,
+                        max_output_tokens=self._summary_max_tokens,
+                    )
+                    text = (response.output_text or "").strip()
+                else:
+                    response = self._client.chat.completions.create(
+                        model=self._summary_model,
+                        messages=[
+                            {"role": "system", "content": _SUMMARY_INSTRUCTIONS},
+                            {"role": "user", "content": payload},
+                        ],
+                        temperature=self._summary_temperature,
+                        max_tokens=self._summary_max_tokens,
+                    )
+                    text = self._extract_chat_completion_text(response).strip()
                 if not text:
                     log.warning("Summary model returned empty output for {}", path)
                     return None
@@ -217,6 +230,31 @@ class SummaryEmbedder:
                     delay,
                 )
                 time.sleep(delay)
+
+    @staticmethod
+    def _extract_chat_completion_text(response: Any) -> str:
+        """Extract assistant text content from a chat completion response."""
+
+        choices = getattr(response, "choices", None)
+        if not choices:
+            return ""
+        first = choices[0]
+        message = getattr(first, "message", None)
+        if message is None:
+            return ""
+        content = getattr(message, "content", None)
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for part in content:
+                text = getattr(part, "text", None)
+                if text:
+                    parts.append(str(text))
+                elif isinstance(part, str):
+                    parts.append(part)
+            return "".join(parts)
+        return str(content or "")
 
     def _embed_summaries(self, summaries: Sequence[FileSummary]) -> list[SummaryEmbedding]:
         progress = self._build_progress()
