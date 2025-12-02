@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
-from uuid import uuid4
 
 from loreley.config import Settings
 from loreley.core.worker.evolution import EvolutionWorker
@@ -42,34 +41,27 @@ def test_first_non_empty_and_coerce_str_sequence(settings: Settings) -> None:
 
 
 def test_extract_goal_and_iteration_hint(settings: Settings) -> None:
+    settings.worker_evolution_global_goal = "GLOBAL GOAL"
     worker = make_worker(settings)
-    job_id = uuid4()
 
     payload: Mapping[str, Any] = {"goal": "G"}
     goal = worker._extract_goal(  # type: ignore[attr-defined]
         payload=payload,
         extra_context={},
-        job_id=job_id,
-        default="default",
     )
     assert goal == "G"
 
     goal2 = worker._extract_goal(  # type: ignore[attr-defined]
         payload={},
         extra_context={"goal": "EG"},
-        job_id=job_id,
-        default="default",
     )
     assert goal2 == "EG"
 
     fallback = worker._extract_goal(  # type: ignore[attr-defined]
         payload={},
         extra_context={},
-        job_id=job_id,
-        default="default",
     )
-    assert str(job_id) in fallback
-    assert "default" in fallback
+    assert fallback == "GLOBAL GOAL"
 
     hint = worker._extract_iteration_hint(  # type: ignore[attr-defined]
         payload={"iteration_hint": "explicit"},

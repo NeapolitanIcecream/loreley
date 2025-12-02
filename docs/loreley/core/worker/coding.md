@@ -8,7 +8,7 @@ Execution engine for Loreley's autonomous worker, responsible for driving the Co
 - **`StepExecutionStatus`**: string `Enum` describing how each plan step was handled (`COMPLETED`, `PARTIAL`, or `SKIPPED`).
 - **`CodingStepReport`**: dataclass capturing the outcome of a single step (`step_id`, `status`, human-readable `summary`, and optional `files` / `commands` touched by that step).
 - **`CodingPlanExecution`**: aggregate result for the whole run, including the overall `implementation_summary`, optional `commit_message`, tuple of `step_results`, `tests_executed`, `tests_recommended`, `follow_up_items`, and `notes`.
-- **`CodingAgentRequest`**: input payload given to the coding agent (`goal`, `plan` from `PlanningPlan`, `base_commit`, optional `constraints`, `acceptance_criteria`, `iteration_hint`, and `additional_notes`); normalises all sequence fields to tuples in `__post_init__`.
+- **`CodingAgentRequest`**: input payload given to the coding agent (`goal`, `plan` from `PlanningPlan`, `base_commit`, optional `constraints`, `acceptance_criteria`, `iteration_hint`, and `additional_notes`); the `goal` is the same global evolution objective that the planning agent sees, resolved by the evolution worker from either explicit job payload fields or `Settings.worker_evolution_global_goal`. All sequence fields are normalised to tuples in `__post_init__`.
 - **`CodingAgentResponse`**: envelope returned from the agent combining the structured `execution`, raw Codex `raw_output`, rendered `prompt`, executed CLI `command`, captured `stderr`, number of `attempts`, and total `duration_seconds`.
 
 ## JSON schema and validation

@@ -204,6 +204,16 @@ class Settings(BaseSettings):
         default=64,
         alias="WORKER_EVALUATOR_MAX_METRICS",
     )
+    # Global evolution objective used to guide planning and coding agents.
+    # This should be a stable, plain-language description of what the
+    # autonomous worker is trying to achieve across all evolution jobs.
+    worker_evolution_global_goal: str = Field(
+        default=(
+            "Continuously improve the repository while keeping tests passing, "
+            "maintaining code quality, and respecting project conventions."
+        ),
+        alias="WORKER_EVOLUTION_GLOBAL_GOAL",
+    )
     worker_evolution_commit_model: str = Field(
         default="gpt-4.1-mini",
         alias="WORKER_EVOLUTION_COMMIT_MODEL",

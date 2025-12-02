@@ -236,9 +236,11 @@ class EvolutionWorker:
         goal = self._extract_goal(
             payload=payload,
             extra_context=extra_context,
-            job_id=job_id,
-            default=base_snapshot.summary,
         )
+        # Persist the resolved goal back into the payload so that downstream
+        # consumers see a normalised evolution objective instead of having to
+        # re-implement the extraction logic.
+        payload["goal"] = goal
         constraints = self._coerce_str_sequence(
             payload.get("constraints") or payload.get("guardrails") or extra_context.get("constraints"),
         )
@@ -522,9 +524,17 @@ class EvolutionWorker:
         *,
         payload: Mapping[str, Any],
         extra_context: Mapping[str, Any] | None,
-        job_id: UUID,
-        default: str,
     ) -> str:
+        """Derive the evolution goal using job fields and global configuration.
+
+        Resolution order:
+        1. Job payload fields: ``goal`` / ``objective`` / ``description``.
+        2. ``extra_context["goal"]`` when present.
+        3. Global ``Settings.worker_evolution_global_goal`` value.
+
+        When neither explicit job fields nor a global goal are configured, the
+        worker fails fast with an EvolutionWorkerError.
+        """
         goal = self._first_non_empty(
             payload.get("goal"),
             payload.get("objective"),
@@ -533,7 +543,13 @@ class EvolutionWorker:
         )
         if goal:
             return goal
-        return f"Evolution job {job_id} objective: {default}"
+        global_goal = (self.settings.worker_evolution_global_goal or "").strip()
+        if global_goal:
+            return global_goal
+        raise EvolutionWorkerError(
+            "No evolution goal configured. "
+            "Set WORKER_EVOLUTION_GLOBAL_GOAL or provide a 'goal' field in the job payload.",
+        )
 
     def _extract_iteration_hint(
         self,

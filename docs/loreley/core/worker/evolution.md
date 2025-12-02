@@ -35,7 +35,7 @@ Autonomous evolution worker that orchestrates planning, coding, evaluation, repo
 - **`_start_job(job_id)`**: uses `EvolutionJobStore.start_job()` to lock the job row, validates its status, and constructs a `JobContext` by:
   - Loading commit metadata and metrics from the DB via `_load_commit_snapshot()`.
   - Merging optional MAP-Elites record payloads from the job `payload` into `extra_context`.
-  - Deriving the job `goal`, `constraints`, `acceptance_criteria`, `iteration_hint`, `notes`, and `tags` from the payload and extra context using a set of coercion helpers.
+  - Deriving the job `goal`, `constraints`, `acceptance_criteria`, `iteration_hint`, `notes`, and `tags` from the payload and extra context using a set of coercion helpers; when no explicit goal is provided in the payload or `extra_context`, the worker falls back to the configured `Settings.worker_evolution_global_goal`.
 - **`_run_planning(job_ctx, checkout)`**: builds a `PlanningAgentRequest` from commit snapshots and job fields, invokes `PlanningAgent.plan()`, and wraps `PlanningError` into `EvolutionWorkerError`.
 - **`_run_coding(job_ctx, plan, checkout)`**: builds a `CodingAgentRequest` from the plan and job context, runs `CodingAgent.implement()`, and wraps `CodingError` into `EvolutionWorkerError`.
 - **`_prepare_commit_message(job_ctx, plan, coding)`**: delegates to `CommitSummarizer.generate()` to generate an LLM-backed git subject line; if summarisation fails, falls back to the coding agent's suggested `commit_message`, plan `summary`, or a generic `"Evolution job <id>"` string.
@@ -50,6 +50,6 @@ Autonomous evolution worker that orchestrates planning, coding, evaluation, repo
   - A human-readable `summary` built from commit message, fallback metadata, or a plain `"Commit <hash>"` string.
   - A set of `highlights` assembled from various `highlights`/`snippets`/`notes` fields in DB and payload metadata.
   - A list of `CommitMetric` values taken either from DB rows or fallback payload metrics.
-- Additional helpers such as `_extract_goal()`, `_extract_iteration_hint()`, `_map_inspiration_payloads()`, `_extract_mapping()`, `_extract_highlights()`, `_first_non_empty()`, `_coerce_str_sequence()`, and `_coerce_uuid()` encapsulate common logic for turning loosely-structured job payloads into the strongly-typed structures that the planning and coding agents expect.
+- Additional helpers such as `_extract_goal()`, `_extract_iteration_hint()`, `_map_inspiration_payloads()`, `_extract_mapping()`, `_extract_highlights()`, `_first_non_empty()`, `_coerce_str_sequence()`, and `_coerce_uuid()` encapsulate common logic for turning loosely-structured job payloads into the strongly-typed structures that the planning and coding agents expect. In particular, `_extract_goal()` derives the goal from explicit job fields and the global configuration and does not use commit messages as a fallback.
 
 
