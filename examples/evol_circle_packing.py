@@ -165,12 +165,14 @@ MAPELITES_SUMMARY_EMBEDDING_DIMENSIONS: int | None = None
 MAPELITES_SUMMARY_EMBEDDING_BATCH_SIZE: int = 16
 
 
-# --- Optional OpenAI-compatible API base URL -------------------------------
+# --- Optional OpenAI-compatible API configuration -------------------------
 # OPENAI_API_KEY is intentionally NOT hard-coded; it is always read from the
 # environment at runtime. If you need a custom base URL (e.g. Azure or a
-# compatible proxy), set OPENAI_BASE_URL here.
+# compatible proxy), set OPENAI_BASE_URL here. OPENAI_API_SPEC selects the API
+# surface (responses, chat_completions, etc.) exposed to the Loreley runtime.
 
 OPENAI_BASE_URL: str | None = None
+OPENAI_API_SPEC: str = "chat_completions"
 
 
 # ============================================================================
@@ -336,6 +338,7 @@ def _apply_base_env() -> None:
     )
 
     # OpenAI-compatible model endpoint (API key remains external).
+    _set_env_if_unset("OPENAI_API_SPEC", OPENAI_API_SPEC)
     if OPENAI_BASE_URL is not None:
         _set_env_if_unset("OPENAI_BASE_URL", OPENAI_BASE_URL)
 
