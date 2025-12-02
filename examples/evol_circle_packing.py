@@ -124,6 +124,14 @@ WORKER_EVOLUTION_COMMIT_MAX_OUTPUT_TOKENS: int = 128
 WORKER_EVOLUTION_COMMIT_MAX_RETRIES: int = 3
 WORKER_EVOLUTION_COMMIT_RETRY_BACKOFF_SECONDS: float = 2.0
 
+# Global evolution objective shared across planning and coding prompts.
+WORKER_EVOLUTION_GLOBAL_GOAL: str = (
+    "Evolve the circle-packing solution so that pack_circles() returns a valid, "
+    "non-overlapping set of circles inside the unit square with as high "
+    "packing_density as possible, while keeping the code simple, deterministic, "
+    "and fast enough for the evaluator."
+)
+
 # Code embedding model used for MAP-Elites preprocessing.
 MAPELITES_CODE_EMBEDDING_MODEL: str = "text-embedding-3-large"
 MAPELITES_CODE_EMBEDDING_DIMENSIONS: int | None = None
@@ -240,6 +248,10 @@ def _apply_base_env() -> None:
     _set_env_if_unset(
         "WORKER_EVOLUTION_COMMIT_RETRY_BACKOFF_SECONDS",
         WORKER_EVOLUTION_COMMIT_RETRY_BACKOFF_SECONDS,
+    )
+    _set_env_if_unset(
+        "WORKER_EVOLUTION_GLOBAL_GOAL",
+        WORKER_EVOLUTION_GLOBAL_GOAL,
     )
 
     _set_env_if_unset("MAPELITES_CODE_EMBEDDING_MODEL", MAPELITES_CODE_EMBEDDING_MODEL)
