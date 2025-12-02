@@ -127,6 +127,10 @@ MAPELITES_FITNESS_METRIC: str = "packing_density"
 MAPELITES_DEFAULT_ISLAND_ID: str = "circle_packing"
 MAPELITES_EXPERIMENT_ROOT_COMMIT: str | None = "64884c2c"
 
+# Size of the cold-start seed population created from the root commit. The
+# scheduler still respects SCHEDULER_MAX_UNFINISHED_JOBS and
+# SCHEDULER_MAX_TOTAL_JOBS when creating these jobs.
+MAPELITES_SEED_POPULATION_SIZE: int = 1
 
 # --- Model / LLM configuration (see loreley.config.Settings) ----------------
 
@@ -254,6 +258,10 @@ def _apply_base_env() -> None:
     _set_env_if_unset(
         "MAPELITES_EXPERIMENT_ROOT_COMMIT",
         MAPELITES_EXPERIMENT_ROOT_COMMIT,
+    )
+    _set_env_if_unset(
+        "MAPELITES_SEED_POPULATION_SIZE",
+        MAPELITES_SEED_POPULATION_SIZE,
     )
 
     # Model / LLM configuration.
@@ -393,10 +401,11 @@ def _print_environment_summary() -> None:
         ),
     )
     console.log(
-        "[green]MAP-Elites[/] fitness_metric={} island_id={} root_commit={}".format(
+        "[green]MAP-Elites[/] fitness_metric={} island_id={} root_commit={} seed_population={}".format(
             os.getenv("MAPELITES_FITNESS_METRIC", "<unset>"),
             os.getenv("MAPELITES_DEFAULT_ISLAND_ID", "<unset>"),
             os.getenv("MAPELITES_EXPERIMENT_ROOT_COMMIT", "<unset>"),
+            os.getenv("MAPELITES_SEED_POPULATION_SIZE", "<unset>"),
         ),
     )
 
