@@ -28,8 +28,6 @@ from loreley.db.models import CommitMetadata, EvolutionJob, JobStatus, MapElites
 
 log = logger.bind(module="scheduler.ingestion")
 
-ROOT_PLACEHOLDER_FILENAME = Path("__mapelites_root_placeholder__.py")
-
 
 class IngestionError(RuntimeError):
     """Raised when result ingestion cannot proceed for a commit."""
@@ -76,7 +74,7 @@ class MapElitesIngestion:
         return ingested
 
     def initialise_root_commit(self, commit_hash: str) -> None:
-        """Ensure the configured root commit is present in DB and archives.
+        """Ensure the configured root commit is present in DB and evaluated.
 
         This helper is idempotent and safe to call on every scheduler startup.
         Failures are logged but do not prevent the scheduler from running.
@@ -94,7 +92,6 @@ class MapElitesIngestion:
         try:
             self._ensure_root_commit_metadata(commit_hash)
             self._ensure_root_commit_evaluated(commit_hash)
-            self._ensure_root_commit_ingested(commit_hash)
         except Exception as exc:  # pragma: no cover - defensive
             self.console.log(
                 f"[bold red]Root commit initialisation failed[/] commit={commit_hash} reason={exc}",
@@ -321,37 +318,6 @@ class MapElitesIngestion:
             changed.append(ChangedFile(path=Path(path), change_count=change_count))
         return changed
 
-    def _build_root_placeholder_files(self, commit_hash: str, island_id: str) -> list[ChangedFile]:
-        """Return synthetic ChangedFile entries used for root commit initialisation.
-
-        The placeholder content is intentionally small and self-contained so that
-        MAP-Elites can derive an embedding for the root commit without relying on
-        historical diffs from the repository.
-        """
-
-        placeholder_source = "\n".join(
-            [
-                "# MAP-Elites root placeholder file.",
-                "# This synthetic file is used to initialise the archive for the",
-                "# experiment root commit without relying on historical diffs.",
-                f"# commit_hash={commit_hash}",
-                f"# island_id={island_id}",
-                "",
-                "def _mapelites_root_placeholder() -> None:",
-                '    """Synthetic function used only for MAP-Elites root initialisation."""',
-                "    return None",
-                "",
-            ]
-        )
-
-        return [
-            ChangedFile(
-                path=ROOT_PLACEHOLDER_FILENAME,
-                change_count=1,
-                content=placeholder_source,
-            )
-        ]
-
     # Root commit initialisation --------------------------------------------
 
     def _ensure_root_commit_evaluated(self, commit_hash: str) -> None:
@@ -569,108 +535,6 @@ class MapElitesIngestion:
                 self.experiment.id,
                 default_island,
             )
-
-    def _ensure_root_commit_ingested(self, commit_hash: str) -> None:
-        """Insert the root commit into each known island's MAP-Elites archive.
-
-        Root ingestion uses synthetic placeholder content so that the commit can
-        participate in the embedding and archive pipeline without depending on
-        its original diff.
-        """
-
-        # Discover islands that already have persisted state for this experiment.
-        islands: set[str] = set()
-        with session_scope() as session:
-            stmt = select(MapElitesState.island_id).where(
-                MapElitesState.experiment_id == self.experiment.id,
-            )
-            islands.update(session.scalars(stmt).all())
-
-        default_island = self.settings.mapelites_default_island_id or "main"
-        islands.add(default_island)
-
-        # Load any persisted metrics for the root commit so that MAP-Elites can
-        # derive a meaningful fitness value instead of falling back to the
-        # configured floor.
-        metrics_payload: Sequence[Mapping[str, Any]] | None = None
-        with session_scope() as session:
-            metric_rows = session.scalars(
-                select(Metric).where(Metric.commit_hash == commit_hash)
-            ).all()
-            if metric_rows:
-                metrics_payload = [
-                    {
-                        "name": row.name,
-                        "value": row.value,
-                        "unit": row.unit,
-                        "higher_is_better": row.higher_is_better,
-                        "details": dict(row.details or {}),
-                    }
-                    for row in metric_rows
-                ]
-
-        for island_id in sorted(islands):
-            records = self.manager.get_records(island_id)
-            if any(record.commit_hash == commit_hash for record in records):
-                continue
-
-            changed_files = self._build_root_placeholder_files(commit_hash, island_id)
-            if not changed_files:
-                self.console.log(
-                    "[yellow]Skipping root commit ingestion; no placeholder files[/] commit={} island={}".format(
-                        commit_hash,
-                        island_id,
-                    ),
-                )
-                continue
-
-            try:
-                insertion = self.manager.ingest(
-                    commit_hash=commit_hash,
-                    changed_files=changed_files,
-                    metrics=metrics_payload,
-                    island_id=island_id,
-                    repo_root=self.repo_root,
-                    treeish=commit_hash,
-                    metadata={
-                        "root_commit": True,
-                        "root_placeholder": True,
-                        "root_placeholder_file": str(ROOT_PLACEHOLDER_FILENAME),
-                        "experiment_id": str(self.experiment.id),
-                        "repository_id": str(self.repository.id) if self.repository is not None else None,
-                        "island_id": island_id,
-                    },
-                )
-            except Exception as exc:  # pragma: no cover - defensive
-                self.console.log(
-                    f"[bold red]Failed to ingest root commit[/] commit={commit_hash} island={island_id} reason={exc}",
-                )
-                log.exception(
-                    "Failed to ingest root commit {} for experiment {} island {}: {}",
-                    commit_hash,
-                    self.experiment.id,
-                    island_id,
-                    exc,
-                )
-                continue
-
-            if insertion.record:
-                self.console.log(
-                    "[green]Initialised root commit in archive[/] commit={} island={} cell={} Δ={:.4f}".format(
-                        commit_hash,
-                        island_id,
-                        insertion.record.cell_index,
-                        insertion.delta,
-                    ),
-                )
-            else:
-                self.console.log(
-                    "[yellow]Root commit did not improve archive[/] commit={} island={} status={}".format(
-                        commit_hash,
-                        island_id,
-                        insertion.status,
-                    ),
-                )
 
     # Misc helpers ----------------------------------------------------------
 

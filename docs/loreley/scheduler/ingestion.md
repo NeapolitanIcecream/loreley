@@ -15,7 +15,7 @@ from loreley.scheduler.ingestion import MapElitesIngestion
 
 - **Purpose**: ingest completed evolution jobs into MAP-Elites, record rich
   ingestion state back onto the job payload, and ensure the experiment's root
-  commit is present in both the database and the archive.
+  commit is registered and evaluated as a baseline in the database.
 - **Construction**: created by `EvolutionScheduler` with:
   - the shared `Settings` instance,
   - the interactive `rich` console,
@@ -76,14 +76,11 @@ When `MAPELITES_EXPERIMENT_ROOT_COMMIT` is set, `EvolutionScheduler` asks
    - a default island id (from `MAPELITES_DEFAULT_ISLAND_ID` or `"main"`),
    - a rich `extra_context` block that links back to the experiment and
      repository.
-3. `_ensure_root_commit_ingested(...)` walks all known islands for the
-   experiment (via `MapElitesState`) plus the default island, and:
-   - skips islands that already contain the root commit,
-   - otherwise ingests the commit once into each island's archive using a
-     small synthetic placeholder file (`__mapelites_root_placeholder__.py`)
-     as the only `ChangedFile`. This placeholder content is designed purely
-     to drive the embedding pipeline (preprocess → chunk → embed → PCA) and
-     does not depend on or expose the root commit's historical diffs.
+3. `_ensure_root_commit_evaluated(...)` runs a one-off evaluation for the root
+   commit when no `Metric` rows already exist, writing baseline metrics into
+   the `metrics` table and a compact `root_evaluation` block into
+   `CommitMetadata.extra_context`. These metrics act as an experiment-wide
+   baseline but do not insert the root commit into any MAP-Elites archive.
 
 Failures during root-commit initialisation are logged but do **not** prevent
 the scheduler from running; they simply mean the experiment may effectively

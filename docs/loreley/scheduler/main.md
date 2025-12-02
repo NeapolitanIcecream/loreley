@@ -5,9 +5,9 @@ Central orchestration loop that keeps the Loreley evolution pipeline moving by c
 ## EvolutionScheduler
 
 - **Purpose**: continuously monitors unfinished jobs (`pending`, `queued`, `running`), schedules new work from the MAP-Elites archive when capacity allows, dispatches pending jobs to the Dramatiq `run_evolution_job` actor, and backfills the archive with freshly evaluated commits.
-- **Construction**: `EvolutionScheduler(settings=None)` loads `loreley.config.Settings`, resolves the target repository root (preferring `SCHEDULER_REPO_ROOT` and falling back to `WORKER_REPO_WORKTREE`), initialises a `git` repository handle, derives a `Repository`/`Experiment` pair via `loreley.core.experiments.get_or_create_experiment()`, wires `MapElitesManager` (scoped to that `experiment_id`) plus `MapElitesSampler` with the same settings, and, when `MAPELITES_EXPERIMENT_ROOT_COMMIT` is set, delegates root-commit registration and ingestion to `loreley.scheduler.ingestion.MapElitesIngestion`.
+- **Construction**: `EvolutionScheduler(settings=None)` loads `loreley.config.Settings`, resolves the target repository root (preferring `SCHEDULER_REPO_ROOT` and falling back to `WORKER_REPO_WORKTREE`), initialises a `git` repository handle, derives a `Repository`/`Experiment` pair via `loreley.core.experiments.get_or_create_experiment()`, wires `MapElitesManager` (scoped to that `experiment_id`) plus `MapElitesSampler` with the same settings, and, when `MAPELITES_EXPERIMENT_ROOT_COMMIT` is set, delegates root-commit registration and baseline evaluation to `loreley.scheduler.ingestion.MapElitesIngestion`.
 - **Lifecycle**:
-  1. `tick()` runs the ingest → dispatch → measure → schedule pipeline and logs a concise summary for observability. Each stage is isolated so failures are logged and do not crash the loop.
+  1. `tick()` runs the ingest → dispatch → measure → seed → schedule pipeline and logs a concise summary for observability. Each stage is isolated so failures are logged and do not crash the loop.
   2. `run_forever()` installs `SIGINT`/`SIGTERM` handlers, runs `tick()` at the configured poll interval, and keeps looping until interrupted.
   3. `--once` CLI flag runs a single tick and exits, useful for cron jobs or tests.
 - **Job scheduling & dispatching**: the scheduler delegates all capacity calculations, MAP-Elites sampling, and Dramatiq job submission to `loreley.scheduler.job_scheduler.JobScheduler`, which:
@@ -31,7 +31,7 @@ The scheduler consumes the following `Settings` fields (all exposed as environme
 - `SCHEDULER_SCHEDULE_BATCH_SIZE`: maximum number of new jobs sampled from MAP-Elites per tick (bounded by the unused capacity).
 - `SCHEDULER_DISPATCH_BATCH_SIZE`: number of pending jobs promoted to `QUEUED` and sent to Dramatiq per tick.
 - `SCHEDULER_INGEST_BATCH_SIZE`: number of newly succeeded jobs ingested into MAP-Elites per tick.
-- `MAPELITES_EXPERIMENT_ROOT_COMMIT`: optional git commit hash used as the logical root for the current experiment. When set, the scheduler records a `CommitMetadata` row (if one does not already exist) and ingests that commit into each known MAP-Elites island archive using a small synthetic placeholder file so that the first scheduled jobs have a stable, well-aligned baseline to branch from without depending on the root commit's original diff.
+- `MAPELITES_EXPERIMENT_ROOT_COMMIT`: optional git commit hash used as the logical root for the current experiment. When set, the scheduler ensures a `CommitMetadata` row exists for that commit and runs a one-off baseline evaluation to populate `Metric` rows and a compact `root_evaluation` block on the metadata, treating it as an experiment-wide baseline rather than inserting it into any MAP-Elites archive. During cold-start, when the archive is empty and no jobs exist yet, the scheduler first generates up to `MAPELITES_SEED_POPULATION_SIZE` seed evolution jobs from this root commit to form the initial population before switching to regular MAP-Elites sampling.
 
 ## CLI usage
 

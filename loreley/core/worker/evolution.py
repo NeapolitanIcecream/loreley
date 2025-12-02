@@ -96,6 +96,7 @@ class JobContext:
     iteration_hint: str | None
     notes: tuple[str, ...]
     tags: tuple[str, ...]
+    is_seed_job: bool
 
 
 @dataclass(slots=True)
@@ -253,6 +254,29 @@ class EvolutionWorker:
         notes = self._coerce_str_sequence(payload.get("notes") or extra_context.get("notes"))
         tags = self._coerce_str_sequence(payload.get("tags") or extra_context.get("tags"))
 
+        # Identify cold-start seed jobs: base commit equals the configured root,
+        # no inspirations, and/or an explicit seed_job flag in extra_context.
+        root_hash = (self.settings.mapelites_experiment_root_commit or "").strip()
+        is_seed_job = bool(
+            root_hash
+            and locked_job.base_commit_hash == root_hash
+            and not locked_job.inspiration_commit_hashes
+        )
+        seed_flag = extra_context.get("seed_job")
+        if isinstance(seed_flag, str):
+            seed_flag = seed_flag.strip().lower() in {"1", "true", "yes", "y"}
+        if seed_flag:
+            is_seed_job = True
+
+        if is_seed_job:
+            seed_hint = (
+                "Seed job: cold-start population design, focus on diverse starting directions."
+            )
+            if iteration_hint:
+                iteration_hint = f"{iteration_hint} | {seed_hint}"
+            else:
+                iteration_hint = seed_hint
+
         return JobContext(
             job_id=locked_job.job_id,
             base_commit_hash=locked_job.base_commit_hash,
@@ -268,6 +292,7 @@ class EvolutionWorker:
             iteration_hint=iteration_hint,
             notes=notes,
             tags=tags,
+            is_seed_job=is_seed_job,
         )
 
     def _run_planning(
@@ -275,15 +300,38 @@ class EvolutionWorker:
         job_ctx: JobContext,
         checkout: CheckoutContext,
     ) -> PlanningAgentResponse:
+        base_context = job_ctx.base_snapshot.to_planning_context()
+        inspirations = tuple(
+            snapshot.to_planning_context() for snapshot in job_ctx.inspiration_snapshots
+        )
+        cold_start = False
+
+        if job_ctx.is_seed_job:
+            # For seed jobs, hide historical metrics/highlights/evaluation details so the
+            # planning agent relies purely on the global objective and constraints.
+            cleaned_extra = dict(base_context.extra_context or {})
+            for key in ("root_evaluation", "evaluation", "evaluation_summary", "metrics"):
+                cleaned_extra.pop(key, None)
+
+            base_context = CommitPlanningContext(
+                commit_hash=base_context.commit_hash,
+                summary=base_context.summary,
+                highlights=(),
+                evaluation_summary=None,
+                metrics=(),
+                extra_context=cleaned_extra,
+            )
+            inspirations = ()
+            cold_start = True
+
         request = PlanningAgentRequest(
-            base=job_ctx.base_snapshot.to_planning_context(),
-            inspirations=tuple(
-                snapshot.to_planning_context() for snapshot in job_ctx.inspiration_snapshots
-            ),
+            base=base_context,
+            inspirations=inspirations,
             goal=job_ctx.goal,
             constraints=job_ctx.constraints,
             acceptance_criteria=job_ctx.acceptance_criteria,
             iteration_hint=job_ctx.iteration_hint,
+            cold_start=cold_start,
         )
         try:
             return self.planning_agent.plan(request, working_dir=checkout.worktree)

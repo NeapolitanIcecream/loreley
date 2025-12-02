@@ -14,7 +14,7 @@ from git import Repo
 from git.exc import BadName, GitCommandError, InvalidGitRepositoryError, NoSuchPathError
 from loguru import logger
 from rich.console import Console
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from loreley.config import Settings, get_settings
 from loreley.core.experiments import ExperimentError, get_or_create_experiment
@@ -119,18 +119,23 @@ class EvolutionScheduler:
         stats["ingested"] = self._run_stage("ingest", self.ingestion.ingest_completed_jobs)
         stats["dispatched"] = self._run_stage("dispatch", self.job_scheduler.dispatch_pending_jobs)
         unfinished = self._run_stage("measure", self.job_scheduler.count_unfinished_jobs)
+        stats["seed_scheduled"] = self._run_stage(
+            "seed",
+            lambda: self._maybe_schedule_seed_jobs(unfinished_jobs=unfinished),
+        )
+        effective_unfinished = unfinished + stats["seed_scheduled"]
         stats["scheduled"] = self._run_stage(
             "schedule",
             lambda: self.job_scheduler.schedule_jobs(
-                unfinished_jobs=unfinished,
+                unfinished_jobs=effective_unfinished,
                 total_scheduled_jobs=self._total_scheduled_jobs,
             ),
         )
-        self._total_scheduled_jobs += stats["scheduled"]
-        stats["unfinished"] = unfinished + stats["scheduled"]
+        self._total_scheduled_jobs += stats["seed_scheduled"] + stats["scheduled"]
+        stats["unfinished"] = unfinished + stats["seed_scheduled"] + stats["scheduled"]
         self.console.log(
             "[bold magenta]Scheduler tick[/] ingested={ingested} dispatched={dispatched} "
-            "scheduled={scheduled} unfinished={unfinished}".format(**stats),
+            "seed_scheduled={seed_scheduled} scheduled={scheduled} unfinished={unfinished}".format(**stats),
         )
 
         max_total = getattr(self.settings, "scheduler_max_total_jobs", None)
@@ -291,6 +296,13 @@ class EvolutionScheduler:
         with session_scope() as session:
             order_column = Metric.value.desc() if is_higher_better else Metric.value.asc()
 
+            conditions: list[Any] = [
+                CommitMetadata.experiment_id == self.experiment.id,
+                Metric.name == metric_name,
+            ]
+            if self._root_commit_hash:
+                conditions.append(CommitMetadata.commit_hash != self._root_commit_hash)
+
             stmt = (
                 select(
                     CommitMetadata.commit_hash,
@@ -298,10 +310,7 @@ class EvolutionScheduler:
                     Metric.value,
                 )
                 .join(Metric, Metric.commit_hash == CommitMetadata.commit_hash)
-                .where(
-                    CommitMetadata.experiment_id == self.experiment.id,
-                    Metric.name == metric_name,
-                )
+                .where(*conditions)
                 .order_by(order_column)
                 .limit(1)
             )
@@ -326,6 +335,98 @@ class EvolutionScheduler:
             "root_commit_hash": root_commit_hash,
         }
         return best_commit_hash, meta
+
+    def _maybe_schedule_seed_jobs(self, *, unfinished_jobs: int) -> int:
+        """Optionally schedule cold-start seed jobs from the experiment root.
+
+        Seed jobs are created only when:
+        - a root commit is configured,
+        - the MAP-Elites archive is still empty for the default island, and
+        - the number of existing seed jobs is below the configured population size.
+
+        Once non-seed jobs exist for the experiment, or the population size has
+        been reached, this helper becomes a no-op even across scheduler restarts.
+        """
+
+        root_hash = self._root_commit_hash
+        if not root_hash:
+            return 0
+
+        default_island = self.settings.mapelites_default_island_id or "main"
+
+        # Skip when the archive already contains any elites for the default island.
+        records = self.manager.get_records(default_island)
+        if records:
+            return 0
+
+        from loreley.db.models import EvolutionJob  # Local import to avoid cycles.
+
+        with session_scope() as session:
+            stmt = select(EvolutionJob).where(EvolutionJob.experiment_id == self.experiment.id)
+            jobs = list(session.execute(stmt).scalars())
+
+        total_jobs = len(jobs)
+        seed_jobs = [
+            job
+            for job in jobs
+            if isinstance(getattr(job, "payload", None), Mapping)
+            and isinstance(job.payload.get("extra_context"), Mapping)
+            and bool(job.payload["extra_context"].get("seed_job"))
+        ]
+        seed_count = len(seed_jobs)
+        non_seed_jobs_exist = total_jobs > seed_count
+
+        if non_seed_jobs_exist:
+            return 0
+
+        seed_population_size = max(0, int(getattr(self.settings, "mapelites_seed_population_size", 0)))
+        if seed_population_size <= 0 or seed_count >= seed_population_size:
+            return 0
+
+        max_jobs = max(0, int(self.settings.scheduler_max_unfinished_jobs))
+        if max_jobs == 0:
+            return 0
+
+        capacity = max(0, max_jobs - unfinished_jobs)
+        if capacity <= 0:
+            return 0
+
+        max_total = getattr(self.settings, "scheduler_max_total_jobs", None)
+        remaining_total = None
+        if max_total is not None and max_total > 0:
+            remaining_total = max_total - self._total_scheduled_jobs
+            if remaining_total <= 0:
+                return 0
+
+        remaining_seed = seed_population_size - seed_count
+        to_create_candidates = [remaining_seed, capacity]
+        if remaining_total is not None:
+            to_create_candidates.append(remaining_total)
+        to_create = max(0, min(to_create_candidates))
+        if to_create <= 0:
+            return 0
+
+        created = self.job_scheduler.create_seed_jobs(
+            base_commit_hash=root_hash,
+            count=to_create,
+            island_id=default_island,
+        )
+        if created:
+            self.console.log(
+                "[bold green]Scheduled seed jobs[/] count={} root={} island={}".format(
+                    created,
+                    root_hash,
+                    default_island,
+                ),
+            )
+            log.info(
+                "Scheduled {} seed jobs from root {} on island {} (unfinished_jobs={})",
+                created,
+                root_hash,
+                default_island,
+                unfinished_jobs,
+            )
+        return created
 
     def _find_root_commit_for_experiment_chain(
         self,

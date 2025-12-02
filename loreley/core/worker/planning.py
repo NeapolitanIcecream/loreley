@@ -73,6 +73,7 @@ class PlanningAgentRequest:
     constraints: Sequence[str] = field(default_factory=tuple)
     acceptance_criteria: Sequence[str] = field(default_factory=tuple)
     iteration_hint: str | None = None
+    cold_start: bool = False
 
     def __post_init__(self) -> None:
         self.inspirations = tuple(self.inspirations or ())
@@ -335,10 +336,21 @@ class PlanningAgent:
         )
         iteration_hint = request.iteration_hint or "None provided"
 
+        cold_start_block = ""
+        if request.cold_start:
+            cold_start_block = (
+                "This is a cold-start seed population design run. The MAP-Elites archive\n"
+                "is currently empty. Propose diverse, high-variance initial directions\n"
+                "that all respect the global objective and constraints. Favour\n"
+                "exploration and higher-temperature behaviour.\n\n"
+            )
+
         prompt = f"""
 You are the planning agent inside Loreley's autonomous evolution worker.
 Your job is to convert the available commit knowledge into a concrete, multi-step
 implementation plan that a coding agent can execute without further clarification.
+
+{cold_start_block}\
 
 Global objective:
 {request.goal.strip()}

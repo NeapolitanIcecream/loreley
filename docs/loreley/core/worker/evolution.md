@@ -9,6 +9,7 @@ Autonomous evolution worker that orchestrates planning, coding, evaluation, repo
   - `job_id`, `base_commit_hash`, optional `island_id`, optional `experiment_id` and `repository_id`, and the raw job `payload`.
   - `base_snapshot` and `inspiration_snapshots` that wrap DB records and/or MAP-Elites payloads.
   - user-facing `goal`, `constraints`, `acceptance_criteria`, optional `iteration_hint`, free-form `notes`, and `tags`, all normalised to tuples of strings.
+  - a boolean `is_seed_job` flag indicating whether the job is a cold-start seed job (root base commit, no inspirations, and/or an explicit `seed_job` marker in the payload).
 - **`EvolutionWorkerResult`**: structured success payload returned from `EvolutionWorker.run()`, combining the `job_id`, `base_commit_hash`, resulting `candidate_commit_hash`, the full `PlanningAgentResponse`, `CodingAgentResponse`, `EvaluationResult`, `CheckoutContext`, and the final `commit_message` used for the worker commit.
 
 ## Public worker API
@@ -35,8 +36,8 @@ Autonomous evolution worker that orchestrates planning, coding, evaluation, repo
 - **`_start_job(job_id)`**: uses `EvolutionJobStore.start_job()` to lock the job row, validates its status, and constructs a `JobContext` by:
   - Loading commit metadata and metrics from the DB via `_load_commit_snapshot()`.
   - Merging optional MAP-Elites record payloads from the job `payload` into `extra_context`.
-  - Deriving the job `goal`, `constraints`, `acceptance_criteria`, `iteration_hint`, `notes`, and `tags` from the payload and extra context using a set of coercion helpers; when no explicit goal is provided in the payload or `extra_context`, the worker falls back to the configured `Settings.worker_evolution_global_goal`.
-- **`_run_planning(job_ctx, checkout)`**: builds a `PlanningAgentRequest` from commit snapshots and job fields, invokes `PlanningAgent.plan()`, and wraps `PlanningError` into `EvolutionWorkerError`.
+  - Deriving the job `goal`, `constraints`, `acceptance_criteria`, `iteration_hint`, `notes`, and `tags` from the payload and extra context using a set of coercion helpers; when no explicit goal is provided in the payload or `extra_context`, the worker falls back to the configured `Settings.worker_evolution_global_goal`. For cold-start seed jobs (root base commit with no inspirations and/or an explicit `seed_job` flag in `extra_context`), `_start_job` sets `is_seed_job=True` and appends a short seed hint to `iteration_hint` to make the cold-start semantics visible to downstream agents.
+- **`_run_planning(job_ctx, checkout)`**: builds a `PlanningAgentRequest` from commit snapshots and job fields, invokes `PlanningAgent.plan()`, and wraps `PlanningError` into `EvolutionWorkerError`. For seed jobs, `_run_planning` clears metrics, highlights, and evaluation details from the base planning context, drops all inspirations, and passes `cold_start=True` so that the planning agent treats the request as a cold-start seed population design run.
 - **`_run_coding(job_ctx, plan, checkout)`**: builds a `CodingAgentRequest` from the plan and job context, runs `CodingAgent.implement()`, and wraps `CodingError` into `EvolutionWorkerError`.
 - **`_prepare_commit_message(job_ctx, plan, coding)`**: delegates to `CommitSummarizer.generate()` to generate an LLM-backed git subject line; if summarisation fails, falls back to the coding agent's suggested `commit_message`, plan `summary`, or a generic `"Evolution job <id>"` string.
 - **`_create_commit(checkout, commit_message)`**: ensures the checkout is on a branch and that the repository contains changes, stages everything, creates a commit, and pushes the per-job branch using `force-with-lease`.

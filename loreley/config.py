@@ -502,6 +502,10 @@ class Settings(BaseSettings):
         default=True,
         alias="MAPELITES_SAMPLER_INCLUDE_METADATA",
     )
+    mapelites_seed_population_size: int = Field(
+        default=16,
+        alias="MAPELITES_SEED_POPULATION_SIZE",
+    )
 
     @computed_field(return_type=str)
     @property

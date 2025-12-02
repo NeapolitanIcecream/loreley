@@ -108,6 +108,73 @@ class JobScheduler:
             self._enqueue_jobs(scheduled_ids)
         return len(scheduled_ids)
 
+    def create_seed_jobs(
+        self,
+        *,
+        base_commit_hash: str,
+        count: int,
+        island_id: str | None = None,
+    ) -> int:
+        """Create and enqueue cold-start seed jobs from the root commit.
+
+        Seed jobs use the configured default priority, carry a small extra_context
+        marker so downstream components can recognise them, and are immediately
+        promoted to QUEUED and sent to Dramatiq.
+        """
+
+        if count <= 0:
+            return 0
+
+        effective_island = island_id or self.settings.mapelites_default_island_id or "main"
+        now = datetime.now(timezone.utc)
+        jobs: list[EvolutionJob] = []
+
+        with session_scope() as session:
+            for _ in range(count):
+                job = EvolutionJob(
+                    status=JobStatus.PENDING,
+                    base_commit_hash=base_commit_hash,
+                    island_id=effective_island,
+                    experiment_id=self.experiment_id,
+                    inspiration_commit_hashes=[],
+                    payload={
+                        "island_id": effective_island,
+                        "extra_context": {
+                            "seed_job": True,
+                            "iteration_hint": (
+                                "Cold-start seed job: design diverse initial directions "
+                                "from the root baseline."
+                            ),
+                        },
+                    },
+                    priority=self._default_priority,
+                    scheduled_at=now,
+                )
+                session.add(job)
+                jobs.append(job)
+            session.flush()
+            job_ids = [job.id for job in jobs]
+
+        if not job_ids:
+            return 0
+
+        self.console.log(
+            "[bold green]Created seed jobs[/] count={} base={} island={}".format(
+                len(job_ids),
+                base_commit_hash,
+                effective_island,
+            ),
+        )
+        log.info(
+            "Created {} seed jobs for base {} on island {}",
+            len(job_ids),
+            base_commit_hash,
+            effective_island,
+        )
+
+        self._enqueue_jobs(job_ids)
+        return len(job_ids)
+
     def _schedule_single_job(self) -> ScheduledSamplerJob | None:
         try:
             scheduled = self.sampler.schedule_job(experiment_id=self.experiment_id)
