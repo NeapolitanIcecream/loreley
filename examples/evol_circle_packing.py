@@ -36,6 +36,9 @@ from rich.console import Console
 # ============================================================================
 
 REPO_ROOT: Path = Path(__file__).resolve().parents[1] / "examples" / "circle-packing"
+# Evaluation environment lives alongside the candidate repository so that
+# evaluation logic is isolated from the evolved code.
+EVAL_ENV_ROOT: Path = REPO_ROOT.parent / "circle_packing_env"
 
 # --- Application metadata ---------------------------------------------------
 
@@ -94,8 +97,9 @@ SCHEDULER_MAX_TOTAL_JOBS: int | None = 1
 # --- Circle-packing evaluator configuration --------------------------------
 
 # Additional Python search paths for evaluator plugins. For this example we
-# only need the circle-packing directory.
-WORKER_EVALUATOR_PYTHON_PATHS: list[str] = [str(REPO_ROOT)]
+# point at the dedicated evaluation environment directory so that the worker
+# can import ``evaluate:plugin`` independently of the candidate repo.
+WORKER_EVALUATOR_PYTHON_PATHS: list[str] = [str(EVAL_ENV_ROOT)]
 
 # Dotted reference to the evaluation plugin callable.
 WORKER_EVALUATOR_PLUGIN: str = "evaluate:plugin"
@@ -108,7 +112,7 @@ MAPELITES_FITNESS_METRIC: str = "packing_density"
 
 # Give this experiment a dedicated island ID.
 MAPELITES_DEFAULT_ISLAND_ID: str = "circle_packing"
-MAPELITES_EXPERIMENT_ROOT_COMMIT: str | None = "f662decc"
+MAPELITES_EXPERIMENT_ROOT_COMMIT: str | None = "f5a819e5"
 
 
 # --- Model / LLM configuration (see loreley.config.Settings) ----------------
@@ -310,10 +314,15 @@ def _ensure_repo_on_sys_path() -> None:
     if project_root_str not in sys.path:
         sys.path.insert(0, project_root_str)
 
-    # Example repo root (circle-packing directory, for evaluator plugins, etc.).
+    # Example repo root (circle-packing directory, used as the worker repo).
     example_root_str = str(REPO_ROOT)
     if example_root_str not in sys.path:
         sys.path.insert(0, example_root_str)
+
+    # Evaluation environment root (contains the ``evaluate`` plugin).
+    eval_env_root_str = str(EVAL_ENV_ROOT)
+    if eval_env_root_str not in sys.path:
+        sys.path.insert(0, eval_env_root_str)
 
 
 def _print_environment_summary() -> None:
