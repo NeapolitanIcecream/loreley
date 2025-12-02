@@ -4,7 +4,8 @@ from __future__ import annotations
 
 This script:
 
-- Loads application settings and configures Loguru logging.
+- Loads application settings and configures Loguru logging, including routing
+  standard-library logging (used by Dramatiq) through Loguru.
 - Initialises the Dramatiq Redis broker defined in ``loreley.tasks.broker``.
 - Imports ``loreley.tasks.workers`` so that the ``run_evolution_job`` actor is registered.
 - Starts a single Dramatiq worker bound to the configured queue using a
@@ -15,6 +16,7 @@ Typical usage (with uv):
     uv run python script/run_worker.py
 """
 
+import logging
 import signal
 import sys
 from typing import Sequence
@@ -31,8 +33,40 @@ console = Console()
 log = logger.bind(module="script.run_worker")
 
 
+class _LoguruInterceptHandler(logging.Handler):
+    """Bridge standard-library logging records into Loguru."""
+
+    def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover - thin wrapper
+        try:
+            level = logger.level(record.levelname).name
+        except ValueError:
+            level = record.levelno
+
+        logger.opt(exception=record.exc_info).log(level, record.getMessage())
+
+
+def _configure_stdlib_logging(level: str) -> None:
+    """Route stdlib logging (including Dramatiq) through Loguru."""
+
+    handler: logging.Handler = _LoguruInterceptHandler()
+
+    # Attach the intercept handler to the root logger so any library using the
+    # standard logging module ends up in Loguru.
+    root = logging.getLogger()
+    root.handlers = [handler]
+    root.setLevel(level)
+
+    # Ensure the Dramatiq logger is also captured explicitly.
+    dramatiq_logger = logging.getLogger("dramatiq")
+    dramatiq_logger.handlers = [handler]
+    dramatiq_logger.setLevel(level)
+
+    # Route warnings.warn() calls through the logging system as well.
+    logging.captureWarnings(True)
+
+
 def _configure_logging() -> None:
-    """Configure Loguru using application settings."""
+    """Configure Loguru and bridge stdlib logging using application settings."""
 
     settings = get_settings()
     level = (settings.log_level or "INFO").upper()
@@ -44,6 +78,9 @@ def _configure_logging() -> None:
         backtrace=False,
         diagnose=False,
     )
+
+    _configure_stdlib_logging(level)
+
     log.info("Worker logging initialised at level {}", level)
 
 
