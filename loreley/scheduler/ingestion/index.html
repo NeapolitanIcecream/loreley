@@ -243,7 +243,7 @@ as how the configured experiment root commit is initialised.</p>
 <ul>
 <li><strong>Purpose</strong>: ingest completed evolution jobs into MAP-Elites, record rich
   ingestion state back onto the job payload, and ensure the experiment's root
-  commit is present in both the database and the archive.</li>
+  commit is registered and evaluated as a baseline in the database.</li>
 <li><strong>Construction</strong>: created by <code>EvolutionScheduler</code> with:</li>
 <li>the shared <code>Settings</code> instance,</li>
 <li>the interactive <code>rich</code> console,</li>
@@ -302,10 +302,11 @@ re-running the full evaluation.</p>
 <li>a default island id (from <code>MAPELITES_DEFAULT_ISLAND_ID</code> or <code>"main"</code>),</li>
 <li>a rich <code>extra_context</code> block that links back to the experiment and
      repository.</li>
-<li><code>_ensure_root_commit_ingested(...)</code> walks all known islands for the
-   experiment (via <code>MapElitesState</code>) plus the default island, and:</li>
-<li>skips islands that already contain the root commit,</li>
-<li>otherwise ingests the commit once into each island's archive.</li>
+<li><code>_ensure_root_commit_evaluated(...)</code> runs a one-off evaluation for the root
+   commit when no <code>Metric</code> rows already exist, writing baseline metrics into
+   the <code>metrics</code> table and a compact <code>root_evaluation</code> block into
+   <code>CommitMetadata.extra_context</code>. These metrics act as an experiment-wide
+   baseline but do not insert the root commit into any MAP-Elites archive.</li>
 </ol>
 <p>Failures during root-commit initialisation are logged but do <strong>not</strong> prevent
 the scheduler from running; they simply mean the experiment may effectively

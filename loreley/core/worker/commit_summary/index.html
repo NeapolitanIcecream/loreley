@@ -249,6 +249,11 @@
 </ul>
 </li>
 <li>Lazily initialises an <code>OpenAI</code> client and applies a local <code>_truncate_limit</code> when building prompts to keep context sizes reasonable.</li>
+<li>Respects the global OpenAI API surface setting <code>OPENAI_API_SPEC</code>:<ul>
+<li><code>"responses"</code> (default) uses the unified Responses API (<code>client.responses.create</code>) with an <code>instructions</code> string and full prompt as <code>input</code>.</li>
+<li><code>"chat_completions"</code> uses the Chat Completions API (<code>client.chat.completions.create</code>), mapping the same instruction text to a <code>system</code> message and the prompt to a <code>user</code> message, extracting the assistant's reply from the first choice.</li>
+</ul>
+</li>
 </ul>
 <h3 id="subject-generation">Subject generation<a class="headerlink" href="#subject-generation" title="Permanent link">&para;</a></h3>
 <ul>
@@ -261,7 +266,7 @@
 </ul>
 </li>
 <li>Calls the <code>OpenAI</code> responses API with the configured model, temperature, and token limit, plus an <code>instructions</code> string that asks for a single imperative git subject no longer than 72 characters.</li>
-<li>Retries up to <code>_max_retries</code> times on <code>OpenAIError</code> or <code>CommitSummaryError</code>, waiting for <code>retry_backoff * attempt</code> seconds between attempts.</li>
+<li>Retries up to <code>_max_retries</code> times on <code>OpenAIError</code> or <code>CommitSummaryError</code>, waiting for <code>retry_backoff * attempt</code> seconds between attempts, regardless of whether Responses or Chat Completions is selected.</li>
 <li>On success, strips and normalises whitespace, then enforces the subject character limit via <code>_normalise_subject()</code>, logging the attempt count via <code>loguru</code>.</li>
 <li>On exhausting retries, raises <code>CommitSummaryError</code> with a descriptive message including the number of attempts.</li>
 </ul>

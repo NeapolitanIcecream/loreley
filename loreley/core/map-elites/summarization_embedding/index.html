@@ -246,7 +246,12 @@
 <ul>
 <li><strong><code>SummaryEmbedder</code></strong>: orchestrates summarisation of preprocessed files and embedding of the resulting summaries.</li>
 <li>Configured via <code>Settings</code> Map-Elites summary options (<code>MAPELITES_SUMMARY_*</code>) controlling the LLM model, temperature, maximum output tokens, source excerpt character limit, and retry/backoff behaviour, and summary embedding options (<code>MAPELITES_SUMMARY_EMBEDDING_*</code>) controlling the embedding model, optional output dimensions, and batch size.</li>
-<li><code>run(files)</code> skips empty input, calls <code>_summarize_files</code> to build <code>FileSummary</code> objects with a <code>rich</code> progress spinner and <code>loguru</code> debug/warning logs, then calls <code>_embed_summaries</code> to batch summaries through the OpenAI embeddings API, weighting them by change count or summary length.</li>
+<li>Uses the global OpenAI API configuration from <code>loreley.config.Settings</code> (<code>OPENAI_API_KEY</code>, <code>OPENAI_BASE_URL</code>, <code>OPENAI_API_SPEC</code>) when constructing the shared <code>OpenAI</code> client. <code>OPENAI_API_SPEC</code> selects whether summarisation uses:<ul>
+<li>the unified <strong>Responses API</strong> (<code>client.responses.create</code>, default), passing <code>_SUMMARY_INSTRUCTIONS</code> as <code>instructions</code> and the file prompt as <code>input</code>; or</li>
+<li>the classic <strong>Chat Completions API</strong> (<code>client.chat.completions.create</code>), mapping <code>_SUMMARY_INSTRUCTIONS</code> to a <code>system</code> message and the file prompt to a <code>user</code> message while keeping temperature and token limits aligned.</li>
+</ul>
+</li>
+<li><code>run(files)</code> skips empty input, calls <code>_summarize_files</code> to build <code>FileSummary</code> objects with a <code>rich</code> progress spinner and <code>loguru</code> debug/warning logs (using either Responses or Chat Completions under the hood), then calls <code>_embed_summaries</code> to batch summaries through the OpenAI embeddings API, weighting them by change count or summary length.</li>
 <li>Aggregates per-file vectors into a single commit-level vector using <code>_weighted_average</code>, after sorting entries by path for stable output; returns a <code>CommitSummaryEmbedding</code> or <code>None</code> if no usable summaries or embeddings were produced.</li>
 </ul>
 <h2 id="convenience-api">Convenience API<a class="headerlink" href="#convenience-api" title="Permanent link">&para;</a></h2>
