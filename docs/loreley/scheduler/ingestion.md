@@ -79,7 +79,11 @@ When `MAPELITES_EXPERIMENT_ROOT_COMMIT` is set, `EvolutionScheduler` asks
 3. `_ensure_root_commit_ingested(...)` walks all known islands for the
    experiment (via `MapElitesState`) plus the default island, and:
    - skips islands that already contain the root commit,
-   - otherwise ingests the commit once into each island's archive.
+   - otherwise ingests the commit once into each island's archive using a
+     small synthetic placeholder file (`__mapelites_root_placeholder__.py`)
+     as the only `ChangedFile`. This placeholder content is designed purely
+     to drive the embedding pipeline (preprocess → chunk → embed → PCA) and
+     does not depend on or expose the root commit's historical diffs.
 
 Failures during root-commit initialisation are logged but do **not** prevent
 the scheduler from running; they simply mean the experiment may effectively

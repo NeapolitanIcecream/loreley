@@ -31,7 +31,7 @@ The scheduler consumes the following `Settings` fields (all exposed as environme
 - `SCHEDULER_SCHEDULE_BATCH_SIZE`: maximum number of new jobs sampled from MAP-Elites per tick (bounded by the unused capacity).
 - `SCHEDULER_DISPATCH_BATCH_SIZE`: number of pending jobs promoted to `QUEUED` and sent to Dramatiq per tick.
 - `SCHEDULER_INGEST_BATCH_SIZE`: number of newly succeeded jobs ingested into MAP-Elites per tick.
-- `MAPELITES_EXPERIMENT_ROOT_COMMIT`: optional git commit hash used as the logical root for the current experiment. When set, the scheduler records a `CommitMetadata` row (if one does not already exist) and ingests that commit into each known MAP-Elites island archive so that the first scheduled jobs have a stable baseline to branch from.
+- `MAPELITES_EXPERIMENT_ROOT_COMMIT`: optional git commit hash used as the logical root for the current experiment. When set, the scheduler records a `CommitMetadata` row (if one does not already exist) and ingests that commit into each known MAP-Elites island archive using a small synthetic placeholder file so that the first scheduled jobs have a stable, well-aligned baseline to branch from without depending on the root commit's original diff.
 
 ## CLI usage
 
