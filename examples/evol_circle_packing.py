@@ -112,7 +112,7 @@ MAPELITES_FITNESS_METRIC: str = "packing_density"
 
 # Give this experiment a dedicated island ID.
 MAPELITES_DEFAULT_ISLAND_ID: str = "circle_packing"
-MAPELITES_EXPERIMENT_ROOT_COMMIT: str | None = "f5a819e5"
+MAPELITES_EXPERIMENT_ROOT_COMMIT: str | None = "64884c2c"
 
 
 # --- Model / LLM configuration (see loreley.config.Settings) ----------------
