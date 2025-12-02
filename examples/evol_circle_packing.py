@@ -50,7 +50,20 @@ LOG_LEVEL: str = "INFO"
 # Loreley requires PostgreSQL because the ORM models use Postgres-specific
 # types (JSONB, ARRAY, UUID). Adjust credentials/host/db name as needed.
 
-DATABASE_URL: str = "postgresql+psycopg://loreley:loreley@localhost:5432/circle_packing"
+DB_SCHEME: str = "postgresql+psycopg"
+DB_HOST: str = "localhost"
+DB_PORT: int = 5432
+DB_USERNAME: str = "loreley"
+DB_PASSWORD: str = "loreley"
+DB_NAME: str = "circle_packing"
+DB_POOL_SIZE: int = 10
+DB_MAX_OVERFLOW: int = 20
+DB_POOL_TIMEOUT: int = 30
+DB_ECHO: bool = False
+
+DATABASE_URL: str = (
+    f"{DB_SCHEME}://{DB_USERNAME}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+)
 
 # --- Redis / Dramatiq broker -----------------------------------------------
 
@@ -188,6 +201,16 @@ def _apply_base_env() -> None:
 
     # Database (PostgreSQL).
     _set_env_if_unset("DATABASE_URL", DATABASE_URL)
+    _set_env_if_unset("DB_SCHEME", DB_SCHEME)
+    _set_env_if_unset("DB_HOST", DB_HOST)
+    _set_env_if_unset("DB_PORT", DB_PORT)
+    _set_env_if_unset("DB_USER", DB_USERNAME)
+    _set_env_if_unset("DB_PASSWORD", DB_PASSWORD)
+    _set_env_if_unset("DB_NAME", DB_NAME)
+    _set_env_if_unset("DB_POOL_SIZE", DB_POOL_SIZE)
+    _set_env_if_unset("DB_MAX_OVERFLOW", DB_MAX_OVERFLOW)
+    _set_env_if_unset("DB_POOL_TIMEOUT", DB_POOL_TIMEOUT)
+    _set_env_if_unset("DB_ECHO", DB_ECHO)
 
     # Redis / Dramatiq broker.
     _set_env_if_unset("TASKS_REDIS_URL", TASKS_REDIS_URL)
