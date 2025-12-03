@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     app_name: str = Field(default="Loreley", alias="APP_NAME")
     environment: str = Field(default="development", alias="APP_ENV")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+    logs_base_dir: str | None = Field(
+        default=None,
+        alias="LOGS_BASE_DIR",
+    )
 
     # OpenAI-compatible API configuration
     openai_api_key: str | None = Field(

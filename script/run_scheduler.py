@@ -16,13 +16,15 @@ Usage (with uv):
 """
 
 import logging
+from datetime import datetime
 import sys
+from pathlib import Path
 from typing import Sequence
 
 from loguru import logger
 from rich.console import Console
 
-from loreley.config import get_settings
+from loreley.config import Settings, get_settings
 from loreley.scheduler.main import main as scheduler_main
 
 console = Console()
@@ -56,6 +58,20 @@ def _configure_stdlib_logging(level: str) -> None:
     logging.captureWarnings(True)
 
 
+def _resolve_logs_dir(settings: Settings, role: str) -> Path:
+    """Return the log directory for the given role, creating it if needed."""
+
+    if settings.logs_base_dir:
+        base_dir = Path(settings.logs_base_dir).expanduser()
+    else:
+        base_dir = Path.cwd()
+
+    logs_root = base_dir / "logs"
+    log_dir = logs_root / role
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir
+
+
 def _configure_logging() -> None:
     """Configure Loguru and bridge stdlib logging using application settings."""
 
@@ -70,11 +86,25 @@ def _configure_logging() -> None:
         diagnose=False,
     )
 
+    logs_dir = _resolve_logs_dir(settings, role="scheduler")
+    log_date = datetime.now().strftime("%Y%m%d")
+    log_file = logs_dir / f"scheduler-{log_date}.log"
+    logger.add(
+        log_file,
+        level=level,
+        rotation="10 MB",
+        retention="14 days",
+        enqueue=True,
+        backtrace=False,
+        diagnose=False,
+    )
+
     _configure_stdlib_logging(level)
 
     logger.bind(module="script.run_scheduler").info(
-        "Scheduler logging initialised at level {}", level
+        "Scheduler logging initialised at level {} file={}", level, log_file
     )
+    console.log("[green]Scheduler logs[/] -> {}".format(log_file))
 
 
 def main(argv: Sequence[str] | None = None) -> int:

@@ -20,13 +20,15 @@ import logging
 import signal
 import sys
 import threading
+from datetime import datetime
+from pathlib import Path
 from typing import Sequence
 
 from dramatiq import Worker
 from loguru import logger
 from rich.console import Console
 
-from loreley.config import get_settings
+from loreley.config import Settings, get_settings
 from loreley.tasks.broker import broker  # noqa: F401 - ensure broker is initialised
 import loreley.tasks.workers as _workers  # noqa: F401  - register actors
 
@@ -66,6 +68,20 @@ def _configure_stdlib_logging(level: str) -> None:
     logging.captureWarnings(True)
 
 
+def _resolve_logs_dir(settings: Settings, role: str) -> Path:
+    """Return the log directory for the given role, creating it if needed."""
+
+    if settings.logs_base_dir:
+        base_dir = Path(settings.logs_base_dir).expanduser()
+    else:
+        base_dir = Path.cwd()
+
+    logs_root = base_dir / "logs"
+    log_dir = logs_root / role
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir
+
+
 def _configure_logging() -> None:
     """Configure Loguru and bridge stdlib logging using application settings."""
 
@@ -80,9 +96,23 @@ def _configure_logging() -> None:
         diagnose=False,
     )
 
+    logs_dir = _resolve_logs_dir(settings, role="worker")
+    log_date = datetime.now().strftime("%Y%m%d")
+    log_file = logs_dir / f"worker-{log_date}.log"
+    logger.add(
+        log_file,
+        level=level,
+        rotation="10 MB",
+        retention="14 days",
+        enqueue=True,
+        backtrace=False,
+        diagnose=False,
+    )
+
     _configure_stdlib_logging(level)
 
-    log.info("Worker logging initialised at level {}", level)
+    log.info("Worker logging initialised at level {} file={}", level, log_file)
+    console.log("[green]Worker logs[/] -> {}".format(log_file))
 
 
 def _install_signal_handlers(worker: Worker, stop_event: threading.Event | None = None) -> None:

@@ -5,7 +5,7 @@ Centralised configuration for the Loreley application, backed by `pydantic-setti
 ## Settings
 
 - **`Settings`**: `BaseSettings` subclass that loads core application configuration.
-  - **Environment**: `app_name`, `environment`, `log_level`. `log_level` controls the global Loguru log level used across long-running processes (including the scheduler, workers, and their CLI wrappers); see the scripts documentation under `docs/script` for concrete examples.
+  - **Environment**: `app_name`, `environment`, `log_level`, `logs_base_dir`. `log_level` controls the global Loguru log level used across long-running processes (including the scheduler, workers, and their CLI wrappers); `logs_base_dir` (via `LOGS_BASE_DIR`) optionally overrides the base directory where long-running process logs are written, defaulting to a `logs/` directory under the current working directory. See the scripts documentation under `docs/script` for concrete examples.
   - **OpenAI-compatible API**: `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_API_SPEC` configure the API key, base URL, and API surface for all OpenAI-compatible LLM and embedding calls, used by `loreley.core.map-elites.code_embedding.CodeEmbedder`, `loreley.core.map-elites.summarization_embedding.SummaryEmbedder`, and `loreley.core.worker.commit_summary.CommitSummarizer`. When unset, `OPENAI_API_KEY`/`OPENAI_BASE_URL` fall back to the OpenAI Python client's own environment variable defaults. `OPENAI_API_SPEC` accepts:
     - `"responses"` (default): use the unified `responses` API (`client.responses.create`) for text generation.
     - `"chat_completions"`: use the classic Chat Completions API (`client.chat.completions.create`) while preserving the same high-level behaviour.
