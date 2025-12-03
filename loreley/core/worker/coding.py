@@ -408,6 +408,7 @@ When you finish applying the plan:
         command: list[str] = [
             self.codex_bin,
             "exec",
+            "--full-auto"
         ]
         if self.schema_mode == "native":
             if schema_path is None:
