@@ -19,6 +19,7 @@ from loreley.core.worker.agent_backend import (
     CodexCliBackend,
     SchemaMode,
     StructuredAgentTask,
+    load_agent_backend,
     resolve_schema_mode,
 )
 from loreley.core.worker.planning import PlanStep, PlanningPlan
@@ -180,15 +181,23 @@ class CodingAgent:
         )
         self._truncate_limit = 2000
         self._debug_dir = self._resolve_debug_dir()
-        self.backend: AgentBackend = backend or CodexCliBackend(
-            bin=self.settings.worker_coding_codex_bin,
-            profile=self.settings.worker_coding_codex_profile,
-            timeout_seconds=self.settings.worker_coding_timeout_seconds,
-            extra_env=dict(self.settings.worker_coding_extra_env or {}),
-            schema_override=self.settings.worker_coding_schema_path,
-            error_cls=CodingError,
-            full_auto=True,
-        )
+        if backend is not None:
+            self.backend: AgentBackend = backend
+        elif self.settings.worker_coding_backend:
+            self.backend = load_agent_backend(
+                self.settings.worker_coding_backend,
+                label="coding backend",
+            )
+        else:
+            self.backend = CodexCliBackend(
+                bin=self.settings.worker_coding_codex_bin,
+                profile=self.settings.worker_coding_codex_profile,
+                timeout_seconds=self.settings.worker_coding_timeout_seconds,
+                extra_env=dict(self.settings.worker_coding_extra_env or {}),
+                schema_override=self.settings.worker_coding_schema_path,
+                error_cls=CodingError,
+                full_auto=True,
+            )
 
     def implement(
         self,

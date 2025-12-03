@@ -18,6 +18,7 @@ from loreley.core.worker.agent_backend import (
     CodexCliBackend,
     SchemaMode,
     StructuredAgentTask,
+    load_agent_backend,
     resolve_schema_mode,
 )
 
@@ -274,15 +275,23 @@ class PlanningAgent:
         self._max_highlights = 8
         self._max_metrics = 10
         self._debug_dir = self._resolve_debug_dir()
-        self.backend: AgentBackend = backend or CodexCliBackend(
-            bin=self.settings.worker_planning_codex_bin,
-            profile=self.settings.worker_planning_codex_profile,
-            timeout_seconds=self.settings.worker_planning_timeout_seconds,
-            extra_env=dict(self.settings.worker_planning_extra_env or {}),
-            schema_override=self.settings.worker_planning_schema_path,
-            error_cls=PlanningError,
-            full_auto=False,
-        )
+        if backend is not None:
+            self.backend: AgentBackend = backend
+        elif self.settings.worker_planning_backend:
+            self.backend = load_agent_backend(
+                self.settings.worker_planning_backend,
+                label="planning backend",
+            )
+        else:
+            self.backend = CodexCliBackend(
+                bin=self.settings.worker_planning_codex_bin,
+                profile=self.settings.worker_planning_codex_profile,
+                timeout_seconds=self.settings.worker_planning_timeout_seconds,
+                extra_env=dict(self.settings.worker_planning_extra_env or {}),
+                schema_override=self.settings.worker_planning_schema_path,
+                error_cls=PlanningError,
+                full_auto=False,
+            )
 
     def plan(
         self,

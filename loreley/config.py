@@ -192,6 +192,14 @@ class Settings(BaseSettings):
         default=None,
         alias="WORKER_CODING_SCHEMA_PATH",
     )
+    worker_planning_backend: str | None = Field(
+        default=None,
+        alias="WORKER_PLANNING_BACKEND",
+    )
+    worker_coding_backend: str | None = Field(
+        default=None,
+        alias="WORKER_CODING_BACKEND",
+    )
     worker_planning_codex_schema_mode: Literal[
         "auto",
         "native",

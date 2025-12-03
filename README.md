@@ -80,6 +80,7 @@ All runtime settings come from environment variables consumed by `loreley.config
   - `WORKER_REPO_ENABLE_LFS`, `WORKER_REPO_FETCH_DEPTH`, `WORKER_REPO_JOB_BRANCH_PREFIX`, `WORKER_REPO_JOB_BRANCH_TTL_HOURS`
 - **Worker planning / coding**
   - `WORKER_PLANNING_CODEX_*` and `WORKER_CODING_CODEX_*` options configuring the default Codex-based planning/coding backends
+  - `WORKER_PLANNING_BACKEND` and `WORKER_CODING_BACKEND` optional dotted paths to custom agent backends that implement the same protocol as the default Codex CLI backend
 - **Evaluator**
   - `WORKER_EVALUATOR_PLUGIN`, `WORKER_EVALUATOR_PYTHON_PATHS`
   - `WORKER_EVALUATOR_TIMEOUT_SECONDS`, `WORKER_EVALUATOR_MAX_METRICS`
