@@ -192,6 +192,24 @@ class Settings(BaseSettings):
         default=None,
         alias="WORKER_CODING_SCHEMA_PATH",
     )
+    worker_planning_codex_schema_mode: Literal[
+        "auto",
+        "native",
+        "prompt",
+        "none",
+    ] = Field(
+        default="auto",
+        alias="WORKER_PLANNING_CODEX_SCHEMA_MODE",
+    )
+    worker_coding_codex_schema_mode: Literal[
+        "auto",
+        "native",
+        "prompt",
+        "none",
+    ] = Field(
+        default="auto",
+        alias="WORKER_CODING_CODEX_SCHEMA_MODE",
+    )
     worker_evaluator_plugin: str | None = Field(
         default=None,
         alias="WORKER_EVALUATOR_PLUGIN",

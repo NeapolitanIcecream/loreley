@@ -272,6 +272,10 @@ class PlanningAgent:
         self.timeout = self.settings.worker_planning_timeout_seconds
         self.extra_env = dict(self.settings.worker_planning_extra_env or {})
         self.schema_override = self.settings.worker_planning_schema_path
+        self.schema_mode = self._resolve_schema_mode(
+            configured_mode=self.settings.worker_planning_codex_schema_mode,
+            api_spec=self.settings.openai_api_spec,
+        )
         self._truncate_limit = 2000
         self._max_highlights = 8
         self._max_metrics = 10
@@ -286,7 +290,10 @@ class PlanningAgent:
         worktree = self._validate_workdir(working_dir)
         prompt = self._render_prompt(request)
 
-        schema_path, cleanup_handle = self._materialise_schema()
+        schema_path: Path | None = None
+        cleanup_handle: Path | None = None
+        if self.schema_mode == "native":
+            schema_path, cleanup_handle = self._materialise_schema()
         last_error: Exception | None = None
         try:
             for attempt in range(1, self.max_attempts + 1):
@@ -336,6 +343,14 @@ class PlanningAgent:
         )
         iteration_hint = request.iteration_hint or "None provided"
 
+        schema_contract_block = ""
+        if self.schema_mode in ("prompt", "none"):
+            schema_json = json.dumps(PLANNING_OUTPUT_SCHEMA, ensure_ascii=True, indent=2)
+            schema_contract_block = (
+                "\n\nOutput JSON schema contract:\n"
+                f"{schema_json}\n"
+            )
+
         cold_start_block = ""
         if request.cold_start:
             cold_start_block = (
@@ -374,7 +389,8 @@ Deliverable requirements:
 - Produce 3-6 coherent steps with explicit actions and files to touch.
 - Reference evaluation metrics to justify why the plan should work.
 - Call out any risks, guardrails, and validation activities per step.
-- Respond ONLY with JSON that satisfies the provided schema.
+ - Respond ONLY with a single JSON object that matches the expected schema.
+{schema_contract_block}
 """
         return textwrap.dedent(prompt).strip()
 
@@ -452,15 +468,22 @@ Deliverable requirements:
     def _invoke_codex(
         self,
         prompt: str,
-        schema_path: Path,
+        schema_path: Path | None,
         worktree: Path,
     ) -> _CodexInvocation:
         command: list[str] = [
             self.codex_bin,
             "exec",
-            "--output-schema",
-            str(schema_path),
         ]
+        if self.schema_mode == "native":
+            if schema_path is None:
+                raise PlanningError("Schema path is required when schema_mode='native'.")
+            command.extend(
+                [
+                    "--output-schema",
+                    str(schema_path),
+                ],
+            )
         if self.profile:
             command.extend(["--profile", self.profile])
 
@@ -507,6 +530,18 @@ Deliverable requirements:
             stderr=stderr,
             duration_seconds=duration,
         )
+
+    @staticmethod
+    def _resolve_schema_mode(
+        configured_mode: str,
+        api_spec: str,
+    ) -> str:
+        """Resolve the effective schema mode from configuration and API spec."""
+        if configured_mode != "auto":
+            return configured_mode
+        if api_spec == "chat_completions":
+            return "prompt"
+        return "native"
 
     def _parse_plan(self, payload: str) -> _PlanModel:
         """Validate JSON output from Codex against the schema."""

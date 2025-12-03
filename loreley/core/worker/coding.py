@@ -180,6 +180,10 @@ class CodingAgent:
         self.timeout = self.settings.worker_coding_timeout_seconds
         self.extra_env = dict(self.settings.worker_coding_extra_env or {})
         self.schema_override = self.settings.worker_coding_schema_path
+        self.schema_mode = self._resolve_schema_mode(
+            configured_mode=self.settings.worker_coding_codex_schema_mode,
+            api_spec=self.settings.openai_api_spec,
+        )
         self._truncate_limit = 2000
 
     def implement(
@@ -192,7 +196,10 @@ class CodingAgent:
         worktree = self._validate_workdir(working_dir)
         prompt = self._render_prompt(request, worktree=worktree)
 
-        schema_path, cleanup_handle = self._materialise_schema()
+        schema_path: Path | None = None
+        cleanup_handle: Path | None = None
+        if self.schema_mode == "native":
+            schema_path, cleanup_handle = self._materialise_schema()
         last_error: Exception | None = None
         try:
             for attempt in range(1, self.max_attempts + 1):
@@ -252,6 +259,14 @@ class CodingAgent:
         fallback_plan_text = self._truncate(plan.fallback_plan or "None provided")
         iteration_hint = request.iteration_hint or "None provided"
 
+        schema_contract_block = ""
+        if self.schema_mode in ("prompt", "none"):
+            schema_json = json.dumps(CODING_OUTPUT_SCHEMA, ensure_ascii=True, indent=2)
+            schema_contract_block = (
+                "\n\nOutput JSON schema contract:\n"
+                f"{schema_json}\n"
+            )
+
         prompt = f"""
 You are the coding agent running inside Loreley's autonomous worker.
 Your mission is to modify the repository located at {worktree} so that it
@@ -303,7 +318,8 @@ Detailed plan steps:
 When you finish applying the plan:
 - ensure repository changes are ready for review (lint/tests as needed)
 - summarise your work using the provided JSON schema
-- respond ONLY with JSON following that schema; no prose outside JSON
+- respond ONLY with a single JSON object following that schema; no prose outside JSON
+{schema_contract_block}
 """
         return textwrap.dedent(prompt).strip()
 
@@ -366,15 +382,22 @@ When you finish applying the plan:
     def _invoke_codex(
         self,
         prompt: str,
-        schema_path: Path,
+        schema_path: Path | None,
         worktree: Path,
     ) -> _CodexInvocation:
         command: list[str] = [
             self.codex_bin,
             "exec",
-            "--output-schema",
-            str(schema_path),
         ]
+        if self.schema_mode == "native":
+            if schema_path is None:
+                raise CodingError("Schema path is required when schema_mode='native'.")
+            command.extend(
+                [
+                    "--output-schema",
+                    str(schema_path),
+                ],
+            )
         if self.profile:
             command.extend(["--profile", self.profile])
 
@@ -420,6 +443,18 @@ When you finish applying the plan:
             stderr=stderr,
             duration_seconds=duration,
         )
+
+    @staticmethod
+    def _resolve_schema_mode(
+        configured_mode: str,
+        api_spec: str,
+    ) -> str:
+        """Resolve the effective schema mode from configuration and API spec."""
+        if configured_mode != "auto":
+            return configured_mode
+        if api_spec == "chat_completions":
+            return "prompt"
+        return "native"
 
     def _parse_output(self, payload: str) -> _CodingOutputModel:
         return _CodingOutputModel.model_validate_json(payload)
