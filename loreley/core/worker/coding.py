@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import textwrap
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from time import monotonic
@@ -185,6 +186,7 @@ class CodingAgent:
             api_spec=self.settings.openai_api_spec,
         )
         self._truncate_limit = 2000
+        self._debug_dir = self._resolve_debug_dir()
 
     def implement(
         self,
@@ -211,6 +213,15 @@ class CodingAgent:
                         self._log_invalid_output(invocation, exc)
                         raise
                     execution = self._to_domain(output_model)
+                    self._dump_debug_artifact(
+                        request=request,
+                        worktree=worktree,
+                        invocation=invocation,
+                        prompt=prompt,
+                        attempt=attempt,
+                        execution=execution,
+                        error=None,
+                    )
                     console.log(
                         "[bold green]Coding agent[/] finished in "
                         f"{invocation.duration_seconds:.1f}s "
@@ -227,6 +238,15 @@ class CodingAgent:
                     )
                 except (CodingError, ValidationError, json.JSONDecodeError) as exc:
                     last_error = exc
+                    self._dump_debug_artifact(
+                        request=request,
+                        worktree=worktree,
+                        invocation=None,
+                        prompt=prompt,
+                        attempt=attempt,
+                        execution=None,
+                        error=exc,
+                    )
                     log.warning("Coding attempt {} failed: {}", attempt, exc)
             raise CodingError(
                 "Coding agent could not produce a valid report after "
@@ -516,4 +536,76 @@ When you finish applying the plan:
                 f"Coding agent requires a git repository at {path} (missing .git).",
             )
         return path
+
+    def _resolve_debug_dir(self) -> Path:
+        """Resolve directory for coding debug artifacts."""
+        if self.settings.logs_base_dir:
+            base_dir = Path(self.settings.logs_base_dir).expanduser()
+        else:
+            base_dir = Path.cwd()
+        logs_root = base_dir / "logs" / "worker" / "coding"
+        logs_root.mkdir(parents=True, exist_ok=True)
+        return logs_root
+
+    def _dump_debug_artifact(
+        self,
+        *,
+        request: CodingAgentRequest,
+        worktree: Path,
+        invocation: _CodexInvocation | None,
+        prompt: str,
+        attempt: int,
+        execution: CodingPlanExecution | None,
+        error: Exception | None,
+    ) -> None:
+        """Persist coding agent prompt and Codex output for debugging."""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+            commit_prefix = (request.base_commit or "unknown")[:12]
+            filename = f"coding-{commit_prefix}-attempt{attempt}-{timestamp}.json"
+            payload: dict[str, Any] = {
+                "timestamp": timestamp,
+                "status": "error" if error else "ok",
+                "error": repr(error) if error else None,
+                "attempt": attempt,
+                "schema_mode": self.schema_mode,
+                "working_dir": str(worktree),
+                "goal": request.goal,
+                "base_commit": request.base_commit,
+                "constraints": list(request.constraints),
+                "acceptance_criteria": list(request.acceptance_criteria),
+                "codex_command": list(invocation.command) if invocation else None,
+                "codex_duration_seconds": (
+                    invocation.duration_seconds if invocation else None
+                ),
+                "codex_stdout": invocation.stdout if invocation else None,
+                "codex_stderr": invocation.stderr if invocation else None,
+                "prompt": prompt,
+                "execution": {
+                    "implementation_summary": execution.implementation_summary,
+                    "commit_message": execution.commit_message,
+                    "step_results": [
+                        {
+                            "step_id": step.step_id,
+                            "status": step.status.value,
+                            "summary": step.summary,
+                            "files": list(step.files),
+                            "commands": list(step.commands),
+                        }
+                        for step in execution.step_results
+                    ],
+                    "tests_executed": list(execution.tests_executed),
+                    "tests_recommended": list(execution.tests_recommended),
+                    "follow_up_items": list(execution.follow_up_items),
+                    "notes": list(execution.notes),
+                }
+                if execution
+                else None,
+            }
+            path = self._debug_dir / filename
+            with path.open("w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+        except Exception as exc:  # pragma: no cover - best-effort logging
+            log.debug("Failed to write coding debug artifact: {}", exc)
+
 

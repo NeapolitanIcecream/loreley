@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import textwrap
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from time import monotonic
 from typing import Any, Sequence
@@ -279,6 +280,7 @@ class PlanningAgent:
         self._truncate_limit = 2000
         self._max_highlights = 8
         self._max_metrics = 10
+        self._debug_dir = self._resolve_debug_dir()
 
     def plan(
         self,
@@ -301,6 +303,15 @@ class PlanningAgent:
                     invocation = self._invoke_codex(prompt, schema_path, worktree)
                     plan_model = self._parse_plan(invocation.stdout)
                     plan = self._to_domain(plan_model)
+                    self._dump_debug_artifact(
+                        request=request,
+                        worktree=worktree,
+                        invocation=invocation,
+                        prompt=prompt,
+                        attempt=attempt,
+                        plan=plan,
+                        error=None,
+                    )
                     console.log(
                         "[bold green]Planning agent[/] generated plan "
                         f"in {invocation.duration_seconds:.1f}s "
@@ -317,6 +328,15 @@ class PlanningAgent:
                     )
                 except (PlanningError, ValidationError, json.JSONDecodeError) as exc:
                     last_error = exc
+                    self._dump_debug_artifact(
+                        request=request,
+                        worktree=worktree,
+                        invocation=None,
+                        prompt=prompt,
+                        attempt=attempt,
+                        plan=None,
+                        error=exc,
+                    )
                     log.warning(
                         "Planning attempt {} failed: {}",
                         attempt,
@@ -597,5 +617,58 @@ Deliverable requirements:
                 f"Planning agent requires a git repository at {path} (missing .git).",
             )
         return path
+
+    def _resolve_debug_dir(self) -> Path:
+        """Resolve directory for planning debug artifacts."""
+        if self.settings.logs_base_dir:
+            base_dir = Path(self.settings.logs_base_dir).expanduser()
+        else:
+            base_dir = Path.cwd()
+        logs_root = base_dir / "logs" / "worker" / "planning"
+        logs_root.mkdir(parents=True, exist_ok=True)
+        return logs_root
+
+    def _dump_debug_artifact(
+        self,
+        *,
+        request: PlanningAgentRequest,
+        worktree: Path,
+        invocation: _CodexInvocation | None,
+        prompt: str,
+        attempt: int,
+        plan: PlanningPlan | None,
+        error: Exception | None,
+    ) -> None:
+        """Persist planning agent prompt and Codex output for debugging."""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+            commit_prefix = (request.base.commit_hash or "unknown")[:12]
+            filename = f"planning-{commit_prefix}-attempt{attempt}-{timestamp}.json"
+            payload: dict[str, Any] = {
+                "timestamp": timestamp,
+                "status": "error" if error else "ok",
+                "error": repr(error) if error else None,
+                "attempt": attempt,
+                "schema_mode": self.schema_mode,
+                "working_dir": str(worktree),
+                "goal": request.goal,
+                "base_commit": request.base.commit_hash,
+                "constraints": list(request.constraints),
+                "acceptance_criteria": list(request.acceptance_criteria),
+                "codex_command": list(invocation.command) if invocation else None,
+                "codex_duration_seconds": (
+                    invocation.duration_seconds if invocation else None
+                ),
+                "codex_stdout": invocation.stdout if invocation else None,
+                "codex_stderr": invocation.stderr if invocation else None,
+                "prompt": prompt,
+                "parsed_plan": plan.as_dict() if plan else None,
+            }
+            path = self._debug_dir / filename
+            with path.open("w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+        except Exception as exc:  # pragma: no cover - best-effort logging
+            log.debug("Failed to write planning debug artifact: {}", exc)
+
 
 
