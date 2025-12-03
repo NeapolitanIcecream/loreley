@@ -428,6 +428,7 @@ def _reset_database() -> None:
         from sqlalchemy import text
 
         from loreley.db.base import Base, engine, ensure_database_schema
+        from loreley.tasks.broker import build_redis_broker
 
         # Ensure schema exists so that all metadata tables are present.
         ensure_database_schema()
@@ -453,6 +454,20 @@ def _reset_database() -> None:
             ),
         )
         log.info("Database reset complete for tables: {}", ", ".join(table_names))
+
+        # Clear all Dramatiq message queues in the configured Redis namespace so
+        # that no jobs from a previous run survive a fresh database initialisation.
+        redis_broker = build_redis_broker()
+        redis_broker.flush_all()
+        console.log(
+            "[bold green]Redis broker reset complete[/] namespace={}".format(
+                os.getenv("TASKS_REDIS_NAMESPACE", "<unset>"),
+            ),
+        )
+        log.info(
+            "Redis broker reset complete for namespace {}",
+            os.getenv("TASKS_REDIS_NAMESPACE", "<unset>"),
+        )
     except Exception as exc:  # pragma: no cover - defensive
         console.log(
             "[bold red]Database reset failed[/] reason={}".format(exc),
@@ -520,7 +535,7 @@ def main(argv: list[str] | None = None) -> int:
         "--init-db",
         action="store_true",
         help="Initialise the DATABASE_URL by clearing all existing Loreley tables "
-        "before running the scheduler.",
+        "and clearing all Dramatiq Redis task queues before running the scheduler.",
     )
 
     subparsers.add_parser(
