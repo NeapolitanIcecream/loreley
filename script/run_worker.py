@@ -97,8 +97,8 @@ def _configure_logging() -> None:
     )
 
     logs_dir = _resolve_logs_dir(settings, role="worker")
-    log_date = datetime.now().strftime("%Y%m%d")
-    log_file = logs_dir / f"worker-{log_date}.log"
+    log_timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_file = logs_dir / f"worker-{log_timestamp}.log"
     logger.add(
         log_file,
         level=level,
