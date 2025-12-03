@@ -147,7 +147,7 @@ class JobScheduler:
                             ),
                         },
                     },
-                    priority=self._default_priority,
+                    priority=self.settings.mapelites_sampler_default_priority,
                     scheduled_at=now,
                 )
                 session.add(job)
