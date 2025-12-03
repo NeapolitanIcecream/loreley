@@ -254,6 +254,12 @@ process.</p>
 <ol>
 <li>Calls <code>get_settings()</code> to load <code>Settings</code>.</li>
 <li>Configures Loguru to log to stderr using <code>LOG_LEVEL</code> as the threshold.</li>
+<li>Resolves a log directory under <code>&lt;BASE&gt;/logs/worker</code> where <code>&lt;BASE&gt;</code> is:</li>
+<li><code>LOGS_BASE_DIR</code> (expanded as a path) when set.</li>
+<li>the current working directory when <code>LOGS_BASE_DIR</code> is unset.</li>
+<li>Adds a rotating file sink at <code>worker-YYYYMMDD.log</code> inside that directory
+   with <code>rotation="10 MB"</code> and <code>retention="14 days"</code>, so worker output is
+   always persisted for later debugging.</li>
 <li>Imports <code>loreley.tasks.broker</code> (which constructs and registers the Redis
    broker) and <code>loreley.tasks.workers</code> (which defines the <code>run_evolution_job</code>
    actor and its queue settings).</li>
@@ -283,6 +289,9 @@ scheduler (<code>loreley.scheduler.main</code>).</p>
 <ul>
 <li><strong>Logging</strong></li>
 <li><code>LOG_LEVEL</code>: global Loguru level for worker logs.</li>
+<li><code>LOGS_BASE_DIR</code> (optional): overrides the base directory used for worker
+    log files; when unset, logs are written under <code>./logs/worker</code> relative to
+    the current working directory.</li>
 <li><strong>Task queue / broker</strong></li>
 <li><code>TASKS_REDIS_URL</code> or (<code>TASKS_REDIS_HOST</code>, <code>TASKS_REDIS_PORT</code>,
     <code>TASKS_REDIS_DB</code>, <code>TASKS_REDIS_PASSWORD</code>, <code>TASKS_REDIS_NAMESPACE</code>).</li>
@@ -295,7 +304,10 @@ scheduler (<code>loreley.scheduler.main</code>).</p>
     <code>loreley.core.worker.repository.WorkerRepository</code>.</li>
 </ul>
 <p>For a full description of these settings, see <code>docs/loreley/config.md</code> and the
-worker module documentation in <code>docs/loreley/tasks/workers.md</code>.</p></div>
+worker module documentation in <code>docs/loreley/tasks/workers.md</code>.</p>
+<p>The <code>examples/evol_circle_packing.py</code> helper simply delegates to this script
+when running the worker, so its runs use the same logging configuration and
+log file locations.</p></div>
             </div>
         </div>
 

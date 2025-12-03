@@ -253,8 +253,14 @@ interaction are all implemented in <code>loreley.scheduler.main.EvolutionSchedul
 <ul>
 <li>Calls <code>get_settings()</code> to load <code>Settings</code> and derive the desired log level
   (via <code>LOG_LEVEL</code>).</li>
-<li>Resets Loguru sinks and installs a single stderr sink at the configured
-  level, disabling backtraces and diagnosis in production-style runs.</li>
+<li>Resets Loguru sinks and installs a stderr sink at the configured level,
+  disabling backtraces and diagnosis in production-style runs.</li>
+<li>Resolves a log directory under <code>&lt;BASE&gt;/logs/scheduler</code> where <code>&lt;BASE&gt;</code> is:</li>
+<li><code>LOGS_BASE_DIR</code> (expanded as a path) when set.</li>
+<li>the current working directory when <code>LOGS_BASE_DIR</code> is unset.</li>
+<li>Adds a rotating file sink at <code>scheduler-YYYYMMDD.log</code> inside that directory
+  with <code>rotation="10 MB"</code> and <code>retention="14 days"</code>, so scheduler output is
+  always persisted for later debugging.</li>
 <li>Binds an informational logger with module name <code>script.run_scheduler</code>.</li>
 <li>Forwards the CLI arguments to <code>loreley.scheduler.main.main(argv)</code>, which
   supports the <code>--once</code> flag to run a single scheduler tick.</li>
@@ -276,10 +282,16 @@ uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </sp
 <p>The script relies on <code>loreley.config.Settings</code>:</p>
 <ul>
 <li><code>LOG_LEVEL</code> controls the global Loguru log level for the scheduler process.</li>
+<li><code>LOGS_BASE_DIR</code> (optional) overrides the base directory used for scheduler
+  log files; when unset, logs are written under <code>./logs/scheduler</code> relative to
+  the current working directory.</li>
 <li>All scheduler-related fields (<code>SCHEDULER_*</code>) and database/Redis settings are
   consumed by <code>loreley.scheduler.main</code> and <code>loreley.tasks.broker</code>. See
   <code>docs/loreley/config.md</code> and <code>docs/loreley/scheduler/main.md</code> for details.</li>
-</ul></div>
+</ul>
+<p>The <code>examples/evol_circle_packing.py</code> helper simply delegates to this script
+when running the scheduler, so its runs use the same logging configuration and
+log file locations.</p></div>
             </div>
         </div>
 
