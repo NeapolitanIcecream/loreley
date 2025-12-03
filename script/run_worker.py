@@ -19,6 +19,7 @@ Typical usage (with uv):
 import logging
 import signal
 import sys
+import threading
 from typing import Sequence
 
 from dramatiq import Worker
@@ -84,7 +85,7 @@ def _configure_logging() -> None:
     log.info("Worker logging initialised at level {}", level)
 
 
-def _install_signal_handlers(worker: Worker) -> None:
+def _install_signal_handlers(worker: Worker, stop_event: threading.Event | None = None) -> None:
     """Install SIGINT/SIGTERM handlers for graceful shutdown."""
 
     def _handle_signal(signum: int, _frame: object) -> None:
@@ -93,6 +94,8 @@ def _install_signal_handlers(worker: Worker) -> None:
         )
         log.info("Worker received signal {}; stopping", signum)
         worker.stop()
+        if stop_event is not None:
+            stop_event.set()
 
     signal.signal(signal.SIGINT, _handle_signal)
     sigterm = getattr(signal, "SIGTERM", None)
@@ -117,19 +120,24 @@ def main(_argv: Sequence[str] | None = None) -> int:
     )
 
     worker = Worker(broker, worker_threads=1)  # single-threaded worker
-    _install_signal_handlers(worker)
+    stop_event = threading.Event()
+    _install_signal_handlers(worker, stop_event=stop_event)
 
     try:
         worker.start()
-        worker.join()
+        # Keep the main thread alive until a shutdown signal is received.
+        stop_event.wait()
     except KeyboardInterrupt:
         console.log(
             "[yellow]Keyboard interrupt received[/]; shutting down worker...",
         )
         worker.stop()
-
-    console.log("[bold yellow]Loreley worker stopped[/]")
-    log.info("Loreley worker stopped")
+    finally:
+        # Ensure the worker is fully stopped before exiting.
+        worker.stop()
+        worker.join()
+        console.log("[bold yellow]Loreley worker stopped[/]")
+        log.info("Loreley worker stopped")
     return 0
 
 
