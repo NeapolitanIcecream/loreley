@@ -267,6 +267,7 @@ class PlanningAgent:
     ) -> None:
         self.settings = settings or get_settings()
         self.max_attempts = max(1, self.settings.worker_planning_max_attempts)
+        self.validation_mode: str = self.settings.worker_planning_validation_mode
         self.schema_mode: SchemaMode = resolve_schema_mode(
             configured_mode=self.settings.worker_planning_codex_schema_mode,
             api_spec=self.settings.openai_api_spec,
@@ -298,31 +299,43 @@ class PlanningAgent:
         request: PlanningAgentRequest,
         *,
         working_dir: Path,
-        ) -> PlanningAgentResponse:
+    ) -> PlanningAgentResponse:
         """Generate a structured plan using the configured backend."""
         worktree = Path(working_dir).expanduser().resolve()
         prompt = self._render_prompt(request)
 
-        task = StructuredAgentTask(
-            name="planning",
-            prompt=prompt,
-            schema=PLANNING_OUTPUT_SCHEMA,
-            schema_mode=self.schema_mode,
-        )
+        if self.validation_mode == "strict":
+            task = StructuredAgentTask(
+                name="planning",
+                prompt=prompt,
+                schema=PLANNING_OUTPUT_SCHEMA,
+                schema_mode=self.schema_mode,
+            )
+        else:
+            # In lenient mode we do not enforce a JSON schema at the backend level.
+            task = StructuredAgentTask(
+                name="planning",
+                prompt=prompt,
+                schema=None,
+                schema_mode="none",
+            )
 
         last_error: Exception | None = None
         for attempt in range(1, self.max_attempts + 1):
+            invocation: AgentInvocation | None = None
             try:
                 console.log(
                     "[cyan]Planning agent[/] requesting plan "
                     f"(attempt {attempt}/{self.max_attempts})",
                 )
-                invocation: AgentInvocation = self.backend.run(
+                invocation = self.backend.run(
                     task,
                     working_dir=worktree,
                 )
-                plan_model = self._parse_plan(invocation.stdout)
-                plan = self._to_domain(plan_model)
+                plan = self._coerce_plan_from_invocation(
+                    request=request,
+                    invocation=invocation,
+                )
                 self._dump_debug_artifact(
                     request=request,
                     worktree=worktree,
@@ -381,11 +394,36 @@ class PlanningAgent:
         iteration_hint = request.iteration_hint or "None provided"
 
         schema_contract_block = ""
-        if self.schema_mode in ("prompt", "none"):
-            schema_json = json.dumps(PLANNING_OUTPUT_SCHEMA, ensure_ascii=True, indent=2)
-            schema_contract_block = (
-                "\n\nOutput JSON schema contract:\n"
-                f"{schema_json}\n"
+        json_requirement_line = ""
+        if self.validation_mode == "strict":
+            if self.schema_mode in ("prompt", "none"):
+                schema_json = json.dumps(
+                    PLANNING_OUTPUT_SCHEMA,
+                    ensure_ascii=True,
+                    indent=2,
+                )
+                schema_contract_block = (
+                    "\n\nOutput JSON schema contract:\n"
+                    f"{schema_json}\n"
+                )
+            json_requirement_line = (
+                "- Respond ONLY with a single JSON object that matches the expected schema."
+            )
+        else:
+            # In lenient mode, JSON is a best-effort contract rather than a hard requirement.
+            if self.schema_mode in ("prompt", "none"):
+                schema_json = json.dumps(
+                    PLANNING_OUTPUT_SCHEMA,
+                    ensure_ascii=True,
+                    indent=2,
+                )
+                schema_contract_block = (
+                    "\n\nSuggested JSON schema (optional, best-effort):\n"
+                    f"{schema_json}\n"
+                )
+            json_requirement_line = (
+                "- Prefer returning a single JSON object that roughly follows the schema, "
+                "but free-form text is also acceptable."
             )
 
         cold_start_block = ""
@@ -426,7 +464,7 @@ Deliverable requirements:
 - Produce 3-6 coherent steps with explicit actions and files to touch.
 - Reference evaluation metrics to justify why the plan should work.
 - Call out any risks, guardrails, and validation activities per step.
- - Respond ONLY with a single JSON object that matches the expected schema.
+{json_requirement_line}
 {schema_contract_block}
 """
         return textwrap.dedent(prompt).strip()
@@ -478,6 +516,31 @@ Deliverable requirements:
             lines.append("  - ... (truncated)")
         return "\n".join(lines)
 
+    def _coerce_plan_from_invocation(
+        self,
+        *,
+        request: PlanningAgentRequest,
+        invocation: AgentInvocation,
+    ) -> PlanningPlan:
+        """Turn backend output into a PlanningPlan, honouring the validation mode."""
+        if self.validation_mode == "strict":
+            plan_model = self._parse_plan(invocation.stdout)
+            return self._to_domain(plan_model)
+
+        try:
+            plan_model = self._parse_plan(invocation.stdout)
+            return self._to_domain(plan_model)
+        except (ValidationError, json.JSONDecodeError) as exc:
+            log.debug(
+                "Lenient planning validation mode: treating invalid planning output as "
+                "free-form text: {}",
+                exc,
+            )
+            return self._build_lenient_plan_from_freeform(
+                request=request,
+                raw_output=invocation.stdout,
+            )
+
     def _parse_plan(self, payload: str) -> _PlanModel:
         """Validate JSON output from the planning backend against the schema."""
         return _PlanModel.model_validate_json(payload)
@@ -508,6 +571,59 @@ Deliverable requirements:
             steps=steps,
             handoff_notes=tuple(plan_model.handoff_notes),
             fallback_plan=plan_model.fallback_plan,
+        )
+
+    def _build_lenient_plan_from_freeform(
+        self,
+        *,
+        request: PlanningAgentRequest,
+        raw_output: str,
+    ) -> PlanningPlan:
+        """Build a minimal PlanningPlan from free-form agent output in lenient mode."""
+        summary_source = (raw_output or "").strip() or request.goal
+        summary = self._truncate(summary_source)
+        rationale = (
+            "Planning output could not be parsed as structured JSON; this plan was "
+            "synthesised from free-form text in lenient validation mode."
+        )
+
+        focus_metrics = tuple(metric.name for metric in request.base.metrics)[:3]
+        guardrails = tuple(request.constraints)
+        risks: tuple[str, ...] = ()
+        validation = tuple(request.acceptance_criteria) or (
+            "Run the project's tests and ensure there are no regressions.",
+        )
+
+        synthetic_step = PlanStep(
+            step_id="lenient-1",
+            title="Apply the free-form planning output",
+            intent="Follow the planning agent's free-form suggestions from the raw output.",
+            actions=(self._truncate(summary_source),),
+            files=tuple(),
+            dependencies=tuple(),
+            validation=validation,
+            risks=risks,
+            references=tuple(),
+        )
+
+        handoff_notes = (
+            "Planning ran in lenient validation mode. The full free-form output is "
+            "available to downstream consumers via raw_output; this structured plan is "
+            "a best-effort synthesis.",
+        )
+
+        fallback_plan = (raw_output or "").strip() or None
+
+        return PlanningPlan(
+            summary=summary,
+            rationale=rationale,
+            focus_metrics=focus_metrics,
+            guardrails=guardrails,
+            risks=risks,
+            validation=validation,
+            steps=(synthetic_step,),
+            handoff_notes=handoff_notes,
+            fallback_plan=fallback_plan,
         )
 
     def _truncate(self, text: str, limit: int | None = None) -> str:

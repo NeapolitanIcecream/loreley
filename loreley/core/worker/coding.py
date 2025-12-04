@@ -175,6 +175,7 @@ class CodingAgent:
     ) -> None:
         self.settings = settings or get_settings()
         self.max_attempts = max(1, self.settings.worker_coding_max_attempts)
+        self.validation_mode: str = self.settings.worker_coding_validation_mode
         self.schema_mode: SchemaMode = resolve_schema_mode(
             configured_mode=self.settings.worker_coding_codex_schema_mode,
             api_spec=self.settings.openai_api_spec,
@@ -204,35 +205,43 @@ class CodingAgent:
         request: CodingAgentRequest,
         *,
         working_dir: Path,
-        ) -> CodingAgentResponse:
+    ) -> CodingAgentResponse:
         """Execute the provided plan and return structured results."""
         worktree = Path(working_dir).expanduser().resolve()
         prompt = self._render_prompt(request, worktree=worktree)
 
-        task = StructuredAgentTask(
-            name="coding",
-            prompt=prompt,
-            schema=CODING_OUTPUT_SCHEMA,
-            schema_mode=self.schema_mode,
-        )
+        if self.validation_mode == "strict":
+            task = StructuredAgentTask(
+                name="coding",
+                prompt=prompt,
+                schema=CODING_OUTPUT_SCHEMA,
+                schema_mode=self.schema_mode,
+            )
+        else:
+            # In lenient mode we do not enforce a JSON schema at the backend level.
+            task = StructuredAgentTask(
+                name="coding",
+                prompt=prompt,
+                schema=None,
+                schema_mode="none",
+            )
 
         last_error: Exception | None = None
         for attempt in range(1, self.max_attempts + 1):
+            invocation: AgentInvocation | None = None
             try:
                 console.log(
                     "[cyan]Coding agent[/] requesting execution "
                     f"(attempt {attempt}/{self.max_attempts})",
                 )
-                invocation: AgentInvocation = self.backend.run(
+                invocation = self.backend.run(
                     task,
                     working_dir=worktree,
                 )
-                try:
-                    output_model = self._parse_output(invocation.stdout)
-                except (ValidationError, json.JSONDecodeError) as exc:
-                    self._log_invalid_output(invocation, exc)
-                    raise
-                execution = self._to_domain(output_model)
+                execution = self._coerce_execution_from_invocation(
+                    request=request,
+                    invocation=invocation,
+                )
                 self._dump_debug_artifact(
                     request=request,
                     worktree=worktree,
@@ -297,11 +306,39 @@ class CodingAgent:
         iteration_hint = request.iteration_hint or "None provided"
 
         schema_contract_block = ""
-        if self.schema_mode in ("prompt", "none"):
-            schema_json = json.dumps(CODING_OUTPUT_SCHEMA, ensure_ascii=True, indent=2)
-            schema_contract_block = (
-                "\n\nOutput JSON schema contract:\n"
-                f"{schema_json}\n"
+        json_requirements_block = ""
+        if self.validation_mode == "strict":
+            if self.schema_mode in ("prompt", "none"):
+                schema_json = json.dumps(
+                    CODING_OUTPUT_SCHEMA,
+                    ensure_ascii=True,
+                    indent=2,
+                )
+                schema_contract_block = (
+                    "\n\nOutput JSON schema contract:\n"
+                    f"{schema_json}\n"
+                )
+            json_requirements_block = (
+                "- summarise your work using the provided JSON schema\n"
+                "- respond ONLY with a single JSON object following that schema; "
+                "no prose outside JSON"
+            )
+        else:
+            # In lenient mode, JSON is a best-effort contract rather than a hard requirement.
+            if self.schema_mode in ("prompt", "none"):
+                schema_json = json.dumps(
+                    CODING_OUTPUT_SCHEMA,
+                    ensure_ascii=True,
+                    indent=2,
+                )
+                schema_contract_block = (
+                    "\n\nSuggested JSON schema for structuring your summary (optional):\n"
+                    f"{schema_json}\n"
+                )
+            json_requirements_block = (
+                "- prefer summarising your work using the JSON schema below when convenient\n"
+                "- it is acceptable to return free-form text if a structured JSON "
+                "object is difficult to produce"
             )
 
         prompt = f"""
@@ -354,8 +391,7 @@ Detailed plan steps:
 
 When you finish applying the plan:
 - ensure repository changes are ready for review (lint/tests as needed)
-- summarise your work using the provided JSON schema
-- respond ONLY with a single JSON object following that schema; no prose outside JSON
+{json_requirements_block}
 {schema_contract_block}
 """
         return textwrap.dedent(prompt).strip()
@@ -393,6 +429,27 @@ When you finish applying the plan:
             return f"{indent}- None"
         return "\n".join(items)
 
+    def _coerce_execution_from_invocation(
+        self,
+        *,
+        request: CodingAgentRequest,
+        invocation: AgentInvocation,
+    ) -> CodingPlanExecution:
+        """Turn backend output into a CodingPlanExecution, honouring the validation mode."""
+        if self.validation_mode == "strict":
+            output_model = self._parse_output(invocation.stdout)
+            return self._to_domain(output_model)
+
+        try:
+            output_model = self._parse_output(invocation.stdout)
+            return self._to_domain(output_model)
+        except (ValidationError, json.JSONDecodeError) as exc:
+            self._log_invalid_output(invocation, exc)
+            return self._build_lenient_execution_from_freeform(
+                request=request,
+                raw_output=invocation.stdout,
+            )
+
     def _parse_output(self, payload: str) -> _CodingOutputModel:
         return _CodingOutputModel.model_validate_json(payload)
 
@@ -429,6 +486,45 @@ When you finish applying the plan:
             tests_recommended=tuple(output.tests_recommended),
             follow_up_items=tuple(output.follow_up_items),
             notes=tuple(output.notes),
+        )
+
+    def _build_lenient_execution_from_freeform(
+        self,
+        *,
+        request: CodingAgentRequest,
+        raw_output: str,
+    ) -> CodingPlanExecution:
+        """Build a minimal CodingPlanExecution from free-form agent output in lenient mode."""
+        summary_source = (raw_output or "").strip()
+        if not summary_source:
+            summary_source = (
+                f"Free-form coding agent output for goal: {self._truncate(request.goal)}"
+            )
+
+        implementation_summary = self._truncate(summary_source)
+
+        step = CodingStepReport(
+            step_id="lenient-1",
+            status=StepExecutionStatus.PARTIAL,
+            summary=self._truncate(summary_source),
+            files=tuple(),
+            commands=tuple(),
+        )
+
+        notes = (
+            "Coding ran in lenient validation mode. The full free-form output is "
+            "available via raw_output; this structured execution summary is a "
+            "best-effort synthesis.",
+        )
+
+        return CodingPlanExecution(
+            implementation_summary=implementation_summary,
+            commit_message=None,
+            step_results=(step,),
+            tests_executed=tuple(),
+            tests_recommended=tuple(),
+            follow_up_items=tuple(),
+            notes=notes,
         )
 
     def _truncate(self, text: str, limit: int | None = None) -> str:
