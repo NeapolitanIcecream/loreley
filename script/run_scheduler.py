@@ -52,7 +52,8 @@ def _configure_stdlib_logging(level: str) -> None:
     root.setLevel(level)
 
     dramatiq_logger = logging.getLogger("dramatiq")
-    dramatiq_logger.handlers = [handler]
+    dramatiq_logger.handlers.clear()
+    dramatiq_logger.propagate = True
     dramatiq_logger.setLevel(level)
 
     logging.captureWarnings(True)

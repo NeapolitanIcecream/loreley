@@ -59,9 +59,10 @@ def _configure_stdlib_logging(level: str) -> None:
     root.handlers = [handler]
     root.setLevel(level)
 
-    # Ensure the Dramatiq logger is also captured explicitly.
     dramatiq_logger = logging.getLogger("dramatiq")
-    dramatiq_logger.handlers = [handler]
+    # Ensure Dramatiq logs propagate to the root logger and are processed once.
+    dramatiq_logger.handlers.clear()
+    dramatiq_logger.propagate = True
     dramatiq_logger.setLevel(level)
 
     # Route warnings.warn() calls through the logging system as well.
