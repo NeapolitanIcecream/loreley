@@ -304,7 +304,7 @@ class PlanningAgent:
         worktree = Path(working_dir).expanduser().resolve()
         prompt = self._render_prompt(request)
 
-        if self.validation_mode == "strict":
+        if self.validation_mode in ("strict", "lenient"):
             task = StructuredAgentTask(
                 name="planning",
                 prompt=prompt,
@@ -312,7 +312,7 @@ class PlanningAgent:
                 schema_mode=self.schema_mode,
             )
         else:
-            # In lenient mode we do not enforce a JSON schema at the backend level.
+            # In 'none' validation mode we do not enforce a JSON schema at the backend level.
             task = StructuredAgentTask(
                 name="planning",
                 prompt=prompt,
@@ -409,7 +409,7 @@ class PlanningAgent:
             json_requirement_line = (
                 "- Respond ONLY with a single JSON object that matches the expected schema."
             )
-        else:
+        elif self.validation_mode == "lenient":
             # In lenient mode, JSON is a best-effort contract rather than a hard requirement.
             if self.schema_mode in ("prompt", "none"):
                 schema_json = json.dumps(
@@ -424,6 +424,11 @@ class PlanningAgent:
             json_requirement_line = (
                 "- Prefer returning a single JSON object that roughly follows the schema, "
                 "but free-form text is also acceptable."
+            )
+        else:
+            # In 'none' validation mode there is no expectation about JSON structure.
+            json_requirement_line = (
+                "- Provide your answer in clear free-form text; JSON formatting is optional."
             )
 
         cold_start_block = ""
@@ -527,19 +532,26 @@ Deliverable requirements:
             plan_model = self._parse_plan(invocation.stdout)
             return self._to_domain(plan_model)
 
-        try:
-            plan_model = self._parse_plan(invocation.stdout)
-            return self._to_domain(plan_model)
-        except (ValidationError, json.JSONDecodeError) as exc:
-            log.debug(
-                "Lenient planning validation mode: treating invalid planning output as "
-                "free-form text: {}",
-                exc,
-            )
-            return self._build_lenient_plan_from_freeform(
-                request=request,
-                raw_output=invocation.stdout,
-            )
+        if self.validation_mode == "lenient":
+            try:
+                plan_model = self._parse_plan(invocation.stdout)
+                return self._to_domain(plan_model)
+            except (ValidationError, json.JSONDecodeError) as exc:
+                log.debug(
+                    "Lenient planning validation mode: treating invalid planning output as "
+                    "free-form text: {}",
+                    exc,
+                )
+                return self._build_lenient_plan_from_freeform(
+                    request=request,
+                    raw_output=invocation.stdout,
+                )
+
+        # validation_mode == "none": skip JSON parsing entirely and treat output as free-form.
+        return self._build_lenient_plan_from_freeform(
+            request=request,
+            raw_output=invocation.stdout,
+        )
 
     def _parse_plan(self, payload: str) -> _PlanModel:
         """Validate JSON output from the planning backend against the schema."""
@@ -667,6 +679,7 @@ Deliverable requirements:
                 "error": repr(error) if error else None,
                 "attempt": attempt,
                 "schema_mode": self.schema_mode,
+                "validation_mode": self.validation_mode,
                 "working_dir": str(worktree),
                 "goal": request.goal,
                 "base_commit": request.base.commit_hash,

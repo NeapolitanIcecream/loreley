@@ -210,7 +210,7 @@ class CodingAgent:
         worktree = Path(working_dir).expanduser().resolve()
         prompt = self._render_prompt(request, worktree=worktree)
 
-        if self.validation_mode == "strict":
+        if self.validation_mode in ("strict", "lenient"):
             task = StructuredAgentTask(
                 name="coding",
                 prompt=prompt,
@@ -218,7 +218,7 @@ class CodingAgent:
                 schema_mode=self.schema_mode,
             )
         else:
-            # In lenient mode we do not enforce a JSON schema at the backend level.
+            # In 'none' validation mode we do not enforce a JSON schema at the backend level.
             task = StructuredAgentTask(
                 name="coding",
                 prompt=prompt,
@@ -323,7 +323,7 @@ class CodingAgent:
                 "- respond ONLY with a single JSON object following that schema; "
                 "no prose outside JSON"
             )
-        else:
+        elif self.validation_mode == "lenient":
             # In lenient mode, JSON is a best-effort contract rather than a hard requirement.
             if self.schema_mode in ("prompt", "none"):
                 schema_json = json.dumps(
@@ -339,6 +339,11 @@ class CodingAgent:
                 "- prefer summarising your work using the JSON schema below when convenient\n"
                 "- it is acceptable to return free-form text if a structured JSON "
                 "object is difficult to produce"
+            )
+        else:
+            # In 'none' validation mode there is no expectation about JSON structure.
+            json_requirements_block = (
+                "- provide your summary in clear free-form text; JSON formatting is optional."
             )
 
         prompt = f"""
@@ -440,15 +445,22 @@ When you finish applying the plan:
             output_model = self._parse_output(invocation.stdout)
             return self._to_domain(output_model)
 
-        try:
-            output_model = self._parse_output(invocation.stdout)
-            return self._to_domain(output_model)
-        except (ValidationError, json.JSONDecodeError) as exc:
-            self._log_invalid_output(invocation, exc)
-            return self._build_lenient_execution_from_freeform(
-                request=request,
-                raw_output=invocation.stdout,
-            )
+        if self.validation_mode == "lenient":
+            try:
+                output_model = self._parse_output(invocation.stdout)
+                return self._to_domain(output_model)
+            except (ValidationError, json.JSONDecodeError) as exc:
+                self._log_invalid_output(invocation, exc)
+                return self._build_lenient_execution_from_freeform(
+                    request=request,
+                    raw_output=invocation.stdout,
+                )
+
+        # validation_mode == "none": skip JSON parsing entirely and treat output as free-form.
+        return self._build_lenient_execution_from_freeform(
+            request=request,
+            raw_output=invocation.stdout,
+        )
 
     def _parse_output(self, payload: str) -> _CodingOutputModel:
         return _CodingOutputModel.model_validate_json(payload)
@@ -568,6 +580,7 @@ When you finish applying the plan:
                 "error": repr(error) if error else None,
                 "attempt": attempt,
                 "schema_mode": self.schema_mode,
+                "validation_mode": self.validation_mode,
                 "working_dir": str(worktree),
                 "goal": request.goal,
                 "base_commit": request.base_commit,

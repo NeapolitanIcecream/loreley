@@ -209,10 +209,7 @@ class Settings(BaseSettings):
         default="auto",
         alias="WORKER_PLANNING_CODEX_SCHEMA_MODE",
     )
-    worker_planning_validation_mode: Literal[
-        "strict",
-        "lenient",
-    ] = Field(
+    worker_planning_validation_mode: Literal["strict", "lenient", "none"] = Field(
         default="lenient",
         alias="WORKER_PLANNING_VALIDATION_MODE",
     )
@@ -225,10 +222,7 @@ class Settings(BaseSettings):
         default="auto",
         alias="WORKER_CODING_CODEX_SCHEMA_MODE",
     )
-    worker_coding_validation_mode: Literal[
-        "strict",
-        "lenient",
-    ] = Field(
+    worker_coding_validation_mode: Literal["strict", "lenient", "none"] = Field(
         default="lenient",
         alias="WORKER_CODING_VALIDATION_MODE",
     )
