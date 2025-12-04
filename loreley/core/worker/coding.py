@@ -166,7 +166,7 @@ CODING_OUTPUT_SCHEMA: dict[str, Any] = {
 
 
 class CodingAgent:
-    """Drive the Codex CLI to implement a plan on the repository."""
+    """Drive the configured coding backend to implement a plan on the repository."""
 
     def __init__(
         self,
@@ -461,7 +461,7 @@ When you finish applying the plan:
         execution: CodingPlanExecution | None,
         error: Exception | None,
     ) -> None:
-        """Persist coding agent prompt and Codex output for debugging."""
+        """Persist coding agent prompt and backend interaction for debugging."""
         try:
             timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
             commit_prefix = (request.base_commit or "unknown")[:12]
@@ -477,12 +477,12 @@ When you finish applying the plan:
                 "base_commit": request.base_commit,
                 "constraints": list(request.constraints),
                 "acceptance_criteria": list(request.acceptance_criteria),
-                "codex_command": list(invocation.command) if invocation else None,
-                "codex_duration_seconds": (
+                "backend_command": list(invocation.command) if invocation else None,
+                "backend_duration_seconds": (
                     invocation.duration_seconds if invocation else None
                 ),
-                "codex_stdout": invocation.stdout if invocation else None,
-                "codex_stderr": invocation.stderr if invocation else None,
+                "backend_stdout": invocation.stdout if invocation else None,
+                "backend_stderr": invocation.stderr if invocation else None,
                 "prompt": prompt,
                 "execution": {
                     "implementation_summary": execution.implementation_summary,

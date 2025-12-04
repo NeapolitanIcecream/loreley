@@ -157,7 +157,7 @@ class PlanningAgentResponse:
 
 
 class _PlanStepModel(BaseModel):
-    """pydantic schema for validating Codex output."""
+    """pydantic schema for validating planning backend output."""
 
     model_config = ConfigDict(frozen=True, populate_by_name=True)
 
@@ -258,7 +258,7 @@ PLANNING_OUTPUT_SCHEMA: dict[str, Any] = {
 
 
 class PlanningAgent:
-    """Bridge between Loreley's worker and the Codex CLI planning workflow."""
+    """Bridge between Loreley's worker and the configured planning backend."""
 
     def __init__(
         self,
@@ -368,7 +368,7 @@ class PlanningAgent:
         ) from last_error
 
     def _render_prompt(self, request: PlanningAgentRequest) -> str:
-        """Compose the narrative prompt for Codex."""
+        """Compose the narrative prompt for the planning backend."""
         base_block = self._format_commit_block("Base commit", request.base)
         insp_blocks = "\n\n".join(
             self._format_commit_block(f"Inspiration #{idx + 1}", ctx)
@@ -479,7 +479,7 @@ Deliverable requirements:
         return "\n".join(lines)
 
     def _parse_plan(self, payload: str) -> _PlanModel:
-        """Validate JSON output from Codex against the schema."""
+        """Validate JSON output from the planning backend against the schema."""
         return _PlanModel.model_validate_json(payload)
 
     def _to_domain(self, plan_model: _PlanModel) -> PlanningPlan:
@@ -540,7 +540,7 @@ Deliverable requirements:
         plan: PlanningPlan | None,
         error: Exception | None,
     ) -> None:
-        """Persist planning agent prompt and Codex output for debugging."""
+        """Persist planning agent prompt and backend interaction for debugging."""
         try:
             timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
             commit_prefix = (request.base.commit_hash or "unknown")[:12]
@@ -556,12 +556,12 @@ Deliverable requirements:
                 "base_commit": request.base.commit_hash,
                 "constraints": list(request.constraints),
                 "acceptance_criteria": list(request.acceptance_criteria),
-                "codex_command": list(invocation.command) if invocation else None,
-                "codex_duration_seconds": (
+                "backend_command": list(invocation.command) if invocation else None,
+                "backend_duration_seconds": (
                     invocation.duration_seconds if invocation else None
                 ),
-                "codex_stdout": invocation.stdout if invocation else None,
-                "codex_stderr": invocation.stderr if invocation else None,
+                "backend_stdout": invocation.stdout if invocation else None,
+                "backend_stderr": invocation.stderr if invocation else None,
                 "prompt": prompt,
                 "parsed_plan": plan.as_dict() if plan else None,
             }
