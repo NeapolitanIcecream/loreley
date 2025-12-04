@@ -5,6 +5,7 @@ import os
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
+import inspect
 from importlib import import_module
 from pathlib import Path
 from time import monotonic
@@ -156,7 +157,10 @@ def load_agent_backend(ref: str, *, label: str) -> AgentBackend:
     target = _import_backend_target(module_name, attr_path)
 
     # Already-instantiated backend instance.
-    if hasattr(target, "run") and callable(getattr(target, "run")):
+    # Avoid treating classes as instances even though they expose a callable ``run`` attribute.
+    if not inspect.isclass(target) and hasattr(target, "run") and callable(
+        getattr(target, "run")
+    ):
         return cast(AgentBackend, target)
 
     # Class or factory function returning a backend instance.
