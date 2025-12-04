@@ -107,9 +107,9 @@ class EvolutionScheduler:
                 log.exception("Scheduler tick crashed: {}", exc)
             elapsed = time.perf_counter() - start
             sleep_for = max(0.0, interval - elapsed)
-            if self._stop_requested:
-                break
-            time.sleep(sleep_for)
+            # Sleep in small increments so SIGINT/SIGTERM can cut the wait short
+            # instead of blocking until the next full tick boundary.
+            self._sleep_with_stop(sleep_for)
         self.console.log("[bold yellow]Scheduler stopped[/]")
 
     def tick(self) -> dict[str, int]:
@@ -181,6 +181,20 @@ class EvolutionScheduler:
             self.console.log(f"[bold red]Stage {label} failed[/] reason={exc}")
             log.exception("Scheduler stage {} failed: {}", label, exc)
             return 0
+
+    def _sleep_with_stop(self, duration: float) -> None:
+        """Sleep up to ``duration`` seconds, waking early when a stop is requested."""
+
+        if duration <= 0:
+            return
+
+        quantum = 0.5  # seconds; keeps shutdown latency low without busy-waiting
+        end = time.perf_counter() + duration
+        while not self._stop_requested:
+            remaining = end - time.perf_counter()
+            if remaining <= 0:
+                break
+            time.sleep(min(quantum, remaining))
 
     # Git helpers -----------------------------------------------------------
 
