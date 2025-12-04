@@ -281,7 +281,11 @@ class CodexCliBackend:
             )
 
         if not stdout:
-            raise self.error_cls("codex exec returned an empty response.")
+            log.warning(
+                "Codex CLI produced an empty stdout payload for task={} (command={})",
+                task.name,
+                command,
+            )
 
         return AgentInvocation(
             command=tuple(command),
@@ -374,7 +378,11 @@ class CursorCliBackend:
             )
 
         if not stdout:
-            raise self.error_cls("cursor-agent returned an empty response.")
+            log.warning(
+                "Cursor CLI produced an empty stdout payload for task={} (command={})",
+                task.name,
+                command,
+            )
 
         return AgentInvocation(
             command=tuple(command),

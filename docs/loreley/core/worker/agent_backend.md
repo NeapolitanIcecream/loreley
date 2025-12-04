@@ -60,7 +60,7 @@ Shared abstractions and helpers for structured planning/coding agents plus the d
       - materialises `task.schema` into a temporary JSON file via `_materialise_schema_to_temp()` and passes it as `--output-schema`.  
     - Adds `--profile` when a profile is configured, merges `extra_env` into a copy of `os.environ`, and feeds `task.prompt` on stdin.  
     - Runs the process with `subprocess.run(...)`, capturing stdout/stderr, enforcing the timeout, and deleting any temporary schema file afterwards.  
-    - Raises `error_cls` when the process exits non‑zero, times out, or produces an empty stdout payload; otherwise wraps the result in an `AgentInvocation`.
+    - Raises `error_cls` when the process exits non‑zero or times out; even when stdout is empty it still returns an `AgentInvocation`, leaving it to higher‑level agents (and their validation modes) to decide whether an empty payload is acceptable.
 
 - **`CursorCliBackend`**: concrete `AgentBackend` implementation that delegates to the Cursor Agent CLI (`cursor-agent`).  
   - Configuration fields:
@@ -78,7 +78,7 @@ Shared abstractions and helpers for structured planning/coding agents plus the d
       - `--output-format` when `output_format` is set.  
     - Merges `extra_env` into a copy of `os.environ` and runs `cursor-agent` in the provided working directory.  
     - Captures stdout/stderr and enforces the timeout via `subprocess.run(...)`.  
-    - Raises `error_cls` when the process exits non‑zero, times out, or produces an empty stdout payload; otherwise wraps the result in an `AgentInvocation`.  
+    - Raises `error_cls` when the process exits non‑zero or times out; even when stdout is empty it still returns an `AgentInvocation`, leaving it to higher‑level agents and validation logic to decide how to handle the result.  
     - Does not pass JSON Schema to the CLI directly; structured agents are expected to enforce schemas via prompt engineering (for example by embedding the schema in the prompt when using `"prompt"` schema mode).
 
 ## Internal utilities

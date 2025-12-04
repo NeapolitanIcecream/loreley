@@ -31,6 +31,6 @@ Planning utilities for Loreley's autonomous worker, responsible for turning comm
 
 ## Exceptions and helpers
 
-- **`PlanningError`**: custom runtime error raised when validation fails, the backend returns an error or empty response, the planning schema path is invalid, or the working directory is not a git repository.
+- **`PlanningError`**: custom runtime error raised when validation fails, the backend returns an error, the planning schema path is invalid, or the working directory is not a git repository.
 - **`_truncate()`**, **`_format_commit_block()`**, and **`_format_metrics()`**: internal utilities that format commit context and metrics into human-readable sections for the prompt while enforcing length limits and providing clear fallbacks when no metrics or highlights are available.
 
