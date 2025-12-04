@@ -24,6 +24,8 @@ Loreley is split into a few key areas:
   See: [Configuration](loreley/config.md)
 - **Database** – `loreley.db` defines the SQLAlchemy engine/session helpers and ORM models for repositories, experiments, jobs, metrics, and archive state.  
   See: [DB base](loreley/db/base.md), [DB models](loreley/db/models.md)
+- **Experiments & repositories** – `loreley.core.experiments` normalises the target git worktree into a `Repository`, derives an `Experiment` from MAP‑Elites and evaluator‑related settings, and exposes helpers for reusing the same experiment ID across scheduler runs.  
+  See: [Experiments](loreley/core/experiments.md)
 - **MAP-Elites core** – `loreley.core.map_elites` handles preprocessing, chunking, embeddings, dimensionality reduction, archive management, sampling, and snapshots.  
   See: [MAP‑Elites overview](loreley/core/map-elites/map-elites.md) and the linked sub‑pages below.
 - **Worker pipeline** – `loreley.core.worker` manages worktrees, planning, coding, evaluation, evolution commits, and commit summaries.  
@@ -103,6 +105,8 @@ Use this index as a quick map of the rest of the documentation:
 - **Database**
   - [Engine and sessions](loreley/db/base.md)
   - [ORM models](loreley/db/models.md)
+- **Experiments**
+  - [Repository & experiment helpers](loreley/core/experiments.md)
 - **MAP-Elites core**
   - [Overview & archive](loreley/core/map-elites/map-elites.md)
   - [Preprocessing](loreley/core/map-elites/preprocess.md)

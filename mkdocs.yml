@@ -8,6 +8,7 @@ nav:
   - Home: index.md
   - Loreley:
       - Configuration: loreley/config.md
+      - Experiments: loreley/core/experiments.md
       - Scheduler:
           - Overview: loreley/scheduler/main.md
           - Job scheduling: loreley/scheduler/job_scheduler.md
@@ -27,6 +28,7 @@ nav:
       - Worker pipeline:
           - Repository: loreley/core/worker/repository.md
           - Planning: loreley/core/worker/planning.md
+          - Agent backend: loreley/core/worker/agent_backend.md
           - Coding: loreley/core/worker/coding.md
           - Evaluation: loreley/core/worker/evaluator.md
           - Evolution loop: loreley/core/worker/evolution.md

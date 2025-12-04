@@ -15,7 +15,7 @@ Planning utilities for Loreley's autonomous worker, responsible for turning comm
 
 - **`PLANNING_OUTPUT_SCHEMA`**: JSON schema describing the expected shape of the planning output (top-level fields like `plan_summary`, `rationale`, `focus_metrics`, `guardrails`, `risks`, `validation`, `steps`, `handoff_notes`, and `fallback_plan`, plus constraints on each step's fields), used when invoking the external Codex CLI.
 - **`_PlanStepModel`** / **`_PlanModel`**: internal `pydantic` models that validate the Codex JSON payload against the schema and provide a typed bridge from raw JSON into the `PlanStep` / `PlanningPlan` domain objects.
-- **`loreley.core.worker.agent_backend`**: shared backend abstractions (`AgentBackend`, `StructuredAgentTask`, `AgentInvocation`) plus the default `CodexCliBackend` implementation that actually talks to the `codex` CLI.
+- **Agent backend**: planning relies on `loreley.core.worker.agent_backend` for shared backend abstractions (`AgentBackend`, `StructuredAgentTask`, `AgentInvocation`) and the default `CodexCliBackend` implementation that talks to the `codex` CLI; see that module's documentation for backend configuration details.
 
 ## Planning agent
 
