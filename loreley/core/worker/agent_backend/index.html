@@ -328,7 +328,7 @@
 <li>materialises <code>task.schema</code> into a temporary JSON file via <code>_materialise_schema_to_temp()</code> and passes it as <code>--output-schema</code>.  </li>
 <li>Adds <code>--profile</code> when a profile is configured, merges <code>extra_env</code> into a copy of <code>os.environ</code>, and feeds <code>task.prompt</code> on stdin.  </li>
 <li>Runs the process with <code>subprocess.run(...)</code>, capturing stdout/stderr, enforcing the timeout, and deleting any temporary schema file afterwards.  </li>
-<li>Raises <code>error_cls</code> when the process exits non‑zero, times out, or produces an empty stdout payload; otherwise wraps the result in an <code>AgentInvocation</code>.</li>
+<li>Raises <code>error_cls</code> when the process exits non‑zero or times out; even when stdout is empty it still returns an <code>AgentInvocation</code>, leaving it to higher‑level agents (and their validation modes) to decide whether an empty payload is acceptable.</li>
 </ul>
 </li>
 <li>
@@ -351,7 +351,7 @@
 <li><code>--output-format</code> when <code>output_format</code> is set.  </li>
 <li>Merges <code>extra_env</code> into a copy of <code>os.environ</code> and runs <code>cursor-agent</code> in the provided working directory.  </li>
 <li>Captures stdout/stderr and enforces the timeout via <code>subprocess.run(...)</code>.  </li>
-<li>Raises <code>error_cls</code> when the process exits non‑zero, times out, or produces an empty stdout payload; otherwise wraps the result in an <code>AgentInvocation</code>.  </li>
+<li>Raises <code>error_cls</code> when the process exits non‑zero or times out; even when stdout is empty it still returns an <code>AgentInvocation</code>, leaving it to higher‑level agents and validation logic to decide how to handle the result.  </li>
 <li>Does not pass JSON Schema to the CLI directly; structured agents are expected to enforce schemas via prompt engineering (for example by embedding the schema in the prompt when using <code>"prompt"</code> schema mode).</li>
 </ul>
 </li>
