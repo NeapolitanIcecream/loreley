@@ -537,18 +537,14 @@ Deliverable requirements:
                 plan_model = self._parse_plan(invocation.stdout)
                 return self._to_domain(plan_model)
             except (ValidationError, json.JSONDecodeError) as exc:
-                log.debug(
-                    "Lenient planning validation mode: treating invalid planning output as "
-                    "free-form text: {}",
-                    exc,
-                )
-                return self._build_lenient_plan_from_freeform(
+                self._log_invalid_output(invocation, exc)
+                return self._build_plan_from_freeform_output(
                     request=request,
                     raw_output=invocation.stdout,
                 )
 
         # validation_mode == "none": skip JSON parsing entirely and treat output as free-form.
-        return self._build_lenient_plan_from_freeform(
+        return self._build_plan_from_freeform_output(
             request=request,
             raw_output=invocation.stdout,
         )
@@ -585,18 +581,18 @@ Deliverable requirements:
             fallback_plan=plan_model.fallback_plan,
         )
 
-    def _build_lenient_plan_from_freeform(
+    def _build_plan_from_freeform_output(
         self,
         *,
         request: PlanningAgentRequest,
         raw_output: str,
     ) -> PlanningPlan:
-        """Build a minimal PlanningPlan from free-form agent output in lenient mode."""
+        """Build a minimal PlanningPlan from free-form agent output under non-strict validation."""
         summary_source = (raw_output or "").strip() or request.goal
         summary = self._truncate(summary_source)
         rationale = (
-            "Planning output could not be parsed as structured JSON; this plan was "
-            "synthesised from free-form text in lenient validation mode."
+            "Planning output could not be parsed as structured JSON or validation was disabled; "
+            "this plan was synthesised from free-form text in a non-strict validation mode."
         )
 
         focus_metrics = tuple(metric.name for metric in request.base.metrics)[:3]
@@ -636,6 +632,20 @@ Deliverable requirements:
             steps=(synthetic_step,),
             handoff_notes=handoff_notes,
             fallback_plan=fallback_plan,
+        )
+
+    def _log_invalid_output(
+        self,
+        invocation: AgentInvocation,
+        exc: Exception,
+    ) -> None:
+        stdout_preview = self._truncate(invocation.stdout, limit=2000) or "<empty>"
+        stderr_preview = self._truncate(invocation.stderr, limit=1000) or "<empty>"
+        log.warning(
+            "Invalid planning agent output: {} | stdout preview: {} | stderr preview: {}",
+            exc,
+            stdout_preview,
+            stderr_preview,
         )
 
     def _truncate(self, text: str, limit: int | None = None) -> str:

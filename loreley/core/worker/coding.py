@@ -451,13 +451,13 @@ When you finish applying the plan:
                 return self._to_domain(output_model)
             except (ValidationError, json.JSONDecodeError) as exc:
                 self._log_invalid_output(invocation, exc)
-                return self._build_lenient_execution_from_freeform(
+                return self._build_execution_from_freeform_output(
                     request=request,
                     raw_output=invocation.stdout,
                 )
 
         # validation_mode == "none": skip JSON parsing entirely and treat output as free-form.
-        return self._build_lenient_execution_from_freeform(
+        return self._build_execution_from_freeform_output(
             request=request,
             raw_output=invocation.stdout,
         )
@@ -500,13 +500,13 @@ When you finish applying the plan:
             notes=tuple(output.notes),
         )
 
-    def _build_lenient_execution_from_freeform(
+    def _build_execution_from_freeform_output(
         self,
         *,
         request: CodingAgentRequest,
         raw_output: str,
     ) -> CodingPlanExecution:
-        """Build a minimal CodingPlanExecution from free-form agent output in lenient mode."""
+        """Build a minimal CodingPlanExecution from free-form agent output under non-strict validation."""
         summary_source = (raw_output or "").strip()
         if not summary_source:
             summary_source = (
@@ -524,9 +524,9 @@ When you finish applying the plan:
         )
 
         notes = (
-            "Coding ran in lenient validation mode. The full free-form output is "
-            "available via raw_output; this structured execution summary is a "
-            "best-effort synthesis.",
+            "Coding ran in a non-strict validation mode. The full free-form output is "
+            "available via raw_output; this structured execution summary is a best-effort "
+            "synthesis.",
         )
 
         return CodingPlanExecution(
