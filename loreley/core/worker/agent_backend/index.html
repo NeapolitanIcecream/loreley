@@ -231,7 +231,7 @@
               <ul class="nav flex-column">
               </ul>
             </li>
-            <li class="nav-item" data-bs-level="2"><a href="#codex-cli-backend" class="nav-link">Codex CLI backend</a>
+            <li class="nav-item" data-bs-level="2"><a href="#cli-backends" class="nav-link">CLI backends</a>
               <ul class="nav flex-column">
               </ul>
             </li>
@@ -305,7 +305,7 @@
 </li>
 <li>Validates that the resulting object has a callable <code>run</code> attribute and raises a descriptive <code>RuntimeError</code> otherwise.</li>
 </ul>
-<h2 id="codex-cli-backend">Codex CLI backend<a class="headerlink" href="#codex-cli-backend" title="Permanent link">&para;</a></h2>
+<h2 id="cli-backends">CLI backends<a class="headerlink" href="#cli-backends" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong><code>CodexCliBackend</code></strong>: concrete <code>AgentBackend</code> implementation that delegates to the external Codex CLI.  </li>
 <li>Configuration fields:<ul>
@@ -318,7 +318,9 @@
 <li><code>full_auto</code>: when <code>True</code>, appends <code>--full-auto</code> so the CLI can drive multi‑step interactions autonomously.</li>
 </ul>
 </li>
-<li><strong><code>run(task, *, working_dir)</code></strong>:<ul>
+<li>
+<p><strong><code>run(task, *, working_dir)</code></strong>:</p>
+<ul>
 <li>Validates that <code>working_dir</code> exists, is a directory, and contains a <code>.git</code> folder via <code>_validate_workdir()</code>.  </li>
 <li>Builds the CLI <code>command</code> list starting from <code>[bin, "exec"]</code>, optionally adding <code>--full-auto</code>.  </li>
 <li>When <code>task.schema_mode=="native"</code>:</li>
@@ -327,6 +329,30 @@
 <li>Adds <code>--profile</code> when a profile is configured, merges <code>extra_env</code> into a copy of <code>os.environ</code>, and feeds <code>task.prompt</code> on stdin.  </li>
 <li>Runs the process with <code>subprocess.run(...)</code>, capturing stdout/stderr, enforcing the timeout, and deleting any temporary schema file afterwards.  </li>
 <li>Raises <code>error_cls</code> when the process exits non‑zero, times out, or produces an empty stdout payload; otherwise wraps the result in an <code>AgentInvocation</code>.</li>
+</ul>
+</li>
+<li>
+<p><strong><code>CursorCliBackend</code></strong>: concrete <code>AgentBackend</code> implementation that delegates to the Cursor Agent CLI (<code>cursor-agent</code>).  </p>
+</li>
+<li>Configuration fields:<ul>
+<li><code>bin</code>: CLI executable to invoke (default <code>"cursor-agent"</code>).  </li>
+<li><code>model</code>: optional model identifier passed as <code>--model</code> (for example, <code>"gpt-5"</code>).  </li>
+<li><code>timeout_seconds</code>: hard timeout for the subprocess invocation.  </li>
+<li><code>extra_env</code>: dict of additional environment variables merged into the subprocess environment.  </li>
+<li><code>output_format</code>: value passed as <code>--output-format</code> (default <code>"text"</code>), typically left as <code>"text"</code> so the agent can emit a single JSON object as plain text.  </li>
+<li><code>error_cls</code>: concrete <code>RuntimeError</code> subtype used for all user‑facing errors.</li>
+</ul>
+</li>
+<li><strong><code>run(task, *, working_dir)</code></strong>:<ul>
+<li>Validates that <code>working_dir</code> exists, is a directory, and contains a <code>.git</code> folder via <code>_validate_workdir()</code>.  </li>
+<li>Builds the CLI <code>command</code> list starting from <code>[bin]</code>, adding:</li>
+<li><code>-p &lt;prompt&gt;</code> to forward <code>task.prompt</code> to the Cursor agent,  </li>
+<li><code>--model</code> when <code>model</code> is configured, and  </li>
+<li><code>--output-format</code> when <code>output_format</code> is set.  </li>
+<li>Merges <code>extra_env</code> into a copy of <code>os.environ</code> and runs <code>cursor-agent</code> in the provided working directory.  </li>
+<li>Captures stdout/stderr and enforces the timeout via <code>subprocess.run(...)</code>.  </li>
+<li>Raises <code>error_cls</code> when the process exits non‑zero, times out, or produces an empty stdout payload; otherwise wraps the result in an <code>AgentInvocation</code>.  </li>
+<li>Does not pass JSON Schema to the CLI directly; structured agents are expected to enforce schemas via prompt engineering (for example by embedding the schema in the prompt when using <code>"prompt"</code> schema mode).</li>
 </ul>
 </li>
 </ul>
