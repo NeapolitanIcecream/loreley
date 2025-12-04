@@ -41,7 +41,7 @@ Shared abstractions and helpers for structured planning/coding agents plus the d
     - a factory callable that returns a backend instance when called with no arguments.  
   - Validates that the resulting object has a callable `run` attribute and raises a descriptive `RuntimeError` otherwise.
 
-## Codex CLI backend
+## CLI backends
 
 - **`CodexCliBackend`**: concrete `AgentBackend` implementation that delegates to the external Codex CLI.  
   - Configuration fields:
@@ -61,6 +61,25 @@ Shared abstractions and helpers for structured planning/coding agents plus the d
     - Adds `--profile` when a profile is configured, merges `extra_env` into a copy of `os.environ`, and feeds `task.prompt` on stdin.  
     - Runs the process with `subprocess.run(...)`, capturing stdout/stderr, enforcing the timeout, and deleting any temporary schema file afterwards.  
     - Raises `error_cls` when the process exits non‑zero, times out, or produces an empty stdout payload; otherwise wraps the result in an `AgentInvocation`.
+
+- **`CursorCliBackend`**: concrete `AgentBackend` implementation that delegates to the Cursor Agent CLI (`cursor-agent`).  
+  - Configuration fields:
+    - `bin`: CLI executable to invoke (default `"cursor-agent"`).  
+    - `model`: optional model identifier passed as `--model` (for example, `"gpt-5"`).  
+    - `timeout_seconds`: hard timeout for the subprocess invocation.  
+    - `extra_env`: dict of additional environment variables merged into the subprocess environment.  
+    - `output_format`: value passed as `--output-format` (default `"text"`), typically left as `"text"` so the agent can emit a single JSON object as plain text.  
+    - `error_cls`: concrete `RuntimeError` subtype used for all user‑facing errors.
+  - **`run(task, *, working_dir)`**:
+    - Validates that `working_dir` exists, is a directory, and contains a `.git` folder via `_validate_workdir()`.  
+    - Builds the CLI `command` list starting from `[bin]`, adding:
+      - `-p <prompt>` to forward `task.prompt` to the Cursor agent,  
+      - `--model` when `model` is configured, and  
+      - `--output-format` when `output_format` is set.  
+    - Merges `extra_env` into a copy of `os.environ` and runs `cursor-agent` in the provided working directory.  
+    - Captures stdout/stderr and enforces the timeout via `subprocess.run(...)`.  
+    - Raises `error_cls` when the process exits non‑zero, times out, or produces an empty stdout payload; otherwise wraps the result in an `AgentInvocation`.  
+    - Does not pass JSON Schema to the CLI directly; structured agents are expected to enforce schemas via prompt engineering (for example by embedding the schema in the prompt when using `"prompt"` schema mode).
 
 ## Internal utilities
 

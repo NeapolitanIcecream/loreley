@@ -132,6 +132,11 @@ MAPELITES_EXPERIMENT_ROOT_COMMIT: str | None = "64884c2c"
 # SCHEDULER_MAX_TOTAL_JOBS when creating these jobs.
 MAPELITES_SEED_POPULATION_SIZE: int = 1
 
+# --- Agent backends ---------------------------------------------------------
+
+WORKER_PLANNING_BACKEND: str = "loreley.core.worker.agent_backend:CursorCliBackend"
+WORKER_CODING_BACKEND: str = "loreley.core.worker.agent_backend:CursorCliBackend"
+
 # --- Model / LLM configuration (see loreley.config.Settings) ----------------
 
 # Evolution commit message model.
@@ -262,6 +267,16 @@ def _apply_base_env() -> None:
     _set_env_if_unset(
         "MAPELITES_SEED_POPULATION_SIZE",
         MAPELITES_SEED_POPULATION_SIZE,
+    )
+
+    # Agent backends
+    _set_env_if_unset(
+        "WORKER_PLANNING_BACKEND",
+        WORKER_PLANNING_BACKEND,
+    )
+    _set_env_if_unset(
+        "WORKER_CODING_BACKEND",
+        WORKER_CODING_BACKEND,
     )
 
     # Model / LLM configuration.

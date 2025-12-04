@@ -4,7 +4,7 @@ import json
 import os
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib import import_module
 from pathlib import Path
 from time import monotonic
@@ -19,6 +19,7 @@ __all__ = [
     "AgentInvocation",
     "StructuredAgentTask",
     "CodexCliBackend",
+    "CursorCliBackend",
     "resolve_schema_mode",
     "load_agent_backend",
 ]
@@ -61,7 +62,7 @@ class AgentBackend(Protocol):
 def resolve_schema_mode(configured_mode: str, api_spec: str) -> SchemaMode:
     """Resolve the effective schema mode from configuration and API spec."""
     if configured_mode != "auto":
-        return configured_mode
+        return cast(SchemaMode, configured_mode)
     if api_spec == "chat_completions":
         return "prompt"
     return "native"
@@ -277,6 +278,99 @@ class CodexCliBackend:
 
         if not stdout:
             raise self.error_cls("codex exec returned an empty response.")
+
+        return AgentInvocation(
+            command=tuple(command),
+            stdout=stdout,
+            stderr=stderr,
+            duration_seconds=duration,
+        )
+
+
+@dataclass(slots=True)
+class CursorCliBackend:
+    """AgentBackend implementation that delegates to the Cursor Agent CLI.
+
+    This backend runs ``cursor-agent`` in non-interactive mode, forwarding the
+    structured prompt via ``-p`` and capturing plain-text output. It relies on
+    prompt engineering (rather than a native JSON schema API) to obtain
+    structured JSON results.
+    """
+
+    bin: str = "cursor-agent"
+    model: str | None = None
+    timeout_seconds: int = 600
+    extra_env: dict[str, str] = field(default_factory=dict)
+    output_format: str = "text"
+    error_cls: type[RuntimeError] = RuntimeError
+
+    def run(
+        self,
+        task: StructuredAgentTask,
+        *,
+        working_dir: Path,
+    ) -> AgentInvocation:
+        worktree = _validate_workdir(
+            working_dir,
+            error_cls=self.error_cls,
+            agent_name=task.name or "Agent",
+        )
+
+        command: list[str] = [self.bin]
+
+        if task.prompt:
+            command.extend(["-p", task.prompt])
+
+        if self.model:
+            command.extend(["--model", self.model])
+
+        if self.output_format:
+            command.extend(["--output-format", self.output_format])
+
+        env = os.environ.copy()
+        env.update(self.extra_env or {})
+
+        start = monotonic()
+        log.debug(
+            "Running Cursor CLI command: {} (cwd={}) for task={}",
+            command,
+            worktree,
+            task.name,
+        )
+        try:
+            result = subprocess.run(
+                command,
+                cwd=str(worktree),
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=self.timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise self.error_cls(
+                f"cursor-agent timed out after {self.timeout_seconds}s.",
+            ) from exc
+
+        duration = monotonic() - start
+        stdout = (result.stdout or "").strip()
+        stderr = (result.stderr or "").strip()
+
+        log.debug(
+            "Cursor CLI finished (exit_code={}, duration={:.2f}s) for task={}",
+            result.returncode,
+            duration,
+            task.name,
+        )
+
+        if result.returncode != 0:
+            raise self.error_cls(
+                f"cursor-agent failed with exit code {result.returncode}. "
+                f"stderr: {stderr or 'N/A'}",
+            )
+
+        if not stdout:
+            raise self.error_cls("cursor-agent returned an empty response.")
 
         return AgentInvocation(
             command=tuple(command),
