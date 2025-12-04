@@ -8,7 +8,7 @@
         
         
         <link rel="shortcut icon" href="../../../img/favicon.ico">
-        <title>Ingestion - Loreley</title>
+        <title>Experiments - Loreley</title>
         <link href="../../../css/bootstrap.min.css" rel="stylesheet">
         <link href="../../../css/fontawesome.min.css" rel="stylesheet">
         <link href="../../../css/brands.min.css" rel="stylesheet">
@@ -46,7 +46,7 @@
 </li>
                                     
 <li>
-    <a href="../../core/experiments/" class="dropdown-item">Experiments</a>
+    <a href="./" class="dropdown-item active" aria-current="page">Experiments</a>
 </li>
                                     
   <li class="dropdown-submenu">
@@ -54,15 +54,15 @@
     <ul class="dropdown-menu">
             
 <li>
-    <a href="../main/" class="dropdown-item">Overview</a>
+    <a href="../../scheduler/main/" class="dropdown-item">Overview</a>
 </li>
             
 <li>
-    <a href="../job_scheduler/" class="dropdown-item">Job scheduling</a>
+    <a href="../../scheduler/job_scheduler/" class="dropdown-item">Job scheduling</a>
 </li>
             
 <li>
-    <a href="./" class="dropdown-item active" aria-current="page">Ingestion</a>
+    <a href="../../scheduler/ingestion/" class="dropdown-item">Ingestion</a>
 </li>
     </ul>
   </li>
@@ -86,35 +86,35 @@
     <ul class="dropdown-menu">
             
 <li>
-    <a href="../../core/map-elites/map-elites/" class="dropdown-item">Overview</a>
+    <a href="../map-elites/map-elites/" class="dropdown-item">Overview</a>
 </li>
             
 <li>
-    <a href="../../core/map-elites/preprocess/" class="dropdown-item">Preprocessing</a>
+    <a href="../map-elites/preprocess/" class="dropdown-item">Preprocessing</a>
 </li>
             
 <li>
-    <a href="../../core/map-elites/chunk/" class="dropdown-item">Chunking</a>
+    <a href="../map-elites/chunk/" class="dropdown-item">Chunking</a>
 </li>
             
 <li>
-    <a href="../../core/map-elites/code_embedding/" class="dropdown-item">Code embeddings</a>
+    <a href="../map-elites/code_embedding/" class="dropdown-item">Code embeddings</a>
 </li>
             
 <li>
-    <a href="../../core/map-elites/dimension_reduction/" class="dropdown-item">Dimensionality reduction</a>
+    <a href="../map-elites/dimension_reduction/" class="dropdown-item">Dimensionality reduction</a>
 </li>
             
 <li>
-    <a href="../../core/map-elites/sampler/" class="dropdown-item">Sampler</a>
+    <a href="../map-elites/sampler/" class="dropdown-item">Sampler</a>
 </li>
             
 <li>
-    <a href="../../core/map-elites/snapshot/" class="dropdown-item">Snapshots</a>
+    <a href="../map-elites/snapshot/" class="dropdown-item">Snapshots</a>
 </li>
             
 <li>
-    <a href="../../core/map-elites/summarization_embedding/" class="dropdown-item">Summary embeddings</a>
+    <a href="../map-elites/summarization_embedding/" class="dropdown-item">Summary embeddings</a>
 </li>
     </ul>
   </li>
@@ -124,35 +124,35 @@
     <ul class="dropdown-menu">
             
 <li>
-    <a href="../../core/worker/repository/" class="dropdown-item">Repository</a>
+    <a href="../worker/repository/" class="dropdown-item">Repository</a>
 </li>
             
 <li>
-    <a href="../../core/worker/planning/" class="dropdown-item">Planning</a>
+    <a href="../worker/planning/" class="dropdown-item">Planning</a>
 </li>
             
 <li>
-    <a href="../../core/worker/agent_backend/" class="dropdown-item">Agent backend</a>
+    <a href="../worker/agent_backend/" class="dropdown-item">Agent backend</a>
 </li>
             
 <li>
-    <a href="../../core/worker/coding/" class="dropdown-item">Coding</a>
+    <a href="../worker/coding/" class="dropdown-item">Coding</a>
 </li>
             
 <li>
-    <a href="../../core/worker/evaluator/" class="dropdown-item">Evaluation</a>
+    <a href="../worker/evaluator/" class="dropdown-item">Evaluation</a>
 </li>
             
 <li>
-    <a href="../../core/worker/evolution/" class="dropdown-item">Evolution loop</a>
+    <a href="../worker/evolution/" class="dropdown-item">Evolution loop</a>
 </li>
             
 <li>
-    <a href="../../core/worker/commit_summary/" class="dropdown-item">Commit summaries</a>
+    <a href="../worker/commit_summary/" class="dropdown-item">Commit summaries</a>
 </li>
             
 <li>
-    <a href="../../core/worker/job_store/" class="dropdown-item">Job store</a>
+    <a href="../worker/job_store/" class="dropdown-item">Job store</a>
 </li>
     </ul>
   </li>
@@ -194,12 +194,12 @@
                             </a>
                         </li>
                             <li class="nav-item">
-                                <a rel="prev" href="../job_scheduler/" class="nav-link">
+                                <a rel="prev" href="../../config/" class="nav-link">
                                     <i class="fa fa-arrow-left"></i> Previous
                                 </a>
                             </li>
                             <li class="nav-item">
-                                <a rel="next" href="../../db/base/" class="nav-link">
+                                <a rel="next" href="../../scheduler/main/" class="nav-link">
                                     Next <i class="fa fa-arrow-right"></i>
                                 </a>
                             </li>
@@ -221,13 +221,25 @@
     <div id="toc-collapse" class="navbar-collapse collapse card bg-body-tertiary">
         <ul class="nav flex-column">
             
-            <li class="nav-item" data-bs-level="1"><a href="#loreleyscheduleringestion" class="nav-link">loreley.scheduler.ingestion</a>
+            <li class="nav-item" data-bs-level="1"><a href="#loreleycoreexperiments" class="nav-link">loreley.core.experiments</a>
               <ul class="nav flex-column">
-            <li class="nav-item" data-bs-level="2"><a href="#mapelitesingestion" class="nav-link">MapElitesIngestion</a>
+            <li class="nav-item" data-bs-level="2"><a href="#errors" class="nav-link">Errors</a>
               <ul class="nav flex-column">
               </ul>
             </li>
-            <li class="nav-item" data-bs-level="2"><a href="#interaction-with-evolutionscheduler" class="nav-link">Interaction with EvolutionScheduler</a>
+            <li class="nav-item" data-bs-level="2"><a href="#repository-normalisation" class="nav-link">Repository normalisation</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#experiment-configuration-snapshots" class="nav-link">Experiment configuration snapshots</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#experiment-derivation" class="nav-link">Experiment derivation</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#logging-and-error-handling" class="nav-link">Logging and error handling</a>
               <ul class="nav flex-column">
               </ul>
             </li>
@@ -238,100 +250,72 @@
 </div></div>
                     <div class="col-md-9" role="main">
 
-<h1 id="loreleyscheduleringestion">loreley.scheduler.ingestion<a class="headerlink" href="#loreleyscheduleringestion" title="Permanent link">&para;</a></h1>
-<p>Result ingestion and MAP-Elites maintenance logic extracted from the central
-evolution scheduler.</p>
-<p>The <code>MapElitesIngestion</code> class owns how succeeded jobs are <strong>discovered</strong>,
-<strong>mapped</strong> to git commits, and <strong>folded</strong> into the MAP-Elites archives, as well
-as how the configured experiment root commit is initialised.</p>
-<h2 id="mapelitesingestion">MapElitesIngestion<a class="headerlink" href="#mapelitesingestion" title="Permanent link">&para;</a></h2>
-<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">loreley.scheduler.ingestion</span><span class="w"> </span><span class="kn">import</span> <span class="n">MapElitesIngestion</span>
-</code></pre></div>
-
+<h1 id="loreleycoreexperiments">loreley.core.experiments<a class="headerlink" href="#loreleycoreexperiments" title="Permanent link">&para;</a></h1>
+<p>Helpers for deriving canonical repository and experiment context from the current git worktree and <code>Settings</code>.</p>
+<h2 id="errors">Errors<a class="headerlink" href="#errors" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Purpose</strong>: ingest completed evolution jobs into MAP-Elites, record rich
-  ingestion state back onto the job payload, and ensure the experiment's root
-  commit is registered and evaluated as a baseline in the database.</li>
-<li><strong>Construction</strong>: created by <code>EvolutionScheduler</code> with:</li>
-<li>the shared <code>Settings</code> instance,</li>
-<li>the interactive <code>rich</code> console,</li>
-<li>a <code>git.Repo</code> handle for the scheduler's repository root,</li>
-<li>the experiment-scoped <code>MapElitesManager</code>,</li>
-<li>the current <code>experiment</code> and its <code>repository</code>.</li>
+<li><strong><code>ExperimentError</code></strong>: runtime error raised when the repository or experiment context cannot be resolved.<br />
+  Used for git discovery failures (non‑existent or non‑repository paths) and database errors when reading or writing <code>Repository</code> / <code>Experiment</code> rows.</li>
 </ul>
-<h3 id="ingesting-succeeded-jobs">Ingesting succeeded jobs<a class="headerlink" href="#ingesting-succeeded-jobs" title="Permanent link">&para;</a></h3>
+<h2 id="repository-normalisation">Repository normalisation<a class="headerlink" href="#repository-normalisation" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>ingest_completed_jobs() -&gt; int</code></strong>:</li>
-<li>Scans for <code>SUCCEEDED</code> <code>EvolutionJob</code> rows up to
-    <code>SCHEDULER_INGEST_BATCH_SIZE</code>.</li>
-<li>Filters out jobs whose payload already records a terminal ingestion status
-    (<code>"succeeded"</code> or <code>"skipped"</code>).</li>
-<li>Builds a <code>JobSnapshot</code> for each remaining job and forwards it to
-    <code>_ingest_snapshot(...)</code>.</li>
-<li>Returns the number of jobs whose commits actually updated the MAP-Elites
-    archive.</li>
+<li><strong><code>canonicalise_repository(*, settings=None, repo_root=None, repo=None)</code></strong>: resolves or creates a <code>Repository</code> row for a given git worktree.  </li>
+<li>Expands and normalises the target path, defaulting to <code>Settings.worker_repo_worktree</code> when <code>repo_root</code> is not provided.  </li>
+<li>Validates that the path is a git repository and extracts the <code>origin</code> remote URL when available.  </li>
+<li>Uses <code>_normalise_remote_url()</code> to strip credentials, support both HTTPS and SSH scp‑style URLs, and produce a canonical <code>remote_url</code> for hashing and storage.  </li>
+<li>Builds a stable <code>slug</code> from either the canonical remote URL or the local path via <code>_build_slug_from_source()</code>.  </li>
+<li>Populates an <code>extra</code> JSON payload with the canonical origin, root path, and all remotes (with URLs normalised for safe storage).  </li>
+<li>Within a DB <code>session_scope()</code>, either:<ul>
+<li>returns an existing <code>Repository</code> with the same <code>slug</code> after best‑effort metadata refresh (remote URL, root path, extra), or  </li>
+<li>creates and persists a new <code>Repository</code> row with the derived slug, remote URL, root path, and extra metadata.  </li>
 </ul>
-<p>Internally, <code>_ingest_snapshot(...)</code>:</p>
-<ol>
-<li>Extracts <code>result.commit_hash</code> and optional <code>result.metrics</code> from the job
-   payload.</li>
-<li>Ensures the corresponding git commit is present locally, fetching from
-   remotes as necessary.</li>
-<li>Computes a list of <code>ChangedFile</code> entries from the commit stats to use as a
-   proxy for behavioural diversity.</li>
-<li>Calls <code>MapElitesManager.ingest(...)</code> with:</li>
-<li><code>commit_hash</code>,</li>
-<li>per-file <code>changed_files</code>,</li>
-<li><code>metrics</code>,</li>
-<li><code>island_id</code>,</li>
-<li><code>repo_root</code> and <code>treeish</code>,</li>
-<li>a structured metadata block that links the job, context, and evaluation
-     summaries.</li>
-<li>Writes a compact ingestion state back under
-   <code>payload["ingestion"]["map_elites"]</code>, including:</li>
-<li><code>status</code> (<code>"succeeded"</code> or <code>"skipped"</code>),</li>
-<li><code>delta</code>, <code>status_code</code>, and <code>message</code> from the ingest result,</li>
-<li>a serialised view of the archive record (if any),</li>
-<li>retry bookkeeping (<code>attempts</code>, <code>last_attempt_at</code>, <code>reason</code>).</li>
-</ol>
-<p>This state allows ingestion to be retried safely and audited later without
-re-running the full evaluation.</p>
-<h3 id="root-commit-initialisation">Root commit initialisation<a class="headerlink" href="#root-commit-initialisation" title="Permanent link">&para;</a></h3>
-<p>When <code>MAPELITES_EXPERIMENT_ROOT_COMMIT</code> is set, <code>EvolutionScheduler</code> asks
-<code>MapElitesIngestion</code> to initialise that commit via
-<code>initialise_root_commit(commit_hash)</code>:</p>
-<ol>
-<li><code>_ensure_commit_available(...)</code> guarantees the commit exists locally,
-   fetching from remotes as needed.</li>
-<li><code>_ensure_root_commit_metadata(...)</code> creates or updates a <code>CommitMetadata</code>
-   row with:</li>
-<li>the commit's parent, author, and message,</li>
-<li>the current <code>experiment_id</code>,</li>
-<li>a default island id (from <code>MAPELITES_DEFAULT_ISLAND_ID</code> or <code>"main"</code>),</li>
-<li>a rich <code>extra_context</code> block that links back to the experiment and
-     repository.</li>
-<li><code>_ensure_root_commit_evaluated(...)</code> runs a one-off evaluation for the root
-   commit when no <code>Metric</code> rows already exist, writing baseline metrics into
-   the <code>metrics</code> table and a compact <code>root_evaluation</code> block into
-   <code>CommitMetadata.extra_context</code>. These metrics act as an experiment-wide
-   baseline but do not insert the root commit into any MAP-Elites archive.</li>
-</ol>
-<p>Failures during root-commit initialisation are logged but do <strong>not</strong> prevent
-the scheduler from running; they simply mean the experiment may effectively
-start from the first successfully ingested commit instead.</p>
-<h2 id="interaction-with-evolutionscheduler">Interaction with EvolutionScheduler<a class="headerlink" href="#interaction-with-evolutionscheduler" title="Permanent link">&para;</a></h2>
-<p><code>EvolutionScheduler.tick()</code> uses <code>MapElitesIngestion</code> as the first stage in the
-pipeline:</p>
-<ol>
-<li><code>ingest_completed_jobs()</code> ingests any newly succeeded jobs and annotates
-   them with ingestion state.</li>
-<li>Later, when all jobs have finished and the global job limit has been
-   reached, <code>EvolutionScheduler</code> uses MAP-Elites metrics and commit metadata
-   to create a dedicated git branch for the current best-fitness commit.</li>
-</ol>
-<p>Separating this logic into <code>MapElitesIngestion</code> keeps the main scheduler loop
-small and clarifies the boundary between <strong>job lifecycle</strong> and <strong>archive
-maintenance</strong>.</p></div>
+</li>
+<li>Logs concise status messages via <code>rich</code> (for human‑friendly console output) and <code>loguru</code> (for structured logs).</li>
+</ul>
+<h2 id="experiment-configuration-snapshots">Experiment configuration snapshots<a class="headerlink" href="#experiment-configuration-snapshots" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong><code>build_experiment_config_snapshot(settings)</code></strong>: extracts just the configuration fields that define an experiment.  </li>
+<li>Starts from <code>settings.model_dump()</code>.  </li>
+<li>Keeps only keys with prefixes <code>mapelites_</code> and <code>worker_evaluator_</code>, so that experiments stay stable across unrelated configuration changes (logging, Redis URLs, etc.).  </li>
+<li>
+<p>Recursively applies <code>_coerce_json_compatible()</code> so that non‑finite floats (NaN/±inf) and nested containers are converted into JSON‑serialisable equivalents, making the snapshot safe for PostgreSQL JSONB.</p>
+</li>
+<li>
+<p><strong><code>hash_experiment_config(snapshot)</code></strong>: computes a stable SHA‑256 hash for a configuration snapshot.  </p>
+</li>
+<li>Serialises the snapshot with <code>json.dumps(..., sort_keys=True, separators=(",", ":"), default=str)</code> so that key ordering does not affect the result.  </li>
+<li>Returns a hex digest used as <code>Experiment.config_hash</code> and as part of the default experiment name.</li>
+</ul>
+<h2 id="experiment-derivation">Experiment derivation<a class="headerlink" href="#experiment-derivation" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong><code>derive_experiment(settings, repository)</code></strong>: returns or creates an <code>Experiment</code> row for a given repository and settings.  </li>
+<li>Builds a snapshot via <code>build_experiment_config_snapshot()</code>, hashes it with <code>hash_experiment_config()</code>, and looks for an existing <code>Experiment</code> with the same <code>(repository_id, config_hash)</code>.  </li>
+<li>When found, returns the existing row unchanged.  </li>
+<li>Otherwise creates a new <code>Experiment</code> with:<ul>
+<li><code>name</code> derived from <code>repository.slug</code> plus the first 8 characters of the config hash,  </li>
+<li><code>config_snapshot</code> set to the JSON‑compatible snapshot, and  </li>
+<li><code>status="active"</code>.  </li>
+</ul>
+</li>
+<li>
+<p>Logs both to the console and to the structured logger when creating a new experiment.</p>
+</li>
+<li>
+<p><strong><code>get_or_create_experiment(*, settings=None, repo_root=None)</code></strong>: convenience helper that resolves both <code>Repository</code> and <code>Experiment</code> for the current process.  </p>
+</li>
+<li>Resolves settings via <code>get_settings()</code> when not provided explicitly.  </li>
+<li>Chooses the repository root in this order: explicit <code>repo_root</code>, <code>Settings.scheduler_repo_root</code>, then <code>Settings.worker_repo_worktree</code>.  </li>
+<li>Validates that the chosen root is a git repository, logging and raising <code>ExperimentError</code> when it is not.  </li>
+<li>Reuses the discovered <code>git.Repo</code> instance when calling <code>canonicalise_repository()</code> to avoid redundant discovery work.  </li>
+<li>Calls <code>derive_experiment()</code> to obtain the current experiment and logs the selected <code>(repository.slug, experiment.id, experiment.config_hash)</code> pair.  </li>
+<li>Returns a <code>(Repository, Experiment)</code> tuple that callers (such as <code>loreley.scheduler.main.EvolutionScheduler</code>) pass downstream to the MAP‑Elites manager and sampler so that all jobs and archive state share the same experiment identifier.</li>
+</ul>
+<h2 id="logging-and-error-handling">Logging and error handling<a class="headerlink" href="#logging-and-error-handling" title="Permanent link">&para;</a></h2>
+<ul>
+<li>All operations are logged through a <code>loguru</code> logger bound with <code>module="core.experiments"</code> plus a <code>rich</code> console for user‑facing status messages.  </li>
+<li>Git and database failures are wrapped into <code>ExperimentError</code> with concise, user‑oriented messages while preserving the original exception as the cause.  </li>
+<li>Configuration snapshots intentionally focus on MAP‑Elites and evaluator knobs so that operational tweaks (logging verbosity, queue names, etc.) do not fragment experiments in the database.</li>
+</ul></div>
             </div>
         </div>
 

@@ -45,6 +45,10 @@
     <a href="../../../config/" class="dropdown-item">Configuration</a>
 </li>
                                     
+<li>
+    <a href="../../experiments/" class="dropdown-item">Experiments</a>
+</li>
+                                    
   <li class="dropdown-submenu">
     <a href="#" class="dropdown-item">Scheduler</a>
     <ul class="dropdown-menu">
@@ -128,6 +132,10 @@
 </li>
             
 <li>
+    <a href="../agent_backend/" class="dropdown-item">Agent backend</a>
+</li>
+            
+<li>
     <a href="../coding/" class="dropdown-item">Coding</a>
 </li>
             
@@ -191,7 +199,7 @@
                                 </a>
                             </li>
                             <li class="nav-item">
-                                <a rel="next" href="../coding/" class="nav-link">
+                                <a rel="next" href="../agent_backend/" class="nav-link">
                                     Next <i class="fa fa-arrow-right"></i>
                                 </a>
                             </li>
@@ -253,7 +261,7 @@
 <ul>
 <li><strong><code>PLANNING_OUTPUT_SCHEMA</code></strong>: JSON schema describing the expected shape of the planning output (top-level fields like <code>plan_summary</code>, <code>rationale</code>, <code>focus_metrics</code>, <code>guardrails</code>, <code>risks</code>, <code>validation</code>, <code>steps</code>, <code>handoff_notes</code>, and <code>fallback_plan</code>, plus constraints on each step's fields), used when invoking the external Codex CLI.</li>
 <li><strong><code>_PlanStepModel</code></strong> / <strong><code>_PlanModel</code></strong>: internal <code>pydantic</code> models that validate the Codex JSON payload against the schema and provide a typed bridge from raw JSON into the <code>PlanStep</code> / <code>PlanningPlan</code> domain objects.</li>
-<li><strong><code>loreley.core.worker.agent_backend</code></strong>: shared backend abstractions (<code>AgentBackend</code>, <code>StructuredAgentTask</code>, <code>AgentInvocation</code>) plus the default <code>CodexCliBackend</code> implementation that actually talks to the <code>codex</code> CLI.</li>
+<li><strong>Agent backend</strong>: planning relies on <code>loreley.core.worker.agent_backend</code> for shared backend abstractions (<code>AgentBackend</code>, <code>StructuredAgentTask</code>, <code>AgentInvocation</code>) and the default <code>CodexCliBackend</code> implementation that talks to the <code>codex</code> CLI; see that module's documentation for backend configuration details.</li>
 </ul>
 <h2 id="planning-agent">Planning agent<a class="headerlink" href="#planning-agent" title="Permanent link">&para;</a></h2>
 <ul>

@@ -8,7 +8,7 @@
         
         
         <link rel="shortcut icon" href="../../../../img/favicon.ico">
-        <title>Repository - Loreley</title>
+        <title>Agent backend - Loreley</title>
         <link href="../../../../css/bootstrap.min.css" rel="stylesheet">
         <link href="../../../../css/fontawesome.min.css" rel="stylesheet">
         <link href="../../../../css/brands.min.css" rel="stylesheet">
@@ -124,7 +124,7 @@
     <ul class="dropdown-menu">
             
 <li>
-    <a href="./" class="dropdown-item active" aria-current="page">Repository</a>
+    <a href="../repository/" class="dropdown-item">Repository</a>
 </li>
             
 <li>
@@ -132,7 +132,7 @@
 </li>
             
 <li>
-    <a href="../agent_backend/" class="dropdown-item">Agent backend</a>
+    <a href="./" class="dropdown-item active" aria-current="page">Agent backend</a>
 </li>
             
 <li>
@@ -194,12 +194,12 @@
                             </a>
                         </li>
                             <li class="nav-item">
-                                <a rel="prev" href="../../map-elites/summarization_embedding/" class="nav-link">
+                                <a rel="prev" href="../planning/" class="nav-link">
                                     <i class="fa fa-arrow-left"></i> Previous
                                 </a>
                             </li>
                             <li class="nav-item">
-                                <a rel="next" href="../planning/" class="nav-link">
+                                <a rel="next" href="../coding/" class="nav-link">
                                     Next <i class="fa fa-arrow-right"></i>
                                 </a>
                             </li>
@@ -221,13 +221,21 @@
     <div id="toc-collapse" class="navbar-collapse collapse card bg-body-tertiary">
         <ul class="nav flex-column">
             
-            <li class="nav-item" data-bs-level="1"><a href="#loreleycoreworkerrepository" class="nav-link">loreley.core.worker.repository</a>
+            <li class="nav-item" data-bs-level="1"><a href="#loreleycoreworkeragent_backend" class="nav-link">loreley.core.worker.agent_backend</a>
               <ul class="nav flex-column">
-            <li class="nav-item" data-bs-level="2"><a href="#types" class="nav-link">Types</a>
+            <li class="nav-item" data-bs-level="2"><a href="#core-types" class="nav-link">Core types</a>
               <ul class="nav flex-column">
               </ul>
             </li>
-            <li class="nav-item" data-bs-level="2"><a href="#repository" class="nav-link">Repository</a>
+            <li class="nav-item" data-bs-level="2"><a href="#backend-resolution-helpers" class="nav-link">Backend resolution helpers</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#codex-cli-backend" class="nav-link">Codex CLI backend</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#internal-utilities" class="nav-link">Internal utilities</a>
               <ul class="nav flex-column">
               </ul>
             </li>
@@ -238,26 +246,96 @@
 </div></div>
                     <div class="col-md-9" role="main">
 
-<h1 id="loreleycoreworkerrepository">loreley.core.worker.repository<a class="headerlink" href="#loreleycoreworkerrepository" title="Permanent link">&para;</a></h1>
-<p>Git worktree management for Loreley worker processes, responsible for cloning, syncing, cleaning, and publishing the upstream repository used for evolutionary jobs.</p>
-<h2 id="types">Types<a class="headerlink" href="#types" title="Permanent link">&para;</a></h2>
+<h1 id="loreleycoreworkeragent_backend">loreley.core.worker.agent_backend<a class="headerlink" href="#loreleycoreworkeragent_backend" title="Permanent link">&para;</a></h1>
+<p>Shared abstractions and helpers for structured planning/coding agents plus the default Codex CLI backend.</p>
+<h2 id="core-types">Core types<a class="headerlink" href="#core-types" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>RepositoryError</code></strong>: custom runtime error raised when a git operation fails, capturing the command, return code, stdout, and stderr for easier debugging.</li>
-<li><strong><code>CheckoutContext</code></strong>: frozen dataclass describing the result of preparing a job checkout (<code>job_id</code>, derived <code>branch_name</code>, selected <code>base_commit</code>, and local <code>worktree</code> path).</li>
+<li>
+<p><strong><code>SchemaMode</code></strong>: type alias restricting schema handling modes to <code>"native"</code>, <code>"prompt"</code>, or <code>"none"</code>.<br />
+  Used by structured agents to decide whether JSON schema is enforced by the backend API itself (<code>"native"</code>), injected into the prompt (<code>"prompt"</code>), or completely disabled (<code>"none"</code>).</p>
+</li>
+<li>
+<p><strong><code>AgentInvocation</code></strong>: immutable result of a single backend invocation.  </p>
+</li>
+<li>Captures the executed <code>command</code> (argv tuple), captured <code>stdout</code> and <code>stderr</code>, and total <code>duration_seconds</code>.  </li>
+<li>
+<p>Serves as the low‑level record returned by all <code>AgentBackend</code> implementations.</p>
+</li>
+<li>
+<p><strong><code>StructuredAgentTask</code></strong>: backend‑agnostic description of a structured agent call.  </p>
+</li>
+<li>Fields:<ul>
+<li><code>name</code>: human‑readable label used in logs and error messages.  </li>
+<li><code>prompt</code>: full natural‑language prompt passed to the backend.  </li>
+<li><code>schema</code>: optional JSON schema dict describing the expected output structure.  </li>
+<li><code>schema_mode</code>: one of the <code>SchemaMode</code> values controlling how <code>schema</code> should be applied.  </li>
 </ul>
-<h2 id="repository">Repository<a class="headerlink" href="#repository" title="Permanent link">&para;</a></h2>
+</li>
+<li>
+<p>Planning and coding agents construct a <code>StructuredAgentTask</code> and delegate execution to a concrete backend.</p>
+</li>
+<li>
+<p><strong><code>AgentBackend</code></strong>: <code>Protocol</code> defining the contract for all agent backends.  </p>
+</li>
+<li>Requires a single method <code>run(task, *, working_dir)</code> that:<ul>
+<li>validates and normalises the <code>working_dir</code>,  </li>
+<li>executes the task using a concrete backend mechanism (CLI, HTTP API, etc.), and  </li>
+<li>returns an <code>AgentInvocation</code> with the raw output and timing information.</li>
+</ul>
+</li>
+</ul>
+<h2 id="backend-resolution-helpers">Backend resolution helpers<a class="headerlink" href="#backend-resolution-helpers" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>WorkerRepository</code></strong>: high-level manager for the worker git worktree built on top of <code>git.Repo</code>.</li>
-<li>Configured via <code>loreley.config.Settings</code> worker repository options (<code>WORKER_REPO_REMOTE_URL</code>, <code>WORKER_REPO_BRANCH</code>, <code>WORKER_REPO_WORKTREE</code>, <code>WORKER_REPO_GIT_BIN</code>, <code>WORKER_REPO_FETCH_DEPTH</code>, <code>WORKER_REPO_CLEAN_EXCLUDES</code>, <code>WORKER_REPO_JOB_BRANCH_PREFIX</code>, <code>WORKER_REPO_ENABLE_LFS</code>, <code>WORKER_REPO_JOB_BRANCH_TTL_HOURS</code>) and honours commit author settings for worker-produced commits.</li>
-<li><code>prepare()</code> ensures the worktree directory exists, clones the remote with the configured depth/branch if necessary, aligns the local tracking branch with the configured upstream, and refreshes tags/LFS where enabled, logging progress via <code>rich</code> and <code>loguru</code>.</li>
-<li><code>checkout_for_job(job_id, base_commit, create_branch=True)</code> cleans the worktree, ensures the <code>base_commit</code> object is available locally (unshallows the repository when needed), then either checks out that commit in detached mode or creates a per-job branch under the configured job-branch prefix, returning a <code>CheckoutContext</code>.</li>
-<li><code>clean_worktree()</code> hard-resets tracked files and runs <code>git clean -xdf</code>, preserving any paths configured in <code>WORKER_REPO_CLEAN_EXCLUDES</code>.</li>
-<li><code>current_commit()</code> returns the current HEAD commit hash for observability and scheduling.</li>
-<li><code>has_changes()</code> reports whether the worktree is dirty (including untracked files), which the evolution worker uses to decide if there is anything to commit after coding.</li>
-<li><code>stage_all()</code> stages all tracked and untracked changes, and <code>commit(message)</code> creates a commit and returns its hash, using GitPython under the hood.</li>
-<li><code>push_branch(branch_name, remote=\"origin\", force_with_lease=False)</code> pushes the current branch to the configured remote (optionally with <code>--force-with-lease</code>), and <code>delete_remote_branch(branch_name, remote=\"origin\")</code> removes remote job branches without affecting local history.</li>
-<li><code>prune_stale_job_branches()</code> enumerates remote job branches under the configured job-branch prefix and deletes those whose last commit is older than <code>WORKER_REPO_JOB_BRANCH_TTL_HOURS</code>, logging a concise summary of how many branches were pruned.</li>
-<li>Internal helpers such as <code>_ensure_worktree_ready()</code>, <code>_sync_upstream()</code>, <code>_ensure_remote_origin()</code>, <code>_fetch()</code>, <code>_sync_lfs()</code>, <code>_ensure_commit_available()</code>, and <code>_wrap_git_error()</code> encapsulate the GitPython integration, remote configuration, LFS sync, shallow/unshallow behaviour, and consistent error wrapping with sanitised git commands.</li>
+<li><strong><code>resolve_schema_mode(configured_mode, api_spec)</code></strong>: determines the effective schema mode based on configuration and the selected API surface.  </li>
+<li>If <code>configured_mode</code> is anything other than <code>"auto"</code>, it is returned unchanged.  </li>
+<li>When <code>configured_mode="auto"</code> and <code>api_spec="chat_completions"</code>, it returns <code>"prompt"</code> so that schemas are enforced via prompt engineering.  </li>
+<li>
+<p>When <code>configured_mode="auto"</code> and <code>api_spec="responses"</code>, it returns <code>"native"</code> so that native tool/JSON capabilities are used.</p>
+</li>
+<li>
+<p><strong><code>load_agent_backend(ref, *, label)</code></strong>: resolves and instantiates an <code>AgentBackend</code> from a dotted reference string.  </p>
+</li>
+<li>Accepts both <code>"module:attr"</code> and <code>"module.attr"</code> forms.  </li>
+<li>Internally splits the reference, imports the target module, and walks the attribute path.  </li>
+<li>Supports three patterns:<ul>
+<li>an already‑instantiated backend object exposing a callable <code>run</code> method,  </li>
+<li>a class implementing the <code>AgentBackend</code> protocol (constructed with no arguments), or  </li>
+<li>a factory callable that returns a backend instance when called with no arguments.  </li>
+</ul>
+</li>
+<li>Validates that the resulting object has a callable <code>run</code> attribute and raises a descriptive <code>RuntimeError</code> otherwise.</li>
+</ul>
+<h2 id="codex-cli-backend">Codex CLI backend<a class="headerlink" href="#codex-cli-backend" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong><code>CodexCliBackend</code></strong>: concrete <code>AgentBackend</code> implementation that delegates to the external Codex CLI.  </li>
+<li>Configuration fields:<ul>
+<li><code>bin</code>: CLI executable to invoke (for example, <code>"codex"</code>).  </li>
+<li><code>profile</code>: optional profile name passed as <code>--profile</code> to select a Codex configuration.  </li>
+<li><code>timeout_seconds</code>: hard timeout for the subprocess invocation.  </li>
+<li><code>extra_env</code>: dict of additional environment variables merged into the subprocess environment.  </li>
+<li><code>schema_override</code>: optional path to a JSON schema file to use instead of the task‑provided schema.  </li>
+<li><code>error_cls</code>: concrete <code>RuntimeError</code> subtype used for all user‑facing errors (planning/coding use module‑specific error types).  </li>
+<li><code>full_auto</code>: when <code>True</code>, appends <code>--full-auto</code> so the CLI can drive multi‑step interactions autonomously.</li>
+</ul>
+</li>
+<li><strong><code>run(task, *, working_dir)</code></strong>:<ul>
+<li>Validates that <code>working_dir</code> exists, is a directory, and contains a <code>.git</code> folder via <code>_validate_workdir()</code>.  </li>
+<li>Builds the CLI <code>command</code> list starting from <code>[bin, "exec"]</code>, optionally adding <code>--full-auto</code>.  </li>
+<li>When <code>task.schema_mode=="native"</code>:</li>
+<li>uses <code>schema_override</code> if provided and points to an existing file, or  </li>
+<li>materialises <code>task.schema</code> into a temporary JSON file via <code>_materialise_schema_to_temp()</code> and passes it as <code>--output-schema</code>.  </li>
+<li>Adds <code>--profile</code> when a profile is configured, merges <code>extra_env</code> into a copy of <code>os.environ</code>, and feeds <code>task.prompt</code> on stdin.  </li>
+<li>Runs the process with <code>subprocess.run(...)</code>, capturing stdout/stderr, enforcing the timeout, and deleting any temporary schema file afterwards.  </li>
+<li>Raises <code>error_cls</code> when the process exits non‑zero, times out, or produces an empty stdout payload; otherwise wraps the result in an <code>AgentInvocation</code>.</li>
+</ul>
+</li>
+</ul>
+<h2 id="internal-utilities">Internal utilities<a class="headerlink" href="#internal-utilities" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong><code>_validate_workdir()</code></strong>: expands and checks the working directory path, ensuring it exists, is a directory, and contains a <code>.git</code> subdirectory; raises the configured error type with clear messages when any condition fails.  </li>
+<li><strong><code>_materialise_schema_to_temp()</code></strong>: writes a JSON schema dict to a temporary file with a deterministic prefix/suffix and returns its path, used only when running in <code>"native"</code> schema mode without a <code>schema_override</code>.  </li>
+<li><strong><code>_split_backend_reference()</code></strong> and <strong><code>_import_backend_target()</code></strong>: low‑level helpers used by <code>load_agent_backend()</code> to parse dotted references and resolve the final object, with detailed error messages for invalid module names or attribute paths.  </li>
+<li>These helpers are internal but form part of the stable backend loading behaviour relied on by the planning and coding agents.</li>
 </ul></div>
             </div>
         </div>

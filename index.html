@@ -45,6 +45,10 @@
     <a href="loreley/config/" class="dropdown-item">Configuration</a>
 </li>
                                     
+<li>
+    <a href="loreley/core/experiments/" class="dropdown-item">Experiments</a>
+</li>
+                                    
   <li class="dropdown-submenu">
     <a href="#" class="dropdown-item">Scheduler</a>
     <ul class="dropdown-menu">
@@ -125,6 +129,10 @@
             
 <li>
     <a href="loreley/core/worker/planning/" class="dropdown-item">Planning</a>
+</li>
+            
+<li>
+    <a href="loreley/core/worker/agent_backend/" class="dropdown-item">Agent backend</a>
 </li>
             
 <li>
@@ -263,6 +271,8 @@
   See: <a href="loreley/config/">Configuration</a></li>
 <li><strong>Database</strong> – <code>loreley.db</code> defines the SQLAlchemy engine/session helpers and ORM models for repositories, experiments, jobs, metrics, and archive state.<br />
   See: <a href="loreley/db/base/">DB base</a>, <a href="loreley/db/models/">DB models</a></li>
+<li><strong>Experiments &amp; repositories</strong> – <code>loreley.core.experiments</code> normalises the target git worktree into a <code>Repository</code>, derives an <code>Experiment</code> from MAP‑Elites and evaluator‑related settings, and exposes helpers for reusing the same experiment ID across scheduler runs.<br />
+  See: <a href="loreley/core/experiments/">Experiments</a></li>
 <li><strong>MAP-Elites core</strong> – <code>loreley.core.map_elites</code> handles preprocessing, chunking, embeddings, dimensionality reduction, archive management, sampling, and snapshots.<br />
   See: <a href="loreley/core/map-elites/map-elites/">MAP‑Elites overview</a> and the linked sub‑pages below.</li>
 <li><strong>Worker pipeline</strong> – <code>loreley.core.worker</code> manages worktrees, planning, coding, evaluation, evolution commits, and commit summaries.<br />
@@ -324,6 +334,8 @@ uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </sp
 <li><strong>Database</strong></li>
 <li><a href="loreley/db/base/">Engine and sessions</a></li>
 <li><a href="loreley/db/models/">ORM models</a></li>
+<li><strong>Experiments</strong></li>
+<li><a href="loreley/core/experiments/">Repository &amp; experiment helpers</a></li>
 <li><strong>MAP-Elites core</strong></li>
 <li><a href="loreley/core/map-elites/map-elites/">Overview &amp; archive</a></li>
 <li><a href="loreley/core/map-elites/preprocess/">Preprocessing</a></li>
@@ -437,5 +449,5 @@ uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </sp
 
 <!--
 MkDocs version : 1.6.1
-Build Date UTC : 2025-12-03 12:37:15.028759+00:00
+Build Date UTC : 2025-12-04 01:45:31.457725+00:00
 -->
