@@ -2,7 +2,7 @@ site_name: Loreley
 site_description: Automated MAP-Elites system that evolves entire git repositories.
 
 theme:
-  name: mkdocs
+  name: material
 
 nav:
   - Home: index.md
