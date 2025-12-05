@@ -315,6 +315,7 @@ class CursorCliBackend:
     timeout_seconds: int = 600
     extra_env: dict[str, str] = field(default_factory=dict)
     output_format: str = "text"
+    force: bool = True
     error_cls: type[RuntimeError] = RuntimeError
 
     def run(
@@ -339,6 +340,9 @@ class CursorCliBackend:
 
         if self.output_format:
             command.extend(["--output-format", self.output_format])
+
+        if self.force:
+            command.append("--force")
 
         env = os.environ.copy()
         env.update(self.extra_env or {})
@@ -409,6 +413,11 @@ def cursor_backend_from_settings(
         settings = get_settings()
 
     model = getattr(settings, "worker_cursor_model", DEFAULT_CURSOR_MODEL)
-    return CursorCliBackend(model=model or DEFAULT_CURSOR_MODEL, error_cls=error_cls)
+    force = getattr(settings, "worker_cursor_force", True)
+    return CursorCliBackend(
+        model=model or DEFAULT_CURSOR_MODEL,
+        force=force,
+        error_cls=error_cls,
+    )
 
 

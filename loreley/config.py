@@ -204,6 +204,10 @@ class Settings(BaseSettings):
         default="gpt-5.1-codex-max-high",
         alias="WORKER_CURSOR_MODEL",
     )
+    worker_cursor_force: bool = Field(
+        default=True,
+        alias="WORKER_CURSOR_FORCE",
+    )
     worker_planning_codex_schema_mode: Literal[
         "auto",
         "native",

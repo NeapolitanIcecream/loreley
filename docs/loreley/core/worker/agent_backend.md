@@ -69,13 +69,15 @@ Shared abstractions and helpers for structured planning/coding agents plus the d
     - `timeout_seconds`: hard timeout for the subprocess invocation.  
     - `extra_env`: dict of additional environment variables merged into the subprocess environment.  
     - `output_format`: value passed as `--output-format` (default `"text"`), typically left as `"text"` so the agent can emit a single JSON object as plain text.  
+    - `force`: when `True` (default), appends `--force` so the Cursor agent allows commands unless explicitly denied; set to `False` to omit the flag.  
     - `error_cls`: concrete `RuntimeError` subtype used for all user‑facing errors.
   - **`run(task, *, working_dir)`**:
     - Validates that `working_dir` exists, is a directory, and contains a `.git` folder via `_validate_workdir()`.  
     - Builds the CLI `command` list starting from `[bin]`, adding:
       - `-p <prompt>` to forward `task.prompt` to the Cursor agent,  
       - `--model` when `model` is configured, and  
-      - `--output-format` when `output_format` is set.  
+      - `--output-format` when `output_format` is set, and  
+      - `--force` when `force=True`.  
     - Merges `extra_env` into a copy of `os.environ` and runs `cursor-agent` in the provided working directory.  
     - Captures stdout/stderr and enforces the timeout via `subprocess.run(...)`.  
     - Raises `error_cls` when the process exits non‑zero or times out; even when stdout is empty it still returns an `AgentInvocation`, leaving it to higher‑level agents and validation logic to decide how to handle the result.  
