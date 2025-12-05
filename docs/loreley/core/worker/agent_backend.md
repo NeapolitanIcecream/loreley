@@ -65,7 +65,7 @@ Shared abstractions and helpers for structured planning/coding agents plus the d
 - **`CursorCliBackend`**: concrete `AgentBackend` implementation that delegates to the Cursor Agent CLI (`cursor-agent`).  
   - Configuration fields:
     - `bin`: CLI executable to invoke (default `"cursor-agent"`).  
-    - `model`: model identifier passed as `--model`; defaults to `"GPT-5.1 Codex Max"` and can be overridden (for example, `"gpt-5"`), including via the `cursor_backend_from_settings()` helper that reads `WORKER_CURSOR_MODEL`.  
+    - `model`: model identifier passed as `--model`; defaults to `"gpt-5.1-codex-max-high"` and can be overridden (for example, `"gpt-5"`), including via the `cursor_backend_from_settings()` helper that reads `WORKER_CURSOR_MODEL`.  
     - `timeout_seconds`: hard timeout for the subprocess invocation.  
     - `extra_env`: dict of additional environment variables merged into the subprocess environment.  
     - `output_format`: value passed as `--output-format` (default `"text"`), typically left as `"text"` so the agent can emit a single JSON object as plain text.  

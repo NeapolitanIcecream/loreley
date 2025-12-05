@@ -201,7 +201,7 @@ class Settings(BaseSettings):
         alias="WORKER_CODING_BACKEND",
     )
     worker_cursor_model: str = Field(
-        default="GPT-5.1 Codex Max",
+        default="gpt-5.1-codex-max-high",
         alias="WORKER_CURSOR_MODEL",
     )
     worker_planning_codex_schema_mode: Literal[

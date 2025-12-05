@@ -142,10 +142,10 @@ MAPELITES_SEED_POPULATION_SIZE: int = 1
 
 # --- Agent backends ---------------------------------------------------------
 
-WORKER_PLANNING_BACKEND: str | None = None
-WORKER_CODING_BACKEND: str | None = None
-# WORKER_PLANNING_BACKEND: str = "loreley.core.worker.agent_backend:CursorCliBackend"
-# WORKER_CODING_BACKEND: str = "loreley.core.worker.agent_backend:CursorCliBackend"
+# WORKER_PLANNING_BACKEND: str | None = None
+# WORKER_CODING_BACKEND: str | None = None
+WORKER_PLANNING_BACKEND: str = "loreley.core.worker.agent_backend:CursorCliBackend"
+WORKER_CODING_BACKEND: str = "loreley.core.worker.agent_backend:CursorCliBackend"
 
 # --- Model / LLM configuration (see loreley.config.Settings) ----------------
 
