@@ -103,6 +103,12 @@ def _configure_logging(settings: Settings, *, override_level: str | None = None)
     """Configure Loguru and bridge stdlib logging using application settings."""
 
     level = (override_level or settings.log_level or "INFO").upper()
+    try:
+        logger.level(level)
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid log level {level!r}; expected one of TRACE/DEBUG/INFO/SUCCESS/WARNING/ERROR/CRITICAL."
+        ) from exc
 
     logger.remove()
     logger.add(
@@ -164,7 +170,11 @@ def main(_argv: Sequence[str] | None = None) -> int:
         )
         return 1
 
-    _configure_logging(settings, override_level=args.log_level)
+    try:
+        _configure_logging(settings, override_level=args.log_level)
+    except ValueError as exc:
+        console.log("[bold red]Invalid log level[/] reason={}".format(exc))
+        return 1
 
     console.log(
         "[bold green]Loreley worker online[/] "
