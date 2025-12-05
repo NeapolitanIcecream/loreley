@@ -1629,7 +1629,7 @@
 </li>
 <li>Configuration fields:<ul>
 <li><code>bin</code>: CLI executable to invoke (default <code>"cursor-agent"</code>).  </li>
-<li><code>model</code>: optional model identifier passed as <code>--model</code> (for example, <code>"gpt-5"</code>).  </li>
+<li><code>model</code>: model identifier passed as <code>--model</code>; defaults to <code>"GPT-5.1 Codex Max"</code> and can be overridden (for example, <code>"gpt-5"</code>), including via the <code>cursor_backend_from_settings()</code> helper that reads <code>WORKER_CURSOR_MODEL</code>.  </li>
 <li><code>timeout_seconds</code>: hard timeout for the subprocess invocation.  </li>
 <li><code>extra_env</code>: dict of additional environment variables merged into the subprocess environment.  </li>
 <li><code>output_format</code>: value passed as <code>--output-format</code> (default <code>"text"</code>), typically left as <code>"text"</code> so the agent can emit a single JSON object as plain text.  </li>
@@ -1648,6 +1648,7 @@
 <li>Does not pass JSON Schema to the CLI directly; structured agents are expected to enforce schemas via prompt engineering (for example by embedding the schema in the prompt when using <code>"prompt"</code> schema mode).</li>
 </ul>
 </li>
+<li><strong>Factory helper</strong>: <code>cursor_backend_from_settings()</code> builds a <code>CursorCliBackend</code> using application settings (notably <code>WORKER_CURSOR_MODEL</code>) so deployments can pick a Cursor model without writing custom wiring.</li>
 </ul>
 <h2 id="internal-utilities">Internal utilities<a class="headerlink" href="#internal-utilities" title="Permanent link">&para;</a></h2>
 <ul>
