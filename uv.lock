@@ -472,7 +472,6 @@ wheels = [
 
 [[package]]
 name = "loreley"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "dramatiq", extra = ["redis"] },
