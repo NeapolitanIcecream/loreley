@@ -24,6 +24,7 @@ import argparse
 import json
 import os
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -88,8 +89,15 @@ WORKER_REPO_REMOTE_URL: str = str(REPO_ROOT)
 # Git branch to track on the remote when syncing the worker clone.
 WORKER_REPO_BRANCH: str = "main"
 
-# Local worktree used exclusively by the worker process.
-WORKER_REPO_WORKTREE: Path = REPO_ROOT / ".cache" / "loreley" / "worker-repo"
+# Local worktree used exclusively by the worker process. A random suffix is
+# added so that multiple runs on the same machine can coexist without sharing
+# the same git worktree directory.
+def _build_worker_repo_worktree() -> Path:
+    random_suffix = uuid.uuid4().hex[:8]
+    return REPO_ROOT / ".cache" / "loreley" / f"worker-repo-{random_suffix}"
+
+
+WORKER_REPO_WORKTREE: Path = _build_worker_repo_worktree()
 
 # --- Scheduler configuration ------------------------------------------------
 
@@ -105,7 +113,7 @@ SCHEDULER_MAX_UNFINISHED_JOBS: int = 1
 
 # Optional global limit on total jobs scheduled by this process.
 # Set to None for no global cap.
-SCHEDULER_MAX_TOTAL_JOBS: int | None = 1
+SCHEDULER_MAX_TOTAL_JOBS: int | None = 2
 
 # --- Circle-packing evaluator configuration --------------------------------
 
