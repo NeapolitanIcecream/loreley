@@ -8,6 +8,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Sequence
 
+from git import Repo
+from git.exc import InvalidGitRepositoryError, NoSuchPathError
+
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from rich.console import Console
@@ -209,6 +212,7 @@ class CodingAgent:
         """Execute the provided plan and return structured results."""
         worktree = Path(working_dir).expanduser().resolve()
         prompt = self._render_prompt(request, worktree=worktree)
+        baseline_status = self._snapshot_worktree_state(worktree)
 
         if self.validation_mode in ("strict", "lenient"):
             task = StructuredAgentTask(
@@ -242,6 +246,26 @@ class CodingAgent:
                     request=request,
                     invocation=invocation,
                 )
+                current_status = self._snapshot_worktree_state(worktree)
+                if current_status == baseline_status:
+                    no_change_error = CodingError(
+                        "Coding agent finished without producing repository changes.",
+                    )
+                    self._dump_debug_artifact(
+                        request=request,
+                        worktree=worktree,
+                        invocation=invocation,
+                        prompt=prompt,
+                        attempt=attempt,
+                        execution=execution,
+                        error=no_change_error,
+                    )
+                    console.log(
+                        "[yellow]Coding agent[/] produced no repository changes; retrying…",
+                    )
+                    log.warning("Coding attempt {} produced no repository changes", attempt)
+                    last_error = no_change_error
+                    continue
                 self._dump_debug_artifact(
                     request=request,
                     worktree=worktree,
@@ -557,6 +581,21 @@ When you finish applying the plan:
         logs_root = base_dir / "logs" / "worker" / "coding"
         logs_root.mkdir(parents=True, exist_ok=True)
         return logs_root
+
+    def _snapshot_worktree_state(self, worktree: Path) -> tuple[str, ...]:
+        """Return a stable snapshot of the worktree status for change detection."""
+        try:
+            repo = Repo(worktree)
+        except (InvalidGitRepositoryError, NoSuchPathError) as exc:  # pragma: no cover - defensive
+            raise CodingError(f"Invalid git worktree for coding agent: {worktree}") from exc
+
+        try:
+            status_output = repo.git.status("--porcelain", "--untracked-files=all")
+        except Exception as exc:  # pragma: no cover - defensive
+            raise CodingError("Failed to inspect worktree status during coding run.") from exc
+
+        lines = [line.strip() for line in status_output.splitlines() if line.strip()]
+        return tuple(sorted(lines))
 
     def _dump_debug_artifact(
         self,
