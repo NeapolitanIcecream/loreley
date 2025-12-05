@@ -75,7 +75,7 @@ class CommitSummarizer:
             try:
                 instructions = (
                     "Respond with a single concise git commit subject line "
-                    "in imperative mood (<=72 characters)."
+                    f"in imperative mood (<= {self._subject_limit} characters)."
                 )
                 if self._api_spec == "responses":
                     response = self._client.responses.create(

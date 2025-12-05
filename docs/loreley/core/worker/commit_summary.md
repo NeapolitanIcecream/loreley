@@ -29,7 +29,7 @@ Commit summarisation utilities used by the evolution worker to derive concise gi
     - Plan `summary`, `rationale`, focus metrics, guardrails, constraints, acceptance criteria, and notes.
     - Coding execution summary, per-step outcomes (step IDs, statuses, summaries), and the list of tests executed.
     - The coding agent's own suggested `commit_message` as a fallback hint.
-  - Calls the `OpenAI` responses API with the configured model, temperature, and token limit, plus an `instructions` string that asks for a single imperative git subject no longer than 72 characters.
+  - Calls the `OpenAI` responses API with the configured model, temperature, and token limit, plus an `instructions` string that asks for a single imperative git subject bounded by `WORKER_EVOLUTION_COMMIT_SUBJECT_MAX_CHARS` (minimum 32; enforced both in the prompt and when normalising the final subject).
   - Retries up to `_max_retries` times on `OpenAIError` or `CommitSummaryError`, waiting for `retry_backoff * attempt` seconds between attempts, regardless of whether Responses or Chat Completions is selected.
   - On success, strips and normalises whitespace, then enforces the subject character limit via `_normalise_subject()`, logging the attempt count via `loguru`.
   - On exhausting retries, raises `CommitSummaryError` with a descriptive message including the number of attempts.

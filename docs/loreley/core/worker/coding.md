@@ -5,7 +5,7 @@ Execution engine for Loreley's autonomous worker, responsible for driving the Co
 ## Domain types
 
 - **`CodingError`**: custom runtime error raised when the coding agent cannot successfully execute the plan (invalid schema, Codex failures, bad working directory, timeouts, etc.).
-- **`StepExecutionStatus`**: string `Enum` describing how each plan step was handled (`COMPLETED`, `PARTIAL`, or `SKIPPED`).
+- **`StepExecutionStatus`**: string `Enum` describing how each plan step was handled (`"completed"`, `"partial"`, or `"skipped"`).
 - **`CodingStepReport`**: dataclass capturing the outcome of a single step (`step_id`, `status`, human-readable `summary`, and optional `files` / `commands` touched by that step).
 - **`CodingPlanExecution`**: aggregate result for the whole run, including the overall `implementation_summary`, optional `commit_message`, tuple of `step_results`, `tests_executed`, `tests_recommended`, `follow_up_items`, and `notes`.
 - **`CodingAgentRequest`**: input payload given to the coding agent (`goal`, `plan` from `PlanningPlan`, `base_commit`, optional `constraints`, `acceptance_criteria`, `iteration_hint`, and `additional_notes`); the `goal` is the same global evolution objective that the planning agent sees, resolved by the evolution worker from either explicit job payload fields or `Settings.worker_evolution_global_goal`. All sequence fields are normalised to tuples in `__post_init__`.
@@ -27,6 +27,7 @@ Execution engine for Loreley's autonomous worker, responsible for driving the Co
     - In `"none"` mode, no schema is enforced at the backend level and the agent skips JSON parsing entirely, always building a minimal `CodingPlanExecution` directly from the raw free-form output and job context.
   - Retries the backend invocation up to `max_attempts` times when the process fails or, in strict/lenient modes, when JSON decoding / schema validation errors occur, logging warnings via `loguru` and showing concise progress output with `rich`.
   - On success, either parses JSON into `_CodingOutputModel` and converts it into a `CodingPlanExecution`, or (for lenient/none modes when parsing is not possible) returns a best-effort synthetic `CodingPlanExecution`; on repeated failure or timeout, raises `CodingError` with a descriptive message.
+  - Detects and treats a run that leaves the worktree unchanged as a failure, persisting debug artifacts and retrying until attempts are exhausted.
   - Merges any configured extra environment variables into the backend subprocess environment and enforces bounded prompt and log sizes via `_truncate`.
 
 ## Exceptions and helpers
