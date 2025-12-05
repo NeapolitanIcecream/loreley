@@ -1,6 +1,6 @@
 [project]
 name = "loreley"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Production-grade framework that automatically evolves the entire git repository."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -31,8 +31,14 @@ dev = [
 ]
 
 [build-system]
-requires = ["hatchling>=1.28.0"]
+requires = [
+    "hatchling>=1.28.0",
+    "hatch-vcs",
+]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["loreley"]
