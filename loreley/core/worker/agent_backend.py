@@ -21,8 +21,10 @@ __all__ = [
     "StructuredAgentTask",
     "CodexCliBackend",
     "CursorCliBackend",
+    "DEFAULT_CURSOR_MODEL",
     "resolve_schema_mode",
     "load_agent_backend",
+    "cursor_backend_from_settings",
 ]
 
 SchemaMode = Literal["native", "prompt", "none"]
@@ -143,6 +145,9 @@ def _import_backend_target(module_name: str, attr_path: str) -> Any:
                 f"Module {module_name!r} does not expose attribute {attr_path!r}.",
             ) from exc
     return target
+
+
+DEFAULT_CURSOR_MODEL = "GPT-5.1 Codex Max"
 
 
 def load_agent_backend(ref: str, *, label: str) -> AgentBackend:
@@ -306,7 +311,7 @@ class CursorCliBackend:
     """
 
     bin: str = "cursor-agent"
-    model: str | None = None
+    model: str | None = DEFAULT_CURSOR_MODEL
     timeout_seconds: int = 600
     extra_env: dict[str, str] = field(default_factory=dict)
     output_format: str = "text"
@@ -390,5 +395,20 @@ class CursorCliBackend:
             stderr=stderr,
             duration_seconds=duration,
         )
+
+
+def cursor_backend_from_settings(
+    *,
+    settings: Any | None = None,
+    error_cls: type[RuntimeError] = RuntimeError,
+) -> CursorCliBackend:
+    """Factory to build a Cursor backend using configured defaults."""
+    if settings is None:
+        from loreley.config import get_settings
+
+        settings = get_settings()
+
+    model = getattr(settings, "worker_cursor_model", DEFAULT_CURSOR_MODEL)
+    return CursorCliBackend(model=model or DEFAULT_CURSOR_MODEL, error_cls=error_cls)
 
 

@@ -200,6 +200,10 @@ class Settings(BaseSettings):
         default=None,
         alias="WORKER_CODING_BACKEND",
     )
+    worker_cursor_model: str = Field(
+        default="GPT-5.1 Codex Max",
+        alias="WORKER_CURSOR_MODEL",
+    )
     worker_planning_codex_schema_mode: Literal[
         "auto",
         "native",

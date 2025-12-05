@@ -65,7 +65,7 @@ Shared abstractions and helpers for structured planning/coding agents plus the d
 - **`CursorCliBackend`**: concrete `AgentBackend` implementation that delegates to the Cursor Agent CLI (`cursor-agent`).  
   - Configuration fields:
     - `bin`: CLI executable to invoke (default `"cursor-agent"`).  
-    - `model`: optional model identifier passed as `--model` (for example, `"gpt-5"`).  
+    - `model`: model identifier passed as `--model`; defaults to `"GPT-5.1 Codex Max"` and can be overridden (for example, `"gpt-5"`), including via the `cursor_backend_from_settings()` helper that reads `WORKER_CURSOR_MODEL`.  
     - `timeout_seconds`: hard timeout for the subprocess invocation.  
     - `extra_env`: dict of additional environment variables merged into the subprocess environment.  
     - `output_format`: value passed as `--output-format` (default `"text"`), typically left as `"text"` so the agent can emit a single JSON object as plain text.  
@@ -80,6 +80,7 @@ Shared abstractions and helpers for structured planning/coding agents plus the d
     - Captures stdout/stderr and enforces the timeout via `subprocess.run(...)`.  
     - Raises `error_cls` when the process exits non‑zero or times out; even when stdout is empty it still returns an `AgentInvocation`, leaving it to higher‑level agents and validation logic to decide how to handle the result.  
     - Does not pass JSON Schema to the CLI directly; structured agents are expected to enforce schemas via prompt engineering (for example by embedding the schema in the prompt when using `"prompt"` schema mode).
+  - **Factory helper**: `cursor_backend_from_settings()` builds a `CursorCliBackend` using application settings (notably `WORKER_CURSOR_MODEL`) so deployments can pick a Cursor model without writing custom wiring.
 
 ## Internal utilities
 
