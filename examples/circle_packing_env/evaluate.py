@@ -29,7 +29,7 @@ def _load_pack_circles(worktree: Path) -> Any:
         <worktree>/solution.py
     """
     import importlib.util
-    import types
+    import sys
 
     worktree_path = Path(worktree).expanduser().resolve()
     solution_path = worktree_path / "solution.py"
@@ -46,8 +46,14 @@ def _load_pack_circles(worktree: Path) -> Any:
     if spec is None or spec.loader is None:
         raise ImportError(f"Could not create import spec for {solution_path!s}.")
 
-    module = types.ModuleType(spec.name)
-    spec.loader.exec_module(module)  # type: ignore[assignment]
+    module = importlib.util.module_from_spec(spec)
+    # Ensure the module is registered so decorators (e.g., dataclass) can resolve __module__.
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)  # type: ignore[assignment]
+    except Exception:
+        sys.modules.pop(spec.name, None)
+        raise
 
     if not hasattr(module, "pack_circles"):
         raise AttributeError(
