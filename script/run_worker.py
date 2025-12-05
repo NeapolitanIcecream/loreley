@@ -4,10 +4,12 @@ from __future__ import annotations
 
 This script:
 
+- Parses a small CLI so ``--help`` works even without environment variables.
 - Loads application settings and configures Loguru logging, including routing
   standard-library logging (used by Dramatiq) through Loguru.
-- Initialises the Dramatiq Redis broker defined in ``loreley.tasks.broker``.
-- Imports ``loreley.tasks.workers`` so that the ``run_evolution_job`` actor is registered.
+- Lazily initialises the Dramatiq Redis broker defined in
+  ``loreley.tasks.broker`` and imports ``loreley.tasks.workers`` so that the
+  ``run_evolution_job`` actor is registered.
 - Starts a single Dramatiq worker bound to the configured queue using a
   single-threaded worker pool.
 
@@ -16,6 +18,7 @@ Typical usage (with uv):
     uv run python script/run_worker.py
 """
 
+import argparse
 import logging
 import signal
 import sys
@@ -29,11 +32,24 @@ from loguru import logger
 from rich.console import Console
 
 from loreley.config import Settings, get_settings
-from loreley.tasks.broker import broker  # noqa: F401 - ensure broker is initialised
-import loreley.tasks.workers as _workers  # noqa: F401  - register actors
 
 console = Console()
 log = logger.bind(module="script.run_worker")
+
+
+def _build_arg_parser() -> argparse.ArgumentParser:
+    """Return a minimal CLI parser so users can ask for help without config."""
+
+    parser = argparse.ArgumentParser(
+        description="Run the Loreley evolution worker (single-threaded Dramatiq consumer).",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--log-level",
+        dest="log_level",
+        help="Override Settings.log_level for this invocation (e.g. DEBUG, INFO).",
+    )
+    return parser
 
 
 class _LoguruInterceptHandler(logging.Handler):
@@ -83,11 +99,10 @@ def _resolve_logs_dir(settings: Settings, role: str) -> Path:
     return log_dir
 
 
-def _configure_logging() -> None:
+def _configure_logging(settings: Settings, *, override_level: str | None = None) -> None:
     """Configure Loguru and bridge stdlib logging using application settings."""
 
-    settings = get_settings()
-    level = (settings.log_level or "INFO").upper()
+    level = (override_level or settings.log_level or "INFO").upper()
 
     logger.remove()
     logger.add(
@@ -137,8 +152,19 @@ def _install_signal_handlers(worker: Worker, stop_event: threading.Event | None 
 def main(_argv: Sequence[str] | None = None) -> int:
     """CLI entrypoint for the evolution worker wrapper."""
 
-    _configure_logging()
-    settings = get_settings()
+    parser = _build_arg_parser()
+    args = parser.parse_args(list(_argv) if _argv is not None else None)
+
+    try:
+        settings = get_settings()
+    except Exception as exc:  # pragma: no cover - defensive
+        console.log(
+            "[bold red]Invalid Loreley configuration[/] "
+            f"reason={exc}. Use --help for usage and set required environment variables."
+        )
+        return 1
+
+    _configure_logging(settings, override_level=args.log_level)
 
     console.log(
         "[bold green]Loreley worker online[/] "
@@ -150,7 +176,22 @@ def main(_argv: Sequence[str] | None = None) -> int:
         settings.worker_repo_worktree,
     )
 
-    worker = Worker(broker, worker_threads=1)  # single-threaded worker
+    try:
+        # Lazily import the broker and worker actors after logging is configured
+        # so that any configuration errors are surfaced cleanly to the user.
+        from loreley.tasks import broker as broker_module
+        import loreley.tasks.workers as _workers  # noqa: F401  - register actors
+
+        dramatiq_broker = broker_module.broker
+    except Exception as exc:  # pragma: no cover - defensive
+        console.log(
+            "[bold red]Failed to initialise worker dependencies[/] "
+            f"reason={exc}. Check Redis/DB configuration and try again.",
+        )
+        log.exception("Worker bootstrap failed")
+        return 1
+
+    worker = Worker(dramatiq_broker, worker_threads=1)  # single-threaded worker
     stop_event = threading.Event()
     _install_signal_handlers(worker, stop_event=stop_event)
 
@@ -163,6 +204,11 @@ def main(_argv: Sequence[str] | None = None) -> int:
             "[yellow]Keyboard interrupt received[/]; shutting down worker...",
         )
         worker.stop()
+    except Exception as exc:  # pragma: no cover - defensive
+        console.log("[bold red]Worker failed to start[/] reason={}".format(exc))
+        log.exception("Worker crashed during startup")
+        worker.stop()
+        return 1
     finally:
         # Ensure the worker is fully stopped before exiting.
         worker.stop()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 This is a thin wrapper around ``loreley.scheduler.main`` that:
 
+- Exposes a small CLI so ``--help`` works without a configured environment.
 - Initialises application settings.
 - Configures Loguru logging level based on ``Settings.log_level`` and routes
   standard-library logging (used by Dramatiq) through Loguru.
@@ -12,9 +13,10 @@ This is a thin wrapper around ``loreley.scheduler.main`` that:
 Usage (with uv):
 
     uv run python script/run_scheduler.py            # continuous loop
-    uv run python script/run_scheduler.py -- --once # single tick then exit
+    uv run python script/run_scheduler.py --once    # single tick then exit
 """
 
+import argparse
 import logging
 from datetime import datetime
 import sys
@@ -25,9 +27,23 @@ from loguru import logger
 from rich.console import Console
 
 from loreley.config import Settings, get_settings
-from loreley.scheduler.main import main as scheduler_main
 
 console = Console()
+
+
+def _build_arg_parser() -> argparse.ArgumentParser:
+    """Return a minimal CLI parser and pass through unknown args to the scheduler."""
+
+    parser = argparse.ArgumentParser(
+        description="Run the Loreley evolution scheduler.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--log-level",
+        dest="log_level",
+        help="Override Settings.log_level for this invocation (e.g. DEBUG, INFO).",
+    )
+    return parser
 
 
 class _LoguruInterceptHandler(logging.Handler):
@@ -73,11 +89,10 @@ def _resolve_logs_dir(settings: Settings, role: str) -> Path:
     return log_dir
 
 
-def _configure_logging() -> None:
+def _configure_logging(settings: Settings, *, override_level: str | None = None) -> None:
     """Configure Loguru and bridge stdlib logging using application settings."""
 
-    settings = get_settings()
-    level = (settings.log_level or "INFO").upper()
+    level = (override_level or settings.log_level or "INFO").upper()
 
     logger.remove()
     logger.add(
@@ -111,9 +126,34 @@ def _configure_logging() -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entrypoint for the scheduler wrapper."""
 
-    _configure_logging()
+    parser = _build_arg_parser()
+    args, forwarded = parser.parse_known_args(list(argv) if argv is not None else None)
+
+    try:
+        settings = get_settings()
+    except Exception as exc:  # pragma: no cover - defensive
+        console.log(
+            "[bold red]Invalid Loreley configuration[/] "
+            f"reason={exc}. Use --help for usage and set required environment variables."
+        )
+        return 1
+
+    _configure_logging(settings, override_level=args.log_level)
+
+    try:
+        from loreley.scheduler.main import main as scheduler_main
+    except Exception as exc:  # pragma: no cover - defensive
+        console.log("[bold red]Failed to import scheduler[/] reason={}".format(exc))
+        logger.exception("Scheduler import failed")
+        return 1
+
     # Delegate argument parsing and control flow to loreley.scheduler.main.
-    return int(scheduler_main(argv))
+    try:
+        return int(scheduler_main(forwarded))
+    except Exception as exc:  # pragma: no cover - defensive
+        console.log("[bold red]Scheduler failed to start[/] reason={}".format(exc))
+        logger.exception("Scheduler crashed during startup")
+        return 1
 
 
 if __name__ == "__main__":  # pragma: no cover

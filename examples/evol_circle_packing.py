@@ -539,7 +539,7 @@ def _run_worker() -> int:
     from script.run_worker import main as worker_main
 
     console.log("[bold green]Starting worker[/] …")
-    return int(worker_main(None))
+    return int(worker_main([]))
 
 
 def main(argv: list[str] | None = None) -> int:
