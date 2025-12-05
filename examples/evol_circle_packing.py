@@ -97,7 +97,7 @@ def _build_worker_repo_worktree() -> Path:
     return REPO_ROOT / ".cache" / "loreley" / f"worker-repo-{random_suffix}"
 
 
-WORKER_REPO_WORKTREE: Path = _build_worker_repo_worktree()
+# Worker worktree is derived lazily when launching a worker process.
 
 # --- Scheduler configuration ------------------------------------------------
 
@@ -212,7 +212,7 @@ def _set_env_if_unset(name: str, value: Any | None) -> None:
     os.environ[name] = str(value)
 
 
-def _apply_base_env() -> None:
+def _apply_base_env(*, include_worker_repo: bool = False) -> None:
     """Populate os.environ with the configuration defined above."""
 
     # Basic app metadata and logging.
@@ -241,7 +241,8 @@ def _apply_base_env() -> None:
     # Worker repository.
     _set_env_if_unset("WORKER_REPO_REMOTE_URL", WORKER_REPO_REMOTE_URL)
     _set_env_if_unset("WORKER_REPO_BRANCH", WORKER_REPO_BRANCH)
-    _set_env_if_unset("WORKER_REPO_WORKTREE", WORKER_REPO_WORKTREE)
+    if include_worker_repo:
+        _set_env_if_unset("WORKER_REPO_WORKTREE", _build_worker_repo_worktree())
 
     # Scheduler.
     if SCHEDULER_REPO_ROOT is not None:
@@ -399,9 +400,11 @@ def _ensure_repo_on_sys_path() -> None:
 def _print_environment_summary() -> None:
     """Print a short summary of the effective runtime configuration."""
 
+    worker_worktree = os.getenv("WORKER_REPO_WORKTREE", "<unset>")
+
     console.log(
         "[bold cyan]Circle-packing evolution launcher[/] "
-        f"repo_root={REPO_ROOT} worker_worktree={WORKER_REPO_WORKTREE}",
+        f"repo_root={REPO_ROOT} worker_worktree={worker_worktree}",
     )
     console.log(
         "[green]DB[/] DATABASE_URL={}".format(os.getenv("DATABASE_URL", "<unset>")),
@@ -527,7 +530,7 @@ def _run_scheduler(once: bool, init_db: bool) -> int:
 def _run_worker() -> int:
     """Run a single-threaded Loreley evolution worker."""
 
-    _apply_base_env()
+    _apply_base_env(include_worker_repo=True)
     _ensure_repo_on_sys_path()
     _print_environment_summary()
     # Import after environment is configured so that Settings, Redis broker, and
