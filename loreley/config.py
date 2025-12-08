@@ -485,13 +485,13 @@ class Settings(BaseSettings):
         default=True,
         alias="MAPELITES_DIMENSION_REDUCTION_PENULTIMATE_NORMALIZE",
     )
-    mapelites_feature_lower_bounds: list[float] = Field(
-        default_factory=lambda: [-6.0, -6.0, -6.0, -6.0],
-        alias="MAPELITES_FEATURE_LOWER_BOUNDS",
+    mapelites_feature_truncation_k: float = Field(
+        default=3.0,
+        alias="MAPELITES_FEATURE_TRUNCATION_K",
     )
-    mapelites_feature_upper_bounds: list[float] = Field(
-        default_factory=lambda: [6.0, 6.0, 6.0, 6.0],
-        alias="MAPELITES_FEATURE_UPPER_BOUNDS",
+    mapelites_feature_normalization_warmup_samples: int = Field(
+        default=0,
+        alias="MAPELITES_FEATURE_NORMALIZATION_WARMUP_SAMPLES",
     )
     mapelites_archive_cells_per_dim: int = Field(
         default=32,
@@ -572,6 +572,21 @@ class Settings(BaseSettings):
             base = Path(self.worker_repo_worktree).expanduser()
             randomized = base.parent / f"{base.name}-{suffix}"
             object.__setattr__(self, "worker_repo_worktree", str(randomized))
+
+        min_fit = int(self.mapelites_dimensionality_min_fit_samples)
+        warmup = int(self.mapelites_feature_normalization_warmup_samples or 0)
+        if warmup <= 0:
+            warmup = min_fit
+        warmup = max(min_fit, warmup)
+        object.__setattr__(
+            self,
+            "mapelites_feature_normalization_warmup_samples",
+            warmup,
+        )
+        truncation_k = float(self.mapelites_feature_truncation_k)
+        if truncation_k <= 0.0:
+            truncation_k = 3.0
+        object.__setattr__(self, "mapelites_feature_truncation_k", truncation_k)
 
     @computed_field(return_type=str)
     @property

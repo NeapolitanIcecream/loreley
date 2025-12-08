@@ -81,9 +81,11 @@ def _make_projection() -> PCAProjection:
         feature_count=2,
         components=((1.0, 0.0), (0.0, 1.0)),
         mean=(0.0, 0.0),
+        explained_variance=(1.0, 1.0),
         explained_variance_ratio=(1.0, 0.0),
         sample_count=10,
         fitted_at=123.0,
+        whiten=True,
     )
 
 

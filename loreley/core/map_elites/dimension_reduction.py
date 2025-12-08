@@ -52,9 +52,11 @@ class PCAProjection:
     feature_count: int
     components: tuple[Vector, ...]
     mean: Vector
+    explained_variance: tuple[float, ...]
     explained_variance_ratio: tuple[float, ...]
     sample_count: int
     fitted_at: float
+    whiten: bool
 
     @property
     def dimensions(self) -> int:
@@ -72,6 +74,14 @@ class PCAProjection:
             sum(component[idx] * centered[idx] for idx in range(self.feature_count))
             for component in self.components
         ]
+        if self.whiten and self.explained_variance:
+            variances = list(self.explained_variance)
+            if len(variances) < len(transformed):
+                variances.extend([1.0] * (len(transformed) - len(variances)))
+            transformed = [
+                value / math.sqrt(variance) if variance > 0.0 else value
+                for value, variance in zip(transformed, variances)
+            ]
         return tuple(transformed)
 
     @classmethod
@@ -88,6 +98,9 @@ class PCAProjection:
             tuple(float(value) for value in row) for row in model.components_
         )
         mean = tuple(float(value) for value in model.mean_)
+        explained_variance = tuple(
+            float(value) for value in getattr(model, "explained_variance_", [])
+        )
         explained = tuple(
             float(value) for value in getattr(model, "explained_variance_ratio_", [])
         )
@@ -95,9 +108,11 @@ class PCAProjection:
             feature_count=len(mean),
             components=components,
             mean=mean,
+            explained_variance=explained_variance,
             explained_variance_ratio=explained,
             sample_count=sample_count,
             fitted_at=fitted_at or time.time(),
+            whiten=bool(getattr(model, "whiten", False)),
         )
 
 
@@ -127,6 +142,7 @@ class DimensionReducer:
         self._min_fit_samples = max(
             2,
             self.settings.mapelites_dimensionality_min_fit_samples,
+            self.settings.mapelites_feature_normalization_warmup_samples,
         )
         self._history_limit = max(
             self._min_fit_samples,
@@ -312,7 +328,11 @@ class DimensionReducer:
             )
             return None
 
-        model = PCA(n_components=n_components, svd_solver="auto")
+        model = PCA(
+            n_components=n_components,
+            svd_solver="auto",
+            whiten=True,
+        )
         try:
             model.fit([entry.vector for entry in samples])
         except ValueError as exc:

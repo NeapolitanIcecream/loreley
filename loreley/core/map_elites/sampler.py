@@ -111,14 +111,8 @@ class MapElitesSampler:
         self._default_priority = self.settings.mapelites_sampler_default_priority
         self._include_metadata = bool(self.settings.mapelites_sampler_include_metadata)
         self._default_island = self.settings.mapelites_default_island_id or "default"
-        self._lower_bounds = self._normalise_bounds(
-            self.settings.mapelites_feature_lower_bounds,
-            fallback=-6.0,
-        )
-        self._upper_bounds = self._normalise_bounds(
-            self.settings.mapelites_feature_upper_bounds,
-            fallback=6.0,
-        )
+        self._lower_bounds = tuple(0.0 for _ in range(self._target_dims))
+        self._upper_bounds = tuple(1.0 for _ in range(self._target_dims))
 
     def schedule_job(
         self,
@@ -340,19 +334,6 @@ class MapElitesSampler:
             log.error("Failed to persist evolution job for island {}: {}", island_id, exc)
             return None
         return job
-
-    def _normalise_bounds(
-        self,
-        raw: Sequence[float] | None,
-        *,
-        fallback: float,
-    ) -> tuple[float, ...]:
-        values = list(raw or [])
-        if not values:
-            values = [fallback]
-        if len(values) < self._target_dims:
-            values.extend([values[-1]] * (self._target_dims - len(values)))
-        return tuple(float(value) for value in values[: self._target_dims])
 
     @staticmethod
     def _format_timestamp(value: float) -> str:

@@ -107,7 +107,7 @@ SCHEDULER_MAX_UNFINISHED_JOBS: int = 4
 
 # Optional global limit on total jobs scheduled by this process.
 # Set to None for no global cap.
-SCHEDULER_MAX_TOTAL_JOBS: int | None = 20
+SCHEDULER_MAX_TOTAL_JOBS: int | None = 100
 
 # --- Circle-packing evaluator configuration --------------------------------
 
@@ -136,10 +136,12 @@ MAPELITES_SEED_POPULATION_SIZE: int = 4
 
 # Behaviour space sized for <= ~200 total jobs.
 MAPELITES_DIMENSION_REDUCTION_TARGET_DIMS: int = 2
-MAPELITES_DIMENSION_REDUCTION_MIN_FIT_SAMPLES: int = 16
-MAPELITES_FEATURE_LOWER_BOUNDS: list[float] = [-6.0, -6.0]
-MAPELITES_FEATURE_UPPER_BOUNDS: list[float] = [6.0, 6.0]
-MAPELITES_ARCHIVE_CELLS_PER_DIM: int = 14
+MAPELITES_DIMENSION_REDUCTION_MIN_FIT_SAMPLES: int = 8
+MAPELITES_FEATURE_TRUNCATION_K: float = 3.0
+MAPELITES_FEATURE_NORMALIZATION_WARMUP_SAMPLES: int = (
+    MAPELITES_DIMENSION_REDUCTION_MIN_FIT_SAMPLES
+)
+MAPELITES_ARCHIVE_CELLS_PER_DIM: int = 12
 MAPELITES_FEATURE_CLIP: bool = True
 
 # --- Agent backends ---------------------------------------------------------
@@ -297,16 +299,14 @@ def _apply_base_env(*, include_worker_repo: bool = False) -> None:
         "MAPELITES_ARCHIVE_CELLS_PER_DIM",
         MAPELITES_ARCHIVE_CELLS_PER_DIM,
     )
-    if MAPELITES_FEATURE_LOWER_BOUNDS:
-        _set_env_if_unset(
-            "MAPELITES_FEATURE_LOWER_BOUNDS",
-            json.dumps(MAPELITES_FEATURE_LOWER_BOUNDS),
-        )
-    if MAPELITES_FEATURE_UPPER_BOUNDS:
-        _set_env_if_unset(
-            "MAPELITES_FEATURE_UPPER_BOUNDS",
-            json.dumps(MAPELITES_FEATURE_UPPER_BOUNDS),
-        )
+    _set_env_if_unset(
+        "MAPELITES_FEATURE_TRUNCATION_K",
+        MAPELITES_FEATURE_TRUNCATION_K,
+    )
+    _set_env_if_unset(
+        "MAPELITES_FEATURE_NORMALIZATION_WARMUP_SAMPLES",
+        MAPELITES_FEATURE_NORMALIZATION_WARMUP_SAMPLES,
+    )
     _set_env_if_unset("MAPELITES_FEATURE_CLIP", MAPELITES_FEATURE_CLIP)
 
     # Agent backends

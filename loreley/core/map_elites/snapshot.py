@@ -267,11 +267,13 @@ def serialize_projection(projection: PCAProjection | None) -> dict[str, Any] | N
         "feature_count": projection.feature_count,
         "components": [[float(value) for value in row] for row in projection.components],
         "mean": [float(value) for value in projection.mean],
+        "explained_variance": [float(value) for value in projection.explained_variance],
         "explained_variance_ratio": [
             float(value) for value in projection.explained_variance_ratio
         ],
         "sample_count": projection.sample_count,
         "fitted_at": projection.fitted_at,
+        "whiten": projection.whiten,
     }
 
 
@@ -284,15 +286,19 @@ def deserialize_projection(payload: Mapping[str, Any] | None) -> PCAProjection |
     components = tuple(tuple(float(value) for value in row) for row in components_payload)
     mean_raw = payload.get("mean") or []
     mean = tuple(float(value) for value in mean_raw)
+    explained_variance_raw = payload.get("explained_variance") or []
+    explained_variance = tuple(float(value) for value in explained_variance_raw)
     explained_raw = payload.get("explained_variance_ratio") or []
     explained = tuple(float(value) for value in explained_raw)
     return PCAProjection(
         feature_count=int(payload.get("feature_count", len(mean))),
         components=components,
         mean=mean,
+        explained_variance=explained_variance,
         explained_variance_ratio=explained,
         sample_count=int(payload.get("sample_count", 0)),
         fitted_at=float(payload.get("fitted_at", 0.0)),
+        whiten=bool(payload.get("whiten", False)),
     )
 
 

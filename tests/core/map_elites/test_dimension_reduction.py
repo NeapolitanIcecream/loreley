@@ -33,9 +33,11 @@ def test_pca_projection_transform_basic() -> None:
         feature_count=2,
         components=((1.0, 0.0), (0.0, 1.0)),
         mean=(1.0, 2.0),
+        explained_variance=(1.0, 1.0),
         explained_variance_ratio=(1.0, 1.0),
         sample_count=10,
         fitted_at=123.0,
+        whiten=False,
     )
 
     result = projection.transform((2.0, 4.0))

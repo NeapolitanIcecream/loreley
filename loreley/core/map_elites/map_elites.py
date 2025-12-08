@@ -129,6 +129,13 @@ class MapElitesManager:
         self.settings = settings or get_settings()
         self.repo_root = Path(repo_root or Path.cwd()).resolve()
         self._target_dims = max(1, self.settings.mapelites_dimensionality_target_dims)
+        self._clip_radius = max(0.0, float(self.settings.mapelites_feature_truncation_k))
+        if self._clip_radius == 0.0:
+            self._clip_radius = 1.0
+        self._normalization_warmup = max(
+            self.settings.mapelites_dimensionality_min_fit_samples,
+            self.settings.mapelites_feature_normalization_warmup_samples,
+        )
         self._cells_per_dim = max(2, self.settings.mapelites_archive_cells_per_dim)
         self._lower_template, self._upper_template = self._build_feature_bounds()
         self._grid_shape = tuple(self._cells_per_dim for _ in range(self._target_dims))
@@ -524,17 +531,8 @@ class MapElitesManager:
         return state
 
     def _build_feature_bounds(self) -> tuple[np.ndarray, np.ndarray]:
-        lower = self._normalise_bounds(
-            self.settings.mapelites_feature_lower_bounds,
-            fallback=-6.0,
-        )
-        upper = self._normalise_bounds(
-            self.settings.mapelites_feature_upper_bounds,
-            fallback=6.0,
-        )
-        for idx, (lo, hi) in enumerate(zip(lower, upper)):
-            if hi <= lo:
-                upper[idx] = lo + 1.0
+        lower = np.zeros(self._target_dims, dtype=np.float64)
+        upper = np.ones(self._target_dims, dtype=np.float64)
         return lower, upper
 
     def _build_archive(self) -> GridArchive:
@@ -557,9 +555,17 @@ class MapElitesManager:
 
     def _clip_vector(self, vector: Vector, state: IslandState) -> np.ndarray:
         arr = np.asarray(vector, dtype=np.float64)
-        if not self.settings.mapelites_feature_clip:
-            return arr
-        return np.clip(arr, state.lower_bounds, state.upper_bounds)
+        clip_radius = self._clip_radius
+        if clip_radius <= 0.0:
+            clip_radius = 1.0
+
+        if self.settings.mapelites_feature_clip:
+            bounded = np.clip(arr, -clip_radius, clip_radius)
+        else:
+            bounded = arr
+
+        normalised = (bounded + clip_radius) / (2.0 * clip_radius)
+        return np.clip(normalised, state.lower_bounds, state.upper_bounds)
 
     def _resolve_fitness(
         self,
@@ -593,19 +599,6 @@ class MapElitesManager:
         if values is None:
             return ()
         return tuple(float(v) for v in np.asarray(values).ravel())
-
-    def _normalise_bounds(
-        self,
-        raw: Sequence[float] | None,
-        *,
-        fallback: float,
-    ) -> np.ndarray:
-        values = list(raw or [])
-        if not values:
-            values = [fallback]
-        if len(values) < self._target_dims:
-            values.extend([values[-1]] * (self._target_dims - len(values)))
-        return np.asarray(values[: self._target_dims], dtype=np.float64)
 
     def _coerce_metrics(
         self,
