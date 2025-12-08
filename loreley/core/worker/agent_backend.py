@@ -312,7 +312,7 @@ class CursorCliBackend:
 
     bin: str = "cursor-agent"
     model: str | None = DEFAULT_CURSOR_MODEL
-    timeout_seconds: int = 600
+    timeout_seconds: int = 1800
     extra_env: dict[str, str] = field(default_factory=dict)
     output_format: str = "text"
     force: bool = True
