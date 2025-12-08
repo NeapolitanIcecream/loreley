@@ -1,27 +1,111 @@
 ## Loreley
 
-Loreley is an automated MAP-Elites system that evolves entire git repositories. It continuously samples promising commits, asks external agents to implement and evaluate them, and stores the best-performing variants for later reuse.
+> Whole-repository MAP-Elites for real git codebases.
+
+Loreley is an automated MAP-Elites system that **evolves entire git repositories**, not just single files or scripts. It continuously samples promising commits, asks external agents to plan and implement changes, evaluates them, and archives the best-performing and most diverse variants for later reuse.
+
+Loreley is inspired by systems such as [AlphaEvolve](https://deepmind.google/blog/alphaevolve-a-gemini-powered-coding-agent-for-designing-advanced-algorithms/) and open-source efforts like [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve), but is designed from day one for **whole-repo evolution**, a **learned behaviour space**, and a **production-grade distributed loop**.
 
 ---
 
-## Why Loreley?
+### Why Loreley?
 
-- **Whole-repo evolution** – each individual is a real git commit, so outputs stay debuggable and compatible with normal tooling.
-- **Learned behaviour space** – behaviour descriptors come from embeddings (optionally reduced with PCA) instead of hand-picked heuristics.
-- **Production-grade loop** – a Dramatiq/Redis worker fleet, PostgreSQL archive, and central scheduler keep the system running indefinitely.
+Most existing LLM-driven evolution systems are powerful research prototypes, but they struggle when pointed at real production repositories:
 
-Related systems: [AlphaEvolve](https://deepmind.google/blog/alphaevolve-a-gemini-powered-coding-agent-for-designing-advanced-algorithms/) style pipelines and open-source efforts such as [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve) and [ShinkaEvolve](https://github.com/SakanaAI/ShinkaEvolve).
+- **Single-file focus** – they typically optimise one script or entrypoint at a time, making it hard to express refactors that span multiple modules, configurations, and tests.
+- **Hand-crafted behaviour features** – diversity is defined by manually designed descriptors, which often need to be rethought for every new project and may miss important behavioural axes.
+- **Non-distributed or demo-oriented loops** – orchestration is usually a bespoke script rather than a resilient, distributed-native job system.
+
+Loreley addresses these limitations with three core ideas:
+
+- **Whole-repo evolution** – each individual in the search is a real git commit. The evolution worker checks out a clean worktree, applies cross-file changes (including new files and configs), runs evaluation, and produces a debuggable commit that works with normal tooling (git, CI, code review).
+- **Learned behaviour space** – instead of hand-picking behaviour descriptors, Loreley learns them from code and summary embeddings (optionally reduced with PCA). Behavioural diversity is measured directly in this learned space, so the same pipeline can generalise across very different repositories.
+- **Production-grade distributed loop** – a Dramatiq/Redis worker fleet, PostgreSQL-backed archive, and a central scheduler provide a long-running evolution loop that can scale out horizontally, respect resource limits, and cleanly export strong candidates as git branches.
+
+Related systems include [AlphaEvolve](https://deepmind.google/blog/alphaevolve-a-gemini-powered-coding-agent-for-designing-advanced-algorithms/), [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve), and [ShinkaEvolve](https://github.com/SakanaAI/ShinkaEvolve). Loreley focuses specifically on **whole-repository, production-grade evolution**.
 
 ---
 
-## Architecture at a Glance
+### System overview
 
-- **Configuration (`loreley.config`)** – a single `Settings` object (pydantic-settings) that centralises environment-driven configuration for logging, database, Redis/Dramatiq, scheduler, worker repositories, and MAP-Elites knobs.
+At a high level, Loreley sits between your git repository, a pool of LLM-based agents, and a MAP-Elites archive:
+
+```mermaid
+flowchart LR
+  repo["Git repository\n(target project)"]
+  sched["Scheduler\n(EvolutionScheduler)"]
+  queue["Redis / Dramatiq\n(job queue)"]
+  w1["Evolution worker 1"]
+  wN["Evolution worker N"]
+  db[("PostgreSQL\n(experiments + metrics)")]
+  archive["MAP-Elites archive\n(learned behaviour space)"]
+
+  repo --> sched
+  sched -->|enqueue evolution jobs| queue
+  queue --> w1
+  queue --> wN
+
+  w1 -->|checkout + push commits| repo
+  wN -->|checkout + push commits| repo
+
+  w1 --> db
+  wN --> db
+
+  db --> archive
+  archive -->|sample base commits| sched
+```
+
+- **Scheduler**: keeps the experiment in sync with the repository, ingests completed jobs, samples new base commits from the MAP-Elites archive, and enqueues evolution jobs.
+- **Workers**: for each job, check out a base commit, call external planning/coding/evaluation agents, create a new commit, and persist metrics.
+- **Archive**: stores a diverse set of high-performing commits in a learned behaviour space, which the scheduler uses to inspire the next round of jobs.
+
+---
+
+### Evolution loop
+
+The core evolution loop connects the scheduler, workers, git repository, evaluation plugins, and the MAP-Elites archive:
+
+```mermaid
+sequenceDiagram
+  participant S as Scheduler
+  participant Q as Redis/Dramatiq
+  participant W as Evolution worker
+  participant G as Git repo
+  participant L as LLM agents
+  participant E as Evaluator
+  participant DB as Postgres
+  participant M as MAP-Elites archive
+
+  S->>DB: ingest completed jobs\n(update metrics)
+  S->>M: update archive from metrics
+  S->>M: sample promising base commits
+  M-->>S: elite commit candidates
+  S->>Q: enqueue evolution jobs
+
+  Q->>W: dispatch evolution job
+  W->>G: checkout base commit\n(create job branch)
+  W->>L: plan + implement changes
+  W->>G: apply edits and commit
+  W->>E: run tests / evaluation
+  E-->>W: metrics
+  W->>DB: persist results
+```
+
+This loop can run indefinitely against a long-lived repository, gradually populating the MAP-Elites archive with diverse, high-quality commits.
+
+---
+
+### Architecture at a glance
+
+Loreley is organised into a few main areas:
+
+- **Configuration (`loreley.config`)** – a single `Settings` object (pydantic-settings) centralises environment-driven configuration for logging, database, Redis/Dramatiq, scheduler, worker repositories, and MAP-Elites knobs.
 - **Database (`loreley.db`)** – SQLAlchemy engine/session helpers plus ORM models for repositories, experiments, commits, metrics, evolution jobs, and archive state.
+- **Experiments (`loreley.core.experiments`)** – helpers for normalising the target git worktree into a `Repository`, deriving an `Experiment` from MAP-Elites and evaluator settings, and reusing the same experiment across scheduler runs.
 - **MAP-Elites core (`loreley.core.map_elites`)** – preprocessing, chunking, code and summary embeddings, dimensionality reduction, archive management, sampling, and snapshot persistence via `MapElitesManager`.
 - **Worker pipeline (`loreley.core.worker`)** – worktree lifecycle, planning, coding, evaluation, evolution commits, commit summaries, and job persistence used by Dramatiq actors.
-- **Tasks (`loreley.tasks`)** – Redis broker helpers and the `run_evolution_job(job_id)` Dramatiq actor that drives the worker.
-- **Scheduler (`loreley.scheduler`)** – `EvolutionScheduler` that ingests completed jobs into MAP-Elites, dispatches pending jobs, maintains a seed population (when a root commit is configured), and can create a best-fitness branch when an experiment reaches its job cap.
+- **Tasks (`loreley.tasks`)** – Redis broker helpers and the `run_evolution_job(job_id)` Dramatiq actor that runs the evolution worker.
+- **Scheduler (`loreley.scheduler`)** – `EvolutionScheduler` ingests completed jobs into MAP-Elites, dispatches pending jobs, maintains a seed population (when a root commit is configured), and can create a best-fitness branch when an experiment reaches its job cap.
 - **Operational scripts (`script/run_scheduler.py`, `script/run_worker.py`)** – CLI shims that wire up Loguru/Rich logging, settings, the Redis broker, and the scheduler/worker entrypoints.
 - **Docs (`docs/`)** – focused guides for configuration, scheduler behaviour, worker operations, and the MAP-Elites pipeline.
 
@@ -29,7 +113,7 @@ Module-level documentation lives under `docs/loreley/**` and `docs/script/**`. T
 
 ---
 
-## Requirements & Tooling
+### Requirements & tooling
 
 - Python 3.11+
 - [`uv`](https://github.com/astral-sh/uv) for dependency management
@@ -39,23 +123,23 @@ Module-level documentation lives under `docs/loreley/**` and `docs/script/**`. T
 
 ---
 
-## Quick Start
+### Quick start
 
-### 1. Clone and install
+#### 1. Clone and install
 
 ```bash
 git clone <YOUR_FORK_OR_ORIGIN_URL> loreley
 cd loreley
-uv sync          # installs according to pyproject.toml / uv.lock
+uv sync          # install dependencies from pyproject.toml / uv.lock
 ```
 
-If you already have an environment, pin dependencies without creating a workspace:
+If you already have an environment, you can pin dependencies without creating a workspace:
 
 ```bash
 uv sync --no-workspace
 ```
 
-### 2. Configure
+#### 2. Configure
 
 All runtime settings come from environment variables consumed by `loreley.config.Settings`. Common examples:
 
@@ -95,9 +179,9 @@ See `docs/loreley/config.md` for the exhaustive list.
 
 ---
 
-## Running Loreley
+### Running Loreley
 
-### Scheduler loop
+#### Scheduler loop
 
 The scheduler drives ingestion, scheduling, dispatch, seeding, and archive maintenance:
 
@@ -112,7 +196,7 @@ uv run python -m loreley.scheduler.main --once # single tick
 
 See `docs/script/run_scheduler.md` and `docs/loreley/scheduler/main.md` for details on scheduler behaviour and configuration.
 
-### Worker process
+#### Worker process
 
 A worker process consumes jobs from Dramatiq, applies planning/coding/evaluation, and pushes results back into the database:
 
@@ -126,7 +210,7 @@ See `docs/script/run_worker.md`, `docs/loreley/core/worker/evolution.md`, and th
 
 ---
 
-## Documentation Map
+### Documentation map
 
 The full documentation lives under `docs/` and is rendered into `site/` via MkDocs. Useful entry points:
 
@@ -141,7 +225,7 @@ The full documentation lives under `docs/` and is rendered into `site/` via MkDo
 
 ---
 
-## Project Layout
+### Project layout
 
 - `loreley/` – core services (`config`, `db`, `core/map_elites`, `core/worker`, `scheduler`, `tasks`).
 - `script/` – CLI shims (`run_scheduler.py`, `run_worker.py`).
@@ -151,7 +235,7 @@ The full documentation lives under `docs/` and is rendered into `site/` via MkDo
 
 ---
 
-## Examples
+### Examples
 
 - **`examples/circle-packing`** – a geometric optimisation benchmark based on the classical
   [circle packing](https://en.wikipedia.org/wiki/Circle_packing) problem. The example defines:
@@ -166,6 +250,6 @@ The full documentation lives under `docs/` and is rendered into `site/` via MkDo
 
 ---
 
-## License
+### License
 
 See `LICENSE` for details.
