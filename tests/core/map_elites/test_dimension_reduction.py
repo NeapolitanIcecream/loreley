@@ -101,6 +101,7 @@ def test_history_resets_on_dimension_change(settings: Settings) -> None:
 def test_fit_projection_respects_min_samples_and_target_dims(settings: Settings) -> None:
     settings.mapelites_dimensionality_target_dims = 3
     settings.mapelites_dimensionality_min_fit_samples = 2
+    settings.mapelites_feature_normalization_warmup_samples = 2
     settings.mapelites_dimensionality_penultimate_normalize = False
 
     reducer = DimensionReducer(settings=settings)

@@ -132,10 +132,6 @@ class MapElitesManager:
         self._clip_radius = max(0.0, float(self.settings.mapelites_feature_truncation_k))
         if self._clip_radius == 0.0:
             self._clip_radius = 1.0
-        self._normalization_warmup = max(
-            self.settings.mapelites_dimensionality_min_fit_samples,
-            self.settings.mapelites_feature_normalization_warmup_samples,
-        )
         self._cells_per_dim = max(2, self.settings.mapelites_archive_cells_per_dim)
         self._lower_template, self._upper_template = self._build_feature_bounds()
         self._grid_shape = tuple(self._cells_per_dim for _ in range(self._target_dims))
@@ -559,13 +555,17 @@ class MapElitesManager:
         if clip_radius <= 0.0:
             clip_radius = 1.0
 
+        # When clipping is enabled, keep descriptors within [-k, k] before mapping.
         if self.settings.mapelites_feature_clip:
-            bounded = np.clip(arr, -clip_radius, clip_radius)
-        else:
-            bounded = arr
+            arr = np.clip(arr, -clip_radius, clip_radius)
 
-        normalised = (bounded + clip_radius) / (2.0 * clip_radius)
-        return np.clip(normalised, state.lower_bounds, state.upper_bounds)
+        normalised = (arr + clip_radius) / (2.0 * clip_radius)
+
+        # Only clamp to archive bounds when defensive clipping is on; otherwise
+        # allow values outside [0, 1] to surface as archive insert failures.
+        if self.settings.mapelites_feature_clip:
+            return np.clip(normalised, state.lower_bounds, state.upper_bounds)
+        return normalised
 
     def _resolve_fitness(
         self,
