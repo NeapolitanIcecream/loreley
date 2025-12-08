@@ -32,13 +32,13 @@ At a high level, Loreley sits between your git repository, a pool of LLM-based a
 
 ```mermaid
 flowchart LR
-  repo["Git repository\n(target project)"]
-  sched["Scheduler\n(EvolutionScheduler)"]
-  queue["Redis / Dramatiq\n(job queue)"]
+  repo["Git repository<br/>(target project)"]
+  sched["Scheduler<br/>(EvolutionScheduler)"]
+  queue["Redis / Dramatiq<br/>(job queue)"]
   w1["Evolution worker 1"]
   wN["Evolution worker N"]
-  db[("PostgreSQL\n(experiments + metrics)")]
-  archive["MAP-Elites archive\n(learned behaviour space)"]
+  db[("PostgreSQL<br/>(experiments + metrics)")]
+  archive["MAP-Elites archive<br/>(learned behaviour space)"]
 
   repo --> sched
   sched -->|enqueue evolution jobs| queue
@@ -76,14 +76,14 @@ sequenceDiagram
   participant DB as Postgres
   participant M as MAP-Elites archive
 
-  S->>DB: ingest completed jobs\n(update metrics)
+  S->>DB: ingest completed jobs<br/>(update metrics)
   S->>M: update archive from metrics
   S->>M: sample promising base commits
   M-->>S: elite commit candidates
   S->>Q: enqueue evolution jobs
 
   Q->>W: dispatch evolution job
-  W->>G: checkout base commit\n(create job branch)
+  W->>G: checkout base commit<br/>(create job branch)
   W->>L: plan + implement changes
   W->>G: apply edits and commit
   W->>E: run tests / evaluation
