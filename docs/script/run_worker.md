@@ -81,6 +81,7 @@ The script uses `loreley.config.Settings` for:
     by `loreley.tasks.workers` when configuring the actor.
 - **Worker repository**
   - `WORKER_REPO_REMOTE_URL`, `WORKER_REPO_BRANCH`, `WORKER_REPO_WORKTREE`,
+    `WORKER_REPO_WORKTREE_RANDOMIZE`, `WORKER_REPO_WORKTREE_RANDOM_SUFFIX_LEN`,
     and related `WORKER_REPO_*` options used by
     `loreley.core.worker.repository.WorkerRepository`.
 

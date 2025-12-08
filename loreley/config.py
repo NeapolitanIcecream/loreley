@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+import uuid
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import quote_plus
@@ -118,6 +119,14 @@ class Settings(BaseSettings):
     worker_repo_worktree: str = Field(
         default_factory=lambda: str(Path.home() / ".cache" / "loreley" / "worker-repo"),
         alias="WORKER_REPO_WORKTREE",
+    )
+    worker_repo_worktree_randomize: bool = Field(
+        default=False,
+        alias="WORKER_REPO_WORKTREE_RANDOMIZE",
+    )
+    worker_repo_worktree_random_suffix_len: int = Field(
+        default=8,
+        alias="WORKER_REPO_WORKTREE_RANDOM_SUFFIX_LEN",
     )
     worker_repo_git_bin: str = Field(
         default="git",
@@ -552,6 +561,17 @@ class Settings(BaseSettings):
         default=16,
         alias="MAPELITES_SEED_POPULATION_SIZE",
     )
+
+    def model_post_init(self, __context: Any) -> None:
+        """Apply derived defaults that depend on other fields."""
+
+        if self.worker_repo_worktree_randomize:
+            suffix_len = int(self.worker_repo_worktree_random_suffix_len or 0)
+            suffix_len = max(1, min(32, suffix_len))
+            suffix = uuid.uuid4().hex[:suffix_len]
+            base = Path(self.worker_repo_worktree).expanduser()
+            randomized = base.parent / f"{base.name}-{suffix}"
+            object.__setattr__(self, "worker_repo_worktree", str(randomized))
 
     @computed_field(return_type=str)
     @property

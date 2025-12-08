@@ -24,7 +24,6 @@ import argparse
 import json
 import os
 import sys
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -89,15 +88,10 @@ WORKER_REPO_REMOTE_URL: str = str(REPO_ROOT)
 # Git branch to track on the remote when syncing the worker clone.
 WORKER_REPO_BRANCH: str = "main"
 
-# Local worktree used exclusively by the worker process. A random suffix is
-# added so that multiple runs on the same machine can coexist without sharing
-# the same git worktree directory.
-def _build_worker_repo_worktree() -> Path:
-    random_suffix = uuid.uuid4().hex[:8]
-    return REPO_ROOT / ".cache" / "loreley" / f"worker-repo-{random_suffix}"
-
-
-# Worker worktree is derived lazily when launching a worker process.
+# Local worktree used exclusively by the worker process. Randomisation is now
+# handled inside loreley.config via WORKER_REPO_WORKTREE_RANDOMIZE.
+WORKER_REPO_WORKTREE: Path = REPO_ROOT / ".cache" / "loreley" / "worker-repo"
+WORKER_REPO_WORKTREE_RANDOMIZE: bool = True
 
 # --- Scheduler configuration ------------------------------------------------
 
@@ -242,7 +236,11 @@ def _apply_base_env(*, include_worker_repo: bool = False) -> None:
     _set_env_if_unset("WORKER_REPO_REMOTE_URL", WORKER_REPO_REMOTE_URL)
     _set_env_if_unset("WORKER_REPO_BRANCH", WORKER_REPO_BRANCH)
     if include_worker_repo:
-        _set_env_if_unset("WORKER_REPO_WORKTREE", _build_worker_repo_worktree())
+        _set_env_if_unset("WORKER_REPO_WORKTREE", WORKER_REPO_WORKTREE)
+        _set_env_if_unset(
+            "WORKER_REPO_WORKTREE_RANDOMIZE",
+            WORKER_REPO_WORKTREE_RANDOMIZE,
+        )
 
     # Scheduler.
     if SCHEDULER_REPO_ROOT is not None:
