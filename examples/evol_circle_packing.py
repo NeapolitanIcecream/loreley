@@ -103,11 +103,11 @@ SCHEDULER_REPO_ROOT: Path | None = REPO_ROOT
 SCHEDULER_POLL_INTERVAL_SECONDS: float = 30.0
 
 # Maximum number of unfinished jobs (pending/queued/running) allowed at once.
-SCHEDULER_MAX_UNFINISHED_JOBS: int = 1
+SCHEDULER_MAX_UNFINISHED_JOBS: int = 4
 
 # Optional global limit on total jobs scheduled by this process.
 # Set to None for no global cap.
-SCHEDULER_MAX_TOTAL_JOBS: int | None = 2
+SCHEDULER_MAX_TOTAL_JOBS: int | None = 20
 
 # --- Circle-packing evaluator configuration --------------------------------
 
@@ -132,7 +132,15 @@ MAPELITES_EXPERIMENT_ROOT_COMMIT: str | None = "64884c2c"
 # Size of the cold-start seed population created from the root commit. The
 # scheduler still respects SCHEDULER_MAX_UNFINISHED_JOBS and
 # SCHEDULER_MAX_TOTAL_JOBS when creating these jobs.
-MAPELITES_SEED_POPULATION_SIZE: int = 1
+MAPELITES_SEED_POPULATION_SIZE: int = 4
+
+# Behaviour space sized for <= ~200 total jobs.
+MAPELITES_DIMENSION_REDUCTION_TARGET_DIMS: int = 2
+MAPELITES_DIMENSION_REDUCTION_MIN_FIT_SAMPLES: int = 16
+MAPELITES_FEATURE_LOWER_BOUNDS: list[float] = [-6.0, -6.0]
+MAPELITES_FEATURE_UPPER_BOUNDS: list[float] = [6.0, 6.0]
+MAPELITES_ARCHIVE_CELLS_PER_DIM: int = 14
+MAPELITES_FEATURE_CLIP: bool = True
 
 # --- Agent backends ---------------------------------------------------------
 
@@ -277,6 +285,29 @@ def _apply_base_env(*, include_worker_repo: bool = False) -> None:
         "MAPELITES_SEED_POPULATION_SIZE",
         MAPELITES_SEED_POPULATION_SIZE,
     )
+    _set_env_if_unset(
+        "MAPELITES_DIMENSION_REDUCTION_TARGET_DIMS",
+        MAPELITES_DIMENSION_REDUCTION_TARGET_DIMS,
+    )
+    _set_env_if_unset(
+        "MAPELITES_DIMENSION_REDUCTION_MIN_FIT_SAMPLES",
+        MAPELITES_DIMENSION_REDUCTION_MIN_FIT_SAMPLES,
+    )
+    _set_env_if_unset(
+        "MAPELITES_ARCHIVE_CELLS_PER_DIM",
+        MAPELITES_ARCHIVE_CELLS_PER_DIM,
+    )
+    if MAPELITES_FEATURE_LOWER_BOUNDS:
+        _set_env_if_unset(
+            "MAPELITES_FEATURE_LOWER_BOUNDS",
+            json.dumps(MAPELITES_FEATURE_LOWER_BOUNDS),
+        )
+    if MAPELITES_FEATURE_UPPER_BOUNDS:
+        _set_env_if_unset(
+            "MAPELITES_FEATURE_UPPER_BOUNDS",
+            json.dumps(MAPELITES_FEATURE_UPPER_BOUNDS),
+        )
+    _set_env_if_unset("MAPELITES_FEATURE_CLIP", MAPELITES_FEATURE_CLIP)
 
     # Agent backends
     _set_env_if_unset(
