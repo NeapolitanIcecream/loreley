@@ -1432,6 +1432,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#failure-handling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failure handling
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1518,6 +1529,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#failure-handling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failure handling
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1540,17 +1562,24 @@
 process.</p>
 <h2 id="purpose">Purpose<a class="headerlink" href="#purpose" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Configure global Loguru logging based on <code>loreley.config.Settings.log_level</code>.</li>
-<li>Initialise the global Dramatiq Redis broker (<code>loreley.tasks.broker.broker</code>).</li>
-<li>Import <code>loreley.tasks.workers</code> so that the <code>run_evolution_job</code> actor is
+<li>Expose a minimal CLI (<code>--help</code>, <code>--log-level</code>) that works even when required
+  environment variables are unset.</li>
+<li>Configure global Loguru logging based on <code>loreley.config.Settings.log_level</code>
+  with optional per-invocation overrides.</li>
+<li>Lazily initialise the Dramatiq Redis broker (<code>loreley.tasks.broker.broker</code>)
+  and import <code>loreley.tasks.workers</code> so that the <code>run_evolution_job</code> actor is
   registered.</li>
 <li>Start a single-threaded Dramatiq <code>Worker</code> bound to the configured queue.</li>
 </ul>
 <h2 id="behaviour">Behaviour<a class="headerlink" href="#behaviour" title="Permanent link">&para;</a></h2>
 <p>On startup the script:</p>
 <ol>
-<li>Calls <code>get_settings()</code> to load <code>Settings</code>.</li>
-<li>Configures Loguru to log to stderr using <code>LOG_LEVEL</code> as the threshold.</li>
+<li>Parses CLI args (primarily <code>--help</code> and <code>--log-level</code>) before loading
+   configuration, so help output works without a valid environment.</li>
+<li>Calls <code>get_settings()</code> to load <code>Settings</code>; any validation error is printed to
+   the console and the process exits with code <code>1</code> instead of crashing.</li>
+<li>Configures Loguru to log to stderr using <code>LOG_LEVEL</code> (or <code>--log-level</code>) as
+   the threshold.</li>
 <li>Resolves a log directory under <code>&lt;BASE&gt;/logs/worker</code> where <code>&lt;BASE&gt;</code> is:</li>
 <li><code>LOGS_BASE_DIR</code> (expanded as a path) when set.</li>
 <li>the current working directory when <code>LOGS_BASE_DIR</code> is unset.</li>
@@ -1559,7 +1588,8 @@ process.</p>
    always persisted for later debugging.</li>
 <li>Imports <code>loreley.tasks.broker</code> (which constructs and registers the Redis
    broker) and <code>loreley.tasks.workers</code> (which defines the <code>run_evolution_job</code>
-   actor and its queue settings).</li>
+   actor and its queue settings) after logging is configured; any import/startup
+   failure is reported with a concise console message and exit code <code>1</code>.</li>
 <li>Logs a short “worker online” message including <code>TASKS_QUEUE_NAME</code> and
    <code>WORKER_REPO_WORKTREE</code>.</li>
 <li>Creates a <code>dramatiq.Worker</code> with:</li>
@@ -1575,12 +1605,15 @@ message.</p>
 <h2 id="cli-usage">CLI usage<a class="headerlink" href="#cli-usage" title="Permanent link">&para;</a></h2>
 <p>Typical usage with <code>uv</code>:</p>
 <div class="codehilite"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_worker.py
+uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_worker.py<span class="w"> </span>--log-level<span class="w"> </span>DEBUG
 </code></pre></div>
 
 <p>The worker will begin consuming messages for the queue specified by
 <code>TASKS_QUEUE_NAME</code> (default: <code>loreley.evolution</code>) in a single process with a
 single worker thread. Jobs are expected to be created and dispatched by the
 scheduler (<code>loreley.scheduler.main</code>).</p>
+<p><code>--help</code> works without configured environment variables; other configuration is
+still read from <code>loreley.config.Settings</code>.</p>
 <h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
 <p>The script uses <code>loreley.config.Settings</code> for:</p>
 <ul>
@@ -1597,6 +1630,7 @@ scheduler (<code>loreley.scheduler.main</code>).</p>
     by <code>loreley.tasks.workers</code> when configuring the actor.</li>
 <li><strong>Worker repository</strong></li>
 <li><code>WORKER_REPO_REMOTE_URL</code>, <code>WORKER_REPO_BRANCH</code>, <code>WORKER_REPO_WORKTREE</code>,
+    <code>WORKER_REPO_WORKTREE_RANDOMIZE</code>, <code>WORKER_REPO_WORKTREE_RANDOM_SUFFIX_LEN</code>,
     and related <code>WORKER_REPO_*</code> options used by
     <code>loreley.core.worker.repository.WorkerRepository</code>.</li>
 </ul>
@@ -1605,6 +1639,14 @@ worker module documentation in <code>docs/loreley/tasks/workers.md</code>.</p>
 <p>The <code>examples/evol_circle_packing.py</code> helper simply delegates to this script
 when running the worker, so its runs use the same logging configuration and
 log file locations.</p>
+<h2 id="failure-handling">Failure handling<a class="headerlink" href="#failure-handling" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Invalid or missing environment variables produce a short console message and
+  exit code <code>1</code> instead of an unhandled exception.</li>
+<li>Errors while initialising the broker/worker modules are logged and surfaced
+  before the process exits, so misconfigured Redis/DB credentials do not
+  produce long stack traces.</li>
+</ul>
 
 
 

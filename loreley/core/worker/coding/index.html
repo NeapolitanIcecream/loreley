@@ -1544,7 +1544,7 @@
 <h2 id="domain-types">Domain types<a class="headerlink" href="#domain-types" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong><code>CodingError</code></strong>: custom runtime error raised when the coding agent cannot successfully execute the plan (invalid schema, Codex failures, bad working directory, timeouts, etc.).</li>
-<li><strong><code>StepExecutionStatus</code></strong>: string <code>Enum</code> describing how each plan step was handled (<code>COMPLETED</code>, <code>PARTIAL</code>, or <code>SKIPPED</code>).</li>
+<li><strong><code>StepExecutionStatus</code></strong>: string <code>Enum</code> describing how each plan step was handled (<code>"completed"</code>, <code>"partial"</code>, or <code>"skipped"</code>).</li>
 <li><strong><code>CodingStepReport</code></strong>: dataclass capturing the outcome of a single step (<code>step_id</code>, <code>status</code>, human-readable <code>summary</code>, and optional <code>files</code> / <code>commands</code> touched by that step).</li>
 <li><strong><code>CodingPlanExecution</code></strong>: aggregate result for the whole run, including the overall <code>implementation_summary</code>, optional <code>commit_message</code>, tuple of <code>step_results</code>, <code>tests_executed</code>, <code>tests_recommended</code>, <code>follow_up_items</code>, and <code>notes</code>.</li>
 <li><strong><code>CodingAgentRequest</code></strong>: input payload given to the coding agent (<code>goal</code>, <code>plan</code> from <code>PlanningPlan</code>, <code>base_commit</code>, optional <code>constraints</code>, <code>acceptance_criteria</code>, <code>iteration_hint</code>, and <code>additional_notes</code>); the <code>goal</code> is the same global evolution objective that the planning agent sees, resolved by the evolution worker from either explicit job payload fields or <code>Settings.worker_evolution_global_goal</code>. All sequence fields are normalised to tuples in <code>__post_init__</code>.</li>
@@ -1568,6 +1568,7 @@
 </li>
 <li>Retries the backend invocation up to <code>max_attempts</code> times when the process fails or, in strict/lenient modes, when JSON decoding / schema validation errors occur, logging warnings via <code>loguru</code> and showing concise progress output with <code>rich</code>.</li>
 <li>On success, either parses JSON into <code>_CodingOutputModel</code> and converts it into a <code>CodingPlanExecution</code>, or (for lenient/none modes when parsing is not possible) returns a best-effort synthetic <code>CodingPlanExecution</code>; on repeated failure or timeout, raises <code>CodingError</code> with a descriptive message.</li>
+<li>Detects and treats a run that leaves the worktree unchanged as a failure, persisting debug artifacts and retrying until attempts are exhausted.</li>
 <li>Merges any configured extra environment variables into the backend subprocess environment and enforces bounded prompt and log sizes via <code>_truncate</code>.</li>
 </ul>
 <h2 id="exceptions-and-helpers">Exceptions and helpers<a class="headerlink" href="#exceptions-and-helpers" title="Permanent link">&para;</a></h2>

@@ -1629,10 +1629,11 @@
 </li>
 <li>Configuration fields:<ul>
 <li><code>bin</code>: CLI executable to invoke (default <code>"cursor-agent"</code>).  </li>
-<li><code>model</code>: model identifier passed as <code>--model</code>; defaults to <code>"GPT-5.1 Codex Max"</code> and can be overridden (for example, <code>"gpt-5"</code>), including via the <code>cursor_backend_from_settings()</code> helper that reads <code>WORKER_CURSOR_MODEL</code>.  </li>
+<li><code>model</code>: model identifier passed as <code>--model</code>; defaults to <code>"gpt-5.1-codex-max-high"</code> and can be overridden (for example, <code>"gpt-5"</code>), including via the <code>cursor_backend_from_settings()</code> helper that reads <code>WORKER_CURSOR_MODEL</code>.  </li>
 <li><code>timeout_seconds</code>: hard timeout for the subprocess invocation.  </li>
 <li><code>extra_env</code>: dict of additional environment variables merged into the subprocess environment.  </li>
 <li><code>output_format</code>: value passed as <code>--output-format</code> (default <code>"text"</code>), typically left as <code>"text"</code> so the agent can emit a single JSON object as plain text.  </li>
+<li><code>force</code>: when <code>True</code> (default), appends <code>--force</code> so the Cursor agent allows commands unless explicitly denied; set to <code>False</code> to omit the flag.  </li>
 <li><code>error_cls</code>: concrete <code>RuntimeError</code> subtype used for all user‑facing errors.</li>
 </ul>
 </li>
@@ -1641,7 +1642,8 @@
 <li>Builds the CLI <code>command</code> list starting from <code>[bin]</code>, adding:</li>
 <li><code>-p &lt;prompt&gt;</code> to forward <code>task.prompt</code> to the Cursor agent,  </li>
 <li><code>--model</code> when <code>model</code> is configured, and  </li>
-<li><code>--output-format</code> when <code>output_format</code> is set.  </li>
+<li><code>--output-format</code> when <code>output_format</code> is set, and  </li>
+<li><code>--force</code> when <code>force=True</code>.  </li>
 <li>Merges <code>extra_env</code> into a copy of <code>os.environ</code> and runs <code>cursor-agent</code> in the provided working directory.  </li>
 <li>Captures stdout/stderr and enforces the timeout via <code>subprocess.run(...)</code>.  </li>
 <li>Raises <code>error_cls</code> when the process exits non‑zero or times out; even when stdout is empty it still returns an <code>AgentInvocation</code>, leaving it to higher‑level agents and validation logic to decide how to handle the result.  </li>

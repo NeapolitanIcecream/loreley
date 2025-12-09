@@ -1406,6 +1406,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#failure-handling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failure handling
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1520,6 +1531,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#failure-handling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failure handling
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1541,8 +1563,12 @@
 <p>Thin CLI wrapper for running the Loreley evolution scheduler.</p>
 <h2 id="purpose">Purpose<a class="headerlink" href="#purpose" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Configure global Loguru logging based on <code>loreley.config.Settings.log_level</code>.</li>
-<li>Delegate all CLI parsing and control flow to <code>loreley.scheduler.main.main</code>.</li>
+<li>Expose a minimal CLI (<code>--help</code>, <code>--log-level</code>) that works even when required
+  environment variables are unset.</li>
+<li>Configure global Loguru logging based on <code>loreley.config.Settings.log_level</code>
+  with optional per-invocation overrides.</li>
+<li>Delegate scheduler-specific CLI parsing and control flow to
+  <code>loreley.scheduler.main.main</code>.</li>
 <li>Provide a convenient entrypoint for process managers and local development
   without having to remember the module path.</li>
 </ul>
@@ -1550,8 +1576,10 @@
 interaction are all implemented in <code>loreley.scheduler.main.EvolutionScheduler</code>.</p>
 <h2 id="behaviour">Behaviour<a class="headerlink" href="#behaviour" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Calls <code>get_settings()</code> to load <code>Settings</code> and derive the desired log level
-  (via <code>LOG_LEVEL</code>).</li>
+<li>Parses wrapper CLI arguments (notably <code>--help</code> and <code>--log-level</code>) before
+  loading configuration, so help output works without a valid environment.</li>
+<li>Calls <code>get_settings()</code> to load <code>Settings</code>; validation errors are printed to
+  the console and the process exits with code <code>1</code>.</li>
 <li>Resets Loguru sinks and installs a stderr sink at the configured level,
   disabling backtraces and diagnosis in production-style runs.</li>
 <li>Resolves a log directory under <code>&lt;BASE&gt;/logs/scheduler</code> where <code>&lt;BASE&gt;</code> is:</li>
@@ -1560,9 +1588,10 @@ interaction are all implemented in <code>loreley.scheduler.main.EvolutionSchedul
 <li>Adds a rotating file sink at <code>scheduler-YYYYMMDD.log</code> inside that directory
   with <code>rotation="10 MB"</code> and <code>retention="14 days"</code>, so scheduler output is
   always persisted for later debugging.</li>
-<li>Binds an informational logger with module name <code>script.run_scheduler</code>.</li>
-<li>Forwards the CLI arguments to <code>loreley.scheduler.main.main(argv)</code>, which
-  supports the <code>--once</code> flag to run a single scheduler tick.</li>
+<li>Imports <code>loreley.scheduler.main.main</code> lazily after logging is configured; any
+  import failure is reported via console/log and exits with code <code>1</code>.</li>
+<li>Forwards any remaining CLI arguments to <code>loreley.scheduler.main.main(argv)</code>,
+  which supports the <code>--once</code> flag to run a single scheduler tick.</li>
 </ul>
 <p>Exit codes are determined by <code>loreley.scheduler.main.main</code>: on success it returns
 <code>0</code>, while unexpected exceptions bubble up and cause a non-zero exit.</p>
@@ -1570,6 +1599,7 @@ interaction are all implemented in <code>loreley.scheduler.main.EvolutionSchedul
 <p>Recommended usage with <code>uv</code>:</p>
 <div class="codehilite"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_scheduler.py<span class="w">        </span><span class="c1"># continuous loop</span>
 uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_scheduler.py<span class="w"> </span>--once<span class="w"> </span><span class="c1"># single tick (cron / smoke tests)</span>
+uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_scheduler.py<span class="w"> </span>--log-level<span class="w"> </span>DEBUG
 </code></pre></div>
 
 <p>The wrapper is equivalent to invoking the module directly:</p>
@@ -1591,6 +1621,14 @@ uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </sp
 <p>The <code>examples/evol_circle_packing.py</code> helper simply delegates to this script
 when running the scheduler, so its runs use the same logging configuration and
 log file locations.</p>
+<h2 id="failure-handling">Failure handling<a class="headerlink" href="#failure-handling" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Invalid or missing environment variables produce a short console message and
+  exit code <code>1</code> instead of an unhandled exception.</li>
+<li>Errors while importing or launching the scheduler are logged and surfaced
+  before the process exits, so misconfigured dependencies do not produce long
+  stack traces.</li>
+</ul>
 
 
 
