@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import time
-from typing import Any, Iterable, Sequence
+from typing import Any, Callable, Iterable, Sequence
 
 from loguru import logger
 from openai import OpenAI, OpenAIError
@@ -84,15 +84,15 @@ class SummaryEmbedder:
         client: OpenAI | None = None,
     ) -> None:
         self.settings = settings or get_settings()
-        if client is not None:
-            self._client = client
-        else:
+        self._client: OpenAI | None = client
+        self._client_factory: Callable[[], OpenAI] | None = None
+        if client is None:
             client_kwargs: dict[str, object] = {}
             if self.settings.openai_api_key:
                 client_kwargs["api_key"] = self.settings.openai_api_key
             if self.settings.openai_base_url:
                 client_kwargs["base_url"] = self.settings.openai_base_url
-            self._client = (
+            self._client_factory = lambda: (
                 OpenAI(**client_kwargs)  # type: ignore[call-arg]
                 if client_kwargs
                 else OpenAI()
@@ -188,8 +188,9 @@ class SummaryEmbedder:
         while True:
             attempt += 1
             try:
+                client = self._get_client()
                 if self._api_spec == "responses":
-                    response = self._client.responses.create(
+                    response = client.responses.create(
                         model=self._summary_model,
                         instructions=_SUMMARY_INSTRUCTIONS,
                         input=payload,
@@ -198,7 +199,7 @@ class SummaryEmbedder:
                     )
                     text = (response.output_text or "").strip()
                 else:
-                    response = self._client.chat.completions.create(
+                    response = client.chat.completions.create(
                         model=self._summary_model,
                         messages=[
                             {"role": "system", "content": _SUMMARY_INSTRUCTIONS},
@@ -292,14 +293,15 @@ class SummaryEmbedder:
         while True:
             attempt += 1
             try:
+                client = self._get_client()
                 if self._embedding_dimensions:
-                    response = self._client.embeddings.create(
+                    response = client.embeddings.create(
                         model=self._embedding_model,
                         input=payload,
                         dimensions=self._embedding_dimensions,
                     )
                 else:
-                    response = self._client.embeddings.create(
+                    response = client.embeddings.create(
                         model=self._embedding_model,
                         input=payload,
                     )
@@ -382,6 +384,13 @@ class SummaryEmbedder:
             TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
             transient=True,
         )
+
+    def _get_client(self) -> OpenAI:
+        if self._client is None:
+            if self._client_factory is None:
+                raise RuntimeError("OpenAI client factory is not configured.")
+            self._client = self._client_factory()
+        return self._client
 
 
 def summarize_preprocessed_files(
