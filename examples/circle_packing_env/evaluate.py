@@ -20,6 +20,9 @@ UNIT_SQUARE_MIN = 0.0
 UNIT_SQUARE_MAX = 1.0
 EPS = 1e-9
 
+# Default number of circles expected from the candidate solution.
+DEFAULT_NUM_CIRCLES = 26
+
 
 def _load_pack_circles(worktree: Path) -> Any:
     """
@@ -126,11 +129,13 @@ def _validate_no_overlap(circles: Sequence[Tuple[float, float, float]]) -> None:
 def _compute_metrics(
     circles: Sequence[Tuple[float, float, float]],
 ) -> Mapping[str, Any]:
-    """Compute packing density and additional details from the circles."""
+    """Compute objective and auxiliary metrics from the circles."""
     total_area = sum(pi * (r**2) for _, _, r in circles)
     density = float(total_area)  # container area is 1.0
+    sum_radii = sum(r for _, _, r in circles)
     num_circles = len(circles)
     return {
+        "sum_radii": sum_radii,
         "packing_density": density,
         "num_circles": num_circles,
     }
@@ -147,7 +152,7 @@ def plugin(context: "EvaluationContext") -> Mapping[str, Any]:
     log.info("Starting circle-packing evaluation for worktree={}", worktree)
 
     pack_circles = _load_pack_circles(worktree)
-    raw_circles = list(pack_circles())
+    raw_circles = list(pack_circles(DEFAULT_NUM_CIRCLES))
     log.info("pack_circles() returned {} circle entries", len(raw_circles))
 
     coerced: list[Tuple[float, float, float]] = []
@@ -158,24 +163,38 @@ def plugin(context: "EvaluationContext") -> Mapping[str, Any]:
     _validate_no_overlap(coerced)
 
     metrics_values = _compute_metrics(coerced)
+    sum_radii = metrics_values["sum_radii"]
     density = metrics_values["packing_density"]
     num_circles = metrics_values["num_circles"]
 
+    if num_circles != DEFAULT_NUM_CIRCLES:
+        raise ValueError(
+            f"Expected exactly {DEFAULT_NUM_CIRCLES} circles, "
+            f"but got {num_circles}.",
+        )
+
     summary = (
         "Circle packing in unit square: "
-        f"density={density:.6f}, circles={num_circles}"
+        f"sum_radii={sum_radii:.6f}, circles={num_circles}, density={density:.6f}"
     )
     log.info(summary)
 
     metrics: list[Mapping[str, Any]] = [
         {
+            "name": "sum_radii",
+            "value": sum_radii,
+            "unit": "radius_sum",
+            "higher_is_better": True,
+            "details": {
+                "num_circles": num_circles,
+                "packing_density": density,
+            },
+        },
+        {
             "name": "packing_density",
             "value": density,
             "unit": "fraction",
             "higher_is_better": True,
-            "details": {
-                "num_circles": num_circles,
-            },
         },
         {
             "name": "num_circles",
@@ -194,6 +213,7 @@ def plugin(context: "EvaluationContext") -> Mapping[str, Any]:
     logs: Iterable[str] = [
         f"Loaded solution from worktree: {worktree}",
         f"Number of circles: {num_circles}",
+        f"Sum of radii: {sum_radii:.6f}",
         f"Packing density: {density:.6f}",
     ]
 

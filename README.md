@@ -239,13 +239,16 @@ The full documentation lives under `docs/` and is rendered into `site/` via MkDo
 
 - **`examples/circle-packing`** – a geometric optimisation benchmark based on the classical
   [circle packing](https://en.wikipedia.org/wiki/Circle_packing) problem. The example defines:
-  - a simple solution interface in `solution.py` that returns a set of equal-radius circles
-    inside the unit square;
-  - an evaluator plugin in `evaluate.py` that checks geometric validity (no overlap, inside
-    bounds) and reports packing density and related metrics.
+  - a small standalone problem repository in `examples/circle-packing` with a `solution.py`
+    that exposes `pack_circles(n: int = 26)` and returns `n` non-overlapping circles inside
+    the unit square; the default instance uses `n = 26` and the objective is to maximise
+    the sum of radii subject to the non-overlap and boundary constraints;
+  - a companion evaluation environment in `examples/circle_packing_env` with an
+    `evaluate.py` plugin that checks geometric validity (no overlap, inside bounds) and
+    reports `sum_radii` (main objective), `packing_density`, and `num_circles`.
 
   You can wire this into the worker by pointing
-  `WORKER_EVALUATOR_PYTHON_PATHS` at `examples/circle-packing` and setting
+  `WORKER_EVALUATOR_PYTHON_PATHS` at `examples/circle_packing_env` and setting
   `WORKER_EVALUATOR_PLUGIN=evaluate:plugin`, then letting MAP-Elites evolve better packings.
 
 ---

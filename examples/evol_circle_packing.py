@@ -123,11 +123,11 @@ WORKER_EVALUATOR_PLUGIN: str = "evaluate:plugin"
 
 # Use packing_density (primary objective from the circle-packing evaluator)
 # as the fitness metric for MAP-Elites instead of the generic composite_score.
-MAPELITES_FITNESS_METRIC: str = "packing_density"
+MAPELITES_FITNESS_METRIC: str = "sum_radii"
 
 # Give this experiment a dedicated island ID.
 MAPELITES_DEFAULT_ISLAND_ID: str = "circle_packing"
-MAPELITES_EXPERIMENT_ROOT_COMMIT: str | None = "64884c2c"
+MAPELITES_EXPERIMENT_ROOT_COMMIT: str | None = "6dab191"
 
 # Size of the cold-start seed population created from the root commit. The
 # scheduler still respects SCHEDULER_MAX_UNFINISHED_JOBS and
@@ -162,10 +162,10 @@ WORKER_EVOLUTION_COMMIT_RETRY_BACKOFF_SECONDS: float = 2.0
 
 # Global evolution objective shared across planning and coding prompts.
 WORKER_EVOLUTION_GLOBAL_GOAL: str = (
-    "Evolve the circle-packing solution so that pack_circles() returns a valid, "
-    "non-overlapping set of circles inside the unit square with as high "
-    "packing_density as possible, while keeping the code simple, deterministic, "
-    "and fast enough for the evaluator."
+    "Evolve the circle-packing solution so that pack_circles(n=26) returns a valid, "
+    "non-overlapping set of 26 circles inside the unit square with as high sum of "
+    "radii as possible (equivalently, large radii at fixed circle count), while "
+    "keeping the code simple, deterministic, and fast enough for the evaluator."
 )
 
 # Code embedding model used for MAP-Elites preprocessing.

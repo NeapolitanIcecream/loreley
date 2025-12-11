@@ -21,11 +21,12 @@ contains a `solution.py` file exposing:
 ```python
 from typing import Iterable, Tuple
 
-def pack_circles() -> Iterable[Tuple[float, float, float]]:
-    """Return an iterable of (x, y, r) triples for circles in the unit square."""
+def pack_circles(n: int = 26) -> Iterable[Tuple[float, float, float]]:
+    \"\"\"Return an iterable of (x, y, r) triples for n circles in the unit square.\"\"\"
 ```
 
 Each triple `(x, y, r)` represents a circle with centre `(x, y)` and radius `r > 0`.
+The evaluator will request exactly `n = 26` circles by calling `pack_circles(26)`.
 
 ---
 
@@ -38,7 +39,7 @@ At a high level the plugin will:
 
 1. Locate `solution.py` at the root of the evaluated git worktree.
 2. Load the `pack_circles()` function directly from that file using `importlib`.
-3. Call `pack_circles()` to obtain the list of circles.
+3. Call `pack_circles(26)` to obtain the list of circles.
 4. Perform geometric validity checks:
    - All elements are length-3 iterables of real numbers.
    - `r > 0` for every circle.
@@ -46,8 +47,9 @@ At a high level the plugin will:
    - No two circles overlap: the distance between any pair of centres is at least
      the sum of their radii (within a small numerical tolerance).
 5. Compute:
-   - `packing_density` – main objective (higher is better).
-   - `num_circles` – number of circles (secondary metric, higher is better).
+   - `sum_radii` – main objective (higher is better).
+   - `packing_density` – total area of all circles inside the unit square (secondary metric).
+   - `num_circles` – number of circles (for sanity checking, higher is better).
 6. Return an `EvaluationResult`-compatible mapping with:
    - A human-readable `summary`.
    - The two metrics above.
