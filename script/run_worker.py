@@ -20,6 +20,7 @@ Typical usage (with uv):
 
 import argparse
 import logging
+import os
 import signal
 import sys
 import threading
@@ -140,14 +141,26 @@ def _configure_logging(settings: Settings, *, override_level: str | None = None)
 def _install_signal_handlers(worker: Worker, stop_event: threading.Event | None = None) -> None:
     """Install SIGINT/SIGTERM handlers for graceful shutdown."""
 
+    received_signals: dict[str, int] = {"count": 0}
+
     def _handle_signal(signum: int, _frame: object) -> None:
+        received_signals["count"] += 1
+
+        if received_signals["count"] == 1:
+            console.log(
+                f"[yellow]Received signal[/] signum={signum}; stopping worker...",
+            )
+            log.info("Worker received signal {}; stopping", signum)
+            worker.stop()
+            if stop_event is not None:
+                stop_event.set()
+            return
+
         console.log(
-            f"[yellow]Received signal[/] signum={signum}; stopping worker...",
+            f"[bold red]Second signal received[/] signum={signum}; forcing immediate shutdown.",
         )
-        log.info("Worker received signal {}; stopping", signum)
-        worker.stop()
-        if stop_event is not None:
-            stop_event.set()
+        log.warning("Second signal {}; forcing immediate shutdown", signum)
+        os._exit(130)
 
     signal.signal(signal.SIGINT, _handle_signal)
     sigterm = getattr(signal, "SIGTERM", None)
