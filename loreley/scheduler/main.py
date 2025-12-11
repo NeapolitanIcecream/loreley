@@ -133,12 +133,21 @@ class EvolutionScheduler:
         )
         self._total_scheduled_jobs += stats["seed_scheduled"] + stats["scheduled"]
         stats["unfinished"] = unfinished + stats["seed_scheduled"] + stats["scheduled"]
+
+        remaining_total_str = ""
+        max_total = getattr(self.settings, "scheduler_max_total_jobs", None)
+        if max_total is not None and max_total > 0:
+            remaining_total = max(0, max_total - self._total_scheduled_jobs)
+            remaining_total_str = f" remaining_total={remaining_total}/{max_total}"
+
         self.console.log(
             "[bold magenta]Scheduler tick[/] ingested={ingested} dispatched={dispatched} "
-            "seed_scheduled={seed_scheduled} scheduled={scheduled} unfinished={unfinished}".format(**stats),
+            "seed_scheduled={seed_scheduled} scheduled={scheduled} unfinished={unfinished}{remaining_total}".format(
+                **stats,
+                remaining_total=remaining_total_str,
+            ),
         )
 
-        max_total = getattr(self.settings, "scheduler_max_total_jobs", None)
         if max_total is not None and max_total > 0:
             if self._total_scheduled_jobs >= max_total and stats["unfinished"] == 0:
                 self._create_best_fitness_branch_if_possible()
