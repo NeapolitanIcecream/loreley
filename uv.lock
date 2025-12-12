@@ -496,6 +496,7 @@ dev = [
 [package.dev-dependencies]
 dev = [
     { name = "mkdocs-material" },
+    { name = "pymdown-extensions" },
     { name = "pytest" },
 ]
 
@@ -520,6 +521,7 @@ provides-extras = ["dev"]
 [package.metadata.requires-dev]
 dev = [
     { name = "mkdocs-material", specifier = ">=9.7.0" },
+    { name = "pymdown-extensions", specifier = ">=10.17.2" },
     { name = "pytest", specifier = ">=9.0.1" },
 ]
 
