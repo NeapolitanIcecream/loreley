@@ -1769,30 +1769,28 @@
 <hr />
 <h3 id="system-overview">System overview<a class="headerlink" href="#system-overview" title="Permanent link">&para;</a></h3>
 <p>At a high level, Loreley sits between your git repository, a pool of LLM-based agents, and a MAP-Elites archive:</p>
-<div class="codehilite"><pre><span></span><code><span class="n">flowchart</span><span class="w"> </span><span class="n">LR</span>
-<span class="w">  </span><span class="n">repo</span><span class="p">[</span><span class="s">&quot;Git repository&lt;br/&gt;(target project)&quot;</span><span class="p">]</span>
-<span class="w">  </span><span class="n">sched</span><span class="p">[</span><span class="s">&quot;Scheduler&lt;br/&gt;(EvolutionScheduler)&quot;</span><span class="p">]</span>
-<span class="w">  </span><span class="n">queue</span><span class="p">[</span><span class="s">&quot;Redis / Dramatiq&lt;br/&gt;(job queue)&quot;</span><span class="p">]</span>
-<span class="w">  </span><span class="n">w1</span><span class="p">[</span><span class="s">&quot;Evolution worker 1&quot;</span><span class="p">]</span>
-<span class="w">  </span><span class="n">wN</span><span class="p">[</span><span class="s">&quot;Evolution worker N&quot;</span><span class="p">]</span>
-<span class="w">  </span><span class="n">db</span><span class="p">[(</span><span class="s">&quot;PostgreSQL&lt;br/&gt;(experiments + metrics)&quot;</span><span class="p">)]</span>
-<span class="w">  </span><span class="n">archive</span><span class="p">[</span><span class="s">&quot;MAP-Elites archive&lt;br/&gt;(learned behaviour space)&quot;</span><span class="p">]</span>
+<pre class="mermaid"><code>flowchart LR
+  repo["Git repository&lt;br/&gt;(target project)"]
+  sched["Scheduler&lt;br/&gt;(EvolutionScheduler)"]
+  queue["Redis / Dramatiq&lt;br/&gt;(job queue)"]
+  w1["Evolution worker 1"]
+  wN["Evolution worker N"]
+  db[("PostgreSQL&lt;br/&gt;(experiments + metrics)")]
+  archive["MAP-Elites archive&lt;br/&gt;(learned behaviour space)"]
 
-<span class="w">  </span><span class="n">repo</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">sched</span>
-<span class="w">  </span><span class="n">sched</span><span class="w"> </span><span class="o">--&gt;|</span><span class="n">enqueue</span><span class="w"> </span><span class="n">evolution</span><span class="w"> </span><span class="n">jobs</span><span class="o">|</span><span class="w"> </span><span class="n">queue</span>
-<span class="w">  </span><span class="n">queue</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">w1</span>
-<span class="w">  </span><span class="n">queue</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">wN</span>
+  repo --&gt; sched
+  sched --&gt;|enqueue evolution jobs| queue
+  queue --&gt; w1
+  queue --&gt; wN
 
-<span class="w">  </span><span class="n">w1</span><span class="w"> </span><span class="o">--&gt;|</span><span class="n">checkout</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">push</span><span class="w"> </span><span class="n">commits</span><span class="o">|</span><span class="w"> </span><span class="n">repo</span>
-<span class="w">  </span><span class="n">wN</span><span class="w"> </span><span class="o">--&gt;|</span><span class="n">checkout</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">push</span><span class="w"> </span><span class="n">commits</span><span class="o">|</span><span class="w"> </span><span class="n">repo</span>
+  w1 --&gt;|checkout + push commits| repo
+  wN --&gt;|checkout + push commits| repo
 
-<span class="w">  </span><span class="n">w1</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">db</span>
-<span class="w">  </span><span class="n">wN</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">db</span>
+  w1 --&gt; db
+  wN --&gt; db
 
-<span class="w">  </span><span class="n">db</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">archive</span>
-<span class="w">  </span><span class="n">archive</span><span class="w"> </span><span class="o">--&gt;|</span><span class="nf">sample</span><span class="w"> </span><span class="n">base</span><span class="w"> </span><span class="n">commits</span><span class="o">|</span><span class="w"> </span><span class="n">sched</span>
-</code></pre></div>
-
+  db --&gt; archive
+  archive --&gt;|sample base commits| sched</code></pre>
 <ul>
 <li><strong>Scheduler</strong> keeps the experiment in sync with the repository, ingests completed jobs, samples new base commits from the MAP-Elites archive, and enqueues evolution jobs.</li>
 <li><strong>Workers</strong> check out base commits, call external planning/coding/evaluation agents, create new commits, and persist metrics.</li>
@@ -1801,31 +1799,29 @@
 <hr />
 <h3 id="evolution-loop">Evolution loop<a class="headerlink" href="#evolution-loop" title="Permanent link">&para;</a></h3>
 <p>The core evolution loop connects the scheduler, workers, git repository, evaluation plugins, and the MAP-Elites archive:</p>
-<div class="codehilite"><pre><span></span><code><span class="nx">sequenceDiagram</span>
-<span class="w">  </span><span class="nx">participant</span><span class="w"> </span><span class="nx">S</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nx">Scheduler</span>
-<span class="w">  </span><span class="nx">participant</span><span class="w"> </span><span class="nx">Q</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nx">Redis</span><span class="o">/</span><span class="nx">Dramatiq</span>
-<span class="w">  </span><span class="nx">participant</span><span class="w"> </span><span class="nx">W</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nx">Evolution</span><span class="w"> </span><span class="nx">worker</span>
-<span class="w">  </span><span class="nx">participant</span><span class="w"> </span><span class="nx">G</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nx">Git</span><span class="w"> </span><span class="nx">repo</span>
-<span class="w">  </span><span class="nx">participant</span><span class="w"> </span><span class="nx">L</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nx">LLM</span><span class="w"> </span><span class="nx">agents</span>
-<span class="w">  </span><span class="nx">participant</span><span class="w"> </span><span class="nx">E</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nx">Evaluator</span>
-<span class="w">  </span><span class="nx">participant</span><span class="w"> </span><span class="nx">DB</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nx">Postgres</span>
-<span class="w">  </span><span class="nx">participant</span><span class="w"> </span><span class="nx">M</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nx">MAP</span><span class="o">-</span><span class="nx">Elites</span><span class="w"> </span><span class="nx">archive</span>
+<pre class="mermaid"><code>sequenceDiagram
+  participant S as Scheduler
+  participant Q as Redis/Dramatiq
+  participant W as Evolution worker
+  participant G as Git repo
+  participant L as LLM agents
+  participant E as Evaluator
+  participant DB as Postgres
+  participant M as MAP-Elites archive
 
-<span class="w">  </span><span class="nx">S</span><span class="o">-&gt;</span><span class="p">&gt;</span><span class="nx">DB</span><span class="p">:</span><span class="w"> </span><span class="nx">ingest</span><span class="w"> </span><span class="nx">completed</span><span class="w"> </span><span class="nx">jobs</span><span class="p">&lt;</span><span class="nx">br</span><span class="o">/</span><span class="p">&gt;(</span><span class="nx">update</span><span class="w"> </span><span class="nx">metrics</span><span class="p">)</span>
-<span class="w">  </span><span class="nx">S</span><span class="o">-&gt;</span><span class="p">&gt;</span><span class="nx">M</span><span class="p">:</span><span class="w"> </span><span class="nx">update</span><span class="w"> </span><span class="nx">archive</span><span class="w"> </span><span class="nx">from</span><span class="w"> </span><span class="nx">metrics</span>
-<span class="w">  </span><span class="nx">S</span><span class="o">-&gt;</span><span class="p">&gt;</span><span class="nx">M</span><span class="p">:</span><span class="w"> </span><span class="nx">sample</span><span class="w"> </span><span class="nx">promising</span><span class="w"> </span><span class="kd">base</span><span class="w"> </span><span class="nx">commits</span>
-<span class="w">  </span><span class="nx">M</span><span class="o">--&gt;&gt;</span><span class="nx">S</span><span class="p">:</span><span class="w"> </span><span class="nx">elite</span><span class="w"> </span><span class="nx">commit</span><span class="w"> </span><span class="nx">candidates</span>
-<span class="w">  </span><span class="nx">S</span><span class="o">-&gt;</span><span class="p">&gt;</span><span class="nx">Q</span><span class="p">:</span><span class="w"> </span><span class="nx">enqueue</span><span class="w"> </span><span class="nx">evolution</span><span class="w"> </span><span class="nx">jobs</span>
+  S-&gt;&gt;DB: ingest completed jobs&lt;br/&gt;(update metrics)
+  S-&gt;&gt;M: update archive from metrics
+  S-&gt;&gt;M: sample promising base commits
+  M--&gt;&gt;S: elite commit candidates
+  S-&gt;&gt;Q: enqueue evolution jobs
 
-<span class="w">  </span><span class="nx">Q</span><span class="o">-&gt;</span><span class="p">&gt;</span><span class="nx">W</span><span class="p">:</span><span class="w"> </span><span class="nx">dispatch</span><span class="w"> </span><span class="nx">evolution</span><span class="w"> </span><span class="nx">job</span>
-<span class="w">  </span><span class="nx">W</span><span class="o">-&gt;</span><span class="p">&gt;</span><span class="nx">G</span><span class="p">:</span><span class="w"> </span><span class="nx">checkout</span><span class="w"> </span><span class="kd">base</span><span class="w"> </span><span class="nx">commit</span><span class="p">&lt;</span><span class="nx">br</span><span class="o">/</span><span class="p">&gt;(</span><span class="nx">create</span><span class="w"> </span><span class="nx">job</span><span class="w"> </span><span class="nx">branch</span><span class="p">)</span>
-<span class="w">  </span><span class="nx">W</span><span class="o">-&gt;</span><span class="p">&gt;</span><span class="nx">L</span><span class="p">:</span><span class="w"> </span><span class="nx">plan</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nx">implement</span><span class="w"> </span><span class="nx">changes</span>
-<span class="w">  </span><span class="nx">W</span><span class="o">-&gt;</span><span class="p">&gt;</span><span class="nx">G</span><span class="p">:</span><span class="w"> </span><span class="nx">apply</span><span class="w"> </span><span class="nx">edits</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="nx">commit</span>
-<span class="w">  </span><span class="nx">W</span><span class="o">-&gt;</span><span class="p">&gt;</span><span class="nx">E</span><span class="p">:</span><span class="w"> </span><span class="nx">run</span><span class="w"> </span><span class="nx">tests</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="nx">evaluation</span>
-<span class="w">  </span><span class="nx">E</span><span class="o">--&gt;&gt;</span><span class="nx">W</span><span class="p">:</span><span class="w"> </span><span class="nx">metrics</span>
-<span class="w">  </span><span class="nx">W</span><span class="o">-&gt;</span><span class="p">&gt;</span><span class="nx">DB</span><span class="p">:</span><span class="w"> </span><span class="nx">persist</span><span class="w"> </span><span class="nx">results</span>
-</code></pre></div>
-
+  Q-&gt;&gt;W: dispatch evolution job
+  W-&gt;&gt;G: checkout base commit&lt;br/&gt;(create job branch)
+  W-&gt;&gt;L: plan + implement changes
+  W-&gt;&gt;G: apply edits and commit
+  W-&gt;&gt;E: run tests / evaluation
+  E--&gt;&gt;W: metrics
+  W-&gt;&gt;DB: persist results</code></pre>
 <p>This loop can run indefinitely against a long-lived repository, gradually populating the MAP-Elites archive with diverse, high-quality commits.</p>
 <hr />
 <h3 id="architecture-map">Architecture map<a class="headerlink" href="#architecture-map" title="Permanent link">&para;</a></h3>
@@ -1857,15 +1853,13 @@
 <li>Git (including worktrees; LFS optional)</li>
 </ul>
 <h4 id="install-dependencies">Install dependencies<a class="headerlink" href="#install-dependencies" title="Permanent link">&para;</a></h4>
-<div class="codehilite"><pre><span></span><code>git<span class="w"> </span>clone<span class="w"> </span>&lt;YOUR_FORK_OR_ORIGIN_URL&gt;<span class="w"> </span>loreley
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>clone<span class="w"> </span>&lt;YOUR_FORK_OR_ORIGIN_URL&gt;<span class="w"> </span>loreley
 <span class="nb">cd</span><span class="w"> </span>loreley
 uv<span class="w"> </span>sync<span class="w">          </span><span class="c1"># install dependencies from pyproject.toml / uv.lock</span>
 </code></pre></div>
-
 <p>If you already have an environment, you can pin dependencies without creating a workspace:</p>
-<div class="codehilite"><pre><span></span><code>uv<span class="w"> </span>sync<span class="w"> </span>--no-workspace
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>sync<span class="w"> </span>--no-workspace
 </code></pre></div>
-
 <h4 id="configure-loreley">Configure Loreley<a class="headerlink" href="#configure-loreley" title="Permanent link">&para;</a></h4>
 <p>All runtime configuration is provided via environment variables and loaded by <code>loreley.config.Settings</code>. Common examples:</p>
 <ul>
@@ -1879,16 +1873,14 @@ uv<span class="w"> </span>sync<span class="w">          </span><span class="c1">
 <p>See <a href="loreley/config/">Configuration</a> for the exhaustive list.</p>
 <h4 id="run-the-scheduler">Run the scheduler<a class="headerlink" href="#run-the-scheduler" title="Permanent link">&para;</a></h4>
 <p>The scheduler drives ingestion, scheduling, dispatch, and archive maintenance:</p>
-<div class="codehilite"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_scheduler.py<span class="w">        </span><span class="c1"># continuous loop</span>
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_scheduler.py<span class="w">        </span><span class="c1"># continuous loop</span>
 uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_scheduler.py<span class="w"> </span>--once<span class="w"> </span><span class="c1"># single tick</span>
 </code></pre></div>
-
 <p>See <a href="script/run_scheduler/">Running the scheduler</a> and <a href="loreley/scheduler/main/">Scheduler internals</a> for more detail.</p>
 <h4 id="run-the-worker">Run the worker<a class="headerlink" href="#run-the-worker" title="Permanent link">&para;</a></h4>
 <p>A worker process consumes jobs from Dramatiq, applies planning/coding/evaluation, and pushes results back into the database:</p>
-<div class="codehilite"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_worker.py
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_worker.py
 </code></pre></div>
-
 <p>See <a href="script/run_worker/">Running the worker</a> and the worker module pages under <code>loreley/core/worker/</code> for operational and implementation details.</p>
 <hr />
 <h3 id="documentation-map">Documentation map<a class="headerlink" href="#documentation-map" title="Permanent link">&para;</a></h3>

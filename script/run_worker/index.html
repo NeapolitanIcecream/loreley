@@ -1604,10 +1604,9 @@ process.</p>
 message.</p>
 <h2 id="cli-usage">CLI usage<a class="headerlink" href="#cli-usage" title="Permanent link">&para;</a></h2>
 <p>Typical usage with <code>uv</code>:</p>
-<div class="codehilite"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_worker.py
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_worker.py
 uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_worker.py<span class="w"> </span>--log-level<span class="w"> </span>DEBUG
 </code></pre></div>
-
 <p>The worker will begin consuming messages for the queue specified by
 <code>TASKS_QUEUE_NAME</code> (default: <code>loreley.evolution</code>) in a single process with a
 single worker thread. Jobs are expected to be created and dispatched by the

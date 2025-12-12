@@ -1597,16 +1597,14 @@ interaction are all implemented in <code>loreley.scheduler.main.EvolutionSchedul
 <code>0</code>, while unexpected exceptions bubble up and cause a non-zero exit.</p>
 <h2 id="cli-usage">CLI usage<a class="headerlink" href="#cli-usage" title="Permanent link">&para;</a></h2>
 <p>Recommended usage with <code>uv</code>:</p>
-<div class="codehilite"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_scheduler.py<span class="w">        </span><span class="c1"># continuous loop</span>
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_scheduler.py<span class="w">        </span><span class="c1"># continuous loop</span>
 uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_scheduler.py<span class="w"> </span>--once<span class="w"> </span><span class="c1"># single tick (cron / smoke tests)</span>
 uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_scheduler.py<span class="w"> </span>--log-level<span class="w"> </span>DEBUG
 </code></pre></div>
-
 <p>The wrapper is equivalent to invoking the module directly:</p>
-<div class="codehilite"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>loreley.scheduler.main<span class="w">        </span><span class="c1"># continuous loop</span>
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>loreley.scheduler.main<span class="w">        </span><span class="c1"># continuous loop</span>
 uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>loreley.scheduler.main<span class="w"> </span>--once<span class="w"> </span><span class="c1"># single tick</span>
 </code></pre></div>
-
 <h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
 <p>The script relies on <code>loreley.config.Settings</code>:</p>
 <ul>

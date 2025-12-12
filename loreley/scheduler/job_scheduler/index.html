@@ -1579,9 +1579,8 @@
 scheduled, <strong>which</strong> jobs should be dispatched next, and <strong>when</strong> they are
 submitted to the Dramatiq worker queue.</p>
 <h2 id="jobscheduler">JobScheduler<a class="headerlink" href="#jobscheduler" title="Permanent link">&para;</a></h2>
-<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">loreley.scheduler.job_scheduler</span><span class="w"> </span><span class="kn">import</span> <span class="n">JobScheduler</span>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">loreley.scheduler.job_scheduler</span><span class="w"> </span><span class="kn">import</span> <span class="n">JobScheduler</span>
 </code></pre></div>
-
 <ul>
 <li><strong>Purpose</strong>: encapsulate database interaction and Dramatiq calls for
   scheduling and dispatching evolution jobs, so that the main
