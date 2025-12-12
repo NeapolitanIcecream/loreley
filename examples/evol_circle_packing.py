@@ -103,7 +103,7 @@ SCHEDULER_REPO_ROOT: Path | None = REPO_ROOT
 SCHEDULER_POLL_INTERVAL_SECONDS: float = 30.0
 
 # Maximum number of unfinished jobs (pending/queued/running) allowed at once.
-SCHEDULER_MAX_UNFINISHED_JOBS: int = 4
+SCHEDULER_MAX_UNFINISHED_JOBS: int = 8
 
 # Optional global limit on total jobs scheduled by this process.
 # Set to None for no global cap.
@@ -132,7 +132,7 @@ MAPELITES_EXPERIMENT_ROOT_COMMIT: str | None = "6dab191"
 # Size of the cold-start seed population created from the root commit. The
 # scheduler still respects SCHEDULER_MAX_UNFINISHED_JOBS and
 # SCHEDULER_MAX_TOTAL_JOBS when creating these jobs.
-MAPELITES_SEED_POPULATION_SIZE: int = 4
+MAPELITES_SEED_POPULATION_SIZE: int = 8
 
 # Behaviour space sized for <= ~200 total jobs.
 MAPELITES_DIMENSION_REDUCTION_TARGET_DIMS: int = 2
