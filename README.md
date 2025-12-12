@@ -251,6 +251,9 @@ The full documentation lives under `docs/` and is rendered into `site/` via MkDo
   `WORKER_EVALUATOR_PYTHON_PATHS` at `examples/circle_packing_env` and setting
   `WORKER_EVALUATOR_PLUGIN=evaluate:plugin`, then letting MAP-Elites evolve better packings.
 
+  The best evolved result for this example is available on the `evolution/best/b11e0430`
+  branch of the `examples/circle-packing` repository.
+
 ---
 
 ### License
