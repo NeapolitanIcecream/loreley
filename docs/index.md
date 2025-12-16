@@ -123,11 +123,11 @@ Loreley is designed to be **QD-native at repository scale**:
 
 Quality-diversity methods require a behaviour space. Hand-crafted behaviour descriptors (file counts, line deltas, test counts, etc.) are brittle and often project-specific.
 
+![hand-craft-feature](./assets/hand-craft-feature.png)
+
 Loreley derives behaviour descriptors from **code embeddings and summary embeddings** (optionally reduced with PCA). This makes diversity measurement less dependent on manual feature engineering and better aligned with “semantic” differences between changes.
 
 Under similar fitness, the archive can preserve structurally different improvements (refactors vs micro-optimisations vs feature shifts) as distinct behavioural niches, enabling exploration without collapsing to a single style of change.
-
-![hand-craft-feature](./assets/hand-craft-feature.png)
 
 ### Production-grade distributed loop
 
