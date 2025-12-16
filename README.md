@@ -1,28 +1,49 @@
 ## Loreley
 
-> Whole-repository MAP-Elites for real git codebases.
+> Whole-repository Quality-Diversity optimization for real git codebases.
 
-Loreley is an automated MAP-Elites system that **evolves entire git repositories**, not just single files or scripts. It continuously samples promising commits, asks external agents to plan and implement changes, evaluates them, and archives the best-performing and most diverse variants for later reuse.
+Loreley is an automated Quality-Diversity optimization system that **evolves entire git repositories**, not just single files or scripts. It continuously samples promising commits, asks external agents to plan and implement changes, evaluates them, and archives the best-performing and most diverse variants for later reuse.
 
 Loreley is inspired by systems such as [AlphaEvolve](https://deepmind.google/blog/alphaevolve-a-gemini-powered-coding-agent-for-designing-advanced-algorithms/) and open-source efforts like [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve), but is designed from day one for **whole-repo evolution**, a **learned behaviour space**, and a **production-grade distributed loop**.
 
 ---
 
-### Why Loreley?
+### Challenges → core ideas
 
-Most existing LLM-driven evolution systems are powerful research prototypes, but they struggle when pointed at real production repositories:
+| Challenge in real repositories | Loreley core idea |
+| --- | --- |
+| Single-file evolution cannot express cross-module refactors and production changes | **Whole-repo evolution** (individual = real git commit) |
+| Hand-crafted behaviour descriptors do not generalise across projects | **Learned behaviour space** (embeddings + optional PCA) |
+| Demo-style pipelines do not scale to distributed, long-running operation | **Production-grade distributed loop** (scheduler + queue + DB) |
 
-- **Single-file focus** – they typically optimise one script or entrypoint at a time, making it hard to express refactors that span multiple modules, configurations, and tests.
-- **Hand-crafted behaviour features** – diversity is defined by manually designed descriptors, which often need to be rethought for every new project and may miss important behavioural axes.
-- **Non-distributed or demo-oriented loops** – orchestration is usually a bespoke script rather than a resilient, distributed-native job system.
+---
 
-Loreley addresses these limitations with three core ideas:
+### Methodology
 
-- **Whole-repo evolution** – each individual in the search is a real git commit. The evolution worker checks out a clean worktree, applies cross-file changes (including new files and configs), runs evaluation, and produces a debuggable commit that works with normal tooling (git, CI, code review).
-- **Learned behaviour space** – instead of hand-picking behaviour descriptors, Loreley learns them from code and summary embeddings (optionally reduced with PCA). Behavioural diversity is measured directly in this learned space, so the same pipeline can generalise across very different repositories.
-- **Production-grade distributed loop** – a Dramatiq/Redis worker fleet, PostgreSQL-backed archive, and a central scheduler provide a long-running evolution loop that can scale out horizontally, respect resource limits, and cleanly export strong candidates as git branches.
+Loreley treats software evolution as **quality-diversity search over the commit graph of a real repository**, guided by a learned behaviour space and driven by a production-grade distributed loop. Instead of using LLMs as one-shot patch generators, it organises planning, editing, evaluation, and archiving into a repeatable system that can safely explore improvements while remaining auditable (git), testable (evaluator), and operable (scheduler + workers).
 
-Related systems include [AlphaEvolve](https://deepmind.google/blog/alphaevolve-a-gemini-powered-coding-agent-for-designing-advanced-algorithms/), [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve), and [ShinkaEvolve](https://github.com/SakanaAI/ShinkaEvolve). Loreley focuses specifically on **whole-repository, production-grade evolution**.
+---
+
+### Core ideas (what they unlock)
+
+#### 1) Whole-repo evolution (individual = git commit)
+
+- **Solves**: cross-file and cross-module changes that are required in production codebases (APIs, configs, build scripts, tests).
+- **QD-native angle**: repository-scale evolution is feasible (e.g. [SATLUTION](https://arxiv.org/pdf/2509.07367)), but many repository-scale loops are champion-based and rulebase-driven, which collapses diversity and makes quality-diversity methods hard to realise. Loreley keeps a **MAP-Elites archive of multiple elites** across behavioural niches and samples from them as inspirations.
+- **Example**: an optimisation that touches `core/`, updates configs, and adjusts tests is a single atomic commit that can be reviewed, bisected, and rolled back.
+- **Why feasible**: the worker runs on a clean worktree, produces real commits, and relies on evaluator gates rather than ad-hoc patch semantics.
+
+#### 2) Learned behaviour space (embeddings + optional PCA)
+
+- **Solves**: brittle, project-specific behaviour features. Loreley derives behaviour descriptors from **code embeddings and summary embeddings**, optionally reduced with PCA, and measures diversity directly in this learned space.
+- **Example**: under similar fitness, the archive can preserve structurally different improvements (refactors vs micro-optimisations vs feature shifts) as distinct behavioural niches.
+- **Why feasible**: the embedding pipeline is configurable and bounded (preprocessing limits, chunk budgets, refit cadence), and low-quality noise is filtered by evaluation and fitness floors.
+
+#### 3) Production-grade distributed loop (scheduler + workers + DB)
+
+- **Solves**: one-off scripts that cannot run continuously, scale out, or provide experiment traceability.
+- **Example**: long-running optimisation on a repository with controlled concurrency (`max_unfinished_jobs`), explicit experiments (config snapshots), and best-candidate export as a git branch.
+- **Why feasible**: Redis/Dramatiq provides distributed job execution, PostgreSQL persists experiments/metrics/archive state, and the scheduler enforces resource limits and lifecycle.
 
 ---
 
