@@ -1950,9 +1950,9 @@ uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </sp
 </ul>
 <h3 id="learned-behaviour-space">Learned behaviour space<a class="headerlink" href="#learned-behaviour-space" title="Permanent link">&para;</a></h3>
 <p>Quality-diversity methods require a behaviour space. Hand-crafted behaviour descriptors (file counts, line deltas, test counts, etc.) are brittle and often project-specific.</p>
+<p><img alt="hand-craft-feature" src="assets/hand-craft-feature.png" /></p>
 <p>Loreley derives behaviour descriptors from <strong>code embeddings and summary embeddings</strong> (optionally reduced with PCA). This makes diversity measurement less dependent on manual feature engineering and better aligned with “semantic” differences between changes.</p>
 <p>Under similar fitness, the archive can preserve structurally different improvements (refactors vs micro-optimisations vs feature shifts) as distinct behavioural niches, enabling exploration without collapsing to a single style of change.</p>
-<p><img alt="hand-craft-feature" src="assets/hand-craft-feature.png" /></p>
 <h3 id="production-grade-distributed-loop">Production-grade distributed loop<a class="headerlink" href="#production-grade-distributed-loop" title="Permanent link">&para;</a></h3>
 <p>Production-grade evolution requires more than an agent loop: it needs distributed execution, resource controls, and persistent traceability.</p>
 <p>Loreley runs a long-lived loop with:</p>
