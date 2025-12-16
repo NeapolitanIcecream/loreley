@@ -32,7 +32,7 @@ Whole-repo evolution makes the **git commit** the fundamental unit of search. Th
 
 Repository-scale evolution has been demonstrated in the literature (for example, [SATLUTION](https://arxiv.org/pdf/2509.07367)), but many repository-scale loops are champion-based and rulebase-driven: a single “current best” becomes the next baseline, and extensive human-authored rules are used to keep the agent on track. This design can limit diversity and makes quality-diversity methods difficult to realise.
 
-![champion-based](./assets/satlution-single-champion.jpg)
+![champion-based](./docs/assets/satlution-single-champion.jpg)
 
 Loreley is designed to be **QD-native at repository scale**:
 
@@ -44,7 +44,7 @@ Loreley is designed to be **QD-native at repository scale**:
 
 Quality-diversity methods require a behaviour space. Hand-crafted behaviour descriptors (file counts, line deltas, test counts, etc.) are brittle and often project-specific.
 
-![hand-craft-feature](./assets/hand-craft-feature.png)
+![hand-craft-feature](./docs/assets/hand-craft-feature.png)
 
 Loreley derives behaviour descriptors from **code embeddings and summary embeddings** (optionally reduced with PCA). This makes diversity measurement less dependent on manual feature engineering and better aligned with “semantic” differences between changes.
 
