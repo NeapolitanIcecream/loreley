@@ -127,7 +127,7 @@ Loreley derives behaviour descriptors from **code embeddings and summary embeddi
 
 Under similar fitness, the archive can preserve structurally different improvements (refactors vs micro-optimisations vs feature shifts) as distinct behavioural niches, enabling exploration without collapsing to a single style of change.
 
-![hand-craft-feature](./docs/assets/hand-craft-feature.png)
+![hand-craft-feature](./assets/hand-craft-feature.png)
 
 ### Production-grade distributed loop
 
