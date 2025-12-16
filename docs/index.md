@@ -15,9 +15,9 @@ Loreley is built around three core ideas, each designed to address a concrete ch
 
 | Challenge in real repositories | Loreley core idea |
 | --- | --- |
-| Single-file evolution cannot express cross-module refactors and production changes | **Whole-repo evolution** (individual = real git commit) |
-| Hand-crafted behaviour descriptors do not generalise across projects | **Learned behaviour space** (code + summary embeddings, optional PCA) |
-| Demo-style pipelines do not scale to distributed, long-running operation | **Production-grade distributed loop** (scheduler + queue + DB) |
+| Single-file evolution cannot express cross-module refactors and production changes | **Whole-repo evolution** |
+| Hand-crafted behaviour descriptors do not generalise across projects | **Learned behaviour space** |
+| Demo-style pipelines do not scale to distributed, long-running operation | **Production-grade distributed loop** |
 
 Related systems include [AlphaEvolve](https://deepmind.google/blog/alphaevolve-a-gemini-powered-coding-agent-for-designing-advanced-algorithms/), [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve), and [ShinkaEvolve](https://github.com/SakanaAI/ShinkaEvolve).
 

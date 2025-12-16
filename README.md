@@ -12,9 +12,9 @@ Loreley is inspired by systems such as [AlphaEvolve](https://deepmind.google/blo
 
 | Challenge in real repositories | Loreley core idea |
 | --- | --- |
-| Single-file evolution cannot express cross-module refactors and production changes | **Whole-repo evolution** (individual = real git commit) |
-| Hand-crafted behaviour descriptors do not generalise across projects | **Learned behaviour space** (embeddings + optional PCA) |
-| Demo-style pipelines do not scale to distributed, long-running operation | **Production-grade distributed loop** (scheduler + queue + DB) |
+| Single-file evolution cannot express cross-module refactors and production changes | **Whole-repo evolution** |
+| Hand-crafted behaviour descriptors do not generalise across projects | **Learned behaviour space** |
+| Demo-style pipelines do not scale to distributed, long-running operation | **Production-grade distributed loop** |
 
 ---
 
@@ -24,22 +24,22 @@ Loreley treats software evolution as **quality-diversity search over the commit 
 
 ---
 
-### Core ideas (what they unlock)
+### Core ideas
 
-#### 1) Whole-repo evolution (individual = git commit)
+#### 1) Whole-repo evolution
 
 - **Solves**: cross-file and cross-module changes that are required in production codebases (APIs, configs, build scripts, tests).
 - **QD-native angle**: repository-scale evolution is feasible (e.g. [SATLUTION](https://arxiv.org/pdf/2509.07367)), but many repository-scale loops are champion-based and rulebase-driven, which collapses diversity and makes quality-diversity methods hard to realise. Loreley keeps a **MAP-Elites archive of multiple elites** across behavioural niches and samples from them as inspirations.
 - **Example**: an optimisation that touches `core/`, updates configs, and adjusts tests is a single atomic commit that can be reviewed, bisected, and rolled back.
 - **Why feasible**: the worker runs on a clean worktree, produces real commits, and relies on evaluator gates rather than ad-hoc patch semantics.
 
-#### 2) Learned behaviour space (embeddings + optional PCA)
+#### 2) Learned behaviour space
 
 - **Solves**: brittle, project-specific behaviour features. Loreley derives behaviour descriptors from **code embeddings and summary embeddings**, optionally reduced with PCA, and measures diversity directly in this learned space.
 - **Example**: under similar fitness, the archive can preserve structurally different improvements (refactors vs micro-optimisations vs feature shifts) as distinct behavioural niches.
 - **Why feasible**: the embedding pipeline is configurable and bounded (preprocessing limits, chunk budgets, refit cadence), and low-quality noise is filtered by evaluation and fitness floors.
 
-#### 3) Production-grade distributed loop (scheduler + workers + DB)
+#### 3) Production-grade distributed loop
 
 - **Solves**: one-off scripts that cannot run continuously, scale out, or provide experiment traceability.
 - **Example**: long-running optimisation on a repository with controlled concurrency (`max_unfinished_jobs`), explicit experiments (config snapshots), and best-candidate export as a git branch.
