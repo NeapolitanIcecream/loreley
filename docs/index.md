@@ -111,13 +111,13 @@ Whole-repo evolution makes the **git commit** the fundamental unit of search. Th
 
 Repository-scale evolution has been demonstrated in the literature (for example, [SATLUTION](https://arxiv.org/pdf/2509.07367)), but many repository-scale loops are champion-based and rulebase-driven: a single “current best” becomes the next baseline, and extensive human-authored rules are used to keep the agent on track. This design can limit diversity and makes quality-diversity methods difficult to realise.
 
+![champion-based](./assets/satlution-single-champion.jpg)
+
 Loreley is designed to be **QD-native at repository scale**:
 
 - it keeps a MAP-Elites archive of **multiple elites** across behavioural niches (not a single champion line),
 - it samples from those niches as inspirations for new jobs,
 - and it uses evaluator gates + repository semantics as the primary source of constraints, minimising dependence on domain-specific rulebases.
-
-**Example**: a performance improvement that touches `core/`, updates a configuration default, and adjusts tests is an atomic commit that can be reviewed, bisected, and rolled back.
 
 ### Learned behaviour space
 
@@ -125,7 +125,9 @@ Quality-diversity methods require a behaviour space. Hand-crafted behaviour desc
 
 Loreley derives behaviour descriptors from **code embeddings and summary embeddings** (optionally reduced with PCA). This makes diversity measurement less dependent on manual feature engineering and better aligned with “semantic” differences between changes.
 
-**Example**: under similar fitness, the archive can preserve structurally different improvements (refactors vs micro-optimisations vs feature shifts) as distinct behavioural niches, enabling exploration without collapsing to a single style of change.
+Under similar fitness, the archive can preserve structurally different improvements (refactors vs micro-optimisations vs feature shifts) as distinct behavioural niches, enabling exploration without collapsing to a single style of change.
+
+![hand-craft-feature](./docs/assets/hand-craft-feature.png)
 
 ### Production-grade distributed loop
 
@@ -138,7 +140,7 @@ Loreley runs a long-lived loop with:
 - a PostgreSQL-backed store for experiments, commits, metrics, and archive state,
 - explicit lifecycle controls (max unfinished jobs, optional total job caps, seed population, best-candidate branch export).
 
-**Example**: you can run a long optimisation campaign on a repository, scaling workers horizontally, while keeping the evolution process reproducible and observable.
+You can run a long optimisation campaign on a repository, scaling workers horizontally, while keeping the evolution process reproducible and observable.
 
 ---
 
