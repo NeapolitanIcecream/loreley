@@ -95,7 +95,7 @@ def render() -> None:
             [{"status": k, "count": int(v)} for k, v in status_counts.items()]
         ).sort_values("count", ascending=False)
         fig = px.bar(status_df, x="status", y="count", title="Job status (loaded)")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     # Job duration histogram
     if not jobs_df.empty and {"started_at", "completed_at"} <= set(jobs_df.columns):
@@ -114,7 +114,7 @@ def render() -> None:
                     nbins=40,
                     title="Job duration (seconds) - loaded jobs",
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
 
     # Fitness over time (from graph nodes)
     nodes = graph.get("nodes") if isinstance(graph, dict) else None
@@ -128,9 +128,9 @@ def render() -> None:
             if not nodes_df.empty:
                 nodes_df["best_so_far"] = nodes_df["fitness"].cummax()
                 fig = px.line(nodes_df, x="created_at", y="best_so_far", title="Best fitness over time (loaded commits)")
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
 
     st.subheader("Islands")
-    st.dataframe(islands or [], use_container_width=True)
+    st.dataframe(islands or [], width="stretch")
 
 

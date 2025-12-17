@@ -27,6 +27,42 @@ from loreley.ui.state import (
 )
 
 
+# Streamlit infers the URL pathname for callable pages from the callable's name.
+# Our page modules expose a same-named `render()` function, which would collide
+# (e.g. multiple pages inferred as pathname "render"). Wrap them with uniquely
+# named callables to ensure stable, unique routing.
+def overview() -> None:
+    render_overview()
+
+
+def experiments() -> None:
+    render_experiments()
+
+
+def jobs() -> None:
+    render_jobs()
+
+
+def commits() -> None:
+    render_commits()
+
+
+def archive() -> None:
+    render_archive()
+
+
+def graphs() -> None:
+    render_graphs()
+
+
+def logs() -> None:
+    render_logs()
+
+
+def settings() -> None:
+    render_settings()
+
+
 def _init_session_defaults() -> None:
     api_base_url = os.getenv("LORELEY_UI_API_BASE_URL", "http://127.0.0.1:8000")
     st.session_state.setdefault(API_BASE_URL_KEY, api_base_url)
@@ -164,19 +200,19 @@ def main() -> None:
     # Use Streamlit's modern router when available; fallback to a simple single page.
     if hasattr(st, "Page") and hasattr(st, "navigation"):
         pages = [
-            st.Page(render_overview, title="Overview"),
-            st.Page(render_experiments, title="Experiments"),
-            st.Page(render_jobs, title="Jobs"),
-            st.Page(render_commits, title="Commits"),
-            st.Page(render_archive, title="Archive"),
-            st.Page(render_graphs, title="Graphs"),
-            st.Page(render_logs, title="Logs"),
-            st.Page(render_settings, title="Settings"),
+            st.Page(overview, title="Overview"),
+            st.Page(experiments, title="Experiments"),
+            st.Page(jobs, title="Jobs"),
+            st.Page(commits, title="Commits"),
+            st.Page(archive, title="Archive"),
+            st.Page(graphs, title="Graphs"),
+            st.Page(logs, title="Logs"),
+            st.Page(settings, title="Settings"),
         ]
         nav = st.navigation(pages, position="sidebar")
         nav.run()
     else:  # pragma: no cover - version dependent
-        render_overview()
+        overview()
 
 
 if __name__ == "__main__":  # pragma: no cover

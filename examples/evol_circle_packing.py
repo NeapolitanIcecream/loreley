@@ -735,5 +735,9 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":  # pragma: no cover
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        console.log("[yellow]Keyboard interrupt received[/]; exiting...")
+        raise SystemExit(130)
 

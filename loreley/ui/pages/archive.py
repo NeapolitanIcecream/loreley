@@ -31,7 +31,7 @@ def render() -> None:
 
     islands = api_get_or_stop(api_base_url, "/api/v1/archive/islands", params={"experiment_id": experiment_id}) or []
     st.subheader("Islands")
-    st.dataframe(islands, use_container_width=True)
+    st.dataframe(islands, width="stretch")
 
     if not island_id:
         st.info("Select an island in the sidebar to explore records.")
@@ -80,7 +80,7 @@ def render() -> None:
             aspect="auto",
             origin="lower",
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     else:
         # Scatter projection using selected dims.
         measures = records_df.get("measures")
@@ -120,7 +120,7 @@ def render() -> None:
                     hover_data=["commit_hash", "cell_index"],
                     title="Archive records scatter (selected measures)",
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
             else:
                 st.info("Not enough measure dimensions to plot a scatter projection.")
 

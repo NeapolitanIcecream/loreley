@@ -100,9 +100,9 @@ def render() -> None:
                 st.json(metrics)
             else:
                 mdf = pd.DataFrame(metrics)
-                st.dataframe(mdf[["name", "value", "unit"]], use_container_width=True)
+                st.dataframe(mdf[["name", "value", "unit"]], width="stretch")
                 fig = px.bar(mdf, x="name", y="value", title="Metrics", text="value")
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
         else:
             st.info("No metrics found for this commit.")
 

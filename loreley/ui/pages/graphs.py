@@ -51,7 +51,7 @@ def render() -> None:
             df["fitness"] = pd.to_numeric(df["fitness"], errors="coerce")
             df = df.dropna(subset=["created_at", "fitness"])
             fig = px.scatter(df, x="created_at", y="fitness", color="island_id", title="Fitness vs time (loaded nodes)")
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
     st.subheader("Interactive network (PyVis)")
     render_pyvis = st.checkbox("Render interactive graph", value=True, help="May be slower for large graphs.")

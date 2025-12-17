@@ -9,6 +9,7 @@ Usage (with uv):
 
 import argparse
 import os
+import signal
 import subprocess
 import sys
 from typing import Sequence
@@ -60,7 +61,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
 
     try:
-        return subprocess.call(cmd, env=env)
+        proc = subprocess.Popen(cmd, env=env)
     except FileNotFoundError as exc:  # pragma: no cover
         console.log(
             "[bold red]Failed to start Streamlit[/] "
@@ -68,6 +69,44 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"reason={exc}"
         )
         return 1
+    except KeyboardInterrupt:
+        # Defensive: KeyboardInterrupt could surface while creating the subprocess.
+        console.log("[yellow]Keyboard interrupt received[/]; stopping UI...")
+        return 130
+
+    try:
+        return int(proc.wait())
+    except KeyboardInterrupt:
+        # Graceful shutdown: forward SIGINT to the Streamlit process and wait.
+        # This avoids printing an uncaught KeyboardInterrupt traceback in callers.
+        console.log("[yellow]Keyboard interrupt received[/]; stopping UI...")
+        try:
+            proc.send_signal(signal.SIGINT)
+        except Exception:
+            # Best-effort only. The process may have already exited.
+            pass
+
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            console.log("[yellow]UI did not stop after SIGINT; terminating...[/]")
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                console.log("[bold red]UI did not terminate; killing...[/]")
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                try:
+                    proc.wait(timeout=5)
+                except Exception:
+                    pass
+        return 130
 
 
 if __name__ == "__main__":  # pragma: no cover

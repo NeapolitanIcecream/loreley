@@ -20,7 +20,7 @@ def render() -> None:
     files = api_get_or_stop(api_base_url, "/api/v1/logs", params={"role": role}) or []
 
     st.subheader("Log files")
-    st.dataframe(files or [], use_container_width=True)
+    st.dataframe(files or [], width="stretch")
 
     if files:
         names = [f.get("name") for f in files if isinstance(f, dict) and f.get("name")]

@@ -70,6 +70,6 @@ def render() -> None:
         params={"experiment_id": effective_experiment_id},
     ) or []
     st.subheader("Islands")
-    st.dataframe(islands, use_container_width=True)
+    st.dataframe(islands, width="stretch")
 
 
