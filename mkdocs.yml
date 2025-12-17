@@ -37,9 +37,12 @@ nav:
       - Tasks:
           - Broker: loreley/tasks/broker.md
           - Workers: loreley/tasks/workers.md
+      - UI: loreley/ui.md
   - Operations:
       - Running the scheduler: script/run_scheduler.md
       - Running the worker: script/run_worker.md
+      - Running the UI API: script/run_api.md
+      - Running the UI: script/run_ui.md
 
 markdown_extensions:
   - admonition
