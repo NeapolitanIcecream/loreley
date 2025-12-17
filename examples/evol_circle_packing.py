@@ -6,15 +6,19 @@ Convenience launcher for running Loreley scheduler/worker on the circle-packing 
 This script:
   - Hard-codes a minimal set of environment variables needed for DB, Redis, worker repo,
     evaluator plugin, and MAP-Elites fitness metric.
-  - Exposes two subcommands:
+  - Exposes four subcommands:
       * scheduler  – run the evolution scheduler loop (or a single tick with --once).
       * worker     – run a single-threaded Dramatiq worker.
+      * api        – run the read-only UI API (FastAPI via uvicorn).
+      * ui         – run the Streamlit UI.
 
 Usage (from the Loreley repository root, ideally via uv):
 
     uv run python examples/evol_circle_packing.py scheduler
     uv run python examples/evol_circle_packing.py scheduler --once
     uv run python examples/evol_circle_packing.py worker
+    uv run python examples/evol_circle_packing.py api --reload
+    uv run python examples/evol_circle_packing.py ui
 
 Edit the configuration block below to match your local PostgreSQL, Redis,
 and git remote setup. OPENAI_API_KEY is always read from the environment.
@@ -108,6 +112,15 @@ SCHEDULER_MAX_UNFINISHED_JOBS: int = 8
 # Optional global limit on total jobs scheduled by this process.
 # Set to None for no global cap.
 SCHEDULER_MAX_TOTAL_JOBS: int | None = 100
+
+# --- UI API / Streamlit UI configuration ------------------------------------
+
+UI_API_HOST: str = "127.0.0.1"
+UI_API_PORT: int = 8000
+UI_API_BASE_URL: str = f"http://{UI_API_HOST}:{UI_API_PORT}"
+
+UI_HOST: str = "127.0.0.1"
+UI_PORT: int = 8501
 
 # --- Circle-packing evaluator configuration --------------------------------
 
@@ -571,6 +584,72 @@ def _run_worker() -> int:
     return int(worker_main([]))
 
 
+def _run_api(*, host: str, port: int, log_level: str | None, reload: bool) -> int:
+    """Run the Loreley read-only UI API (FastAPI via uvicorn)."""
+
+    _apply_base_env()
+    _ensure_repo_on_sys_path()
+    _print_environment_summary()
+
+    # Import after environment is configured so that Settings is initialised with
+    # the values defined above.
+    from script.run_api import main as api_main
+
+    argv: list[str] = ["--host", str(host), "--port", str(int(port))]
+    if log_level:
+        argv += ["--log-level", str(log_level)]
+    if reload:
+        argv.append("--reload")
+
+    console.log(
+        "[bold green]Starting UI API[/] host={} port={} reload={} …".format(
+            host,
+            port,
+            "yes" if reload else "no",
+        )
+    )
+    return int(api_main(argv))
+
+
+def _run_ui(*, host: str, port: int, api_base_url: str, headless: bool) -> int:
+    """Run the Loreley Streamlit UI."""
+
+    _apply_base_env()
+    _ensure_repo_on_sys_path()
+    _print_environment_summary()
+
+    # Streamlit is invoked as a subprocess by script.run_ui and expects the
+    # "loreley/ui/app.py" path to be resolved from the project root.
+    project_root = Path(__file__).resolve().parents[1]
+    previous_cwd = Path.cwd()
+    os.chdir(project_root)
+    try:
+        from script.run_ui import main as ui_main
+
+        argv: list[str] = [
+            "--api-base-url",
+            str(api_base_url),
+            "--host",
+            str(host),
+            "--port",
+            str(int(port)),
+        ]
+        if headless:
+            argv.append("--headless")
+
+        console.log(
+            "[bold green]Starting UI[/] host={} port={} headless={} api_base_url={} …".format(
+                host,
+                port,
+                "yes" if headless else "no",
+                api_base_url,
+            )
+        )
+        return int(ui_main(argv))
+    finally:
+        os.chdir(previous_cwd)
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint for this helper script."""
 
@@ -600,12 +679,56 @@ def main(argv: list[str] | None = None) -> int:
         help="Run a single-threaded evolution worker.",
     )
 
+    api_parser = subparsers.add_parser(
+        "api",
+        help="Run the read-only UI API (FastAPI via uvicorn).",
+    )
+    api_parser.add_argument("--host", default=UI_API_HOST, help="Bind host.")
+    api_parser.add_argument("--port", type=int, default=UI_API_PORT, help="Bind port.")
+    api_parser.add_argument(
+        "--log-level",
+        dest="log_level",
+        help="Override Settings.log_level.",
+    )
+    api_parser.add_argument("--reload", action="store_true", help="Enable auto-reload (dev only).")
+
+    ui_parser = subparsers.add_parser(
+        "ui",
+        help="Run the Loreley Streamlit UI.",
+    )
+    ui_parser.add_argument(
+        "--api-base-url",
+        default=UI_API_BASE_URL,
+        help="Base URL of the Loreley UI API.",
+    )
+    ui_parser.add_argument("--host", default=UI_HOST, help="Streamlit bind host.")
+    ui_parser.add_argument("--port", type=int, default=UI_PORT, help="Streamlit bind port.")
+    ui_parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Run without opening a browser.",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "scheduler":
         return _run_scheduler(once=bool(args.once), init_db=bool(args.init_db))
     if args.command == "worker":
         return _run_worker()
+    if args.command == "api":
+        return _run_api(
+            host=str(args.host),
+            port=int(args.port),
+            log_level=(str(args.log_level) if args.log_level else None),
+            reload=bool(args.reload),
+        )
+    if args.command == "ui":
+        return _run_ui(
+            host=str(args.host),
+            port=int(args.port),
+            api_base_url=str(args.api_base_url),
+            headless=bool(args.headless),
+        )
 
     parser.print_help()
     return 1
