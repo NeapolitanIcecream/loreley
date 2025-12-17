@@ -1,7 +1,7 @@
 [project]
 name = "loreley"
 dynamic = ["version"]
-description = "Production-grade framework that automatically evolves the entire git repository."
+description = "Whole-repository Quality-Diversity optimization for real git codebases."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
