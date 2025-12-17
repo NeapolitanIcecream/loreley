@@ -18,17 +18,22 @@ dependencies = [
     "sqlalchemy>=2.0.44",
 ]
 
-[dependency-groups]
+[project.optional-dependencies]
 dev = [
     "pytest>=9.0.1",
     "mkdocs-material>=9.7.0",
     "pymdown-extensions>=10.17.2",
 ]
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=9.0.1",
-    "mkdocs-material>=9.7.0",
+ui = [
+    "fastapi>=0.124.4",
+    "networkx>=3.6.1",
+    "pandas>=2.3.3",
+    "plotly>=6.5.0",
+    "polars>=1.36.1",
+    "pyvis>=0.3.2",
+    "streamlit>=1.52.1",
+    "streamlit-aggrid>=1.2.1",
+    "uvicorn[standard]>=0.38.0",
 ]
 
 [build-system]
