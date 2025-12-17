@@ -6,18 +6,18 @@ We intentionally avoid extra HTTP dependencies to keep the UI extras small.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlencode, urljoin
 from urllib.request import Request, urlopen
 
 
-@dataclass(frozen=True, slots=True)
 class APIError(RuntimeError):
     """Raised when the UI API returns an error or cannot be reached."""
 
-    message: str
-    status_code: int | None = None
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.message = str(message)
+        self.status_code = int(status_code) if status_code is not None else None
 
     def __str__(self) -> str:  # pragma: no cover - trivial
         if self.status_code is None:
