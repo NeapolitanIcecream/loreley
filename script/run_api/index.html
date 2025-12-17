@@ -11,25 +11,25 @@
       
       
       
-        <link rel="prev" href="../snapshot/">
+        <link rel="prev" href="../run_worker/">
       
       
-        <link rel="next" href="../../worker/repository/">
+        <link rel="next" href="../run_ui/">
       
       
         
       
       
-      <link rel="icon" href="../../../../assets/images/favicon.png">
+      <link rel="icon" href="../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.0">
     
     
       
-        <title>Summary embeddings - Loreley</title>
+        <title>Running the UI API - Loreley</title>
       
     
     
-      <link rel="stylesheet" href="../../../../assets/stylesheets/main.618322db.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.618322db.min.css">
       
       
 
@@ -48,7 +48,7 @@
       
     
     
-    <script>__md_scope=new URL("../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -66,7 +66,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#loreleycoremap-elitessummarization_embedding" class="md-skip">
+        <a href="#running-the-ui-api" class="md-skip">
           Skip to content
         </a>
       
@@ -82,7 +82,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../../../.." title="Loreley" class="md-header__button md-logo" aria-label="Loreley" data-md-component="logo">
+    <a href="../.." title="Loreley" class="md-header__button md-logo" aria-label="Loreley" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -102,7 +102,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Summary embeddings
+              Running the UI API
             
           </span>
         </div>
@@ -180,7 +180,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../../../.." title="Loreley" class="md-nav__button md-logo" aria-label="Loreley" data-md-component="logo">
+    <a href="../.." title="Loreley" class="md-nav__button md-logo" aria-label="Loreley" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -198,7 +198,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../.." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   
@@ -222,20 +222,18 @@
       
   
   
-    
   
   
-  
     
     
     
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
         
           
           <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
@@ -256,7 +254,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -274,7 +272,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../config/" class="md-nav__link">
+      <a href="../../loreley/config/" class="md-nav__link">
         
   
   
@@ -302,7 +300,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../experiments/" class="md-nav__link">
+      <a href="../../loreley/core/experiments/" class="md-nav__link">
         
   
   
@@ -377,7 +375,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../scheduler/main/" class="md-nav__link">
+      <a href="../../loreley/scheduler/main/" class="md-nav__link">
         
   
   
@@ -405,7 +403,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../scheduler/job_scheduler/" class="md-nav__link">
+      <a href="../../loreley/scheduler/job_scheduler/" class="md-nav__link">
         
   
   
@@ -433,7 +431,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../scheduler/ingestion/" class="md-nav__link">
+      <a href="../../loreley/scheduler/ingestion/" class="md-nav__link">
         
   
   
@@ -516,7 +514,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../db/base/" class="md-nav__link">
+      <a href="../../loreley/db/base/" class="md-nav__link">
         
   
   
@@ -544,7 +542,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../db/models/" class="md-nav__link">
+      <a href="../../loreley/db/models/" class="md-nav__link">
         
   
   
@@ -577,20 +575,18 @@
                 
   
   
-    
   
   
-  
     
     
     
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_5" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_5" >
         
           
           <label class="md-nav__link" for="__nav_2_5" id="__nav_2_5_label" tabindex="0">
@@ -611,7 +607,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_5_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_5_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2_5">
             <span class="md-nav__icon md-icon"></span>
             
@@ -629,7 +625,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../map-elites/" class="md-nav__link">
+      <a href="../../loreley/core/map-elites/map-elites/" class="md-nav__link">
         
   
   
@@ -657,7 +653,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../preprocess/" class="md-nav__link">
+      <a href="../../loreley/core/map-elites/preprocess/" class="md-nav__link">
         
   
   
@@ -685,7 +681,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../chunk/" class="md-nav__link">
+      <a href="../../loreley/core/map-elites/chunk/" class="md-nav__link">
         
   
   
@@ -713,7 +709,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../code_embedding/" class="md-nav__link">
+      <a href="../../loreley/core/map-elites/code_embedding/" class="md-nav__link">
         
   
   
@@ -741,7 +737,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../dimension_reduction/" class="md-nav__link">
+      <a href="../../loreley/core/map-elites/dimension_reduction/" class="md-nav__link">
         
   
   
@@ -769,7 +765,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../sampler/" class="md-nav__link">
+      <a href="../../loreley/core/map-elites/sampler/" class="md-nav__link">
         
   
   
@@ -797,7 +793,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../snapshot/" class="md-nav__link">
+      <a href="../../loreley/core/map-elites/snapshot/" class="md-nav__link">
         
   
   
@@ -822,37 +818,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Summary embeddings
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../loreley/core/map-elites/summarization_embedding/" class="md-nav__link">
         
   
   
@@ -868,59 +837,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#data-structures" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Data structures
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#embedder" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Embedder
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#convenience-api" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Convenience API
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -988,7 +904,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../worker/repository/" class="md-nav__link">
+      <a href="../../loreley/core/worker/repository/" class="md-nav__link">
         
   
   
@@ -1016,7 +932,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../worker/planning/" class="md-nav__link">
+      <a href="../../loreley/core/worker/planning/" class="md-nav__link">
         
   
   
@@ -1044,7 +960,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../worker/agent_backend/" class="md-nav__link">
+      <a href="../../loreley/core/worker/agent_backend/" class="md-nav__link">
         
   
   
@@ -1072,7 +988,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../worker/coding/" class="md-nav__link">
+      <a href="../../loreley/core/worker/coding/" class="md-nav__link">
         
   
   
@@ -1100,7 +1016,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../worker/evaluator/" class="md-nav__link">
+      <a href="../../loreley/core/worker/evaluator/" class="md-nav__link">
         
   
   
@@ -1128,7 +1044,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../worker/evolution/" class="md-nav__link">
+      <a href="../../loreley/core/worker/evolution/" class="md-nav__link">
         
   
   
@@ -1156,7 +1072,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../worker/commit_summary/" class="md-nav__link">
+      <a href="../../loreley/core/worker/commit_summary/" class="md-nav__link">
         
   
   
@@ -1184,7 +1100,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../worker/job_store/" class="md-nav__link">
+      <a href="../../loreley/core/worker/job_store/" class="md-nav__link">
         
   
   
@@ -1267,7 +1183,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../tasks/broker/" class="md-nav__link">
+      <a href="../../loreley/tasks/broker/" class="md-nav__link">
         
   
   
@@ -1295,7 +1211,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../tasks/workers/" class="md-nav__link">
+      <a href="../../loreley/tasks/workers/" class="md-nav__link">
         
   
   
@@ -1331,7 +1247,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../ui/" class="md-nav__link">
+      <a href="../../loreley/ui/" class="md-nav__link">
         
   
   
@@ -1363,18 +1279,20 @@
       
   
   
+    
   
   
+  
     
     
     
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
           <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
@@ -1395,7 +1313,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1413,7 +1331,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../script/run_scheduler/" class="md-nav__link">
+      <a href="../run_scheduler/" class="md-nav__link">
         
   
   
@@ -1441,7 +1359,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../script/run_worker/" class="md-nav__link">
+      <a href="../run_worker/" class="md-nav__link">
         
   
   
@@ -1466,10 +1384,35 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../../../script/run_api/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Running the UI API
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1485,6 +1428,79 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#running-the-ui-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running the UI API
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#install-ui-dependencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Install UI dependencies
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Start
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Options
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logs
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1497,7 +1513,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../script/run_ui/" class="md-nav__link">
+      <a href="../run_ui/" class="md-nav__link">
         
   
   
@@ -1542,8 +1558,6 @@
   
   
   
-    
-  
   
     <label class="md-nav__title" for="__toc">
       <span class="md-nav__icon md-icon"></span>
@@ -1552,10 +1566,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#data-structures" class="md-nav__link">
+  <a href="#running-the-ui-api" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Data structures
+        Running the UI API
       
     </span>
   </a>
@@ -1563,10 +1577,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#embedder" class="md-nav__link">
+  <a href="#install-ui-dependencies" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Embedder
+        Install UI dependencies
       
     </span>
   </a>
@@ -1574,10 +1588,32 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#convenience-api" class="md-nav__link">
+  <a href="#start" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Convenience API
+        Start
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Options
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logs
       
     </span>
   </a>
@@ -1601,29 +1637,27 @@
 
 
 
-<h1 id="loreleycoremap-elitessummarization_embedding">loreley.core.map-elites.summarization_embedding<a class="headerlink" href="#loreleycoremap-elitessummarization_embedding" title="Permanent link">&para;</a></h1>
-<p>Summary-level embedding utilities that turn preprocessed code into structured natural-language summaries and a commit-level embedding vector for the Map-Elites pipeline.</p>
-<h2 id="data-structures">Data structures<a class="headerlink" href="#data-structures" title="Permanent link">&para;</a></h2>
+  <h1>Running the UI API</h1>
+
+<h2 id="running-the-ui-api">Running the UI API<a class="headerlink" href="#running-the-ui-api" title="Permanent link">&para;</a></h2>
+<p>This script starts the <strong>read-only</strong> UI API based on FastAPI.</p>
+<h2 id="install-ui-dependencies">Install UI dependencies<a class="headerlink" href="#install-ui-dependencies" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>sync<span class="w"> </span>--extra<span class="w"> </span>ui
+</code></pre></div>
+<h2 id="start">Start<a class="headerlink" href="#start" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_api.py
+</code></pre></div>
+<h2 id="options">Options<a class="headerlink" href="#options" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>FileSummary</code></strong>: immutable record describing one file-level summary (repository-relative <code>path</code>, approximate <code>change_count</code>, and the generated markdown <code>summary</code> text). The path is normalised to a <code>pathlib.Path</code>.</li>
-<li><strong><code>SummaryEmbedding</code></strong>: embedding derived from a <code>FileSummary</code>, containing the original <code>file_summary</code>, its numeric <code>vector</code>, and a scalar <code>weight</code> used during aggregation.</li>
-<li><strong><code>CommitSummaryEmbedding</code></strong>: commit-level representation bundling all <code>SummaryEmbedding</code> instances, the final aggregated <code>vector</code>, the <code>summary_model</code> and <code>embedding_model</code> names, <code>dimensions</code>, and a <code>file_count</code> convenience property.</li>
+<li><code>--host</code>: bind host (default: <code>127.0.0.1</code>)</li>
+<li><code>--port</code>: bind port (default: <code>8000</code>)</li>
+<li><code>--log-level</code>: override <code>LOG_LEVEL</code></li>
+<li><code>--reload</code>: enable auto-reload (development only)</li>
 </ul>
-<h2 id="embedder">Embedder<a class="headerlink" href="#embedder" title="Permanent link">&para;</a></h2>
+<h2 id="logs">Logs<a class="headerlink" href="#logs" title="Permanent link">&para;</a></h2>
+<p>Logs are written to:</p>
 <ul>
-<li><strong><code>SummaryEmbedder</code></strong>: orchestrates summarisation of preprocessed files and embedding of the resulting summaries.</li>
-<li>Configured via <code>Settings</code> Map-Elites summary options (<code>MAPELITES_SUMMARY_*</code>) controlling the LLM model, temperature, maximum output tokens, source excerpt character limit, and retry/backoff behaviour, and summary embedding options (<code>MAPELITES_SUMMARY_EMBEDDING_*</code>) controlling the embedding model, optional output dimensions, and batch size.</li>
-<li>Uses the global OpenAI API configuration from <code>loreley.config.Settings</code> (<code>OPENAI_API_KEY</code>, <code>OPENAI_BASE_URL</code>, <code>OPENAI_API_SPEC</code>) when constructing the shared <code>OpenAI</code> client. <code>OPENAI_API_SPEC</code> selects whether summarisation uses:<ul>
-<li>the unified <strong>Responses API</strong> (<code>client.responses.create</code>, default), passing <code>_SUMMARY_INSTRUCTIONS</code> as <code>instructions</code> and the file prompt as <code>input</code>; or</li>
-<li>the classic <strong>Chat Completions API</strong> (<code>client.chat.completions.create</code>), mapping <code>_SUMMARY_INSTRUCTIONS</code> to a <code>system</code> message and the file prompt to a <code>user</code> message while keeping temperature and token limits aligned.</li>
-</ul>
-</li>
-<li><code>run(files)</code> skips empty input, calls <code>_summarize_files</code> to build <code>FileSummary</code> objects with a <code>rich</code> progress spinner and <code>loguru</code> debug/warning logs (using either Responses or Chat Completions under the hood), then calls <code>_embed_summaries</code> to batch summaries through the OpenAI embeddings API, weighting them by change count or summary length.</li>
-<li>Aggregates per-file vectors into a single commit-level vector using <code>_weighted_average</code>, after sorting entries by path for stable output; returns a <code>CommitSummaryEmbedding</code> or <code>None</code> if no usable summaries or embeddings were produced.</li>
-</ul>
-<h2 id="convenience-api">Convenience API<a class="headerlink" href="#convenience-api" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong><code>summarize_preprocessed_files(files, settings=None, client=None)</code></strong>: helper that constructs a <code>SummaryEmbedder</code> (optionally injecting custom settings or OpenAI client) and returns a <code>CommitSummaryEmbedding</code> for the supplied <code>PreprocessedFile</code> sequence, or <code>None</code> when there is nothing to summarise or embed.</li>
+<li><code>logs/ui_api/ui-api-&lt;timestamp&gt;.log</code></li>
 </ul>
 
 
@@ -1674,10 +1708,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../../../..", "features": [], "search": "../../../../assets/javascripts/workers/search.7a47a382.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.7a47a382.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../../../assets/javascripts/bundle.e71a0d61.min.js"></script>
+      <script src="../../assets/javascripts/bundle.e71a0d61.min.js"></script>
       
     
   </body>
