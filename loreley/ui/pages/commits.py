@@ -54,46 +54,38 @@ def render() -> None:
     sel = selected_rows(grid)
 
     st.divider()
-    # Persist selection so users can recover if dataframe row-selection doesn't
-    # trigger a rerun reliably in their environment.
-    selected_commit_hash: str | None = None
+    # Persist table selection to session-state (used by the detail view below).
     if sel:
         value = sel[0].get("commit_hash")
-        selected_commit_hash = str(value).strip() if value else None
-
-    commit_hashes: list[str] = []
-    if "commit_hash" in df.columns:
         try:
-            commit_hashes = [str(v) for v in df["commit_hash"].dropna().astype(str).tolist()]
+            is_missing = value is None or pd.isna(value)
         except Exception:
-            commit_hashes = []
-    # De-duplicate while preserving order.
-    seen: set[str] = set()
-    commit_hashes = [h for h in commit_hashes if not (h in seen or seen.add(h))]
+            is_missing = value is None
+        if not is_missing:
+            selected_commit_hash = str(value).strip()
+            if selected_commit_hash:
+                st.session_state[COMMIT_HASH_KEY] = selected_commit_hash
 
     # Ensure state value remains valid even when the user filters the table.
-    current = st.session_state.get(COMMIT_HASH_KEY)
-    if isinstance(current, str) and current not in commit_hashes:
-        st.session_state[COMMIT_HASH_KEY] = None
-
-    if selected_commit_hash and selected_commit_hash in commit_hashes:
-        st.session_state[COMMIT_HASH_KEY] = selected_commit_hash
-
-    with st.expander("Selection", expanded=False):
-        st.caption("If clicking a row doesn't update details, use this selector (it forces a rerun).")
-        if commit_hashes:
-            st.selectbox(
-                "Selected commit",
-                options=commit_hashes,
-                index=None,
-                key=COMMIT_HASH_KEY,
-                placeholder="Select a commit hash…",
-                format_func=lambda h: f"{h[:8]}…{h[-6:]}" if isinstance(h, str) and len(h) > 16 else str(h),
+    commit_hash = st.session_state.get(COMMIT_HASH_KEY)
+    if isinstance(commit_hash, str):
+        commit_hash = commit_hash.strip() or None
+    if isinstance(commit_hash, str) and commit_hash and "commit_hash" in df.columns:
+        try:
+            visible_hashes = set(
+                df["commit_hash"]
+                .dropna()
+                .astype(str)
+                .str.strip()
+                .loc[lambda s: s != ""]
+                .tolist()
             )
-        else:
-            st.info("No commits available for selection.")
+        except Exception:
+            visible_hashes = set()
+        if commit_hash not in visible_hashes:
+            st.session_state[COMMIT_HASH_KEY] = None
+            commit_hash = None
 
-    commit_hash = st.session_state.get(COMMIT_HASH_KEY) or selected_commit_hash
     if not commit_hash:
         st.info("Select a commit to see details.")
         return
