@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../tasks/workers/">
+        <link rel="prev" href="../api/">
       
       
         <link rel="next" href="../../script/run_scheduler/">
@@ -25,7 +25,7 @@
     
     
       
-        <title>UI - Loreley</title>
+        <title>Streamlit UI - Loreley</title>
       
     
     
@@ -66,7 +66,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#ui-overview" class="md-skip">
+        <a href="#streamlit-ui-loreleyui" class="md-skip">
           Skip to content
         </a>
       
@@ -102,7 +102,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              UI
+              Streamlit UI
             
           </span>
         </div>
@@ -1246,6 +1246,34 @@
                 
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    UI API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
     
   
   
@@ -1263,7 +1291,7 @@
   <span class="md-ellipsis">
     
   
-    UI
+    Streamlit UI
   
 
     
@@ -1281,7 +1309,7 @@
   <span class="md-ellipsis">
     
   
-    UI
+    Streamlit UI
   
 
     
@@ -1305,10 +1333,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#ui-overview" class="md-nav__link">
+  <a href="#streamlit-ui-loreleyui" class="md-nav__link">
     <span class="md-ellipsis">
       
-        UI overview
+        Streamlit UI (loreley.ui)
       
     </span>
   </a>
@@ -1381,17 +1409,6 @@
     <span class="md-ellipsis">
       
         Pages
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#api-endpoints-v1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        API endpoints (v1)
       
     </span>
   </a>
@@ -1616,10 +1633,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#ui-overview" class="md-nav__link">
+  <a href="#streamlit-ui-loreleyui" class="md-nav__link">
     <span class="md-ellipsis">
       
-        UI overview
+        Streamlit UI (loreley.ui)
       
     </span>
   </a>
@@ -1699,17 +1716,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#api-endpoints-v1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        API endpoints (v1)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#notes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1737,20 +1743,17 @@
 
 
 
-  <h1>UI</h1>
+  <h1>Streamlit UI</h1>
 
-<h2 id="ui-overview">UI overview<a class="headerlink" href="#ui-overview" title="Permanent link">&para;</a></h2>
-<p>Loreley ships an <strong>optional</strong> visualization stack designed for read-only observability:</p>
-<ul>
-<li><strong>FastAPI UI API</strong>: a small, versioned JSON API that reads from PostgreSQL (and optionally the local <code>logs/</code> directory).</li>
-<li><strong>Streamlit UI</strong>: a multipage dashboard that calls the API and renders tables (AgGrid) and charts (Plotly), plus an interactive commit graph (NetworkX + PyVis embedded via <code>st.components.v1.html</code>).</li>
-</ul>
-<p>The UI is intentionally read-only: it does not enqueue jobs, stop workers, or mutate the database.</p>
+<h2 id="streamlit-ui-loreleyui">Streamlit UI (loreley.ui)<a class="headerlink" href="#streamlit-ui-loreleyui" title="Permanent link">&para;</a></h2>
+<p>Loreley ships an optional <strong>read-only</strong> Streamlit dashboard for observability.
+It calls the <a href="../api/">UI API</a> and renders tables, charts, and commit lineage graphs.</p>
+<p>The UI stack is intentionally read-only: it does not enqueue jobs, stop workers, or mutate the database.</p>
 <pre class="mermaid"><code>flowchart LR
-  user[User] --&gt; stApp[StreamlitUI]
-  stApp --&gt; api[FastAPI_UI_API]
+  user[User] --&gt; stApp[Streamlit UI]
+  stApp --&gt; api["UI API (FastAPI)"]
   api --&gt; db[(PostgreSQL)]
-  api --&gt; logsDir[LogsDir]</code></pre>
+  api --&gt; logsDir[Logs directory]</code></pre>
 <h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
 <p>The UI dependencies live under the <code>ui</code> extra in <code>pyproject.toml</code>.</p>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>sync<span class="w"> </span>--extra<span class="w"> </span>ui
@@ -1762,53 +1765,37 @@
 <p>Then start Streamlit:</p>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_ui.py<span class="w"> </span>--api-base-url<span class="w"> </span>http://127.0.0.1:8000
 </code></pre></div>
-<p>You can also run Streamlit directly:</p>
-<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>streamlit<span class="w"> </span>run<span class="w"> </span>loreley/ui/app.py
-</code></pre></div>
+<p>See also:</p>
+<ul>
+<li><a href="../../script/run_api/">Running the UI API</a></li>
+<li><a href="../../script/run_ui/">Running the Streamlit UI</a></li>
+</ul>
 <h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
 <h3 id="ui-variables">UI variables<a class="headerlink" href="#ui-variables" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>LORELEY_UI_API_BASE_URL</code>: Base URL for the UI API (default: <code>http://127.0.0.1:8000</code>).</li>
 </ul>
 <h3 id="api-runtime-variables">API runtime variables<a class="headerlink" href="#api-runtime-variables" title="Permanent link">&para;</a></h3>
-<p>The API relies on the standard Loreley settings (database/logs), see <code>docs/loreley/config.md</code>.</p>
-<p>Common ones:</p>
+<p>The API relies on standard Loreley settings (database/logs). See:</p>
 <ul>
-<li><code>DATABASE_URL</code> (or individual <code>DB_*</code> fields)</li>
-<li><code>LOGS_BASE_DIR</code> (optional; logs are read from <code>&lt;LOGS_BASE_DIR&gt;/logs</code> or <code>&lt;cwd&gt;/logs</code>)</li>
+<li><a href="../config/">Configuration</a></li>
+<li><a href="../api/">UI API</a></li>
 </ul>
 <h2 id="pages">Pages<a class="headerlink" href="#pages" title="Permanent link">&para;</a></h2>
+<p>The Streamlit UI is multi-page (implemented under <code>loreley/ui/pages</code>):</p>
 <ul>
-<li><strong>Overview</strong>: quick KPIs (loaded jobs, failures), fitness trend (from commit lineage), island table.</li>
-<li><strong>Experiments</strong>: experiment list and selected experiment config snapshot; island overview.</li>
-<li><strong>Jobs</strong>: job table with filters and a details panel (payload).</li>
-<li><strong>Commits</strong>: commit table with search; commit details with metrics chart.</li>
-<li><strong>Archive</strong>: island stats, snapshot metadata, record scatter/heatmap, record table.</li>
-<li><strong>Graphs</strong>: fitness scatter + interactive commit lineage graph (PyVis).</li>
+<li><strong>Overview</strong>: quick KPIs, fitness trend, island table.</li>
+<li><strong>Experiments</strong>: experiment list and selected experiment details.</li>
+<li><strong>Jobs</strong>: job table with filters and a details panel.</li>
+<li><strong>Commits</strong>: commit table with search; commit details with charts.</li>
+<li><strong>Archive</strong>: island stats, snapshot metadata, record plots and table.</li>
+<li><strong>Graphs</strong>: fitness scatter and commit lineage graph.</li>
 <li><strong>Logs</strong>: browse role logs and tail a file.</li>
 <li><strong>Settings</strong>: API health and safe settings (<code>Settings.export_safe()</code>).</li>
 </ul>
-<h2 id="api-endpoints-v1">API endpoints (v1)<a class="headerlink" href="#api-endpoints-v1" title="Permanent link">&para;</a></h2>
-<p>Base prefix: <code>/api/v1</code></p>
-<ul>
-<li><code>GET /health</code></li>
-<li><code>GET /repositories</code></li>
-<li><code>GET /repositories/{repository_id}/experiments</code></li>
-<li><code>GET /experiments/{experiment_id}</code></li>
-<li><code>GET /jobs</code></li>
-<li><code>GET /jobs/{job_id}</code></li>
-<li><code>GET /commits</code></li>
-<li><code>GET /commits/{commit_hash}</code></li>
-<li><code>GET /archive/islands</code></li>
-<li><code>GET /archive/records</code></li>
-<li><code>GET /archive/snapshot_meta</code></li>
-<li><code>GET /graphs/commit_lineage</code></li>
-<li><code>GET /logs</code></li>
-<li><code>GET /logs/tail</code></li>
-</ul>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Caching</strong>: the Streamlit UI caches API GET calls briefly; use the sidebar <strong>Refresh data</strong> button to clear cache.</li>
+<li><strong>Caching</strong>: the Streamlit UI caches API GET calls (default: ~60s); use the sidebar <strong>Refresh data</strong> button to clear cache.</li>
 <li><strong>Security</strong>: there is no authentication layer. Deploy behind your internal network controls if exposing remotely.</li>
 </ul>
 
