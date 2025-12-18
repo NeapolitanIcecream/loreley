@@ -320,8 +320,10 @@ class MapElitesManager:
     ) -> tuple["SupportsMapElitesRecord", ...]:
         """Return all elites for a given island."""
         effective_island = island_id or self._default_island
-        state = self._archives.get(effective_island)
-        if not state or state.archive.empty:
+        # Lazily initialise and restore snapshots so that callers (UI, scheduler)
+        # can observe persisted archives without requiring a prior ingest call.
+        state = self._ensure_island(effective_island)
+        if state.archive.empty:
             return ()
         data = state.archive.data()
         return self._records_from_store_data(
@@ -337,8 +339,8 @@ class MapElitesManager:
     ) -> tuple[MapElitesRecord, ...]:
         """Randomly sample elites for downstream planning."""
         effective_island = island_id or self._default_island
-        state = self._archives.get(effective_island)
-        if not state or state.archive.empty:
+        state = self._ensure_island(effective_island)
+        if state.archive.empty:
             return ()
         sampled = state.archive.sample_elites(max(1, count))
         return self._records_from_store_data(
@@ -365,9 +367,7 @@ class MapElitesManager:
     def describe_island(self, island_id: str | None = None) -> dict[str, Any]:
         """Return basic stats for observability dashboards."""
         effective_island = island_id or self._default_island
-        state = self._archives.get(effective_island)
-        if not state:
-            return {"island_id": effective_island, "occupied": 0, "cells": 0}
+        state = self._ensure_island(effective_island)
         archive = state.archive
         stats = archive.stats
         best = getattr(stats, "objective_max", None)
