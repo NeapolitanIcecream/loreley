@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 import streamlit as st
 
 from loreley.ui.components.aggrid import render_table, selected_rows
@@ -68,10 +70,14 @@ def render() -> None:
     if dims == 2 and cells_per_dim > 0 and "cell_index" in records_df.columns:
         grid = np.full((cells_per_dim, cells_per_dim), np.nan, dtype=float)
         for _, row in records_df.iterrows():
+            raw_idx = row.get("cell_index")
+            if raw_idx is None:
+                continue
+            raw_fitness = row.get("fitness", 0.0)
             try:
-                idx = int(row.get("cell_index"))
+                idx = int(cast(Any, raw_idx))
                 coords = np.unravel_index(idx, (cells_per_dim, cells_per_dim))
-                grid[coords] = float(row.get("fitness", 0.0))
+                grid[coords] = float(cast(Any, raw_fitness))
             except Exception:
                 continue
         fig = px.imshow(

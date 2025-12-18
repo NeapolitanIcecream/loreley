@@ -36,7 +36,24 @@ def render() -> None:
         return
 
     # Filters
-    statuses = sorted({str(s) for s in df.get("status", []).dropna().tolist()}) if "status" in df.columns else []
+    statuses: list[str] = []
+    if "status" in df.columns:
+        try:
+            values = df["status"].tolist()
+        except Exception:
+            values = []
+        normalized: set[str] = set()
+        for v in values:
+            try:
+                is_missing = v is None or pd.isna(v)
+            except Exception:
+                is_missing = v is None
+            if is_missing:
+                continue
+            s = str(v).strip()
+            if s:
+                normalized.add(s)
+        statuses = sorted(normalized)
     selected_statuses = st.multiselect("Status filter", options=statuses, default=statuses)
     if selected_statuses and "status" in df.columns:
         df = df[df["status"].isin(selected_statuses)]

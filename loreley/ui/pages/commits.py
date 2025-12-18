@@ -71,17 +71,21 @@ def render() -> None:
     if isinstance(commit_hash, str):
         commit_hash = commit_hash.strip() or None
     if isinstance(commit_hash, str) and commit_hash and "commit_hash" in df.columns:
+        visible_hashes: set[str] = set()
         try:
-            visible_hashes = set(
-                df["commit_hash"]
-                .dropna()
-                .astype(str)
-                .str.strip()
-                .loc[lambda s: s != ""]
-                .tolist()
-            )
+            values = df["commit_hash"].tolist()
         except Exception:
-            visible_hashes = set()
+            values = []
+        for v in values:
+            try:
+                is_missing = v is None or pd.isna(v)
+            except Exception:
+                is_missing = v is None
+            if is_missing:
+                continue
+            s = str(v).strip()
+            if s:
+                visible_hashes.add(s)
         if commit_hash not in visible_hashes:
             st.session_state[COMMIT_HASH_KEY] = None
             commit_hash = None
