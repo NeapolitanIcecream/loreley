@@ -224,6 +224,9 @@ Use this index as a quick map of the rest of the documentation:
   - [Scheduler](loreley/scheduler/main.md)
   - [Tasks broker](loreley/tasks/broker.md)
   - [Tasks workers](loreley/tasks/workers.md)
+- **UI (optional)**
+  - [UI API (`loreley.api`)](loreley/api.md)
+  - [Streamlit UI (`loreley.ui`)](loreley/ui.md)
 - **Operational scripts**
   - [Run scheduler script](script/run_scheduler.md)
   - [Run worker script](script/run_worker.md)

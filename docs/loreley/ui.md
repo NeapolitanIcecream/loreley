@@ -1,18 +1,16 @@
-## UI overview
+## Streamlit UI (loreley.ui)
 
-Loreley ships an **optional** visualization stack designed for read-only observability:
+Loreley ships an optional **read-only** Streamlit dashboard for observability.
+It calls the [UI API](api.md) and renders tables, charts, and commit lineage graphs.
 
-- **FastAPI UI API**: a small, versioned JSON API that reads from PostgreSQL (and optionally the local `logs/` directory).
-- **Streamlit UI**: a multipage dashboard that calls the API and renders tables (native `st.dataframe` with row selection; optional AgGrid fallback) and charts (Plotly), plus an interactive commit graph (NetworkX + PyVis embedded via `st.components.v1.html`).
-
-The UI is intentionally read-only: it does not enqueue jobs, stop workers, or mutate the database.
+The UI stack is intentionally read-only: it does not enqueue jobs, stop workers, or mutate the database.
 
 ```mermaid
 flowchart LR
-  user[User] --> stApp[StreamlitUI]
-  stApp --> api[FastAPI_UI_API]
+  user[User] --> stApp[Streamlit UI]
+  stApp --> api["UI API (FastAPI)"]
   api --> db[(PostgreSQL)]
-  api --> logsDir[LogsDir]
+  api --> logsDir[Logs directory]
 ```
 
 ## Install
@@ -37,11 +35,10 @@ Then start Streamlit:
 uv run python script/run_ui.py --api-base-url http://127.0.0.1:8000
 ```
 
-You can also run Streamlit directly:
+See also:
 
-```bash
-uv run streamlit run loreley/ui/app.py
-```
+- [Running the UI API](../script/run_api.md)
+- [Running the Streamlit UI](../script/run_ui.md)
 
 ## Configuration
 
@@ -51,46 +48,25 @@ uv run streamlit run loreley/ui/app.py
 
 ### API runtime variables
 
-The API relies on the standard Loreley settings (database/logs), see `docs/loreley/config.md`.
+The API relies on standard Loreley settings (database/logs). See:
 
-Common ones:
-
-- `DATABASE_URL` (or individual `DB_*` fields)
-- `LOGS_BASE_DIR` (optional; logs are read from `<LOGS_BASE_DIR>/logs` or `<cwd>/logs`)
+- [Configuration](config.md)
+- [UI API](api.md)
 
 ## Pages
 
-- **Overview**: quick KPIs (loaded jobs, failures), fitness trend (from commit lineage), island table.
-- **Experiments**: experiment list and selected experiment config snapshot; island overview.
-- **Jobs**: job table with filters and a details panel (payload).
-- **Commits**: commit table with search; commit details with metrics chart.
-- **Archive**: island stats, snapshot metadata, record scatter/heatmap, record table.
-- **Graphs**: fitness scatter + interactive commit lineage graph (PyVis).
+The Streamlit UI is multi-page (implemented under `loreley/ui/pages`):
+
+- **Overview**: quick KPIs, fitness trend, island table.
+- **Experiments**: experiment list and selected experiment details.
+- **Jobs**: job table with filters and a details panel.
+- **Commits**: commit table with search; commit details with charts.
+- **Archive**: island stats, snapshot metadata, record plots and table.
+- **Graphs**: fitness scatter and commit lineage graph.
 - **Logs**: browse role logs and tail a file.
 - **Settings**: API health and safe settings (`Settings.export_safe()`).
-
-## API endpoints (v1)
-
-Base prefix: `/api/v1`
-
-- `GET /health`
-- `GET /repositories`
-- `GET /repositories/{repository_id}/experiments`
-- `GET /experiments/{experiment_id}`
-- `GET /jobs`
-- `GET /jobs/{job_id}`
-- `GET /commits`
-- `GET /commits/{commit_hash}`
-- `GET /archive/islands`
-- `GET /archive/records`
-- `GET /archive/snapshot_meta`
-- `GET /graphs/commit_lineage`
-- `GET /logs`
-- `GET /logs/tail`
 
 ## Notes
 
 - **Caching**: the Streamlit UI caches API GET calls (default: ~60s); use the sidebar **Refresh data** button to clear cache.
 - **Security**: there is no authentication layer. Deploy behind your internal network controls if exposing remotely.
-
-

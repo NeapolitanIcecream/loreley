@@ -260,6 +260,8 @@ The full documentation lives under `docs/` and is rendered into `site/` via MkDo
 - `docs/loreley/core/worker/` – planning, coding, evaluator, evolution loop, commit summaries, job store, and worker repository.
 - `docs/loreley/scheduler/main.md` – scheduler internals and configuration.
 - `docs/loreley/tasks/` – Redis broker and Dramatiq actors.
+- [docs/loreley/api.md](docs/loreley/api.md) – UI API (FastAPI, read-only JSON).
+- [docs/loreley/ui.md](docs/loreley/ui.md) – Streamlit UI dashboard (read-only observability).
 - `docs/script/` – CLI wrappers for the scheduler and worker.
 
 ---

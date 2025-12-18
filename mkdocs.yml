@@ -37,7 +37,8 @@ nav:
       - Tasks:
           - Broker: loreley/tasks/broker.md
           - Workers: loreley/tasks/workers.md
-      - UI: loreley/ui.md
+      - UI API: loreley/api.md
+      - Streamlit UI: loreley/ui.md
   - Operations:
       - Running the scheduler: script/run_scheduler.md
       - Running the worker: script/run_worker.md
