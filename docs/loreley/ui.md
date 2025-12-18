@@ -3,7 +3,7 @@
 Loreley ships an **optional** visualization stack designed for read-only observability:
 
 - **FastAPI UI API**: a small, versioned JSON API that reads from PostgreSQL (and optionally the local `logs/` directory).
-- **Streamlit UI**: a multipage dashboard that calls the API and renders tables (AgGrid) and charts (Plotly), plus an interactive commit graph (NetworkX + PyVis embedded via `st.components.v1.html`).
+- **Streamlit UI**: a multipage dashboard that calls the API and renders tables (native `st.dataframe` with row selection; optional AgGrid fallback) and charts (Plotly), plus an interactive commit graph (NetworkX + PyVis embedded via `st.components.v1.html`).
 
 The UI is intentionally read-only: it does not enqueue jobs, stop workers, or mutate the database.
 
@@ -90,7 +90,7 @@ Base prefix: `/api/v1`
 
 ## Notes
 
-- **Caching**: the Streamlit UI caches API GET calls briefly; use the sidebar **Refresh data** button to clear cache.
+- **Caching**: the Streamlit UI caches API GET calls (default: ~60s); use the sidebar **Refresh data** button to clear cache.
 - **Security**: there is no authentication layer. Deploy behind your internal network controls if exposing remotely.
 
 

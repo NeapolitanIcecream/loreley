@@ -22,7 +22,7 @@ def freeze_params(params: dict[str, Any] | None) -> tuple[tuple[str, str], ...]:
     return tuple(sorted(items))
 
 
-@st.cache_data(ttl=5, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def api_get(base_url: str, path: str, params: tuple[tuple[str, str], ...] = ()) -> Any:
     """Cached GET request returning JSON."""
 

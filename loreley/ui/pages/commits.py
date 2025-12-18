@@ -6,7 +6,7 @@ import streamlit as st
 
 from loreley.ui.components.aggrid import render_table, selected_rows
 from loreley.ui.components.api import api_get_or_stop
-from loreley.ui.state import API_BASE_URL_KEY, EXPERIMENT_ID_KEY, ISLAND_ID_KEY
+from loreley.ui.state import API_BASE_URL_KEY, COMMIT_HASH_KEY, EXPERIMENT_ID_KEY, ISLAND_ID_KEY
 
 
 def render() -> None:
@@ -54,13 +54,48 @@ def render() -> None:
     sel = selected_rows(grid)
 
     st.divider()
-    if not sel:
-        st.info("Select a commit to see details.")
-        return
+    # Persist selection so users can recover if dataframe row-selection doesn't
+    # trigger a rerun reliably in their environment.
+    selected_commit_hash: str | None = None
+    if sel:
+        value = sel[0].get("commit_hash")
+        selected_commit_hash = str(value).strip() if value else None
 
-    commit_hash = sel[0].get("commit_hash")
+    commit_hashes: list[str] = []
+    if "commit_hash" in df.columns:
+        try:
+            commit_hashes = [str(v) for v in df["commit_hash"].dropna().astype(str).tolist()]
+        except Exception:
+            commit_hashes = []
+    # De-duplicate while preserving order.
+    seen: set[str] = set()
+    commit_hashes = [h for h in commit_hashes if not (h in seen or seen.add(h))]
+
+    # Ensure state value remains valid even when the user filters the table.
+    current = st.session_state.get(COMMIT_HASH_KEY)
+    if isinstance(current, str) and current not in commit_hashes:
+        st.session_state[COMMIT_HASH_KEY] = None
+
+    if selected_commit_hash and selected_commit_hash in commit_hashes:
+        st.session_state[COMMIT_HASH_KEY] = selected_commit_hash
+
+    with st.expander("Selection", expanded=False):
+        st.caption("If clicking a row doesn't update details, use this selector (it forces a rerun).")
+        if commit_hashes:
+            st.selectbox(
+                "Selected commit",
+                options=commit_hashes,
+                index=None,
+                key=COMMIT_HASH_KEY,
+                placeholder="Select a commit hash…",
+                format_func=lambda h: f"{h[:8]}…{h[-6:]}" if isinstance(h, str) and len(h) > 16 else str(h),
+            )
+        else:
+            st.info("No commits available for selection.")
+
+    commit_hash = st.session_state.get(COMMIT_HASH_KEY) or selected_commit_hash
     if not commit_hash:
-        st.warning("Selected row has no commit_hash.")
+        st.info("Select a commit to see details.")
         return
 
     detail = api_get_or_stop(api_base_url, f"/api/v1/commits/{commit_hash}")
