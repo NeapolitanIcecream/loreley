@@ -33,6 +33,7 @@ Eligibility is determined by a combination of:
 - `MAPELITES_PREPROCESS_ALLOWED_EXTENSIONS` / `MAPELITES_PREPROCESS_ALLOWED_FILENAMES`.
 - `MAPELITES_PREPROCESS_EXCLUDED_GLOBS`.
 - `MAPELITES_PREPROCESS_MAX_FILE_SIZE_KB` (oversized blobs are skipped).
+- `MAPELITES_REPO_STATE_MAX_FILES` (optional cap; when set, the eligible list is deterministically truncated).
 
 For each eligible file we keep:
 

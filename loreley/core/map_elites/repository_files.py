@@ -224,9 +224,9 @@ class RepositoryFileCatalog:
                 continue
 
             # Apply preprocessing file filters (extension allowlist + excluded globs).
-            if self._preprocess_filter._is_excluded(repo_rel):  # type: ignore[attr-defined]
+            if self._preprocess_filter.is_excluded(repo_rel):
                 continue
-            if not self._preprocess_filter._is_code_file(repo_rel):  # type: ignore[attr-defined]
+            if not self._preprocess_filter.is_code_file(repo_rel):
                 continue
 
             size = int(getattr(blob, "size", 0) or 0)
@@ -246,6 +246,15 @@ class RepositoryFileCatalog:
             )
 
         results.sort(key=lambda entry: entry.path.as_posix())
+        limit = int(getattr(self.settings, "mapelites_repo_state_max_files", 0) or 0)
+        if limit > 0 and len(results) > limit:
+            original = len(results)
+            results = results[:limit]
+            log.warning(
+                "Truncated eligible repository files from {} to {} due to MAPELITES_REPO_STATE_MAX_FILES.",
+                original,
+                limit,
+            )
         log.info(
             "Enumerated {} eligible repository files at treeish={} (repo_root={})",
             len(results),

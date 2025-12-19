@@ -166,16 +166,19 @@ class MapElitesManager:
         effective_island = island_id or self._default_island
         state = self._ensure_island(effective_island)
         working_dir = Path(repo_root or self.repo_root).resolve()
+        embedding_mode = getattr(self.settings, "mapelites_embedding_mode", "repo_state")
+        effective_treeish = (treeish or commit_hash).strip() or None
 
         log.info(
-            "Ingesting commit {} for island {} (treeish={})",
+            "Ingesting commit {} for island {} (embedding_mode={} treeish={} treeish_source={})",
             commit_hash,
             effective_island,
-            treeish or "working-tree",
+            embedding_mode,
+            effective_treeish or "<missing>",
+            "explicit" if treeish else "defaulted_to_commit_hash",
         )
 
         try:
-            effective_treeish = (treeish or commit_hash).strip() or None
             code_embedding, repo_stats = embed_repository_state(
                 commit_hash=commit_hash,
                 repo_root=working_dir,

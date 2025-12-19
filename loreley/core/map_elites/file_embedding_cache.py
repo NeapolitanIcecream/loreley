@@ -165,11 +165,17 @@ class DatabaseFileEmbeddingCache:
         try:
             with session_scope() as session:
                 for batch in _batched(cleaned, 500):
-                    stmt = select(MapElitesFileEmbeddingCache).where(
+                    conditions = [
                         MapElitesFileEmbeddingCache.blob_sha.in_(batch),
                         MapElitesFileEmbeddingCache.embedding_model == self.embedding_model,
                         MapElitesFileEmbeddingCache.pipeline_signature == self.pipeline_signature,
-                    )
+                    ]
+                    if self.requested_dimensions is not None:
+                        conditions.append(
+                            MapElitesFileEmbeddingCache.dimensions
+                            == int(self.requested_dimensions)
+                        )
+                    stmt = select(MapElitesFileEmbeddingCache).where(*conditions)
                     for row in session.execute(stmt).scalars():
                         vector = tuple(float(v) for v in (row.vector or []))
                         if not vector:

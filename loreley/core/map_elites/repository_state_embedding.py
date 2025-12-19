@@ -208,10 +208,10 @@ class RepositoryStateEmbedder:
         skipped_empty = 0
         blob_for_path: dict[Path, str] = {}
         for blob_sha, entry in wanted.items():
-            raw = preprocessor._load_text(entry.path)  # type: ignore[attr-defined]
+            raw = preprocessor.load_text(entry.path)
             if raw is None:
                 continue
-            cleaned = preprocessor._cleanup_text(raw)  # type: ignore[attr-defined]
+            cleaned = preprocessor.cleanup_text(raw)
             if not cleaned.strip():
                 skipped_empty += 1
                 continue

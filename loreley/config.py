@@ -86,6 +86,10 @@ class Settings(BaseSettings):
         default=None,
         alias="MAPELITES_FILE_EMBEDDING_CACHE_BACKEND",
     )
+    mapelites_repo_state_max_files: int | None = Field(
+        default=None,
+        alias="MAPELITES_REPO_STATE_MAX_FILES",
+    )
 
     scheduler_repo_root: str | None = Field(
         default=None,

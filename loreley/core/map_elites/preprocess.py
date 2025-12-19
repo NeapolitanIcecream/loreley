@@ -1,4 +1,4 @@
-"""Preprocess commit diffs before feature extraction."""
+"""Preprocess code files before feature extraction."""
 
 from __future__ import annotations
 
@@ -159,6 +159,24 @@ class CodePreprocessor:
 
         log.info("Preprocessed {} files.", len(artifacts))
         return artifacts
+
+    # Public helpers -------------------------------------------------------
+
+    def is_code_file(self, relative_path: Path) -> bool:
+        """Return True if the file looks like a code file under current settings."""
+        return self._is_code_file(relative_path)
+
+    def is_excluded(self, relative_path: Path) -> bool:
+        """Return True if the path should be excluded under current settings."""
+        return self._is_excluded(relative_path)
+
+    def cleanup_text(self, content: str) -> str:
+        """Apply preprocessing cleanup (comment stripping, whitespace normalisation)."""
+        return self._cleanup_text(content)
+
+    def load_text(self, relative_path: Path) -> str | None:
+        """Load file content either from `treeish` or from disk."""
+        return self._load_text(relative_path)
 
     def _select_candidates(
         self,
