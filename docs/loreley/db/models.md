@@ -26,7 +26,19 @@ ORM models and enums for tracking evolutionary jobs, commits, and associated met
   - Relates back to `CommitMetadata` via `base_commit_hash` and to `Experiment` via `experiment_id`, enabling efficient queries per base commit or experiment.
 - **`MapElitesState`** (`map_elites_states` table): persists per-experiment, per-island snapshots of the MAP-Elites archive.
   - Uses a composite primary key `(experiment_id, island_id)` so that multiple experiments can maintain independent archives even when they share island identifiers.
-  - Stores a JSONB `snapshot` payload containing feature bounds, PCA history/projection metadata, and the current archive entries so that `loreley.core.map_elites.snapshot` and `MapElitesManager` can restore state across process restarts for a given experiment.
+  - Stores a JSONB `snapshot` payload containing **lightweight metadata** (feature bounds, PCA projection payload, schema version, and other knobs).
+  - For `schema_version >= 2`, the large `archive`/`history` payloads are stored incrementally in separate tables and
+    reconstructed on load by `loreley.core.map_elites.snapshot.DatabaseSnapshotBackend`.
+  - For legacy rows (`schema_version < 2`) that still embed `archive`/`history` lists, the loader performs **lazy migration**
+    into the incremental tables on first read and strips the large fields from `snapshot`.
+- **`MapElitesArchiveCell`** (`map_elites_archive_cells` table): one row per occupied MAP-Elites archive cell.
+  - Primary key: `(experiment_id, island_id, cell_index)`.
+  - Stores the cell's `commit_hash`, `objective`, behaviour `measures`, stored `solution` vector, free-form `metadata`, and `timestamp`.
+  - Enables cheap per-cell upserts when a commit improves a specific cell.
+- **`MapElitesPcaHistory`** (`map_elites_pca_history` table): incremental PCA history entries used to restore dimensionality reduction state.
+  - Primary key: `(experiment_id, island_id, commit_hash)`.
+  - Stores the commit's penultimate embedding `vector` plus embedding provenance (dimensions/models) and a `last_seen_at` marker used
+    to restore ordered, bounded history windows across restarts.
 - **`MapElitesFileEmbeddingCache`** (`map_elites_file_embedding_cache` table): persistent file-level embedding cache keyed by git blob SHA.
   - Uses a composite primary key `(blob_sha, embedding_model, dimensions, pipeline_signature)`.
   - Stores a float array `vector` containing the file embedding, allowing repo-state embeddings to reuse unchanged file vectors across commits.
