@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
-from typing import Iterable, Mapping, Protocol, Sequence
+from typing import Iterable, Mapping, Protocol, Sequence, TypeVar
 
 from loguru import logger
 from sqlalchemy import select
@@ -31,6 +31,7 @@ from loreley.db.models import MapElitesFileEmbeddingCache
 log = logger.bind(module="map_elites.file_embedding_cache")
 
 Vector = tuple[float, ...]
+T = TypeVar("T")
 
 __all__ = [
     "Vector",
@@ -165,22 +166,63 @@ class DatabaseFileEmbeddingCache:
         try:
             with session_scope() as session:
                 for batch in _batched(cleaned, 500):
-                    conditions = [
+                    base_conditions = [
                         MapElitesFileEmbeddingCache.blob_sha.in_(batch),
                         MapElitesFileEmbeddingCache.embedding_model == self.embedding_model,
                         MapElitesFileEmbeddingCache.pipeline_signature == self.pipeline_signature,
                     ]
                     if self.requested_dimensions is not None:
-                        conditions.append(
+                        base_conditions.append(
                             MapElitesFileEmbeddingCache.dimensions
                             == int(self.requested_dimensions)
                         )
-                    stmt = select(MapElitesFileEmbeddingCache).where(*conditions)
-                    for row in session.execute(stmt).scalars():
+
+                    stmt = select(MapElitesFileEmbeddingCache).where(*base_conditions)
+                    rows = list(session.execute(stmt).scalars())
+                    if not rows:
+                        continue
+
+                    # When no explicit dimensions are requested, we may observe multiple
+                    # rows per blob (same signature) with different dimensions.
+                    # Select a single, deterministic dimension for this read batch and
+                    # only return vectors matching it.
+                    if self.requested_dimensions is None:
+                        candidates: dict[int, dict[str, Vector]] = {}
+                        for row in rows:
+                            vector = tuple(float(v) for v in (row.vector or []))
+                            if not vector:
+                                continue
+                            dims = int(row.dimensions or len(vector))
+                            if dims != len(vector):
+                                continue
+                            candidates.setdefault(dims, {})[str(row.blob_sha)] = vector
+
+                        if not candidates:
+                            continue
+                        if len(candidates) == 1:
+                            found.update(next(iter(candidates.values())))
+                            continue
+
+                        chosen_dims = max(
+                            candidates.keys(),
+                            key=lambda d: (len(candidates[d]), d),
+                        )
+                        log.warning(
+                            "Multiple embedding dimensions found for model={} signature={} (dims={} chosen={} batch_size={})",
+                            self.embedding_model,
+                            self.pipeline_signature[:12],
+                            sorted(candidates.keys()),
+                            chosen_dims,
+                            len(batch),
+                        )
+                        found.update(candidates[chosen_dims])
+                        continue
+
+                    # Explicit dimensions: accept rows directly (already filtered).
+                    for row in rows:
                         vector = tuple(float(v) for v in (row.vector or []))
                         if not vector:
                             continue
-                        # Guard against unexpected dimension changes.
                         if row.dimensions and len(vector) != int(row.dimensions):
                             continue
                         if (
@@ -227,19 +269,20 @@ class DatabaseFileEmbeddingCache:
 
         try:
             with session_scope() as session:
-                stmt = pg_insert(MapElitesFileEmbeddingCache).values(values)
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=[
-                        "blob_sha",
-                        "embedding_model",
-                        "dimensions",
-                        "pipeline_signature",
-                    ],
-                    set_={
-                        "vector": stmt.excluded.vector,
-                    },
-                )
-                session.execute(stmt)
+                for batch in _batched(values, 500):
+                    stmt = pg_insert(MapElitesFileEmbeddingCache).values(batch)
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=[
+                            "blob_sha",
+                            "embedding_model",
+                            "dimensions",
+                            "pipeline_signature",
+                        ],
+                        set_={
+                            "vector": stmt.excluded.vector,
+                        },
+                    )
+                    session.execute(stmt)
         except SQLAlchemyError as exc:
             log.error("Failed to persist file embedding cache: {}", exc)
 
@@ -299,7 +342,7 @@ def _unique_clean_blob_shas(blob_shas: Sequence[str]) -> list[str]:
     return cleaned
 
 
-def _batched(items: Sequence[str], batch_size: int) -> Iterable[Sequence[str]]:
+def _batched(items: Sequence[T], batch_size: int) -> Iterable[Sequence[T]]:
     step = max(1, int(batch_size))
     for start in range(0, len(items), step):
         yield items[start : start + step]

@@ -33,7 +33,10 @@ Eligibility is determined by a combination of:
 - `MAPELITES_PREPROCESS_ALLOWED_EXTENSIONS` / `MAPELITES_PREPROCESS_ALLOWED_FILENAMES`.
 - `MAPELITES_PREPROCESS_EXCLUDED_GLOBS`.
 - `MAPELITES_PREPROCESS_MAX_FILE_SIZE_KB` (oversized blobs are skipped).
-- `MAPELITES_REPO_STATE_MAX_FILES` (optional cap; when set, the eligible list is deterministically truncated).
+- `MAPELITES_REPO_STATE_MAX_FILES` (optional cap; when set, the eligible list is deterministically sub-sampled).
+
+!!! note
+    `.gitignore` filtering is currently **best-effort** and only uses the repository root `.gitignore` at the requested `treeish`. Nested `.gitignore` files and global excludes are not applied.
 
 For each eligible file we keep:
 

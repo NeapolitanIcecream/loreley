@@ -189,10 +189,12 @@ class RepositoryStateEmbedder:
         if not missing_blob_shas:
             return {}, 0, 0
 
+        missing_set = set(str(sha).strip() for sha in missing_blob_shas if str(sha).strip())
+
         # Pick one representative path per missing blob.
         wanted: dict[str, RepositoryFile] = {}
         for entry in repo_files:
-            if entry.blob_sha in missing_blob_shas and entry.blob_sha not in wanted:
+            if entry.blob_sha in missing_set and entry.blob_sha not in wanted:
                 wanted[entry.blob_sha] = entry
         if not wanted:
             return {}, 0, 0

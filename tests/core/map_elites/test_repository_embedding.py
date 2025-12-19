@@ -133,7 +133,17 @@ def test_repository_file_catalog_respects_repo_state_max_files_cap(
         settings=settings,
         repo=repo,
     )
-    assert [f.path.as_posix() for f in files] == ["a.py", "b.py"]
+    paths = [f.path.as_posix() for f in files]
+    assert len(paths) == 2
+    assert set(paths).issubset({"a.py", "b.py", "c.py"})
+    # Deterministic across calls.
+    files_again = list_repository_files(
+        repo_root=tmp_path,
+        treeish=commit,
+        settings=settings,
+        repo=repo,
+    )
+    assert [f.path.as_posix() for f in files_again] == paths
 
 
 def test_repository_state_embedder_uses_cache_hits_and_misses(
