@@ -296,15 +296,13 @@ def build_file_embedding_cache(
 
     - If `backend` is provided, it wins.
     - Else consult `settings.mapelites_file_embedding_cache_backend` when set.
-    - Else default to `db` when snapshot persistence is enabled (experiment id
-      provided elsewhere) is handled by callers; here we default to `memory` for
-      safe local/test execution.
+    - Else default to `db`.
     """
 
     s = settings or get_settings()
     chosen = (backend or getattr(s, "mapelites_file_embedding_cache_backend", None) or "").strip()
     if not chosen:
-        chosen = "memory"
+        chosen = "db"
 
     pipeline_signature = build_pipeline_signature(settings=s)
     embedding_model = str(s.mapelites_code_embedding_model)

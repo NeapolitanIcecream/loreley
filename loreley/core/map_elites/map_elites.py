@@ -184,12 +184,8 @@ class MapElitesManager:
                 repo_root=working_dir,
                 treeish=effective_treeish,
                 settings=self.settings,
-                # Default to DB cache when experiment_id is set (scheduler runs),
-                # otherwise keep tests/local runs DB-free.
-                cache_backend=(
-                    self.settings.mapelites_file_embedding_cache_backend
-                    or ("db" if self._experiment_id is not None else "memory")
-                ),
+                # Prefer the configured backend; default is DB.
+                cache_backend=(self.settings.mapelites_file_embedding_cache_backend or "db"),
             )
             if not code_embedding or not code_embedding.vector:
                 artifacts = self._build_artifacts(repo_stats, (), None, None)

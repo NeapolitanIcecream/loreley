@@ -212,7 +212,7 @@ All runtime settings come from environment variables consumed by `loreley.config
 - **MAP-Elites**
   - `MAPELITES_EXPERIMENT_ROOT_COMMIT` – optional experiment root commit used for seeding
   - `MAPELITES_EMBEDDING_MODE` (currently only `repo_state`)
-  - `MAPELITES_FILE_EMBEDDING_CACHE_BACKEND` (`db` or `memory`)
+  - `MAPELITES_FILE_EMBEDDING_CACHE_BACKEND` (`db` (default) or `memory`)
   - `MAPELITES_REPO_STATE_MAX_FILES` (optional cap for repo-state file enumeration)
   - `MAPELITES_PREPROCESS_*`, `MAPELITES_CHUNK_*`, `MAPELITES_CODE_EMBEDDING_*`
   - `MAPELITES_DIMENSION_REDUCTION_*`, `MAPELITES_FEATURE_*`, `MAPELITES_ARCHIVE_*`, `MAPELITES_FITNESS_*`, `MAPELITES_SAMPLER_*`, `MAPELITES_SEED_POPULATION_SIZE`

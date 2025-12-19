@@ -83,7 +83,7 @@ class Settings(BaseSettings):
         alias="MAPELITES_EMBEDDING_MODE",
     )
     mapelites_file_embedding_cache_backend: Literal["db", "memory"] | None = Field(
-        default=None,
+        default="db",
         alias="MAPELITES_FILE_EMBEDDING_CACHE_BACKEND",
     )
     mapelites_repo_state_max_files: int | None = Field(

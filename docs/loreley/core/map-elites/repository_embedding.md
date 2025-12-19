@@ -63,7 +63,7 @@ the pipeline changes).
 
 Backend selection:
 
-- `MAPELITES_FILE_EMBEDDING_CACHE_BACKEND=memory|db`
+- `MAPELITES_FILE_EMBEDDING_CACHE_BACKEND=db|memory` (default: `db`)
 
 ## Commit aggregation
 
