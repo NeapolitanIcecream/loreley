@@ -125,7 +125,7 @@ Quality-diversity methods require a behaviour space. Hand-crafted behaviour desc
 
 ![hand-craft-feature](./assets/hand-craft-feature.png)
 
-Loreley derives behaviour descriptors from **code embeddings and summary embeddings** (optionally reduced with PCA). This makes diversity measurement less dependent on manual feature engineering and better aligned with “semantic” differences between changes.
+Loreley derives behaviour descriptors from **repo-state code embeddings** (file-level embeddings cached by git blob SHA and aggregated into a commit vector), optionally reduced with PCA. Summary embeddings remain available as an optional utility, but are not used for MAP-Elites behaviour descriptors in repo-state mode.
 
 Under similar fitness, the archive can preserve structurally different improvements (refactors vs micro-optimisations vs feature shifts) as distinct behavioural niches, enabling exploration without collapsing to a single style of change.
 

@@ -46,7 +46,7 @@ Quality-diversity methods require a behaviour space. Hand-crafted behaviour desc
 
 ![hand-craft-feature](./docs/assets/hand-craft-feature.png)
 
-Loreley derives behaviour descriptors from **code embeddings and summary embeddings** (optionally reduced with PCA). This makes diversity measurement less dependent on manual feature engineering and better aligned with “semantic” differences between changes.
+Loreley derives behaviour descriptors from **repo-state code embeddings** (file-level embeddings cached by git blob SHA and aggregated into a commit vector), optionally reduced with PCA. Summary embeddings remain available as an optional utility, but are not used for MAP-Elites behaviour descriptors in repo-state mode.
 
 Under similar fitness, the archive can preserve structurally different improvements (refactors vs micro-optimisations vs feature shifts) as distinct behavioural niches, enabling exploration without collapsing to a single style of change.
 
@@ -141,7 +141,7 @@ Loreley is organised into a few main areas:
 - **Configuration (`loreley.config`)** – a single `Settings` object (pydantic-settings) centralises environment-driven configuration for logging, database, Redis/Dramatiq, scheduler, worker repositories, and MAP-Elites knobs.
 - **Database (`loreley.db`)** – SQLAlchemy engine/session helpers plus ORM models for repositories, experiments, commits, metrics, evolution jobs, and archive state.
 - **Experiments (`loreley.core.experiments`)** – helpers for normalising the target git worktree into a `Repository`, deriving an `Experiment` from MAP-Elites and evaluator settings, and reusing the same experiment across scheduler runs.
-- **MAP-Elites core (`loreley.core.map_elites`)** – preprocessing, chunking, code and summary embeddings, dimensionality reduction, archive management, sampling, and snapshot persistence via `MapElitesManager`.
+- **MAP-Elites core (`loreley.core.map_elites`)** – repository preprocessing/chunking utilities, repo-state code embeddings (file cache), dimensionality reduction, archive management, sampling, and snapshot persistence via `MapElitesManager` (summary embeddings are optional utilities).
 - **Worker pipeline (`loreley.core.worker`)** – worktree lifecycle, planning, coding, evaluation, evolution commits, commit summaries, and job persistence used by Dramatiq actors.
 - **Tasks (`loreley.tasks`)** – Redis broker helpers and the `run_evolution_job(job_id)` Dramatiq actor that runs the evolution worker.
 - **Scheduler (`loreley.scheduler`)** – `EvolutionScheduler` ingests completed jobs into MAP-Elites, dispatches pending jobs, maintains a seed population (when a root commit is configured), and can create a best-fitness branch when an experiment reaches its job cap.
@@ -211,8 +211,12 @@ All runtime settings come from environment variables consumed by `loreley.config
   - `WORKER_EVOLUTION_GLOBAL_GOAL` – plain-language global objective shared across jobs
 - **MAP-Elites**
   - `MAPELITES_EXPERIMENT_ROOT_COMMIT` – optional experiment root commit used for seeding
-  - `MAPELITES_PREPROCESS_*`, `MAPELITES_CHUNK_*`, `MAPELITES_CODE_EMBEDDING_*`, `MAPELITES_SUMMARY_*`, `MAPELITES_SUMMARY_EMBEDDING_*`
+  - `MAPELITES_EMBEDDING_MODE` (currently only `repo_state`)
+  - `MAPELITES_FILE_EMBEDDING_CACHE_BACKEND` (`db` or `memory`)
+  - `MAPELITES_REPO_STATE_MAX_FILES` (optional cap for repo-state file enumeration)
+  - `MAPELITES_PREPROCESS_*`, `MAPELITES_CHUNK_*`, `MAPELITES_CODE_EMBEDDING_*`
   - `MAPELITES_DIMENSION_REDUCTION_*`, `MAPELITES_FEATURE_*`, `MAPELITES_ARCHIVE_*`, `MAPELITES_FITNESS_*`, `MAPELITES_SAMPLER_*`, `MAPELITES_SEED_POPULATION_SIZE`
+  - `MAPELITES_SUMMARY_*`, `MAPELITES_SUMMARY_EMBEDDING_*` (optional summary embedding utilities; not used for MAP-Elites behaviour descriptors in repo-state mode)
 
 See `docs/loreley/config.md` for the exhaustive list.
 
@@ -256,7 +260,7 @@ The full documentation lives under `docs/` and is rendered into `site/` via MkDo
 - `docs/index.md` – high-level overview and navigation.
 - `docs/loreley/config.md` – global settings and environment variables.
 - `docs/loreley/db/` – database engine/sessions and ORM models.
-- `docs/loreley/core/map-elites/` – MAP-Elites pipeline (preprocessing, chunking, embeddings, dimensionality reduction, sampler, snapshots, and summary embeddings).
+- `docs/loreley/core/map-elites/` – MAP-Elites pipeline (repo-state repository embeddings, preprocessing/chunking helpers, dimensionality reduction, sampler, snapshots, and optional summary embeddings).
 - `docs/loreley/core/worker/` – planning, coding, evaluator, evolution loop, commit summaries, job store, and worker repository.
 - `docs/loreley/scheduler/main.md` – scheduler internals and configuration.
 - `docs/loreley/tasks/` – Redis broker and Dramatiq actors.

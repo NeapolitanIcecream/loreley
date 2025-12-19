@@ -4,12 +4,10 @@ This page documents the repo-state embedding pipeline used by MAP-Elites.
 
 ## Motivation
 
-Diff-based embeddings (e.g. embedding `diff(parent, current)`) can place commits
-that are far apart in repository state close together in embedding space when
-their *local diffs* happen to be similar.
-
-Repo-state embeddings instead represent the **entire repository state** at a
-commit by aggregating file-level embeddings.
+Repo-state embeddings represent the **entire repository state** at a commit by
+aggregating file-level embeddings into a single commit vector. This makes the
+behaviour descriptor depend on the repository snapshot at `treeish`, not just a
+subset of changed files.
 
 ## High-level pipeline
 
