@@ -12,12 +12,16 @@ from loreley.api.routers.jobs import router as jobs_router
 from loreley.api.routers.commits import router as commits_router
 from loreley.api.routers.logs import router as logs_router
 from loreley.api.routers.graphs import router as graphs_router
+from loreley.db.base import ensure_database_schema
 
 API_V1_PREFIX = "/api/v1"
 
 
 def create_app() -> FastAPI:
     """Create the FastAPI application instance."""
+
+    # Ensure DB schema exists before serving requests.
+    ensure_database_schema()
 
     app = FastAPI(
         title="Loreley UI API",

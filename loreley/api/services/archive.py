@@ -6,12 +6,12 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from loreley.config import Settings, get_settings
 from loreley.core.map_elites.map_elites import MapElitesManager
 from loreley.db.base import session_scope
-from loreley.db.models import MapElitesState
+from loreley.db.models import MapElitesArchiveCell, MapElitesPcaHistory, MapElitesState
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,14 +84,46 @@ def snapshot_meta(
         row = session.execute(stmt).scalar_one_or_none()
         snapshot = dict(row.snapshot or {}) if row and row.snapshot else {}
 
+        schema_version = int(snapshot.get("schema_version") or 1)
+
+        # Prefer incremental tables (schema_version>=2). For legacy snapshots that
+        # have not yet been migrated, fall back to counting embedded JSON fields.
+        legacy_archive = snapshot.get("archive")
+        legacy_history = snapshot.get("history")
+
+        if schema_version < 2 and isinstance(legacy_archive, list):
+            entry_count = len(legacy_archive)
+        else:
+            entry_count = int(
+                session.execute(
+                    select(func.count())
+                    .select_from(MapElitesArchiveCell)
+                    .where(
+                        MapElitesArchiveCell.experiment_id == experiment_id,
+                        MapElitesArchiveCell.island_id == island_id,
+                    )
+                ).scalar_one()
+                or 0
+            )
+
+        if schema_version < 2 and isinstance(legacy_history, list):
+            history_length = len(legacy_history)
+        else:
+            history_length = int(
+                session.execute(
+                    select(func.count())
+                    .select_from(MapElitesPcaHistory)
+                    .where(
+                        MapElitesPcaHistory.experiment_id == experiment_id,
+                        MapElitesPcaHistory.island_id == island_id,
+                    )
+                ).scalar_one()
+                or 0
+            )
+
     lower = snapshot.get("lower_bounds") or [0.0] * dims
     upper = snapshot.get("upper_bounds") or [1.0] * dims
-    archive_entries = snapshot.get("archive") or []
-    history_entries = snapshot.get("history") or []
     has_projection = bool(snapshot.get("projection"))
-
-    entry_count = len(archive_entries) if isinstance(archive_entries, list) else 0
-    history_length = len(history_entries) if isinstance(history_entries, list) else 0
 
     return SnapshotMeta(
         entry_count=entry_count,

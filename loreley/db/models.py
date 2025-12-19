@@ -331,6 +331,112 @@ class MapElitesState(TimestampMixin, Base):
         )
 
 
+class MapElitesArchiveCell(TimestampMixin, Base):
+    """Single occupied MAP-Elites archive cell stored incrementally.
+
+    This table replaces embedding the full archive inside `MapElitesState.snapshot`.
+    Each occupied cell is stored as one row so inserts can be persisted via upserts.
+    """
+
+    __tablename__ = "map_elites_archive_cells"
+    __table_args__ = (
+        Index(
+            "ix_map_elites_archive_cells_island",
+            "experiment_id",
+            "island_id",
+        ),
+        Index(
+            "ix_map_elites_archive_cells_commit_hash",
+            "commit_hash",
+        ),
+    )
+
+    experiment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("experiments.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    island_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    cell_index: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    commit_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    objective: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    measures: Mapped[list[float]] = mapped_column(
+        MutableList.as_mutable(ARRAY(Float)),
+        default=list,
+        nullable=False,
+    )
+    solution: Mapped[list[float]] = mapped_column(
+        MutableList.as_mutable(ARRAY(Float)),
+        default=list,
+        nullable=False,
+    )
+    # NOTE: `metadata` is reserved by SQLAlchemy declarative; use a different
+    # Python attribute name while keeping the DB column name stable.
+    cell_metadata: Mapped[dict[str, Any]] = mapped_column(
+        "metadata",
+        MutableDict.as_mutable(JSONB),
+        default=dict,
+        nullable=False,
+    )
+    # Epoch seconds used by the archive extra field.
+    timestamp: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return (
+            "<MapElitesArchiveCell "
+            f"experiment_id={self.experiment_id!r} island_id={self.island_id!r} "
+            f"cell_index={self.cell_index!r} commit={self.commit_hash!r}>"
+        )
+
+
+class MapElitesPcaHistory(TimestampMixin, Base):
+    """Penultimate embedding history entries persisted for PCA reconstruction.
+
+    Rows are keyed by commit hash so updates are idempotent and `last_seen_at`
+    can be used to load the most recent history window after restarts.
+    """
+
+    __tablename__ = "map_elites_pca_history"
+    __table_args__ = (
+        Index(
+            "ix_map_elites_pca_history_last_seen",
+            "experiment_id",
+            "island_id",
+            "last_seen_at",
+        ),
+    )
+
+    experiment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("experiments.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    island_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    commit_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+
+    vector: Mapped[list[float]] = mapped_column(
+        MutableList.as_mutable(ARRAY(Float)),
+        default=list,
+        nullable=False,
+    )
+    code_dimensions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    summary_dimensions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    code_model: Mapped[str | None] = mapped_column(String(255))
+    summary_model: Mapped[str | None] = mapped_column(String(255))
+    summary_embedding_model: Mapped[str | None] = mapped_column(String(255))
+
+    # Epoch seconds used to restore ordered, bounded history windows.
+    last_seen_at: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return (
+            "<MapElitesPcaHistory "
+            f"experiment_id={self.experiment_id!r} island_id={self.island_id!r} "
+            f"commit={self.commit_hash!r} last_seen_at={self.last_seen_at!r}>"
+        )
+
+
 class MapElitesFileEmbeddingCache(TimestampMixin, Base):
     """Persistent file-level embedding cache keyed by git blob SHA.
 

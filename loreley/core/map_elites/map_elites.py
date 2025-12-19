@@ -25,8 +25,9 @@ from .preprocess import ChangedFile, PreprocessedFile
 from .repository_state_embedding import RepoStateEmbeddingStats, embed_repository_state
 from .snapshot import (
     SnapshotBackend,
+    SnapshotCellUpsert,
+    SnapshotUpdate,
     apply_snapshot,
-    build_snapshot,
     build_snapshot_backend,
     to_list,
 )
@@ -178,6 +179,8 @@ class MapElitesManager:
             "explicit" if treeish else "defaulted_to_commit_hash",
         )
 
+        update: SnapshotUpdate | None = None
+
         try:
             code_embedding, repo_stats = embed_repository_state(
                 commit_hash=commit_hash,
@@ -210,6 +213,16 @@ class MapElitesManager:
             )
             state.history = history
             state.projection = projection
+
+            # Persist PCA state incrementally even when the archive does not change.
+            update = SnapshotUpdate(
+                lower_bounds=state.lower_bounds.tolist(),
+                upper_bounds=state.upper_bounds.tolist(),
+                projection=state.projection,
+                history_upsert=final_embedding.penultimate if final_embedding else None,
+                history_seen_at=time.time(),
+                history_limit=self._resolve_history_limit(),
+            )
 
             artifacts = self._build_artifacts(repo_stats, (), code_embedding, final_embedding)
 
@@ -267,6 +280,17 @@ class MapElitesManager:
                 metadata=payload_metadata,
             )
 
+            if update is not None and record is not None:
+                update.cell_upsert = SnapshotCellUpsert(
+                    cell_index=int(record.cell_index),
+                    objective=float(record.fitness),
+                    measures=tuple(float(v) for v in record.measures),
+                    solution=tuple(float(v) for v in record.solution),
+                    commit_hash=str(record.commit_hash),
+                    metadata=dict(record.metadata or {}),
+                    timestamp=float(record.timestamp),
+                )
+
             if record:
                 log.info(
                     "Inserted commit {} into island {} (cell={} status={} Δ={:.4f})",
@@ -293,7 +317,7 @@ class MapElitesManager:
                 message=None if status else "Commit not inserted; objective below cell threshold.",
             )
         finally:
-            self._persist_island_state(effective_island, state)
+            self._persist_island_state(effective_island, state, update=update)
 
     def get_records(
         self,
@@ -343,7 +367,15 @@ class MapElitesManager:
         state.commit_to_index.clear()
         state.index_to_commit.clear()
         log.info("Cleared MAP-Elites state for island {}", effective_island)
-        self._persist_island_state(effective_island, state)
+        update = SnapshotUpdate(
+            lower_bounds=state.lower_bounds.tolist(),
+            upper_bounds=state.upper_bounds.tolist(),
+            projection=None,
+            clear=True,
+            history_seen_at=time.time(),
+            history_limit=self._resolve_history_limit(),
+        )
+        self._persist_island_state(effective_island, state, update=update)
 
     def describe_island(self, island_id: str | None = None) -> dict[str, Any]:
         """Return basic stats for observability dashboards."""
@@ -628,14 +660,33 @@ class MapElitesManager:
             final_embedding=final_embedding,
         )
 
-    def _persist_island_state(self, island_id: str, state: IslandState | None) -> None:
-        """Persist the current archive snapshot for an island, if enabled."""
+    def _persist_island_state(
+        self,
+        island_id: str,
+        state: IslandState | None,
+        *,
+        update: SnapshotUpdate | None,
+    ) -> None:
+        """Persist incremental snapshot updates for an island when enabled."""
 
-        if not state:
+        if not state or self._experiment_id is None:
             return
+        if update is None:
+            return
+        self._snapshot_backend.apply_update(island_id, state=state, update=update)
 
-        snapshot = build_snapshot(island_id, state)
-        self._snapshot_backend.save(island_id, snapshot)
+    def _resolve_history_limit(self) -> int:
+        """Return the bounded history window size used by the PCA reducer."""
+
+        min_fit = max(
+            2,
+            int(self.settings.mapelites_dimensionality_min_fit_samples),
+            int(self.settings.mapelites_feature_normalization_warmup_samples),
+        )
+        return max(
+            min_fit,
+            int(self.settings.mapelites_dimensionality_history_size),
+        )
 
     @staticmethod
     def _maybe_float(value: Any) -> float | None:

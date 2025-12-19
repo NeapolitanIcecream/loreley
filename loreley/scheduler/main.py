@@ -20,7 +20,7 @@ from loreley.config import Settings, get_settings
 from loreley.core.experiments import ExperimentError, get_or_create_experiment
 from loreley.core.map_elites.map_elites import MapElitesManager
 from loreley.core.map_elites.sampler import MapElitesSampler
-from loreley.db.base import session_scope
+from loreley.db.base import ensure_database_schema, session_scope
 from loreley.db.models import CommitMetadata, Metric
 from loreley.scheduler.ingestion import MapElitesIngestion
 from loreley.scheduler.job_scheduler import JobScheduler
@@ -41,6 +41,8 @@ class EvolutionScheduler:
     def __init__(self, *, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
         self.console = console
+        # Ensure DB schema (including MAP-Elites incremental tables) exists before use.
+        ensure_database_schema()
         self.repo_root = self._resolve_repo_root()
         self._repo = self._init_repo()
         self._root_commit_hash = (self.settings.mapelites_experiment_root_commit or "").strip() or None

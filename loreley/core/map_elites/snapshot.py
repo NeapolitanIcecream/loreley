@@ -17,16 +17,20 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+import time
 from typing import Any, Mapping, Sequence
 
 import numpy as np
 from loguru import logger
 from ribs.archives import GridArchive
+from sqlalchemy import delete
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
+from loreley.config import get_settings
 from loreley.db.base import session_scope
-from loreley.db.models import MapElitesState
+from loreley.db.models import MapElitesArchiveCell, MapElitesPcaHistory, MapElitesState
 from .dimension_reduction import PCAProjection, PenultimateEmbedding
 
 log = logger.bind(module="map_elites.snapshot")
@@ -34,6 +38,8 @@ log = logger.bind(module="map_elites.snapshot")
 Vector = tuple[float, ...]
 
 __all__ = [
+    "SnapshotCellUpsert",
+    "SnapshotUpdate",
     "SnapshotBackend",
     "NullSnapshotBackend",
     "DatabaseSnapshotBackend",
@@ -52,6 +58,37 @@ __all__ = [
 ]
 
 
+@dataclass(slots=True, frozen=True)
+class SnapshotCellUpsert:
+    """Incremental upsert payload for a single archive cell."""
+
+    cell_index: int
+    objective: float
+    measures: Vector
+    solution: Vector
+    commit_hash: str
+    metadata: Mapping[str, Any]
+    timestamp: float
+
+
+@dataclass(slots=True)
+class SnapshotUpdate:
+    """Incremental snapshot update applied to a persisted island state."""
+
+    lower_bounds: Sequence[float] | None = None
+    upper_bounds: Sequence[float] | None = None
+    projection: PCAProjection | None = None
+
+    history_upsert: PenultimateEmbedding | None = None
+    history_seen_at: float | None = None
+
+    cell_upsert: SnapshotCellUpsert | None = None
+    clear: bool = False
+
+    # Optional knob to keep history restoration bounded without relying on global settings.
+    history_limit: int | None = None
+
+
 class SnapshotBackend(ABC):
     """Abstract storage backend for island snapshots.
 
@@ -67,6 +104,23 @@ class SnapshotBackend(ABC):
     def save(self, island_id: str, snapshot: Mapping[str, Any]) -> None:  # pragma: no cover - interface
         """Persist a snapshot for the given island."""
 
+    def apply_update(  # pragma: no cover - thin default
+        self,
+        island_id: str,
+        *,
+        state: Any,
+        update: SnapshotUpdate | None = None,
+    ) -> None:
+        """Persist an incremental update.
+
+        Default implementation falls back to serialising the full snapshot and
+        delegating to ``save``. Storage backends can override this method to
+        implement incremental persistence without rewriting large JSON blobs.
+        """
+
+        snapshot = build_snapshot(island_id, state)
+        self.save(island_id, snapshot)
+
 
 @dataclass(slots=True)
 class NullSnapshotBackend(SnapshotBackend):
@@ -77,6 +131,16 @@ class NullSnapshotBackend(SnapshotBackend):
 
     def save(self, island_id: str, snapshot: Mapping[str, Any]) -> None:
         # Intentionally ignore all writes.
+        return None
+
+    def apply_update(
+        self,
+        island_id: str,
+        *,
+        state: Any,
+        update: SnapshotUpdate | None = None,
+    ) -> None:
+        # Intentionally ignore all writes, including full-snapshot fallbacks.
         return None
 
 
@@ -94,9 +158,40 @@ class DatabaseSnapshotBackend(SnapshotBackend):
                     MapElitesState.island_id == island_id,
                 )
                 state = session.execute(stmt).scalar_one_or_none()
-                if not state or not state.snapshot:
+                if not state:
                     return None
-                return dict(state.snapshot)
+
+                meta = dict(state.snapshot or {})
+                meta = self._maybe_migrate_legacy_snapshot(session, state, meta, island_id=island_id)
+
+                schema_version = _coerce_int(meta.get("schema_version"), default=1)
+                if schema_version < 2:
+                    # Legacy mode: return the stored payload as-is.
+                    return meta or None
+
+                # Assemble a snapshot payload compatible with `apply_snapshot()`.
+                lower = meta.get("lower_bounds")
+                upper = meta.get("upper_bounds")
+                projection_payload = meta.get("projection")
+                history_limit = _coerce_int(meta.get("history_limit"), default=0) or None
+
+                archive_entries = self._load_archive_entries(session, island_id=island_id)
+                history_entries = self._load_history_entries(
+                    session,
+                    island_id=island_id,
+                    limit=history_limit,
+                )
+
+                payload: dict[str, Any] = {
+                    **meta,
+                    "island_id": island_id,
+                    "lower_bounds": lower if isinstance(lower, Sequence) else None,
+                    "upper_bounds": upper if isinstance(upper, Sequence) else None,
+                    "projection": projection_payload,
+                    "history": history_entries,
+                    "archive": archive_entries,
+                }
+                return payload
         except SQLAlchemyError as exc:
             log.error(
                 "Failed to load MAP-Elites snapshot for experiment {} island {}: {}",
@@ -145,6 +240,365 @@ class DatabaseSnapshotBackend(SnapshotBackend):
                 island_id,
                 exc,
             )
+
+    def apply_update(
+        self,
+        island_id: str,
+        *,
+        state: Any,
+        update: SnapshotUpdate | None = None,
+    ) -> None:
+        """Persist an incremental update into per-cell/history tables + lightweight metadata."""
+
+        if update is None:
+            # Backwards-compatible fallback.
+            return super().apply_update(island_id, state=state, update=update)
+
+        now = float(update.history_seen_at) if update.history_seen_at is not None else time.time()
+
+        try:
+            with session_scope() as session:
+                # Upsert lightweight metadata row.
+                stmt = select(MapElitesState).where(
+                    MapElitesState.experiment_id == self.experiment_id,
+                    MapElitesState.island_id == island_id,
+                )
+                existing = session.execute(stmt).scalar_one_or_none()
+                meta: dict[str, Any] = dict(existing.snapshot or {}) if existing else {}
+
+                # Ensure we do not keep legacy large fields around.
+                meta.pop("archive", None)
+                meta.pop("history", None)
+
+                meta["schema_version"] = 2
+                meta["storage_backend"] = "cells_history_v1"
+                meta["last_update_at"] = now
+
+                if update.history_limit is not None:
+                    meta["history_limit"] = int(update.history_limit)
+
+                if update.lower_bounds is not None:
+                    meta["lower_bounds"] = [float(v) for v in update.lower_bounds]
+                if update.upper_bounds is not None:
+                    meta["upper_bounds"] = [float(v) for v in update.upper_bounds]
+
+                # Projection updates are frequent but small; keep them in metadata JSON.
+                meta["projection"] = serialize_projection(update.projection)
+
+                if existing:
+                    existing.snapshot = meta
+                else:
+                    session.add(
+                        MapElitesState(
+                            experiment_id=self.experiment_id,
+                            island_id=island_id,
+                            snapshot=meta,
+                        )
+                    )
+
+                if update.clear:
+                    session.execute(
+                        delete(MapElitesArchiveCell).where(
+                            MapElitesArchiveCell.experiment_id == self.experiment_id,
+                            MapElitesArchiveCell.island_id == island_id,
+                        )
+                    )
+                    session.execute(
+                        delete(MapElitesPcaHistory).where(
+                            MapElitesPcaHistory.experiment_id == self.experiment_id,
+                            MapElitesPcaHistory.island_id == island_id,
+                        )
+                    )
+                    return
+
+                # Incremental cell upsert (only when a commit improved a cell).
+                if update.cell_upsert is not None:
+                    cell = update.cell_upsert
+                    values = {
+                        "experiment_id": self.experiment_id,
+                        "island_id": island_id,
+                        "cell_index": int(cell.cell_index),
+                        "commit_hash": str(cell.commit_hash),
+                        "objective": float(cell.objective),
+                        "measures": [float(v) for v in cell.measures],
+                        "solution": [float(v) for v in cell.solution],
+                        "metadata": dict(cell.metadata) if isinstance(cell.metadata, Mapping) else {},
+                        "timestamp": float(cell.timestamp),
+                    }
+                    stmt = pg_insert(MapElitesArchiveCell.__table__).values(**values)
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=[
+                            MapElitesArchiveCell.__table__.c.experiment_id,
+                            MapElitesArchiveCell.__table__.c.island_id,
+                            MapElitesArchiveCell.__table__.c.cell_index,
+                        ],
+                        set_={
+                            "commit_hash": stmt.excluded.commit_hash,
+                            "objective": stmt.excluded.objective,
+                            "measures": stmt.excluded.measures,
+                            "solution": stmt.excluded.solution,
+                            "metadata": stmt.excluded["metadata"],
+                            "timestamp": stmt.excluded.timestamp,
+                        },
+                    )
+                    session.execute(stmt)
+
+                # Incremental history upsert (idempotent per commit hash).
+                if update.history_upsert is not None:
+                    entry = update.history_upsert
+                    values = {
+                        "experiment_id": self.experiment_id,
+                        "island_id": island_id,
+                        "commit_hash": str(entry.commit_hash),
+                        "vector": [float(v) for v in entry.vector],
+                        "code_dimensions": int(entry.code_dimensions),
+                        "summary_dimensions": int(entry.summary_dimensions),
+                        "code_model": entry.code_model,
+                        "summary_model": entry.summary_model,
+                        "summary_embedding_model": entry.summary_embedding_model,
+                        "last_seen_at": float(now),
+                    }
+                    stmt = pg_insert(MapElitesPcaHistory).values(**values)
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=[
+                            MapElitesPcaHistory.experiment_id,
+                            MapElitesPcaHistory.island_id,
+                            MapElitesPcaHistory.commit_hash,
+                        ],
+                        set_={
+                            "vector": stmt.excluded.vector,
+                            "code_dimensions": stmt.excluded.code_dimensions,
+                            "summary_dimensions": stmt.excluded.summary_dimensions,
+                            "code_model": stmt.excluded.code_model,
+                            "summary_model": stmt.excluded.summary_model,
+                            "summary_embedding_model": stmt.excluded.summary_embedding_model,
+                            "last_seen_at": stmt.excluded.last_seen_at,
+                        },
+                    )
+                    session.execute(stmt)
+        except SQLAlchemyError as exc:
+            log.error(
+                "Failed to persist incremental MAP-Elites snapshot for experiment {} island {}: {}",
+                self.experiment_id,
+                island_id,
+                exc,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            log.error(
+                "Unexpected error while persisting incremental snapshot for experiment {} island {}: {}",
+                self.experiment_id,
+                island_id,
+                exc,
+            )
+
+    def _load_archive_entries(self, session, *, island_id: str) -> list[dict[str, Any]]:
+        rows = list(
+            session.execute(
+                select(MapElitesArchiveCell).where(
+                    MapElitesArchiveCell.experiment_id == self.experiment_id,
+                    MapElitesArchiveCell.island_id == island_id,
+                )
+            )
+            .scalars()
+            .all()
+        )
+        entries: list[dict[str, Any]] = []
+        for row in rows:
+            entries.append(
+                {
+                    "index": int(row.cell_index),
+                    "objective": float(row.objective or 0.0),
+                    "measures": [float(v) for v in (row.measures or [])],
+                    "solution": [float(v) for v in (row.solution or [])],
+                    "commit_hash": str(row.commit_hash or ""),
+                    "metadata": dict(row.cell_metadata or {}),
+                    "timestamp": float(row.timestamp or 0.0),
+                }
+            )
+        return entries
+
+    def _load_history_entries(
+        self,
+        session,
+        *,
+        island_id: str,
+        limit: int | None,
+    ) -> list[dict[str, Any]]:
+        effective_limit = limit
+        if effective_limit is None:
+            settings = get_settings()
+            min_fit = max(
+                2,
+                int(settings.mapelites_dimensionality_min_fit_samples),
+                int(settings.mapelites_feature_normalization_warmup_samples),
+            )
+            effective_limit = max(
+                min_fit,
+                int(settings.mapelites_dimensionality_history_size),
+            )
+        effective_limit = max(0, int(effective_limit or 0))
+
+        stmt = (
+            select(MapElitesPcaHistory)
+            .where(
+                MapElitesPcaHistory.experiment_id == self.experiment_id,
+                MapElitesPcaHistory.island_id == island_id,
+            )
+            .order_by(MapElitesPcaHistory.last_seen_at.desc())
+        )
+        if effective_limit:
+            stmt = stmt.limit(effective_limit)
+        rows = list(session.execute(stmt).scalars().all())
+        # Reverse to restore oldest->newest ordering expected by `DimensionReducer`.
+        rows.reverse()
+        payload: list[dict[str, Any]] = []
+        for row in rows:
+            payload.append(
+                {
+                    "commit_hash": str(row.commit_hash or ""),
+                    "vector": [float(v) for v in (row.vector or [])],
+                    "code_dimensions": int(row.code_dimensions or 0),
+                    "summary_dimensions": int(row.summary_dimensions or 0),
+                    "code_model": row.code_model,
+                    "summary_model": row.summary_model,
+                    "summary_embedding_model": row.summary_embedding_model,
+                }
+            )
+        return payload
+
+    def _maybe_migrate_legacy_snapshot(
+        self,
+        session,
+        state_row: MapElitesState,
+        meta: dict[str, Any],
+        *,
+        island_id: str,
+    ) -> dict[str, Any]:
+        schema_version = _coerce_int(meta.get("schema_version"), default=1)
+        if schema_version >= 2:
+            return meta
+
+        archive_payload = meta.get("archive")
+        history_payload = meta.get("history")
+
+        has_archive = isinstance(archive_payload, list) and bool(archive_payload)
+        has_history = isinstance(history_payload, list) and bool(history_payload)
+        if not has_archive and not has_history:
+            return meta
+
+        now = time.time()
+        migrated_cells = 0
+        migrated_history = 0
+
+        if isinstance(archive_payload, list):
+            for entry in archive_payload:
+                if not isinstance(entry, Mapping):
+                    continue
+                stored_index = entry.get("index")
+                if stored_index is None:
+                    continue
+                try:
+                    cell_index = int(stored_index)
+                except (TypeError, ValueError):
+                    continue
+
+                measures = array_to_list(entry.get("measures"))
+                solution = array_to_list(entry.get("solution"))
+                if not measures or not solution:
+                    # Skip malformed rows; restore logic similarly expects both.
+                    continue
+
+                values = {
+                    "experiment_id": self.experiment_id,
+                    "island_id": island_id,
+                    "cell_index": cell_index,
+                    "commit_hash": str(entry.get("commit_hash", "")),
+                    "objective": float(entry.get("objective", 0.0)),
+                    "measures": [float(v) for v in measures],
+                    "solution": [float(v) for v in solution],
+                    "metadata": _coerce_metadata(entry.get("metadata")),
+                    "timestamp": float(entry.get("timestamp", 0.0)),
+                }
+                stmt = pg_insert(MapElitesArchiveCell.__table__).values(**values)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=[
+                        MapElitesArchiveCell.__table__.c.experiment_id,
+                        MapElitesArchiveCell.__table__.c.island_id,
+                        MapElitesArchiveCell.__table__.c.cell_index,
+                    ],
+                    set_={
+                        "commit_hash": stmt.excluded.commit_hash,
+                        "objective": stmt.excluded.objective,
+                        "measures": stmt.excluded.measures,
+                        "solution": stmt.excluded.solution,
+                        "metadata": stmt.excluded["metadata"],
+                        "timestamp": stmt.excluded.timestamp,
+                    },
+                )
+                session.execute(stmt)
+                migrated_cells += 1
+
+        if isinstance(history_payload, list):
+            n = len(history_payload)
+            for idx, entry in enumerate(history_payload):
+                if not isinstance(entry, Mapping):
+                    continue
+                commit_hash = str(entry.get("commit_hash", "")).strip()
+                if not commit_hash:
+                    continue
+                vec_values = entry.get("vector") or []
+                if not isinstance(vec_values, (list, tuple)):
+                    vec_values = []
+                last_seen_at = now - float(max(0, (n - 1) - idx))
+                values = {
+                    "experiment_id": self.experiment_id,
+                    "island_id": island_id,
+                    "commit_hash": commit_hash,
+                    "vector": [float(v) for v in vec_values],
+                    "code_dimensions": int(entry.get("code_dimensions", 0)),
+                    "summary_dimensions": int(entry.get("summary_dimensions", 0)),
+                    "code_model": entry.get("code_model"),
+                    "summary_model": entry.get("summary_model"),
+                    "summary_embedding_model": entry.get("summary_embedding_model"),
+                    "last_seen_at": float(last_seen_at),
+                }
+                stmt = pg_insert(MapElitesPcaHistory).values(**values)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=[
+                        MapElitesPcaHistory.experiment_id,
+                        MapElitesPcaHistory.island_id,
+                        MapElitesPcaHistory.commit_hash,
+                    ],
+                    set_={
+                        "vector": stmt.excluded.vector,
+                        "code_dimensions": stmt.excluded.code_dimensions,
+                        "summary_dimensions": stmt.excluded.summary_dimensions,
+                        "code_model": stmt.excluded.code_model,
+                        "summary_model": stmt.excluded.summary_model,
+                        "summary_embedding_model": stmt.excluded.summary_embedding_model,
+                        "last_seen_at": stmt.excluded.last_seen_at,
+                    },
+                )
+                session.execute(stmt)
+                migrated_history += 1
+
+        cleaned = dict(meta)
+        cleaned.pop("archive", None)
+        cleaned.pop("history", None)
+        cleaned["schema_version"] = 2
+        cleaned["storage_backend"] = "cells_history_v1"
+        cleaned["last_update_at"] = now
+        cleaned.setdefault("last_migrated_at", now)
+        state_row.snapshot = cleaned
+
+        log.info(
+            "Migrated legacy MAP-Elites snapshot to incremental tables (experiment={} island={} cells={} history={})",
+            self.experiment_id,
+            island_id,
+            migrated_cells,
+            migrated_history,
+        )
+        return cleaned
 
 
 def build_snapshot_backend(experiment_id: Any | None) -> SnapshotBackend:
@@ -427,5 +881,12 @@ def _coerce_metadata(payload: Any) -> dict[str, Any]:
     if isinstance(payload, Mapping):
         return dict(payload)
     return {}
+
+
+def _coerce_int(value: Any, *, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return int(default)
 
 
