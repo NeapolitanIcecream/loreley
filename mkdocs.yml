@@ -18,6 +18,7 @@ nav:
           - Models: loreley/db/models.md
       - MAP-Elites:
           - Overview: loreley/core/map-elites/map-elites.md
+          - Repository embeddings: loreley/core/map-elites/repository_embedding.md
           - Preprocessing: loreley/core/map-elites/preprocess.md
           - Chunking: loreley/core/map-elites/chunk.md
           - Code embeddings: loreley/core/map-elites/code_embedding.md

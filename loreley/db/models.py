@@ -329,3 +329,39 @@ class MapElitesState(TimestampMixin, Base):
             f"<MapElitesState experiment_id={self.experiment_id!r} "
             f"island_id={self.island_id!r}>"
         )
+
+
+class MapElitesFileEmbeddingCache(TimestampMixin, Base):
+    """Persistent file-level embedding cache keyed by git blob SHA.
+
+    The cache is designed for the repo-state embedding pipeline:
+    - Keyed by (blob_sha, embedding_model, dimensions, pipeline_signature).
+    - Stores the final file-level embedding vector (list of floats).
+
+    `pipeline_signature` captures preprocessing/chunking settings so that
+    embeddings can be invalidated when the pipeline changes while the blob
+    content remains identical.
+    """
+
+    __tablename__ = "map_elites_file_embedding_cache"
+    __table_args__ = (
+        Index("ix_mapelites_file_embedding_cache_blob_sha", "blob_sha"),
+        Index("ix_mapelites_file_embedding_cache_signature", "pipeline_signature"),
+    )
+
+    blob_sha: Mapped[str] = mapped_column(String(64), primary_key=True)
+    embedding_model: Mapped[str] = mapped_column(String(255), primary_key=True)
+    dimensions: Mapped[int] = mapped_column(Integer, primary_key=True)
+    pipeline_signature: Mapped[str] = mapped_column(String(128), primary_key=True)
+    vector: Mapped[list[float]] = mapped_column(
+        MutableList.as_mutable(ARRAY(Float)),
+        default=list,
+        nullable=False,
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return (
+            "<MapElitesFileEmbeddingCache "
+            f"blob_sha={self.blob_sha!r} model={self.embedding_model!r} "
+            f"dims={self.dimensions!r} sig={self.pipeline_signature[:8]!r}>"
+        )

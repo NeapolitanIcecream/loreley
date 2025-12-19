@@ -41,17 +41,14 @@ Internally, `_ingest_snapshot(...)`:
    payload.
 2. Ensures the corresponding git commit is present locally, fetching from
    remotes as necessary.
-3. Computes a list of `ChangedFile` entries from the commit stats to use as a
-   proxy for behavioural diversity.
-4. Calls `MapElitesManager.ingest(...)` with:
+3. Calls `MapElitesManager.ingest(...)` with:
    - `commit_hash`,
-   - per-file `changed_files`,
    - `metrics`,
    - `island_id`,
    - `repo_root` and `treeish`,
    - a structured metadata block that links the job, context, and evaluation
      summaries.
-5. Writes a compact ingestion state back under
+4. Writes a compact ingestion state back under
    `payload["ingestion"]["map_elites"]`, including:
    - `status` (`"succeeded"` or `"skipped"`),
    - `delta`, `status_code`, and `message` from the ingest result,

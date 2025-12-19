@@ -78,6 +78,14 @@ class Settings(BaseSettings):
         default=None,
         alias="MAPELITES_EXPERIMENT_ROOT_COMMIT",
     )
+    mapelites_embedding_mode: Literal["repo_state"] = Field(
+        default="repo_state",
+        alias="MAPELITES_EMBEDDING_MODE",
+    )
+    mapelites_file_embedding_cache_backend: Literal["db", "memory"] | None = Field(
+        default=None,
+        alias="MAPELITES_FILE_EMBEDDING_CACHE_BACKEND",
+    )
 
     scheduler_repo_root: str | None = Field(
         default=None,

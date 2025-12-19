@@ -8,12 +8,10 @@ import pytest
 
 import loreley.core.map_elites.map_elites as map_elites_module
 from loreley.config import Settings
-from loreley.core.map_elites.chunk import ChunkedFile, FileChunk
 from loreley.core.map_elites.code_embedding import CommitCodeEmbedding
 from loreley.core.map_elites.dimension_reduction import FinalEmbedding, PenultimateEmbedding
 from loreley.core.map_elites.map_elites import MapElitesManager, MapElitesRecord
-from loreley.core.map_elites.preprocess import PreprocessedFile
-from loreley.core.map_elites.summarization_embedding import CommitSummaryEmbedding
+from loreley.core.map_elites.repository_state_embedding import RepoStateEmbeddingStats
 
 
 def test_manager_lazy_loads_persisted_snapshot_for_stats_and_records(settings: Settings) -> None:
@@ -64,10 +62,25 @@ def test_manager_lazy_loads_persisted_snapshot_for_stats_and_records(settings: S
     assert records[0].commit_hash == "c1"
 
 
-def test_ingest_short_circuits_when_no_preprocessed(
+def test_ingest_short_circuits_when_no_repo_state_embedding(
     monkeypatch: pytest.MonkeyPatch, settings: Settings
 ) -> None:
-    monkeypatch.setattr(map_elites_module, "preprocess_changed_files", lambda *args, **kwargs: [])
+    stats = RepoStateEmbeddingStats(
+        treeish="abc",
+        eligible_files=0,
+        files_embedded=0,
+        files_aggregated=0,
+        unique_blobs=0,
+        cache_hits=0,
+        cache_misses=0,
+        skipped_empty_after_preprocess=0,
+        skipped_failed_embedding=0,
+    )
+    monkeypatch.setattr(
+        map_elites_module,
+        "embed_repository_state",
+        lambda *args, **kwargs: (None, stats),
+    )
 
     manager = MapElitesManager(settings=settings, repo_root=Path("."))
     result = manager.ingest(
@@ -78,7 +91,7 @@ def test_ingest_short_circuits_when_no_preprocessed(
     assert result.status == 0
     assert result.record is None
     assert result.artifacts.preprocessed_files == ()
-    assert "No eligible files" in (result.message or "")
+    assert "No eligible repository files" in (result.message or "")
 
 
 def test_ingest_builds_record_with_stubbed_dependencies(
@@ -89,49 +102,31 @@ def test_ingest_builds_record_with_stubbed_dependencies(
     settings.mapelites_feature_truncation_k = 1.0
     settings.mapelites_fitness_metric = "score"
 
-    preprocessed = PreprocessedFile(
-        path=Path("a.py"),
-        change_count=2,
-        content="print('a')",
-    )
-    chunk = FileChunk(
-        file_path=Path("a.py"),
-        chunk_id="a.py::chunk-0000",
-        index=0,
-        start_line=1,
-        end_line=1,
-        content="print('a')",
-        line_count=1,
-        change_count=preprocessed.change_count,
-    )
-    chunked = ChunkedFile(
-        path=Path("a.py"),
-        change_count=preprocessed.change_count,
-        total_lines=1,
-        chunks=(chunk,),
-    )
-
     code_embedding = CommitCodeEmbedding(
         files=(),
         vector=(0.5, -0.5),
         model="code",
         dimensions=2,
     )
-    summary_embedding = CommitSummaryEmbedding(
-        summaries=(),
-        vector=(0.2, 0.3),
-        summary_model="summary",
-        embedding_model="embed",
-        dimensions=2,
+    stats = RepoStateEmbeddingStats(
+        treeish="abc",
+        eligible_files=2,
+        files_embedded=1,
+        files_aggregated=2,
+        unique_blobs=2,
+        cache_hits=1,
+        cache_misses=1,
+        skipped_empty_after_preprocess=0,
+        skipped_failed_embedding=0,
     )
     penultimate = PenultimateEmbedding(
         commit_hash="abc",
-        vector=(0.1, 0.2, 0.3, 0.4),
+        vector=(0.5, -0.5),
         code_dimensions=2,
-        summary_dimensions=2,
+        summary_dimensions=0,
         code_model="code",
-        summary_model="summary",
-        summary_embedding_model="embed",
+        summary_model=None,
+        summary_embedding_model=None,
     )
     final_embedding = FinalEmbedding(
         commit_hash="abc",
@@ -142,16 +137,9 @@ def test_ingest_builds_record_with_stubbed_dependencies(
     )
 
     monkeypatch.setattr(
-        map_elites_module, "preprocess_changed_files", lambda *args, **kwargs: [preprocessed]
-    )
-    monkeypatch.setattr(
-        map_elites_module, "chunk_preprocessed_files", lambda *args, **kwargs: [chunked]
-    )
-    monkeypatch.setattr(
-        map_elites_module, "embed_chunked_files", lambda *args, **kwargs: code_embedding
-    )
-    monkeypatch.setattr(
-        map_elites_module, "summarize_preprocessed_files", lambda *args, **kwargs: summary_embedding
+        map_elites_module,
+        "embed_repository_state",
+        lambda *args, **kwargs: (code_embedding, stats),
     )
     monkeypatch.setattr(
         map_elites_module,
@@ -202,6 +190,6 @@ def test_ingest_builds_record_with_stubbed_dependencies(
     assert result.record is not None
     assert result.record.commit_hash == "abc"
     assert result.artifacts.code_embedding is code_embedding
-    assert result.artifacts.summary_embedding is summary_embedding
+    assert result.artifacts.summary_embedding is None
     assert result.artifacts.final_embedding is final_embedding
     assert result.record.metadata["metrics"]["score"] == 1.2

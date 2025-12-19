@@ -27,3 +27,6 @@ ORM models and enums for tracking evolutionary jobs, commits, and associated met
 - **`MapElitesState`** (`map_elites_states` table): persists per-experiment, per-island snapshots of the MAP-Elites archive.
   - Uses a composite primary key `(experiment_id, island_id)` so that multiple experiments can maintain independent archives even when they share island identifiers.
   - Stores a JSONB `snapshot` payload containing feature bounds, PCA history/projection metadata, and the current archive entries so that `loreley.core.map_elites.snapshot` and `MapElitesManager` can restore state across process restarts for a given experiment.
+- **`MapElitesFileEmbeddingCache`** (`map_elites_file_embedding_cache` table): persistent file-level embedding cache keyed by git blob SHA.
+  - Uses a composite primary key `(blob_sha, embedding_model, dimensions, pipeline_signature)`.
+  - Stores a float array `vector` containing the file embedding, allowing repo-state embeddings to reuse unchanged file vectors across commits.

@@ -1,6 +1,6 @@
 # loreley.core.map-elites.preprocess
 
-Preprocessing utilities for turning raw commit diffs into cleaned code snippets suitable for embedding and feature extraction.
+Preprocessing utilities for turning raw repository code files into cleaned code snippets suitable for embedding and feature extraction.
 
 ## Data structures
 
@@ -9,7 +9,7 @@ Preprocessing utilities for turning raw commit diffs into cleaned code snippets 
 
 ## Preprocessor
 
-- **`CodePreprocessor`**: filters and normalises changed files before embedding.
+- **`CodePreprocessor`**: filters and normalises files before embedding.
   - Uses `Settings` map-elites preprocessing options to enforce maximum file count/size, allowed extensions/filenames, and excluded glob patterns.
   - Loads file contents either from the working tree or a specific `treeish` via GitPython, applies comment stripping, tab-to-spaces conversion, blank-line collapse, and basic normalisation.
   - Exposes `run(changed_files)` which returns a list of `PreprocessedFile` objects ordered by `change_count`.

@@ -14,15 +14,15 @@ from loguru import logger
 from ribs.archives import GridArchive
 
 from loreley.config import Settings, get_settings
-from .chunk import ChunkedFile, chunk_preprocessed_files
-from .code_embedding import CommitCodeEmbedding, embed_chunked_files
+from .code_embedding import CommitCodeEmbedding
 from .dimension_reduction import (
     FinalEmbedding,
     PenultimateEmbedding,
     PCAProjection,
     reduce_commit_embeddings,
 )
-from .preprocess import ChangedFile, PreprocessedFile, preprocess_changed_files
+from .preprocess import ChangedFile, PreprocessedFile
+from .repository_state_embedding import RepoStateEmbeddingStats, embed_repository_state
 from .snapshot import (
     SnapshotBackend,
     apply_snapshot,
@@ -30,13 +30,9 @@ from .snapshot import (
     build_snapshot_backend,
     to_list,
 )
-from .summarization_embedding import (
-    CommitSummaryEmbedding,
-    summarize_preprocessed_files,
-)
+from .summarization_embedding import CommitSummaryEmbedding
 
 if TYPE_CHECKING:  # pragma: no cover
-    from .chunk import PreprocessedArtifact
     from .sampler import SupportsMapElitesRecord
 
 log = logger.bind(module="map_elites.manager")
@@ -55,19 +51,22 @@ Vector = tuple[float, ...]
 class CommitEmbeddingArtifacts:
     """Lightweight container for intermediate embedding artifacts."""
 
+    repo_state_stats: RepoStateEmbeddingStats | None
     preprocessed_files: tuple[PreprocessedFile, ...]
-    chunked_files: tuple[ChunkedFile, ...]
     code_embedding: CommitCodeEmbedding | None
     summary_embedding: CommitSummaryEmbedding | None
     final_embedding: FinalEmbedding | None
 
     @property
     def file_count(self) -> int:
+        if self.repo_state_stats is not None:
+            return int(self.repo_state_stats.files_aggregated)
         return len(self.preprocessed_files)
 
     @property
     def chunk_count(self) -> int:
-        return sum(len(file.chunks) for file in self.chunked_files)
+        # Repo-state embeddings do not retain chunk-level artifacts.
+        return 0
 
 
 @dataclass(slots=True, frozen=True)
@@ -155,7 +154,7 @@ class MapElitesManager:
         self,
         *,
         commit_hash: str,
-        changed_files: Sequence[ChangedFile | Mapping[str, object]],
+        changed_files: Sequence[ChangedFile | Mapping[str, object]] | None = None,
         metrics: Sequence[Mapping[str, Any]] | Mapping[str, Any] | None = None,
         island_id: str | None = None,
         repo_root: Path | None = None,
@@ -176,15 +175,22 @@ class MapElitesManager:
         )
 
         try:
-            preprocessed = preprocess_changed_files(
-                changed_files,
+            effective_treeish = (treeish or commit_hash).strip() or None
+            code_embedding, repo_stats = embed_repository_state(
+                commit_hash=commit_hash,
                 repo_root=working_dir,
+                treeish=effective_treeish,
                 settings=self.settings,
-                treeish=treeish,
+                # Default to DB cache when experiment_id is set (scheduler runs),
+                # otherwise keep tests/local runs DB-free.
+                cache_backend=(
+                    self.settings.mapelites_file_embedding_cache_backend
+                    or ("db" if self._experiment_id is not None else "memory")
+                ),
             )
-            if not preprocessed:
-                artifacts = self._build_artifacts(preprocessed, [], None, None, None)
-                message = "No eligible files after preprocessing."
+            if not code_embedding or not code_embedding.vector:
+                artifacts = self._build_artifacts(repo_stats, (), None, None)
+                message = "No eligible repository files produced an embedding."
                 log.warning("{} {}", message, commit_hash)
                 return MapElitesInsertionResult(
                     status=0,
@@ -193,25 +199,7 @@ class MapElitesManager:
                     artifacts=artifacts,
                     message=message,
                 )
-
-            chunked = chunk_preprocessed_files(
-                cast("Sequence[PreprocessedArtifact]", preprocessed),
-                settings=self.settings,
-            )
-            if not chunked:
-                artifacts = self._build_artifacts(preprocessed, chunked, None, None, None)
-                message = "Chunking produced no content."
-                log.warning("{} {}", message, commit_hash)
-                return MapElitesInsertionResult(
-                    status=0,
-                    delta=0.0,
-                    record=None,
-                    artifacts=artifacts,
-                    message=message,
-                )
-
-            code_embedding = embed_chunked_files(chunked, settings=self.settings)
-            summary_embedding = summarize_preprocessed_files(preprocessed, settings=self.settings)
+            summary_embedding = None
 
             final_embedding, history, projection = reduce_commit_embeddings(
                 commit_hash=commit_hash,
@@ -224,13 +212,7 @@ class MapElitesManager:
             state.history = history
             state.projection = projection
 
-            artifacts = self._build_artifacts(
-                preprocessed,
-                chunked,
-                code_embedding,
-                summary_embedding,
-                final_embedding,
-            )
+            artifacts = self._build_artifacts(repo_stats, (), code_embedding, final_embedding)
 
             if not final_embedding:
                 message = "Unable to derive final embedding."
@@ -634,17 +616,16 @@ class MapElitesManager:
 
     @staticmethod
     def _build_artifacts(
+        repo_state_stats: RepoStateEmbeddingStats | None,
         preprocessed: Sequence[PreprocessedFile],
-        chunked: Sequence[ChunkedFile],
         code_embedding: CommitCodeEmbedding | None,
-        summary_embedding: CommitSummaryEmbedding | None,
         final_embedding: FinalEmbedding | None,
     ) -> CommitEmbeddingArtifacts:
         return CommitEmbeddingArtifacts(
+            repo_state_stats=repo_state_stats,
             preprocessed_files=tuple(preprocessed),
-            chunked_files=tuple(chunked),
             code_embedding=code_embedding,
-            summary_embedding=summary_embedding,
+            summary_embedding=None,
             final_embedding=final_embedding,
         )
 

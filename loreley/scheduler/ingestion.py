@@ -20,7 +20,6 @@ from sqlalchemy import select
 
 from loreley.config import Settings
 from loreley.core.map_elites.map_elites import MapElitesManager
-from loreley.core.map_elites.preprocess import ChangedFile
 from loreley.core.worker.evaluator import EvaluationContext, EvaluationError, Evaluator
 from loreley.core.worker.repository import RepositoryError, WorkerRepository
 from loreley.db.base import session_scope
@@ -157,20 +156,11 @@ class MapElitesIngestion:
                 reason=str(exc),
             )
             return False
-        changed_files = self._collect_changed_files(commit_hash)
-        if not changed_files:
-            self._record_ingestion_state(
-                snapshot,
-                status="skipped",
-                reason="No changed files detected for commit.",
-            )
-            return False
         metadata = self._build_ingestion_metadata(snapshot, result)
         metrics = result.get("metrics") or []
         try:
             insertion = self.manager.ingest(
                 commit_hash=commit_hash,
-                changed_files=changed_files,
                 metrics=metrics,
                 island_id=snapshot.island_id,
                 repo_root=self.repo_root,
@@ -307,16 +297,6 @@ class MapElitesIngestion:
             raise IngestionError(f"Cannot fetch commit {commit_hash}: {exc}") from exc
         except BadName as exc:
             raise IngestionError(f"Commit {commit_hash} not found after fetch.") from exc
-
-    def _collect_changed_files(self, commit_hash: str) -> list[ChangedFile]:
-        commit = self.repo.commit(commit_hash)
-        stats = commit.stats
-        files = stats.files or {}
-        changed: list[ChangedFile] = []
-        for path, info in files.items():
-            change_count = int(info.get("lines") or (info.get("insertions", 0) + info.get("deletions", 0)) or 1)
-            changed.append(ChangedFile(path=Path(path), change_count=change_count))
-        return changed
 
     # Root commit initialisation --------------------------------------------
 
