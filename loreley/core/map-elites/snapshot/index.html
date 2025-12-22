@@ -657,6 +657,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../repository_embedding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository embeddings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../preprocess/" class="md-nav__link">
         
   
@@ -861,6 +889,17 @@
     <span class="md-ellipsis">
       
         Responsibilities
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#snapshot-schema-versions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Snapshot schema versions
       
     </span>
   </a>
@@ -1580,6 +1619,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#snapshot-schema-versions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Snapshot schema versions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#integration-with-mapelitesmanager" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1617,9 +1667,29 @@
 <li>Restore bounds, history, projection, archive entries, and commit-to-cell mappings from previously stored snapshots.</li>
 <li><strong>Backends</strong>:</li>
 <li>Define a small <code>SnapshotBackend</code> interface with <code>load(island_id)</code> and <code>save(island_id, snapshot)</code> methods.</li>
-<li>Provide a <code>NullSnapshotBackend</code> that disables persistence and simply returns <code>None</code> on <code>load</code>.</li>
-<li>Provide a <code>DatabaseSnapshotBackend</code> that stores snapshots in the <code>map_elites_states</code> table via the <code>MapElitesState</code> ORM model.</li>
+<li>Provide an optional <code>apply_update(island_id, *, state, update)</code> method:<ul>
+<li>Default implementation falls back to building a full snapshot and calling <code>save(...)</code>.</li>
+<li>Database backends override it to persist <strong>incremental</strong> updates without rewriting large JSON blobs.</li>
 </ul>
+</li>
+<li>Provide a <code>NullSnapshotBackend</code> that disables persistence and simply returns <code>None</code> on <code>load</code>.</li>
+<li>Provide a <code>DatabaseSnapshotBackend</code> that stores lightweight metadata in <code>map_elites_states</code> (<code>MapElitesState</code>)
+    and persists the large payload incrementally in dedicated tables:<ul>
+<li><code>map_elites_archive_cells</code> (<code>MapElitesArchiveCell</code>): one row per occupied archive cell.</li>
+<li><code>map_elites_pca_history</code> (<code>MapElitesPcaHistory</code>): one row per commit hash for PCA reconstruction.</li>
+</ul>
+</li>
+</ul>
+<h2 id="snapshot-schema-versions">Snapshot schema versions<a class="headerlink" href="#snapshot-schema-versions" title="Permanent link">&para;</a></h2>
+<p><code>MapElitesState.snapshot</code> carries a small <code>schema_version</code> flag:</p>
+<ul>
+<li><strong>schema_version = 1 (legacy)</strong>: <code>snapshot</code> may embed large <code>archive</code>/<code>history</code> lists directly.</li>
+<li><strong>schema_version &gt;= 2 (incremental)</strong>: <code>snapshot</code> is lightweight metadata only (bounds, projection, knobs),
+  while <code>archive</code> and <code>history</code> are stored in the incremental tables.</li>
+</ul>
+<p>When loading a legacy payload that still embeds <code>archive</code>/<code>history</code>, the database backend performs <strong>lazy migration</strong>
+on read: it upserts rows into the incremental tables, strips the large fields from <code>snapshot</code>, and bumps
+<code>schema_version</code> to 2.</p>
 <h2 id="integration-with-mapelitesmanager">Integration with <code>MapElitesManager</code><a class="headerlink" href="#integration-with-mapelitesmanager" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>MapElitesManager</code> constructs a backend through <code>build_snapshot_backend(experiment_id)</code>:</li>
@@ -1627,7 +1697,12 @@
 <li>When <code>experiment_id</code> is set, a <code>DatabaseSnapshotBackend</code> is used and snapshots are scoped by <code>(experiment_id, island_id)</code>.</li>
 <li>The manager decides <em>when</em> to persist:</li>
 <li>On island initialisation it calls <code>backend.load(island_id)</code> and, if a payload exists, applies it with <code>apply_snapshot(...)</code>.</li>
-<li>After ingestion and <code>clear_island()</code>, it calls <code>build_snapshot(island_id, state)</code> and <code>backend.save(island_id, snapshot)</code> to keep durable state up to date.</li>
+<li>After ingestion and <code>clear_island()</code>, it emits a <code>SnapshotUpdate</code> and calls <code>backend.apply_update(...)</code>:<ul>
+<li>PCA history/projection updates are persisted frequently (small metadata + per-commit history row).</li>
+<li>Archive cell writes are persisted only when a commit actually improves a cell (single cell upsert).</li>
+<li>Clearing an island deletes that island's cell/history rows and resets projection metadata.</li>
+</ul>
+</li>
 </ul>
 
 

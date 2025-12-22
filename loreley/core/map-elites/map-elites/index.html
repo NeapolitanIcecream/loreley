@@ -14,7 +14,7 @@
         <link rel="prev" href="../../../db/models/">
       
       
-        <link rel="next" href="../preprocess/">
+        <link rel="next" href="../repository_embedding/">
       
       
         
@@ -725,6 +725,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../repository_embedding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository embeddings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -1633,7 +1661,7 @@
 <p>High-level manager that runs the MAP-Elites pipeline on git commits and maintains per-island archives backed by the database.</p>
 <h2 id="data-structures">Data structures<a class="headerlink" href="#data-structures" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>CommitEmbeddingArtifacts</code></strong>: immutable container bundling preprocessed files, chunked files, and the commit-level code and summary embeddings plus the final low-dimensional embedding produced for a commit.</li>
+<li><strong><code>CommitEmbeddingArtifacts</code></strong>: immutable container bundling lightweight embedding artifacts for a commit. In repo-state mode this includes repo-state stats plus the final low-dimensional embedding.</li>
 <li><strong><code>MapElitesRecord</code></strong>: snapshot of a single elite stored in the archive, including commit hash, island, cell index, fitness, behaviour measures, solution vector, metadata, and timestamp.</li>
 <li><strong><code>MapElitesInsertionResult</code></strong>: describes the outcome of attempting to insert a commit into the archive, exposing a status flag, fitness delta, optional <code>MapElitesRecord</code>, any intermediate artifacts, and an optional human-readable message.</li>
 <li><strong><code>IslandState</code></strong>: internal mutable state attached to each island, holding the <code>GridArchive</code>, behaviour bounds, PCA history/projection, and mappings between commits and archive cell indices.</li>
@@ -1641,9 +1669,16 @@
 <h2 id="manager">Manager<a class="headerlink" href="#manager" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong><code>MapElitesManager</code></strong>: orchestrates preprocessing, chunking, embedding, dimensionality reduction, archive updates, and snapshot persistence.</li>
-<li>Configured via <code>Settings</code> map-elites options: preprocessing, chunking, code/summary embeddings, dimensionality reduction (PCA with whitening), feature normalisation/truncation (<code>MAPELITES_FEATURE_TRUNCATION_K</code>, <code>MAPELITES_FEATURE_NORMALIZATION_WARMUP_SAMPLES</code>, <code>MAPELITES_FEATURE_CLIP</code>), archive grid, fitness metric, and default island identifiers.</li>
+<li>Configured via <code>Settings</code> map-elites options: preprocessing and repository file filtering, repo-state code embeddings (file cache), dimensionality reduction (PCA with whitening), feature normalisation/truncation (<code>MAPELITES_FEATURE_TRUNCATION_K</code>, <code>MAPELITES_FEATURE_NORMALIZATION_WARMUP_SAMPLES</code>, <code>MAPELITES_FEATURE_CLIP</code>), archive grid, fitness metric, and default island identifiers.</li>
 <li>Accepts an optional <code>experiment_id</code> at construction time; when provided, all persisted <code>MapElitesState</code> rows are scoped by <code>(experiment_id, island_id)</code>, allowing multiple experiments to maintain independent archives even when they share island identifiers. When omitted, archive state is kept purely in-memory and snapshots are not written.</li>
-<li><code>ingest(commit_hash, changed_files, metrics, island_id, repo_root, treeish, metadata, fitness_override)</code> runs the full pipeline for a commit: loads and preprocesses changed files, chunks them, derives code and summary embeddings, reduces them to the behaviour space, resolves a scalar fitness from metrics or overrides, and attempts to insert the result into the island's <code>GridArchive</code>.</li>
+<li><code>ingest(commit_hash, ...)</code> runs the full pipeline for a commit in <strong>repo-state</strong> embedding mode:<ul>
+<li>enumerates eligible code files at <code>treeish</code> (respecting <code>.gitignore</code> and basic filtering),</li>
+<li>reuses a file-level embedding cache keyed by git blob SHA,</li>
+<li>embeds only cache misses (new/changed blobs),</li>
+<li>aggregates all file embeddings into a single commit vector via <strong>uniform averaging</strong>,</li>
+<li>reduces it to the behaviour space (PCA), resolves fitness, and updates the island's <code>GridArchive</code>.</li>
+</ul>
+</li>
 <li>Tracks per-island PCA history and projection so that new embeddings are consistent with previous ones, logging detailed progress and warnings with <code>loguru</code>.</li>
 <li>Behaviour descriptors are clipped to <code>[-k, k]</code> (k from <code>MAPELITES_FEATURE_TRUNCATION_K</code>), linearly mapped into <code>[0, 1]^d</code>, and archives are constructed with fixed <code>[0, 1]</code> bounds per dimension to avoid manual per-dimension tuning and boundary crowding.</li>
 <li>Delegates snapshot serialisation and persistence to <code>loreley.core.map_elites.snapshot</code>, which exposes pure helpers for encoding/decoding archive state plus pluggable storage backends (database or no-op).</li>

@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../snapshot/">
+        <link rel="prev" href="../map-elites/">
       
       
-        <link rel="next" href="../../worker/repository/">
+        <link rel="next" href="../preprocess/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>Summary embeddings - Loreley</title>
+        <title>Repository embeddings - Loreley</title>
       
     
     
@@ -66,7 +66,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#loreleycoremap-elitessummarization_embedding" class="md-skip">
+        <a href="#repository-state-embeddings-file-cache" class="md-skip">
           Skip to content
         </a>
       
@@ -102,7 +102,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Summary embeddings
+              Repository embeddings
             
           </span>
         </div>
@@ -654,10 +654,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../repository_embedding/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository embeddings
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -673,6 +700,81 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#motivation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Motivation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#high-level-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        High-level pipeline
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#file-enumeration-and-filtering" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        File enumeration and filtering
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#file-embedding-cache" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        File embedding cache
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#commit-aggregation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Commit aggregation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -850,37 +952,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Summary embeddings
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../summarization_embedding/" class="md-nav__link">
         
   
   
@@ -896,59 +971,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#data-structures" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Data structures
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#embedder" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Embedder
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#convenience-api" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Convenience API
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1608,10 +1630,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#data-structures" class="md-nav__link">
+  <a href="#motivation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Data structures
+        Motivation
       
     </span>
   </a>
@@ -1619,10 +1641,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#embedder" class="md-nav__link">
+  <a href="#high-level-pipeline" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Embedder
+        High-level pipeline
       
     </span>
   </a>
@@ -1630,10 +1652,32 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#convenience-api" class="md-nav__link">
+  <a href="#file-enumeration-and-filtering" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Convenience API
+        File enumeration and filtering
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#file-embedding-cache" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        File embedding cache
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#commit-aggregation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Commit aggregation
       
     </span>
   </a>
@@ -1657,30 +1701,79 @@
 
 
 
-<h1 id="loreleycoremap-elitessummarization_embedding">loreley.core.map-elites.summarization_embedding<a class="headerlink" href="#loreleycoremap-elitessummarization_embedding" title="Permanent link">&para;</a></h1>
-<p>Optional summary-level embedding utilities that turn preprocessed code into structured natural-language summaries and a commit-level embedding vector. In repo-state mode (<code>MAPELITES_EMBEDDING_MODE=repo_state</code>), MAP-Elites uses code-only repo-state embeddings and does not currently include these summary vectors.</p>
-<h2 id="data-structures">Data structures<a class="headerlink" href="#data-structures" title="Permanent link">&para;</a></h2>
+<h1 id="repository-state-embeddings-file-cache">Repository-state embeddings (file cache)<a class="headerlink" href="#repository-state-embeddings-file-cache" title="Permanent link">&para;</a></h1>
+<p>This page documents the repo-state embedding pipeline used by MAP-Elites.</p>
+<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
+<p>Repo-state embeddings represent the <strong>entire repository state</strong> at a commit by
+aggregating file-level embeddings into a single commit vector. This makes the
+behaviour descriptor depend on the repository snapshot at <code>treeish</code>, not just a
+subset of changed files.</p>
+<h2 id="high-level-pipeline">High-level pipeline<a class="headerlink" href="#high-level-pipeline" title="Permanent link">&para;</a></h2>
+<p>At a given <code>treeish</code> (typically a commit hash), we:</p>
+<ol>
+<li>Enumerate eligible files and resolve their <strong>git blob SHA</strong> fingerprints.</li>
+<li>Look up each blob SHA in a <strong>file embedding cache</strong>.</li>
+<li>Embed only cache misses (new/changed blobs).</li>
+<li>Aggregate per-file embeddings into one commit vector via <strong>uniform mean</strong>.</li>
+<li>Feed the commit vector into PCA → MAP-Elites as the behaviour descriptor.</li>
+</ol>
+<h2 id="file-enumeration-and-filtering">File enumeration and filtering<a class="headerlink" href="#file-enumeration-and-filtering" title="Permanent link">&para;</a></h2>
+<p>Implemented by:</p>
 <ul>
-<li><strong><code>FileSummary</code></strong>: immutable record describing one file-level summary (repository-relative <code>path</code>, approximate <code>change_count</code>, and the generated markdown <code>summary</code> text). The path is normalised to a <code>pathlib.Path</code>.</li>
-<li><strong><code>SummaryEmbedding</code></strong>: embedding derived from a <code>FileSummary</code>, containing the original <code>file_summary</code>, its numeric <code>vector</code>, and a scalar <code>weight</code> used during aggregation.</li>
-<li><strong><code>CommitSummaryEmbedding</code></strong>: commit-level representation bundling all <code>SummaryEmbedding</code> instances, the final aggregated <code>vector</code>, the <code>summary_model</code> and <code>embedding_model</code> names, <code>dimensions</code>, and a <code>file_count</code> convenience property.</li>
+<li><code>loreley.core.map_elites.repository_files.RepositoryFileCatalog</code></li>
 </ul>
-<h2 id="embedder">Embedder<a class="headerlink" href="#embedder" title="Permanent link">&para;</a></h2>
+<p>Eligibility is determined by a combination of:</p>
 <ul>
-<li><strong><code>SummaryEmbedder</code></strong>: orchestrates summarisation of preprocessed files and embedding of the resulting summaries.</li>
-<li>Configured via <code>Settings</code> Map-Elites summary options (<code>MAPELITES_SUMMARY_*</code>) controlling the LLM model, temperature, maximum output tokens, source excerpt character limit, and retry/backoff behaviour, and summary embedding options (<code>MAPELITES_SUMMARY_EMBEDDING_*</code>) controlling the embedding model, optional output dimensions, and batch size.</li>
-<li>Uses the global OpenAI API configuration from <code>loreley.config.Settings</code> (<code>OPENAI_API_KEY</code>, <code>OPENAI_BASE_URL</code>, <code>OPENAI_API_SPEC</code>) when constructing the shared <code>OpenAI</code> client. <code>OPENAI_API_SPEC</code> selects whether summarisation uses:<ul>
-<li>the unified <strong>Responses API</strong> (<code>client.responses.create</code>, default), passing <code>_SUMMARY_INSTRUCTIONS</code> as <code>instructions</code> and the file prompt as <code>input</code>; or</li>
-<li>the classic <strong>Chat Completions API</strong> (<code>client.chat.completions.create</code>), mapping <code>_SUMMARY_INSTRUCTIONS</code> to a <code>system</code> message and the file prompt to a <code>user</code> message while keeping temperature and token limits aligned.</li>
+<li>Root <code>.gitignore</code> (best-effort glob matching).</li>
+<li><code>MAPELITES_PREPROCESS_ALLOWED_EXTENSIONS</code> / <code>MAPELITES_PREPROCESS_ALLOWED_FILENAMES</code>.</li>
+<li><code>MAPELITES_PREPROCESS_EXCLUDED_GLOBS</code>.</li>
+<li><code>MAPELITES_PREPROCESS_MAX_FILE_SIZE_KB</code> (oversized blobs are skipped).</li>
+<li><code>MAPELITES_REPO_STATE_MAX_FILES</code> (optional cap; when set, the eligible list is deterministically sub-sampled).</li>
 </ul>
-</li>
-<li><code>run(files)</code> skips empty input, calls <code>_summarize_files</code> to build <code>FileSummary</code> objects with a <code>rich</code> progress spinner and <code>loguru</code> debug/warning logs (using either Responses or Chat Completions under the hood), then calls <code>_embed_summaries</code> to batch summaries through the OpenAI embeddings API, weighting them by change count or summary length.</li>
-<li>Aggregates per-file vectors into a single commit-level vector using <code>_weighted_average</code>, after sorting entries by path for stable output; returns a <code>CommitSummaryEmbedding</code> or <code>None</code> if no usable summaries or embeddings were produced.</li>
-</ul>
-<h2 id="convenience-api">Convenience API<a class="headerlink" href="#convenience-api" title="Permanent link">&para;</a></h2>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><code>.gitignore</code> filtering is currently <strong>best-effort</strong> and only uses the repository root <code>.gitignore</code> at the requested <code>treeish</code>. Nested <code>.gitignore</code> files and global excludes are not applied.</p>
+</div>
+<p>For each eligible file we keep:</p>
 <ul>
-<li><strong><code>summarize_preprocessed_files(files, settings=None, client=None)</code></strong>: helper that constructs a <code>SummaryEmbedder</code> (optionally injecting custom settings or OpenAI client) and returns a <code>CommitSummaryEmbedding</code> for the supplied <code>PreprocessedFile</code> sequence, or <code>None</code> when there is nothing to summarise or embed.</li>
+<li><code>path</code> (repo-root relative)</li>
+<li><code>blob_sha</code> (content fingerprint)</li>
+<li><code>size_bytes</code></li>
 </ul>
+<h2 id="file-embedding-cache">File embedding cache<a class="headerlink" href="#file-embedding-cache" title="Permanent link">&para;</a></h2>
+<p>Implemented by:</p>
+<ul>
+<li><code>loreley.core.map_elites.file_embedding_cache.InMemoryFileEmbeddingCache</code></li>
+<li><code>loreley.core.map_elites.file_embedding_cache.DatabaseFileEmbeddingCache</code></li>
+<li>ORM table: <code>loreley.db.models.MapElitesFileEmbeddingCache</code></li>
+</ul>
+<p>Cache key:</p>
+<ul>
+<li><code>blob_sha</code></li>
+<li><code>embedding_model</code></li>
+<li><code>dimensions</code> (actual output vector length guard)</li>
+<li><code>pipeline_signature</code></li>
+</ul>
+<p><code>pipeline_signature</code> is a SHA-256 hash over the preprocessing/chunking/embedding
+knobs that affect the produced vectors (so cache entries are invalidated when
+the pipeline changes).</p>
+<p>Backend selection:</p>
+<ul>
+<li><code>MAPELITES_FILE_EMBEDDING_CACHE_BACKEND=db|memory</code> (default: <code>db</code>)</li>
+</ul>
+<h2 id="commit-aggregation">Commit aggregation<a class="headerlink" href="#commit-aggregation" title="Permanent link">&para;</a></h2>
+<p>Implemented by:</p>
+<ul>
+<li><code>loreley.core.map_elites.repository_state_embedding.RepositoryStateEmbedder</code></li>
+</ul>
+<p>Let (v_i) be the embedding vector for eligible file (i), and (N) be the
+number of eligible files with available vectors. The repo-state commit vector is
+the <strong>uniform mean</strong>:</p>
+<p>[
+v_{commit} = \frac{1}{N}\sum_{i=1}^{N} v_i
+]</p>
+<p>If multiple paths point at the same blob SHA, the corresponding (v_i) is the
+same vector but still contributes once per file path (uniform per-file weighting).</p>
 
 
 

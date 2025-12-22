@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../map-elites/">
+        <link rel="prev" href="../repository_embedding/">
       
       
         <link rel="next" href="../chunk/">
@@ -637,6 +637,34 @@
     
   
     Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../repository_embedding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository embeddings
   
 
     
@@ -1630,7 +1658,7 @@
 
 
 <h1 id="loreleycoremap-elitespreprocess">loreley.core.map-elites.preprocess<a class="headerlink" href="#loreleycoremap-elitespreprocess" title="Permanent link">&para;</a></h1>
-<p>Preprocessing utilities for turning raw commit diffs into cleaned code snippets suitable for embedding and feature extraction.</p>
+<p>Preprocessing utilities for turning raw repository code files into cleaned code snippets suitable for embedding and feature extraction.</p>
 <h2 id="data-structures">Data structures<a class="headerlink" href="#data-structures" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong><code>ChangedFile</code></strong>: lightweight description of a file touched by a commit (path, approximate <code>change_count</code>, optional inline <code>content</code> override).</li>
@@ -1638,7 +1666,7 @@
 </ul>
 <h2 id="preprocessor">Preprocessor<a class="headerlink" href="#preprocessor" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>CodePreprocessor</code></strong>: filters and normalises changed files before embedding.</li>
+<li><strong><code>CodePreprocessor</code></strong>: filters and normalises files before embedding.</li>
 <li>Uses <code>Settings</code> map-elites preprocessing options to enforce maximum file count/size, allowed extensions/filenames, and excluded glob patterns.</li>
 <li>Loads file contents either from the working tree or a specific <code>treeish</code> via GitPython, applies comment stripping, tab-to-spaces conversion, blank-line collapse, and basic normalisation.</li>
 <li>Exposes <code>run(changed_files)</code> which returns a list of <code>PreprocessedFile</code> objects ordered by <code>change_count</code>.</li>

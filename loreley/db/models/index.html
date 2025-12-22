@@ -726,6 +726,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../core/map-elites/repository_embedding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository embeddings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../core/map-elites/preprocess/" class="md-nav__link">
         
   
@@ -1633,7 +1661,22 @@
 <li>Relates back to <code>CommitMetadata</code> via <code>base_commit_hash</code> and to <code>Experiment</code> via <code>experiment_id</code>, enabling efficient queries per base commit or experiment.</li>
 <li><strong><code>MapElitesState</code></strong> (<code>map_elites_states</code> table): persists per-experiment, per-island snapshots of the MAP-Elites archive.</li>
 <li>Uses a composite primary key <code>(experiment_id, island_id)</code> so that multiple experiments can maintain independent archives even when they share island identifiers.</li>
-<li>Stores a JSONB <code>snapshot</code> payload containing feature bounds, PCA history/projection metadata, and the current archive entries so that <code>loreley.core.map_elites.snapshot</code> and <code>MapElitesManager</code> can restore state across process restarts for a given experiment.</li>
+<li>Stores a JSONB <code>snapshot</code> payload containing <strong>lightweight metadata</strong> (feature bounds, PCA projection payload, schema version, and other knobs).</li>
+<li>For <code>schema_version &gt;= 2</code>, the large <code>archive</code>/<code>history</code> payloads are stored incrementally in separate tables and
+    reconstructed on load by <code>loreley.core.map_elites.snapshot.DatabaseSnapshotBackend</code>.</li>
+<li>For legacy rows (<code>schema_version &lt; 2</code>) that still embed <code>archive</code>/<code>history</code> lists, the loader performs <strong>lazy migration</strong>
+    into the incremental tables on first read and strips the large fields from <code>snapshot</code>.</li>
+<li><strong><code>MapElitesArchiveCell</code></strong> (<code>map_elites_archive_cells</code> table): one row per occupied MAP-Elites archive cell.</li>
+<li>Primary key: <code>(experiment_id, island_id, cell_index)</code>.</li>
+<li>Stores the cell's <code>commit_hash</code>, <code>objective</code>, behaviour <code>measures</code>, stored <code>solution</code> vector, free-form <code>metadata</code>, and <code>timestamp</code>.</li>
+<li>Enables cheap per-cell upserts when a commit improves a specific cell.</li>
+<li><strong><code>MapElitesPcaHistory</code></strong> (<code>map_elites_pca_history</code> table): incremental PCA history entries used to restore dimensionality reduction state.</li>
+<li>Primary key: <code>(experiment_id, island_id, commit_hash)</code>.</li>
+<li>Stores the commit's penultimate embedding <code>vector</code> plus embedding provenance (dimensions/models) and a <code>last_seen_at</code> marker used
+    to restore ordered, bounded history windows across restarts.</li>
+<li><strong><code>MapElitesFileEmbeddingCache</code></strong> (<code>map_elites_file_embedding_cache</code> table): persistent file-level embedding cache keyed by git blob SHA.</li>
+<li>Uses a composite primary key <code>(blob_sha, embedding_model, dimensions, pipeline_signature)</code>.</li>
+<li>Stores a float array <code>vector</code> containing the file embedding, allowing repo-state embeddings to reuse unchanged file vectors across commits.</li>
 </ul>
 
 
