@@ -57,16 +57,23 @@ class CommitPlanningContext:
     """Context shared with the planning agent for a single commit."""
 
     commit_hash: str
-    summary: str
+    subject: str
+    change_summary: str
+    key_files: Sequence[str] = field(default_factory=tuple)
     highlights: Sequence[str] = field(default_factory=tuple)
     evaluation_summary: str | None = None
     metrics: Sequence[CommitMetric] = field(default_factory=tuple)
-    extra_context: dict[str, Any] = field(default_factory=dict)
+    map_elites_cell_index: int | None = None
+    map_elites_objective: float | None = None
+    map_elites_measures: Sequence[float] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
+        self.subject = " ".join((self.subject or "").split()).strip() or f"Commit {self.commit_hash}"
+        self.change_summary = (self.change_summary or "").strip() or "N/A"
+        self.key_files = tuple(self.key_files or ())
         self.highlights = tuple(self.highlights or ())
         self.metrics = tuple(self.metrics or ())
-        self.extra_context = dict(self.extra_context or {})
+        self.map_elites_measures = tuple(self.map_elites_measures or ())
 
 
 @dataclass(slots=True)
@@ -177,8 +184,8 @@ class _PlanModel(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    plan_summary: str
-    rationale: str
+    plan_summary: str = Field(min_length=1, max_length=512)
+    rationale: str = Field(min_length=1, max_length=2048)
     focus_metrics: list[str]
     guardrails: list[str]
     risks: list[str]
@@ -191,58 +198,65 @@ class _PlanModel(BaseModel):
 PLANNING_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "plan_summary": {"type": "string", "minLength": 1},
-        "rationale": {"type": "string", "minLength": 1},
+        "plan_summary": {"type": "string", "minLength": 1, "maxLength": 512},
+        "rationale": {"type": "string", "minLength": 1, "maxLength": 2048},
         "focus_metrics": {
             "type": "array",
             "items": {"type": "string"},
             "minItems": 1,
+            "maxItems": 10,
         },
         "guardrails": {
             "type": "array",
             "items": {"type": "string"},
             "minItems": 1,
+            "maxItems": 20,
         },
         "risks": {
             "type": "array",
             "items": {"type": "string"},
             "minItems": 1,
+            "maxItems": 20,
         },
         "validation": {
             "type": "array",
             "items": {"type": "string"},
             "minItems": 1,
+            "maxItems": 20,
         },
         "steps": {
             "type": "array",
             "minItems": 1,
+            "maxItems": 6,
             "items": {
                 "type": "object",
                 "properties": {
-                    "id": {"type": "string"},
-                    "title": {"type": "string"},
-                    "intent": {"type": "string"},
+                    "id": {"type": "string", "minLength": 1, "maxLength": 64},
+                    "title": {"type": "string", "minLength": 1, "maxLength": 120},
+                    "intent": {"type": "string", "minLength": 1, "maxLength": 400},
                     "actions": {
                         "type": "array",
-                        "items": {"type": "string"},
+                        "items": {"type": "string", "minLength": 1, "maxLength": 200},
                         "minItems": 1,
+                        "maxItems": 12,
                     },
-                    "files": {"type": "array", "items": {"type": "string"}},
-                    "dependencies": {"type": "array", "items": {"type": "string"}},
+                    "files": {"type": "array", "items": {"type": "string", "maxLength": 256}, "maxItems": 30},
+                    "dependencies": {"type": "array", "items": {"type": "string", "maxLength": 200}, "maxItems": 12},
                     "validation": {
                         "type": "array",
-                        "items": {"type": "string"},
+                        "items": {"type": "string", "minLength": 1, "maxLength": 200},
                         "minItems": 1,
+                        "maxItems": 12,
                     },
-                    "risks": {"type": "array", "items": {"type": "string"}},
-                    "references": {"type": "array", "items": {"type": "string"}},
+                    "risks": {"type": "array", "items": {"type": "string", "maxLength": 200}, "maxItems": 12},
+                    "references": {"type": "array", "items": {"type": "string", "maxLength": 256}, "maxItems": 12},
                 },
                 "required": ["id", "title", "intent", "actions", "validation"],
                 "additionalProperties": False,
             },
         },
-        "handoff_notes": {"type": "array", "items": {"type": "string"}},
-        "fallback_plan": {"type": ["string", "null"]},
+        "handoff_notes": {"type": "array", "items": {"type": "string", "maxLength": 200}, "maxItems": 20},
+        "fallback_plan": {"type": ["string", "null"], "maxLength": 1200},
     },
     "required": [
         "plan_summary",
@@ -486,20 +500,39 @@ Deliverable requirements:
             if highlights
             else "  - None"
         )
-        extra = ""
-        if context.extra_context:
-            serialized = self._truncate(json.dumps(context.extra_context, indent=2))
-            extra = f"\nAdditional context:\n{serialized}"
-
+        key_files = tuple(context.key_files or ())[:20]
+        key_files_block = (
+            "\n".join(f"  - {self._truncate(path)}" for path in key_files) if key_files else "  - None"
+        )
         evaluation_summary = self._truncate(context.evaluation_summary or "N/A")
+        map_elites_block = ""
+        if context.map_elites_cell_index is not None:
+            measures = (
+                ", ".join(self._truncate(str(v), limit=48) for v in context.map_elites_measures[:4])
+                if context.map_elites_measures
+                else "N/A"
+            )
+            obj = (
+                f"{float(context.map_elites_objective):.4f}"
+                if context.map_elites_objective is not None
+                else "N/A"
+            )
+            map_elites_block = (
+                "\n- MAP-Elites:\n"
+                f"  - cell_index: {int(context.map_elites_cell_index)}\n"
+                f"  - objective: {obj}\n"
+                f"  - measures_head: {measures}"
+            )
         return (
             f"{title}\n"
             f"- Hash: {context.commit_hash}\n"
-            f"- Summary: {self._truncate(context.summary)}\n"
+            f"- Subject: {self._truncate(context.subject)}\n"
+            f"- Change summary: {self._truncate(context.change_summary, limit=512)}\n"
+            f"- Key files:\n{key_files_block}\n"
             f"- Evaluation summary: {evaluation_summary}\n"
-            f"- Key snippets:\n{highlight_block}\n"
+            f"- Highlights:\n{highlight_block}\n"
             f"- Metrics:\n{metrics_block}"
-            f"{extra}"
+            f"{map_elites_block}"
         )
 
     def _format_metrics(self, metrics: Sequence[CommitMetric]) -> str:

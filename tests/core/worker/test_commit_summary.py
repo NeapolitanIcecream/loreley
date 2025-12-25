@@ -9,7 +9,7 @@ from openai import OpenAIError
 from loreley.config import Settings
 from loreley.core.worker.coding import CodingPlanExecution, CodingStepReport, StepExecutionStatus
 from loreley.core.worker.commit_summary import CommitSummarizer, CommitSummaryError
-from loreley.core.worker.evolution import CommitSnapshot, JobContext
+from loreley.core.worker.evolution import JobContext
 from loreley.core.worker.planning import PlanStep, PlanningPlan
 
 
@@ -58,22 +58,13 @@ def _make_coding_execution() -> CodingPlanExecution:
 
 
 def _make_job_context() -> JobContext:
-    snapshot = CommitSnapshot(
-        commit_hash="abc",
-        summary="base",
-        evaluation_summary=None,
-        highlights=(),
-        metrics=(),
-    )
     return JobContext(
         job_id=uuid4(),
         base_commit_hash="abc",
         island_id=None,
         experiment_id=None,
         repository_id=None,
-        payload={},
-        base_snapshot=snapshot,
-        inspiration_snapshots=(),
+        inspiration_commit_hashes=(),
         goal="Improve docs",
         constraints=("c1",),
         acceptance_criteria=("a1",),
@@ -81,6 +72,10 @@ def _make_job_context() -> JobContext:
         notes=("note",),
         tags=(),
         is_seed_job=False,
+        sampling_strategy=None,
+        sampling_initial_radius=None,
+        sampling_radius_used=None,
+        sampling_fallback_inspirations=None,
     )
 
 

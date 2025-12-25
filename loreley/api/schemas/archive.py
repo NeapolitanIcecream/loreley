@@ -25,7 +25,6 @@ class ArchiveRecordOut(BaseModel):
     measures: list[float]
     solution: list[float]
     timestamp: float
-    metadata: dict[str, Any]
 
 
 class ArchiveSnapshotMetaOut(BaseModel):

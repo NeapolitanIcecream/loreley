@@ -20,7 +20,9 @@ class _DummyBackend:
 def _make_request(goal: str) -> PlanningAgentRequest:
     base = CommitPlanningContext(
         commit_hash="base",
-        summary="base summary",
+        subject="Base subject",
+        change_summary="base summary",
+        highlights=("Touched files: foo.py",),
     )
     return PlanningAgentRequest(
         base=base,

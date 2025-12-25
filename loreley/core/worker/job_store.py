@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, TYPE_CHECKING
 from uuid import UUID
 
@@ -9,12 +10,15 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
+from loreley.core.contracts import clamp_text, normalize_single_line
+from loreley.core.worker.artifacts import write_job_artifacts
+from loreley.core.worker.commit_card import build_commit_card_from_git
 from loreley.config import Settings, get_settings
 from loreley.core.worker.coding import CodingAgentResponse
 from loreley.core.worker.evaluator import EvaluationResult
 from loreley.core.worker.planning import PlanningAgentResponse
 from loreley.db.base import session_scope
-from loreley.db.models import CommitMetadata, EvolutionJob, Experiment, JobStatus, Metric
+from loreley.db.models import CommitCard, EvolutionJob, Experiment, JobArtifacts, JobStatus, Metric
 
 if TYPE_CHECKING:
     from loreley.core.worker.evolution import JobContext
@@ -27,9 +31,6 @@ __all__ = [
     "JobLockConflict",
     "JobPreconditionError",
     "LockedJob",
-    "build_plan_payload",
-    "build_coding_payload",
-    "build_evaluation_payload",
 ]
 
 
@@ -54,68 +55,18 @@ class LockedJob:
     island_id: str | None
     experiment_id: UUID | None
     repository_id: UUID | None
-    payload: dict[str, Any]
     inspiration_commit_hashes: tuple[str, ...]
-
-
-def build_plan_payload(response: PlanningAgentResponse) -> dict[str, Any]:
-    """Convert a planning response into a serializable payload."""
-
-    plan_dict = response.plan.as_dict()
-    plan_dict.update(
-        {
-            "prompt": response.prompt,
-            "raw_output": response.raw_output,
-            "command": list(response.command),
-            "stderr": response.stderr,
-            "attempts": response.attempts,
-            "duration_seconds": response.duration_seconds,
-        }
-    )
-    return plan_dict
-
-
-def build_coding_payload(response: CodingAgentResponse) -> dict[str, Any]:
-    """Convert a coding response into a serializable payload."""
-
-    execution = response.execution
-    return {
-        "implementation_summary": execution.implementation_summary,
-        "commit_message": execution.commit_message,
-        "step_results": [
-            {
-                "step_id": step.step_id,
-                "status": step.status.value,
-                "summary": step.summary,
-                "files": list(step.files),
-                "commands": list(step.commands),
-            }
-            for step in execution.step_results
-        ],
-        "tests_executed": list(execution.tests_executed),
-        "tests_recommended": list(execution.tests_recommended),
-        "follow_up_items": list(execution.follow_up_items),
-        "notes": list(execution.notes),
-        "raw_output": response.raw_output,
-        "prompt": response.prompt,
-        "command": list(response.command),
-        "stderr": response.stderr,
-        "attempts": response.attempts,
-        "duration_seconds": response.duration_seconds,
-    }
-
-
-def build_evaluation_payload(result: EvaluationResult) -> dict[str, Any]:
-    """Convert an evaluation result into a serializable payload."""
-
-    return {
-        "summary": result.summary,
-        "metrics": [metric.as_dict() for metric in result.metrics],
-        "tests_executed": list(result.tests_executed),
-        "logs": list(result.logs),
-        "extra": dict(result.extra or {}),
-    }
-
+    goal: str | None
+    constraints: tuple[str, ...]
+    acceptance_criteria: tuple[str, ...]
+    iteration_hint: str | None
+    notes: tuple[str, ...]
+    tags: tuple[str, ...]
+    is_seed_job: bool
+    sampling_strategy: str | None
+    sampling_initial_radius: int | None
+    sampling_radius_used: int | None
+    sampling_fallback_inspirations: int | None
 
 class EvolutionJobStore:
     """Persistence adapter for the evolution worker."""
@@ -160,8 +111,18 @@ class EvolutionJobStore:
                     island_id=job.island_id,
                     experiment_id=job.experiment_id,
                     repository_id=repository_id,
-                    payload=dict(job.payload or {}),
                     inspiration_commit_hashes=tuple(job.inspiration_commit_hashes or []),
+                    goal=(job.goal or None),
+                    constraints=tuple(job.constraints or ()),
+                    acceptance_criteria=tuple(job.acceptance_criteria or ()),
+                    iteration_hint=job.iteration_hint,
+                    notes=tuple(job.notes or ()),
+                    tags=tuple(job.tags or ()),
+                    is_seed_job=bool(getattr(job, "is_seed_job", False)),
+                    sampling_strategy=getattr(job, "sampling_strategy", None),
+                    sampling_initial_radius=getattr(job, "sampling_initial_radius", None),
+                    sampling_radius_used=getattr(job, "sampling_radius_used", None),
+                    sampling_fallback_inspirations=getattr(job, "sampling_fallback_inspirations", None),
                 )
         except SQLAlchemyError as exc:
             if self._is_lock_conflict(exc):
@@ -175,55 +136,57 @@ class EvolutionJobStore:
         plan: PlanningAgentResponse,
         coding: CodingAgentResponse,
         evaluation: EvaluationResult,
+        worktree: Path,
         commit_hash: str,
         commit_message: str,
     ) -> None:
-        """Persist successful worker execution artifacts."""
+        """Persist successful worker execution artifacts.
 
-        experiment_extra: dict[str, Any] | None = None
-        if job_ctx.experiment_id or job_ctx.repository_id:
-            # A minimal experiment block is always included so downstream
-            # consumers can rely on its presence. Richer metadata is attached
-            # below once we have a DB session available.
-            experiment_extra = {
-                "id": str(job_ctx.experiment_id) if job_ctx.experiment_id else None,
-                "repository_id": str(job_ctx.repository_id) if job_ctx.repository_id else None,
-            }
+        Hot-path data (CommitCard + job indices) is written to the DB.
+        Cold-path evidence (prompts/raw/logs) is written to disk and referenced
+        via the JobArtifacts table.
+        """
 
-        commit_extra = {
-            "job": {
-                "id": str(job_ctx.job_id),
-                "island_id": job_ctx.island_id,
-                "experiment_id": str(job_ctx.experiment_id) if job_ctx.experiment_id else None,
-                "repository_id": str(job_ctx.repository_id) if job_ctx.repository_id else None,
-                "goal": job_ctx.goal,
-                "constraints": list(job_ctx.constraints),
-                "acceptance_criteria": list(job_ctx.acceptance_criteria),
-                "notes": list(job_ctx.notes),
-                "tags": list(job_ctx.tags),
-                "payload": job_ctx.payload,
-            },
-            "experiment": experiment_extra or {},
-            "base_commit": job_ctx.base_snapshot.commit_hash,
-            "inspirations": [snapshot.commit_hash for snapshot in job_ctx.inspiration_snapshots],
-            "plan": build_plan_payload(plan),
-            "coding": build_coding_payload(coding),
-            "evaluation": build_evaluation_payload(evaluation),
-            "worker": {
-                "app_name": self.settings.app_name,
-                "environment": self.settings.environment,
-                "completed_at": _utc_now().isoformat(),
-            },
-        }
-        job_payload = dict(job_ctx.payload)
-        job_payload["result"] = {
-            "commit_hash": commit_hash,
-            "plan_summary": plan.plan.summary,
-            "tests_executed": list(coding.execution.tests_executed),
-            "tests_recommended": list(coding.execution.tests_recommended),
-            "evaluation_summary": evaluation.summary,
-            "metrics": [metric.as_dict() for metric in evaluation.metrics],
-        }
+        subject = normalize_single_line(commit_message) or f"Evolution job {job_ctx.job_id}"
+        if "```" in subject or subject.startswith("{") or subject.startswith("["):
+            subject = f"Evolution job {job_ctx.job_id}"
+        subject = clamp_text(subject, 72)
+
+        change_summary_source = (
+            coding.execution.implementation_summary
+            or plan.plan.summary
+            or f"Evolution job {job_ctx.job_id}"
+        )
+        change_summary = clamp_text(normalize_single_line(change_summary_source), 512) or "N/A"
+
+        eval_summary = clamp_text(normalize_single_line(evaluation.summary), 512) or None
+
+        build = build_commit_card_from_git(
+            worktree=Path(worktree),
+            base_commit=job_ctx.base_commit_hash,
+            candidate_commit=commit_hash,
+        )
+        key_files = [clamp_text(path, 256) for path in build.key_files[:20] if path.strip()]
+        highlights = [clamp_text(line, 200) for line in build.highlights[:8] if line.strip()]
+        if not highlights:
+            highlights = ["No file-level highlights available."]
+
+        tags = [clamp_text(normalize_single_line(tag), 64) for tag in job_ctx.tags if str(tag).strip()]
+
+        artifact_paths: dict[str, str] = {}
+        try:
+            artifact_paths = write_job_artifacts(
+                job_id=job_ctx.job_id,
+                plan=plan,
+                coding=coding,
+                evaluation=evaluation,
+                base_commit_hash=job_ctx.base_commit_hash,
+                candidate_commit_hash=commit_hash,
+                commit_message=subject,
+                settings=self.settings,
+            )
+        except Exception as exc:  # pragma: no cover - best-effort artifact store
+            log.warning("Failed to write artifacts for job {}: {}", job_ctx.job_id, exc)
 
         try:
             with session_scope() as session:
@@ -235,41 +198,36 @@ class EvolutionJobStore:
                 job.status = JobStatus.SUCCEEDED
                 job.completed_at = _utc_now()
                 job.plan_summary = plan.plan.summary
-                job.payload = job_payload
+                job.result_commit_hash = commit_hash
                 job.last_error = None
+                job.ingestion_status = None
+                job.ingestion_attempts = 0
+                job.ingestion_delta = None
+                job.ingestion_status_code = None
+                job.ingestion_message = None
+                job.ingestion_cell_index = None
+                job.ingestion_last_attempt_at = None
+                job.ingestion_reason = None
 
-                # Where possible, enrich the experiment block in extra_context
-                # with stable identifiers such as config hash and repository slug.
+                # Ensure the owning experiment exists (best-effort).
                 if job_ctx.experiment_id:
-                    experiment_row = session.get(Experiment, job_ctx.experiment_id)
-                    if experiment_row is not None:
-                        repository = experiment_row.repository
-                        experiment_payload = dict(commit_extra.get("experiment") or {})
-                        experiment_payload.update(
-                            {
-                                "id": str(experiment_row.id),
-                                "repository_id": str(experiment_row.repository_id),
-                                "name": experiment_row.name,
-                                "config_hash": experiment_row.config_hash,
-                                "repository_slug": getattr(repository, "slug", None)
-                                if repository is not None
-                                else None,
-                            }
-                        )
-                        commit_extra["experiment"] = experiment_payload
+                    _ = session.get(Experiment, job_ctx.experiment_id)
 
-                metadata = CommitMetadata(
+                card = CommitCard(
                     commit_hash=commit_hash,
                     parent_commit_hash=job_ctx.base_commit_hash,
                     island_id=job_ctx.island_id,
                     experiment_id=job_ctx.experiment_id,
                     author=self.settings.worker_evolution_commit_author,
-                    message=commit_message,
-                    evaluation_summary=evaluation.summary,
-                    tags=list(job_ctx.tags),
-                    extra_context=commit_extra,
+                    subject=subject,
+                    change_summary=change_summary,
+                    evaluation_summary=eval_summary,
+                    tags=tags,
+                    key_files=key_files,
+                    highlights=highlights,
+                    job_id=job_ctx.job_id,
                 )
-                session.add(metadata)
+                session.add(card)
                 for metric in evaluation.metrics:
                     session.add(
                         Metric(
@@ -279,6 +237,20 @@ class EvolutionJobStore:
                             unit=metric.unit,
                             higher_is_better=metric.higher_is_better,
                             details=dict(metric.details or {}),
+                        )
+                    )
+                if artifact_paths:
+                    session.add(
+                        JobArtifacts(
+                            job_id=job_ctx.job_id,
+                            planning_prompt_path=artifact_paths.get("planning_prompt_path"),
+                            planning_raw_output_path=artifact_paths.get("planning_raw_output_path"),
+                            planning_plan_json_path=artifact_paths.get("planning_plan_json_path"),
+                            coding_prompt_path=artifact_paths.get("coding_prompt_path"),
+                            coding_raw_output_path=artifact_paths.get("coding_raw_output_path"),
+                            coding_execution_json_path=artifact_paths.get("coding_execution_json_path"),
+                            evaluation_json_path=artifact_paths.get("evaluation_json_path"),
+                            evaluation_logs_path=artifact_paths.get("evaluation_logs_path"),
                         )
                     )
         except SQLAlchemyError as exc:

@@ -117,9 +117,8 @@ class JobScheduler:
     ) -> int:
         """Create and enqueue cold-start seed jobs from the root commit.
 
-        Seed jobs use the configured default priority, carry a small extra_context
-        marker so downstream components can recognise them, and are immediately
-        promoted to QUEUED and sent to Dramatiq.
+        Seed jobs use the configured default priority and are immediately promoted
+        to QUEUED and sent to Dramatiq.
         """
 
         if count <= 0:
@@ -128,6 +127,12 @@ class JobScheduler:
         effective_island = island_id or self.settings.mapelites_default_island_id or "main"
         now = datetime.now(timezone.utc)
         jobs: list[EvolutionJob] = []
+        goal = (self.settings.worker_evolution_global_goal or "").strip()
+        if not goal:
+            self.console.log(
+                "[bold red]Cannot create seed jobs[/] WORKER_EVOLUTION_GLOBAL_GOAL is empty",
+            )
+            return 0
 
         with session_scope() as session:
             for _ in range(count):
@@ -137,16 +142,20 @@ class JobScheduler:
                     island_id=effective_island,
                     experiment_id=self.experiment_id,
                     inspiration_commit_hashes=[],
-                    payload={
-                        "island_id": effective_island,
-                        "extra_context": {
-                            "seed_job": True,
-                            "iteration_hint": (
-                                "Cold-start seed job: design diverse initial directions "
-                                "from the root baseline."
-                            ),
-                        },
-                    },
+                    goal=goal,
+                    constraints=[],
+                    acceptance_criteria=[],
+                    notes=[],
+                    tags=[],
+                    iteration_hint=(
+                        "Cold-start seed job: design diverse initial directions "
+                        "from the root baseline."
+                    ),
+                    sampling_strategy="seed",
+                    sampling_initial_radius=None,
+                    sampling_radius_used=None,
+                    sampling_fallback_inspirations=None,
+                    is_seed_job=True,
                     priority=self.settings.mapelites_sampler_default_priority,
                     scheduled_at=now,
                 )

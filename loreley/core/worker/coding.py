@@ -137,31 +137,32 @@ class _CodingOutputModel(BaseModel):
 CODING_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "implementation_summary": {"type": "string", "minLength": 1},
-        "commit_message": {"type": ["string", "null"]},
+        "implementation_summary": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "commit_message": {"type": ["string", "null"], "maxLength": 200},
         "step_results": {
             "type": "array",
             "minItems": 1,
+            "maxItems": 12,
             "items": {
                 "type": "object",
                 "properties": {
-                    "step_id": {"type": "string", "minLength": 1},
+                    "step_id": {"type": "string", "minLength": 1, "maxLength": 64},
                     "status": {
                         "type": "string",
                         "enum": [status.value for status in StepExecutionStatus],
                     },
-                    "summary": {"type": "string", "minLength": 1},
-                    "files": {"type": "array", "items": {"type": "string"}},
-                    "commands": {"type": "array", "items": {"type": "string"}},
+                    "summary": {"type": "string", "minLength": 1, "maxLength": 800},
+                    "files": {"type": "array", "items": {"type": "string", "maxLength": 256}, "maxItems": 50},
+                    "commands": {"type": "array", "items": {"type": "string", "maxLength": 512}, "maxItems": 50},
                 },
                 "required": ["step_id", "status", "summary"],
                 "additionalProperties": False,
             },
         },
-        "tests_executed": {"type": "array", "items": {"type": "string"}},
-        "tests_recommended": {"type": "array", "items": {"type": "string"}},
-        "follow_up_items": {"type": "array", "items": {"type": "string"}},
-        "notes": {"type": "array", "items": {"type": "string"}},
+        "tests_executed": {"type": "array", "items": {"type": "string", "maxLength": 256}, "maxItems": 50},
+        "tests_recommended": {"type": "array", "items": {"type": "string", "maxLength": 256}, "maxItems": 50},
+        "follow_up_items": {"type": "array", "items": {"type": "string", "maxLength": 200}, "maxItems": 50},
+        "notes": {"type": "array", "items": {"type": "string", "maxLength": 200}, "maxItems": 50},
     },
     "required": ["implementation_summary", "step_results"],
     "additionalProperties": False,
@@ -420,6 +421,7 @@ Detailed plan steps:
 
 When you finish applying the plan:
 - ensure repository changes are ready for review (lint/tests as needed)
+- keep `implementation_summary` concise (<= 2000 chars), plain text, and free of code fences/JSON dumps
 {json_requirements_block}
 {schema_contract_block}
 """

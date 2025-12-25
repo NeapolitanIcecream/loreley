@@ -18,12 +18,7 @@ class FakeRecord:
     fitness: float = 1.0
     measures: Sequence[float] = ()
     solution: Sequence[float] = ()
-    metadata: Mapping[str, Any] = None
     timestamp: float = 0.0
-
-    def __post_init__(self) -> None:
-        if self.metadata is None:
-            self.metadata = {}
 
 
 class FakeManager:
@@ -99,7 +94,8 @@ def test_schedule_job_with_and_without_records(monkeypatch, settings: Settings) 
         island_id,
         base,
         inspirations,
-        payload,
+        selection_stats,
+        iteration_hint,
         priority,
         experiment_id,
     ):

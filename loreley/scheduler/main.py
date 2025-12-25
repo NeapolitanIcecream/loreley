@@ -21,7 +21,7 @@ from loreley.core.experiments import ExperimentError, get_or_create_experiment
 from loreley.core.map_elites.map_elites import MapElitesManager
 from loreley.core.map_elites.sampler import MapElitesSampler
 from loreley.db.base import ensure_database_schema, session_scope
-from loreley.db.models import CommitMetadata, Metric
+from loreley.db.models import CommitCard, Metric
 from loreley.scheduler.ingestion import MapElitesIngestion
 from loreley.scheduler.job_scheduler import JobScheduler
 
@@ -322,19 +322,19 @@ class EvolutionScheduler:
             order_column = Metric.value.desc() if is_higher_better else Metric.value.asc()
 
             conditions: list[Any] = [
-                CommitMetadata.experiment_id == self.experiment.id,
+                CommitCard.experiment_id == self.experiment.id,
                 Metric.name == metric_name,
             ]
             if self._root_commit_hash:
-                conditions.append(CommitMetadata.commit_hash != self._root_commit_hash)
+                conditions.append(CommitCard.commit_hash != self._root_commit_hash)
 
             stmt = (
                 select(
-                    CommitMetadata.commit_hash,
-                    CommitMetadata.island_id,
+                    CommitCard.commit_hash,
+                    CommitCard.island_id,
                     Metric.value,
                 )
-                .join(Metric, Metric.commit_hash == CommitMetadata.commit_hash)
+                .join(Metric, Metric.commit_hash == CommitCard.commit_hash)
                 .where(*conditions)
                 .order_by(order_column)
                 .limit(1)
@@ -391,13 +391,7 @@ class EvolutionScheduler:
             jobs = list(session.execute(stmt).scalars())
 
         total_jobs = len(jobs)
-        seed_jobs = [
-            job
-            for job in jobs
-            if isinstance(getattr(job, "payload", None), Mapping)
-            and isinstance(job.payload.get("extra_context"), Mapping)
-            and bool(job.payload["extra_context"].get("seed_job"))
-        ]
+        seed_jobs = [job for job in jobs if bool(getattr(job, "is_seed_job", False))]
         seed_count = len(seed_jobs)
         non_seed_jobs_exist = total_jobs > seed_count
 
@@ -459,11 +453,11 @@ class EvolutionScheduler:
         session,
         start_commit_hash: str,
     ) -> str | None:
-        """Walk the CommitMetadata parent chain to find the experiment root commit.
+        """Walk the CommitCard parent chain to find the experiment root commit.
 
         The root commit is defined as the earliest known parent in the evolution
         chain for this experiment. This may be a commit that does not itself have
-        a CommitMetadata row (for example, the original repository commit used as
+        a CommitCard row (for example, the original repository commit used as
         the starting point for the first evolution job).
         """
 
@@ -474,9 +468,9 @@ class EvolutionScheduler:
         while current and current not in visited:
             visited.add(current)
             parent_hash = session.execute(
-                select(CommitMetadata.parent_commit_hash).where(
-                    CommitMetadata.commit_hash == current,
-                    CommitMetadata.experiment_id == self.experiment.id,
+                select(CommitCard.parent_commit_hash).where(
+                    CommitCard.commit_hash == current,
+                    CommitCard.experiment_id == self.experiment.id,
                 )
             ).scalar_one_or_none()
             if not parent_hash:
@@ -485,9 +479,9 @@ class EvolutionScheduler:
 
             # Continue walking only while the parent itself belongs to this experiment.
             exists = session.execute(
-                select(CommitMetadata.commit_hash).where(
-                    CommitMetadata.commit_hash == parent_hash,
-                    CommitMetadata.experiment_id == self.experiment.id,
+                select(CommitCard.commit_hash).where(
+                    CommitCard.commit_hash == parent_hash,
+                    CommitCard.experiment_id == self.experiment.id,
                 )
             ).scalar_one_or_none()
             if not exists:

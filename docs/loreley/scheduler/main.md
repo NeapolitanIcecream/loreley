@@ -17,9 +17,9 @@ Central orchestration loop that keeps the Loreley evolution pipeline moving by c
   - marks rows as `QUEUED` and sends them to the `run_evolution_job` actor in priority order.
 - **MAP-Elites maintenance**: ingestion of succeeded jobs is handled by `loreley.scheduler.ingestion.MapElitesIngestion`, which:
   - scans for `SUCCEEDED` jobs that have not yet been fully ingested,
-  - extracts their `result.commit_hash`, fetches the corresponding git commit, and computes per-file change counts,
-  - calls `MapElitesManager.ingest(...)` with metrics and contextual metadata, and
-  - writes a detailed ingestion status block back under `payload["ingestion"]["map_elites"]` (including attempts, delta, placement, and any error messages).
+  - reads `result_commit_hash`, fetches the corresponding git commit, and computes per-file change counts,
+  - calls `MapElitesManager.ingest(...)` with metrics (loaded from the `metrics` table), and
+  - writes ingestion status back onto the job row (attempts, delta, placement/cell index, and any error messages).
 
 ## Configuration
 
@@ -31,7 +31,7 @@ The scheduler consumes the following `Settings` fields (all exposed as environme
 - `SCHEDULER_SCHEDULE_BATCH_SIZE`: maximum number of new jobs sampled from MAP-Elites per tick (bounded by the unused capacity).
 - `SCHEDULER_DISPATCH_BATCH_SIZE`: number of pending jobs promoted to `QUEUED` and sent to Dramatiq per tick.
 - `SCHEDULER_INGEST_BATCH_SIZE`: number of newly succeeded jobs ingested into MAP-Elites per tick.
-- `MAPELITES_EXPERIMENT_ROOT_COMMIT`: optional git commit hash used as the logical root for the current experiment. When set, the scheduler ensures a `CommitMetadata` row exists for that commit and runs a one-off baseline evaluation to populate `Metric` rows and a compact `root_evaluation` block on the metadata, treating it as an experiment-wide baseline rather than inserting it into any MAP-Elites archive. During cold-start, when the archive is empty and no jobs exist yet, the scheduler first generates up to `MAPELITES_SEED_POPULATION_SIZE` seed evolution jobs from this root commit to form the initial population before switching to regular MAP-Elites sampling.
+- `MAPELITES_EXPERIMENT_ROOT_COMMIT`: optional git commit hash used as the logical root for the current experiment. When set, the scheduler ensures a `CommitCard` row exists for that commit and runs a one-off baseline evaluation to populate `Metric` rows, treating it as an experiment-wide baseline rather than inserting it into any MAP-Elites archive. During cold-start, when the archive is empty and no jobs exist yet, the scheduler first generates up to `MAPELITES_SEED_POPULATION_SIZE` seed evolution jobs from this root commit to form the initial population before switching to regular MAP-Elites sampling.
 
 ## CLI usage
 

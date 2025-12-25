@@ -121,7 +121,7 @@ class Experiment(TimestampMixin, Base):
         back_populates="experiment",
         passive_deletes=True,
     )
-    commits: Mapped[list["CommitMetadata"]] = relationship(
+    commits: Mapped[list["CommitCard"]] = relationship(
         back_populates="experiment",
         passive_deletes=True,
     )
@@ -134,51 +134,53 @@ class Experiment(TimestampMixin, Base):
         return f"<Experiment id={self.id} repository_id={self.repository_id} hash={self.config_hash[:8]!r}>"
 
 
-class CommitMetadata(TimestampMixin, Base):
-    """Git commit metadata captured during evolution."""
+class CommitCard(TimestampMixin, Base):
+    """Lightweight commit representation used for inspiration and UI."""
 
-    __tablename__ = "commits"
+    __tablename__ = "commit_cards"
     __table_args__ = (
-        Index("ix_commits_island_id", "island_id"),
-        Index("ix_commits_parent_hash", "parent_commit_hash"),
+        Index("ix_commit_cards_island_id", "island_id"),
+        Index("ix_commit_cards_parent_hash", "parent_commit_hash"),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-    )
     commit_hash: Mapped[str] = mapped_column(
         String(64),
-        unique=True,
+        primary_key=True,
         nullable=False,
         index=True,
     )
-    parent_commit_hash: Mapped[str | None] = mapped_column(
-        String(64),
-        nullable=True,
-    )
-    island_id: Mapped[str | None] = mapped_column(
-        String(64),
-        nullable=True,
-    )
+    parent_commit_hash: Mapped[str | None] = mapped_column(String(64))
+    island_id: Mapped[str | None] = mapped_column(String(64))
     experiment_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("experiments.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("evolution_jobs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     author: Mapped[str | None] = mapped_column(String(128))
-    message: Mapped[str | None] = mapped_column(Text)
-    evaluation_summary: Mapped[str | None] = mapped_column(Text)
+    subject: Mapped[str] = mapped_column(String(72), nullable=False)
+    change_summary: Mapped[str] = mapped_column(String(512), nullable=False)
+    evaluation_summary: Mapped[str | None] = mapped_column(String(512))
     tags: Mapped[list[str]] = mapped_column(
         MutableList.as_mutable(ARRAY(String(64))),
         default=list,
         nullable=False,
     )
-    extra_context: Mapped[dict[str, Any]] = mapped_column(
-        MutableDict.as_mutable(JSONB),
-        default=dict,
+    key_files: Mapped[list[str]] = mapped_column(
+        MutableList.as_mutable(ARRAY(String(256))),
+        default=list,
+        nullable=False,
+    )
+    highlights: Mapped[list[str]] = mapped_column(
+        MutableList.as_mutable(ARRAY(String(200))),
+        default=list,
         nullable=False,
     )
 
@@ -189,6 +191,7 @@ class CommitMetadata(TimestampMixin, Base):
     )
     jobs_as_base: Mapped[list["EvolutionJob"]] = relationship(
         back_populates="base_commit",
+        foreign_keys="EvolutionJob.base_commit_hash",
         passive_deletes=True,
     )
     experiment: Mapped["Experiment | None"] = relationship(
@@ -198,7 +201,7 @@ class CommitMetadata(TimestampMixin, Base):
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return (
-            f"<CommitMetadata commit_hash={self.commit_hash!r} "
+            f"<CommitCard commit_hash={self.commit_hash!r} "
             f"island={self.island_id!r} experiment_id={self.experiment_id!r}>"
         )
 
@@ -219,7 +222,7 @@ class Metric(TimestampMixin, Base):
     )
     commit_hash: Mapped[str] = mapped_column(
         String(64),
-        ForeignKey("commits.commit_hash", ondelete="CASCADE"),
+        ForeignKey("commit_cards.commit_hash", ondelete="CASCADE"),
         nullable=False,
     )
     name: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -232,9 +235,9 @@ class Metric(TimestampMixin, Base):
         nullable=False,
     )
 
-    commit: Mapped["CommitMetadata"] = relationship(
+    commit: Mapped["CommitCard"] = relationship(
         back_populates="metrics",
-        primaryjoin="CommitMetadata.commit_hash == Metric.commit_hash",
+        primaryjoin="CommitCard.commit_hash == Metric.commit_hash",
         foreign_keys=[commit_hash],
     )
 
@@ -263,7 +266,7 @@ class EvolutionJob(TimestampMixin, Base):
     )
     base_commit_hash: Mapped[str | None] = mapped_column(
         String(64),
-        ForeignKey("commits.commit_hash", ondelete="SET NULL"),
+        ForeignKey("commit_cards.commit_hash", ondelete="SET NULL"),
         nullable=True,
     )
     island_id: Mapped[str | None] = mapped_column(String(64))
@@ -278,19 +281,50 @@ class EvolutionJob(TimestampMixin, Base):
         default=list,
         nullable=False,
     )
-    payload: Mapped[dict[str, Any]] = mapped_column(
-        MutableDict.as_mutable(JSONB),
-        default=dict,
+    plan_summary: Mapped[str | None] = mapped_column(Text)
+    goal: Mapped[str | None] = mapped_column(String(512))
+    constraints: Mapped[list[str]] = mapped_column(
+        MutableList.as_mutable(ARRAY(String(200))),
+        default=list,
         nullable=False,
     )
-    plan_summary: Mapped[str | None] = mapped_column(Text)
+    acceptance_criteria: Mapped[list[str]] = mapped_column(
+        MutableList.as_mutable(ARRAY(String(200))),
+        default=list,
+        nullable=False,
+    )
+    notes: Mapped[list[str]] = mapped_column(
+        MutableList.as_mutable(ARRAY(String(200))),
+        default=list,
+        nullable=False,
+    )
+    tags: Mapped[list[str]] = mapped_column(
+        MutableList.as_mutable(ARRAY(String(64))),
+        default=list,
+        nullable=False,
+    )
+    iteration_hint: Mapped[str | None] = mapped_column(String(256))
+    sampling_strategy: Mapped[str | None] = mapped_column(String(64))
+    sampling_initial_radius: Mapped[int | None] = mapped_column(Integer)
+    sampling_radius_used: Mapped[int | None] = mapped_column(Integer)
+    sampling_fallback_inspirations: Mapped[int | None] = mapped_column(Integer)
+    is_seed_job: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    result_commit_hash: Mapped[str | None] = mapped_column(String(64))
+    ingestion_status: Mapped[str | None] = mapped_column(String(32))
+    ingestion_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    ingestion_delta: Mapped[float | None] = mapped_column(Float)
+    ingestion_status_code: Mapped[int | None] = mapped_column(Integer)
+    ingestion_message: Mapped[str | None] = mapped_column(Text)
+    ingestion_cell_index: Mapped[int | None] = mapped_column(Integer)
+    ingestion_last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ingestion_reason: Mapped[str | None] = mapped_column(Text)
     priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
 
-    base_commit: Mapped["CommitMetadata"] = relationship(
+    base_commit: Mapped["CommitCard"] = relationship(
         back_populates="jobs_as_base",
         foreign_keys=[base_commit_hash],
     )
@@ -301,6 +335,29 @@ class EvolutionJob(TimestampMixin, Base):
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return f"<EvolutionJob id={self.id} status={self.status}>"
+
+
+class JobArtifacts(TimestampMixin, Base):
+    """Filesystem paths for cold-path artifacts produced by a job."""
+
+    __tablename__ = "job_artifacts"
+
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("evolution_jobs.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
+    planning_prompt_path: Mapped[str | None] = mapped_column(String(1024))
+    planning_raw_output_path: Mapped[str | None] = mapped_column(String(1024))
+    planning_plan_json_path: Mapped[str | None] = mapped_column(String(1024))
+
+    coding_prompt_path: Mapped[str | None] = mapped_column(String(1024))
+    coding_raw_output_path: Mapped[str | None] = mapped_column(String(1024))
+    coding_execution_json_path: Mapped[str | None] = mapped_column(String(1024))
+
+    evaluation_json_path: Mapped[str | None] = mapped_column(String(1024))
+    evaluation_logs_path: Mapped[str | None] = mapped_column(String(1024))
 
 
 class MapElitesState(TimestampMixin, Base):
@@ -369,14 +426,6 @@ class MapElitesArchiveCell(TimestampMixin, Base):
     solution: Mapped[list[float]] = mapped_column(
         MutableList.as_mutable(ARRAY(Float)),
         default=list,
-        nullable=False,
-    )
-    # NOTE: `metadata` is reserved by SQLAlchemy declarative; use a different
-    # Python attribute name while keeping the DB column name stable.
-    cell_metadata: Mapped[dict[str, Any]] = mapped_column(
-        "metadata",
-        MutableDict.as_mutable(JSONB),
-        default=dict,
         nullable=False,
     )
     # Epoch seconds used by the archive extra field.

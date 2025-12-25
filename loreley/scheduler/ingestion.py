@@ -9,7 +9,7 @@ can delegate all ingestion responsibilities to this module.
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Sequence
 from uuid import UUID
 
 from git import Repo
@@ -23,7 +23,7 @@ from loreley.core.map_elites.map_elites import MapElitesManager
 from loreley.core.worker.evaluator import EvaluationContext, EvaluationError, Evaluator
 from loreley.core.worker.repository import RepositoryError, WorkerRepository
 from loreley.db.base import session_scope
-from loreley.db.models import CommitMetadata, EvolutionJob, JobStatus, MapElitesState, Metric
+from loreley.db.models import CommitCard, EvolutionJob, JobStatus, MapElitesState, Metric
 
 log = logger.bind(module="scheduler.ingestion")
 
@@ -41,7 +41,7 @@ class JobSnapshot:
     island_id: str | None
     experiment_id: UUID | None
     repository_id: UUID | None
-    payload: dict[str, Any]
+    result_commit_hash: str
     completed_at: datetime | None
 
 
@@ -111,13 +111,9 @@ class MapElitesIngestion:
             )
             rows = list(session.execute(stmt).scalars())
             for job in rows:
-                payload = self._coerce_payload(job.payload)
-                state = self._current_ingestion_state(payload)
-                status = state.get("status")
-                if status in {"succeeded", "skipped"}:
+                if (job.ingestion_status or "").strip() in {"succeeded", "skipped"}:
                     continue
-                result = self._extract_result_block(payload)
-                commit_hash = (result.get("commit_hash") or "").strip()
+                commit_hash = (job.result_commit_hash or "").strip()
                 if not commit_hash:
                     continue
 
@@ -134,7 +130,7 @@ class MapElitesIngestion:
                         island_id=job.island_id,
                         experiment_id=experiment_id,
                         repository_id=repository_id,
-                        payload=payload,
+                        result_commit_hash=commit_hash,
                         completed_at=job.completed_at,
                     )
                 )
@@ -143,8 +139,7 @@ class MapElitesIngestion:
         return snapshots
 
     def _ingest_snapshot(self, snapshot: JobSnapshot) -> bool:
-        result = self._extract_result_block(snapshot.payload)
-        commit_hash = (result.get("commit_hash") or "").strip()
+        commit_hash = (snapshot.result_commit_hash or "").strip()
         if not commit_hash:
             return False
         try:
@@ -156,16 +151,25 @@ class MapElitesIngestion:
                 reason=str(exc),
             )
             return False
-        metadata = self._build_ingestion_metadata(snapshot, result)
-        metrics = result.get("metrics") or []
+        metrics_payload: list[dict[str, Any]] = []
+        with session_scope() as session:
+            rows = session.scalars(select(Metric).where(Metric.commit_hash == commit_hash)).all()
+            for row in rows:
+                metrics_payload.append(
+                    {
+                        "name": row.name,
+                        "value": float(row.value),
+                        "unit": row.unit,
+                        "higher_is_better": bool(row.higher_is_better),
+                    }
+                )
         try:
             insertion = self.manager.ingest(
                 commit_hash=commit_hash,
-                metrics=metrics,
+                metrics=metrics_payload,
                 island_id=snapshot.island_id,
                 repo_root=self.repo_root,
                 treeish=commit_hash,
-                metadata=metadata,
             )
         except Exception as exc:  # pragma: no cover - defensive
             self._record_ingestion_state(
@@ -187,14 +191,14 @@ class MapElitesIngestion:
             self.console.log(
                 f"[yellow]Archive unchanged[/] job={snapshot.job_id} commit={commit_hash} status={insertion.status}",
             )
-        state_payload = {
-            "status": "succeeded" if insertion.inserted else "skipped",
-            "delta": insertion.delta,
-            "status_code": insertion.status,
-            "message": insertion.message,
-            "record": self._record_to_payload(insertion.record),
-        }
-        self._record_ingestion_state(snapshot, **state_payload)
+        self._record_ingestion_state(
+            snapshot,
+            status="succeeded" if insertion.inserted else "skipped",
+            delta=insertion.delta,
+            status_code=insertion.status,
+            message=insertion.message,
+            record=insertion.record,
+        )
         return bool(insertion.record)
 
     def _record_ingestion_state(
@@ -206,80 +210,23 @@ class MapElitesIngestion:
         delta: float | None = None,
         status_code: int | None = None,
         message: str | None = None,
-        record: Mapping[str, Any] | None = None,
+        record: Any | None = None,
     ) -> None:
-        payload = snapshot.payload
-        state = self._current_ingestion_state(payload)
-        state["attempts"] = int(state.get("attempts", 0)) + 1
-        state["status"] = status
-        state["last_attempt_at"] = self._now_iso()
-        state["reason"] = reason
-        state["delta"] = delta
-        state["status_code"] = status_code
-        state["message"] = message
-        if record is not None:
-            state["record"] = dict(record)
-        payload.setdefault("ingestion", {})["map_elites"] = {k: v for k, v in state.items() if v is not None}
-        self._persist_payload(snapshot.job_id, payload)
-
-    def _persist_payload(self, job_id: UUID, payload: Mapping[str, Any]) -> None:
         with session_scope() as session:
-            job = session.get(EvolutionJob, job_id)
+            job = session.get(EvolutionJob, snapshot.job_id)
             if not job:
                 return
-            job.payload = dict(payload)
-
-    def _build_ingestion_metadata(
-        self,
-        snapshot: JobSnapshot,
-        result: Mapping[str, Any],
-    ) -> dict[str, Any]:
-        context = {
-            "goal": snapshot.payload.get("goal"),
-            "constraints": snapshot.payload.get("constraints"),
-            "acceptance_criteria": snapshot.payload.get("acceptance_criteria"),
-            "tags": snapshot.payload.get("tags"),
-            "notes": snapshot.payload.get("notes"),
-        }
-        return {
-            "job": {
-                "id": str(snapshot.job_id),
-                "base_commit": snapshot.base_commit_hash,
-                "island_id": snapshot.island_id,
-                "experiment_id": str(snapshot.experiment_id) if snapshot.experiment_id else None,
-                "repository_id": str(snapshot.repository_id) if snapshot.repository_id else None,
-                "completed_at": snapshot.completed_at.isoformat() if snapshot.completed_at else None,
-            },
-            "context": context,
-            "result": {
-                "plan_summary": result.get("plan_summary"),
-                "evaluation_summary": result.get("evaluation_summary"),
-                "tests_executed": result.get("tests_executed"),
-                "tests_recommended": result.get("tests_recommended"),
-            },
-        }
-
-    def _record_to_payload(self, record: Any) -> dict[str, Any] | None:
-        if record is None:
-            return None
-        return {
-            "commit_hash": record.commit_hash,
-            "cell_index": record.cell_index,
-            "fitness": record.fitness,
-            "island_id": record.island_id,
-            "timestamp": record.timestamp,
-        }
-
-    def _current_ingestion_state(self, payload: Mapping[str, Any]) -> dict[str, Any]:
-        ingestion = payload.get("ingestion") or {}
-        state = ingestion.get("map_elites") or {}
-        return dict(state)
-
-    def _extract_result_block(self, payload: Mapping[str, Any]) -> dict[str, Any]:
-        result = payload.get("result")
-        if isinstance(result, Mapping):
-            return dict(result)
-        return {}
+            job.ingestion_attempts = int(getattr(job, "ingestion_attempts", 0) or 0) + 1
+            job.ingestion_status = status
+            job.ingestion_last_attempt_at = datetime.now(timezone.utc)
+            job.ingestion_reason = reason
+            job.ingestion_delta = delta
+            job.ingestion_status_code = status_code
+            job.ingestion_message = message
+            if record is not None and hasattr(record, "cell_index"):
+                job.ingestion_cell_index = int(getattr(record, "cell_index"))
+            else:
+                job.ingestion_cell_index = None
 
     # Git helpers -----------------------------------------------------------
 
@@ -382,7 +329,7 @@ class MapElitesIngestion:
                 "experiment_id": str(self.experiment.id),
                 "repository_id": str(self.repository.id) if self.repository is not None else None,
             },
-        )
+        )  # type: ignore[call-arg]
 
         try:
             result = evaluator.evaluate(context)
@@ -397,20 +344,10 @@ class MapElitesIngestion:
 
         with session_scope() as session:
             commit_row = session.execute(
-                select(CommitMetadata).where(CommitMetadata.commit_hash == commit_hash)
+                select(CommitCard).where(CommitCard.commit_hash == commit_hash)
             ).scalar_one_or_none()
             if commit_row is not None:
                 commit_row.evaluation_summary = result.summary
-                extra = dict(commit_row.extra_context or {})
-                root_eval = dict(extra.get("root_evaluation") or {})
-                root_eval.update(
-                    {
-                        "summary": result.summary,
-                        "metrics": metrics_payload,
-                    }
-                )
-                extra["root_evaluation"] = root_eval
-                commit_row.extra_context = extra
 
             for metric in result.metrics:
                 existing_metric = session.execute(
@@ -449,7 +386,7 @@ class MapElitesIngestion:
         )
 
     def _ensure_root_commit_metadata(self, commit_hash: str) -> None:
-        """Create or update CommitMetadata for the root commit."""
+        """Create or update CommitCard for the root commit."""
 
         git_commit = self.repo.commit(commit_hash)
         parent_hash = git_commit.parents[0].hexsha if git_commit.parents else None
@@ -457,7 +394,7 @@ class MapElitesIngestion:
         message = getattr(git_commit, "message", None)
 
         with session_scope() as session:
-            stmt = select(CommitMetadata).where(CommitMetadata.commit_hash == commit_hash)
+            stmt = select(CommitCard).where(CommitCard.commit_hash == commit_hash)
             existing = session.execute(stmt).scalar_one_or_none()
             default_island = self.settings.mapelites_default_island_id or "main"
 
@@ -469,6 +406,16 @@ class MapElitesIngestion:
                 if existing.island_id is None:
                     existing.island_id = default_island
                     updated = True
+                if not getattr(existing, "highlights", None):
+                    existing.highlights = ["Root baseline commit."]
+                    updated = True
+                if not getattr(existing, "subject", None):
+                    subject = str(message or "").splitlines()[0].strip() if message else f"Commit {commit_hash}"
+                    existing.subject = subject[:72].strip() or f"Commit {commit_hash}"
+                    updated = True
+                if not getattr(existing, "change_summary", None):
+                    existing.change_summary = "Root baseline commit."
+                    updated = True
                 if updated:
                     self.console.log(
                         "[cyan]Updated root commit metadata[/] commit={} experiment={} island={}".format(
@@ -479,27 +426,21 @@ class MapElitesIngestion:
                     )
                 return
 
-            extra_context: dict[str, Any] = {
-                "root_commit": True,
-                "experiment": {
-                    "id": str(self.experiment.id),
-                    "repository_id": str(self.repository.id) if self.repository is not None else None,
-                    "name": getattr(self.experiment, "name", None),
-                    "config_hash": getattr(self.experiment, "config_hash", None),
-                    "repository_slug": getattr(self.repository, "slug", None) if self.repository is not None else None,
-                },
-            }
-
-            metadata = CommitMetadata(
+            subject = str(message or "").splitlines()[0].strip() if message else f"Commit {commit_hash}"
+            subject = subject[:72].strip() or f"Commit {commit_hash}"
+            metadata = CommitCard(
                 commit_hash=commit_hash,
                 parent_commit_hash=parent_hash,
                 island_id=default_island,
                 experiment_id=self.experiment.id,
                 author=author,
-                message=message,
+                subject=subject,
+                change_summary="Root baseline commit.",
                 evaluation_summary=None,
                 tags=[],
-                extra_context=extra_context,
+                key_files=[],
+                highlights=["Root baseline commit."],
+                job_id=None,
             )
             session.add(metadata)
             self.console.log(
@@ -517,12 +458,6 @@ class MapElitesIngestion:
             )
 
     # Misc helpers ----------------------------------------------------------
-
-    @staticmethod
-    def _coerce_payload(payload: Mapping[str, Any] | None) -> dict[str, Any]:
-        if not payload:
-            return {}
-        return dict(payload)
 
     @staticmethod
     def _now_iso() -> str:

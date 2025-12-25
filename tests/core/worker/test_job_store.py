@@ -16,98 +16,13 @@ from loreley.core.worker.coding import (
     StepExecutionStatus,
 )
 from loreley.core.worker.evaluator import EvaluationMetric, EvaluationResult
-from loreley.core.worker.evolution import CommitSnapshot, JobContext
+from loreley.core.worker.evolution import JobContext
 from loreley.core.worker.job_store import (
     EvolutionJobStore,
     JobPreconditionError,
-    build_coding_payload,
-    build_evaluation_payload,
-    build_plan_payload,
 )
 from loreley.core.worker.planning import PlanStep, PlanningAgentResponse, PlanningPlan
 from loreley.db.models import Experiment, EvolutionJob, JobStatus
-
-
-def test_payload_builders_serialise_domain_objects() -> None:
-    plan_step = PlanStep(
-        step_id="s1",
-        title="Add feature",
-        intent="Implement new feature",
-        actions=("do a",),
-        files=("file.py",),
-        dependencies=("dep",),
-        validation=("run tests",),
-        risks=("risk",),
-        references=("ref",),
-    )
-    plan = PlanningPlan(
-        summary="Plan summary",
-        rationale="Because",
-        focus_metrics=("metric",),
-        guardrails=("guard",),
-        risks=("risk",),
-        validation=("validate",),
-        steps=(plan_step,),
-        handoff_notes=("handoff",),
-        fallback_plan="fallback text",
-    )
-    plan_response = PlanningAgentResponse(
-        plan=plan,
-        raw_output="raw",
-        prompt="prompt",
-        command=("cmd",),
-        stderr="stderr",
-        attempts=2,
-        duration_seconds=1.0,
-    )
-    plan_payload = build_plan_payload(plan_response)
-    assert plan_payload["summary"] == "Plan summary"
-    assert plan_payload["command"] == ["cmd"]
-    assert plan_payload["steps"][0]["files"] == ["file.py"]
-    assert plan_payload["attempts"] == 2
-
-    step_report = CodingStepReport(
-        step_id="s1",
-        status=StepExecutionStatus.COMPLETED,
-        summary="done",
-        files=("file.py",),
-        commands=("pytest -q",),
-    )
-    execution = CodingPlanExecution(
-        implementation_summary="impl",
-        commit_message="msg",
-        step_results=(step_report,),
-        tests_executed=("pytest -q",),
-        tests_recommended=("pytest -m slow",),
-        follow_up_items=("todo",),
-        notes=("note",),
-    )
-    coding_response = CodingAgentResponse(
-        execution=execution,
-        raw_output="raw",
-        prompt="prompt",
-        command=("code",),
-        stderr="stderr",
-        attempts=1,
-        duration_seconds=2.0,
-    )
-    coding_payload = build_coding_payload(coding_response)
-    assert coding_payload["implementation_summary"] == "impl"
-    assert coding_payload["step_results"][0]["status"] == StepExecutionStatus.COMPLETED.value
-    assert coding_payload["tests_recommended"] == ["pytest -m slow"]
-    assert coding_payload["command"] == ["code"]
-
-    evaluation = EvaluationResult(
-        summary="ok",
-        metrics=(EvaluationMetric(name="m1", value=1.0, unit="pt"),),
-        tests_executed=("pytest -q",),
-        logs=("log",),
-        extra={"key": "value"},
-    )
-    evaluation_payload = build_evaluation_payload(evaluation)
-    assert evaluation_payload["summary"] == "ok"
-    assert evaluation_payload["metrics"][0]["name"] == "m1"
-    assert evaluation_payload["extra"] == {"key": "value"}
 
 
 def test_is_lock_conflict_matches_pgcode_and_messages(settings: Settings) -> None:
@@ -143,8 +58,18 @@ def test_start_job_marks_running_and_returns_snapshot(
             self.base_commit_hash = "abc123"
             self.island_id = "island"
             self.experiment_id = uuid.uuid4()
-            self.payload = {"goal": "value"}
             self.inspiration_commit_hashes = ["i1", "i2"]
+            self.goal = "value"
+            self.constraints = []
+            self.acceptance_criteria = []
+            self.notes = []
+            self.tags = []
+            self.iteration_hint = None
+            self.is_seed_job = False
+            self.sampling_strategy = None
+            self.sampling_initial_radius = None
+            self.sampling_radius_used = None
+            self.sampling_fallback_inspirations = None
             self.status = JobStatus.PENDING
             self.started_at = None
             self.last_error = "previous"
@@ -222,8 +147,18 @@ def test_start_job_rejects_missing_or_invalid_jobs(
             self.base_commit_hash = "hash"
             self.island_id = None
             self.experiment_id = None
-            self.payload = {}
             self.inspiration_commit_hashes = []
+            self.goal = "g"
+            self.constraints = []
+            self.acceptance_criteria = []
+            self.notes = []
+            self.tags = []
+            self.iteration_hint = None
+            self.is_seed_job = False
+            self.sampling_strategy = None
+            self.sampling_initial_radius = None
+            self.sampling_radius_used = None
+            self.sampling_fallback_inspirations = None
             self.status = JobStatus.RUNNING
             self.experiment = None
 
@@ -249,12 +184,20 @@ def test_persist_success_updates_job_and_records_metadata(
             self.id = job_id
             self.status = JobStatus.PENDING
             self.plan_summary: str | None = None
-            self.payload: dict[str, Any] = {"foo": "bar"}
             self.completed_at = None
             self.last_error = "err"
             self.experiment_id = experiment_id
             self.island_id = "island"
             self.base_commit_hash = "base"
+            self.result_commit_hash = None
+            self.ingestion_status = None
+            self.ingestion_attempts = 0
+            self.ingestion_delta = None
+            self.ingestion_status_code = None
+            self.ingestion_message = None
+            self.ingestion_cell_index = None
+            self.ingestion_last_attempt_at = None
+            self.ingestion_reason = None
 
     job_row = DummyJob()
     experiment_row = Experiment(id=experiment_id, repository_id=repository_id, config_hash="hash")  # type: ignore[arg-type]
@@ -344,22 +287,13 @@ def test_persist_success_updates_job_and_records_metadata(
         logs=("log",),
         extra={},
     )
-    base_snapshot = CommitSnapshot(
-        commit_hash="base",
-        summary="s",
-        evaluation_summary=None,
-        highlights=(),
-        metrics=(),
-    )
     job_ctx = JobContext(
         job_id=job_id,
         base_commit_hash="base",
         island_id="island",
         experiment_id=experiment_id,
         repository_id=repository_id,
-        payload={"constraints": ["c"]},
-        base_snapshot=base_snapshot,
-        inspiration_snapshots=(),
+        inspiration_commit_hashes=(),
         goal="goal",
         constraints=("c",),
         acceptance_criteria=("done",),
@@ -367,6 +301,10 @@ def test_persist_success_updates_job_and_records_metadata(
         notes=(),
         tags=("tag",),
         is_seed_job=False,
+        sampling_strategy=None,
+        sampling_initial_radius=None,
+        sampling_radius_used=None,
+        sampling_fallback_inspirations=None,
     )
 
     store.persist_success(
@@ -374,14 +312,15 @@ def test_persist_success_updates_job_and_records_metadata(
         plan=plan_response,
         coding=coding_response,
         evaluation=evaluation,
+        worktree=".",  # dummy path; artifacts/git diff are best-effort in tests
         commit_hash="newcommit",
         commit_message="msg",
     )
 
     assert job_row.status is JobStatus.SUCCEEDED
     assert job_row.plan_summary == "plan"
-    assert job_row.payload["result"]["commit_hash"] == "newcommit"
-    metadata = [obj for obj in added if isinstance(obj, job_store.CommitMetadata)]
+    assert job_row.result_commit_hash == "newcommit"
+    metadata = [obj for obj in added if isinstance(obj, job_store.CommitCard)]
     metrics = [obj for obj in added if isinstance(obj, job_store.Metric)]
     assert len(metadata) == 1
     assert metadata[0].commit_hash == "newcommit"

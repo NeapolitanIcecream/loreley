@@ -46,9 +46,6 @@ class SupportsMapElitesRecord(Protocol):
     def solution(self) -> Sequence[float]: ...
 
     @property
-    def metadata(self) -> Mapping[str, Any]: ...
-
-    @property
     def timestamp(self) -> float: ...
 
 
@@ -71,7 +68,6 @@ class ScheduledSamplerJob:
     island_id: str
     base: SupportsMapElitesRecord
     inspirations: tuple[SupportsMapElitesRecord, ...]
-    payload: Mapping[str, Any]
 
     @property
     def base_commit_hash(self) -> str:
@@ -118,7 +114,6 @@ class MapElitesSampler:
         self,
         *,
         island_id: str | None = None,
-        payload_overrides: Mapping[str, Any] | None = None,
         priority: int | None = None,
         experiment_id: UUID | str | None = None,
     ) -> ScheduledSamplerJob | None:
@@ -132,17 +127,11 @@ class MapElitesSampler:
         base_record = self._rng.choice(records)
         records_by_cell = {record.cell_index: record for record in records}
         inspirations, selection_stats = self._select_inspirations(base_record, records_by_cell)
-        payload = self._build_job_payload(
-            island_id=effective_island,
-            base=base_record,
-            inspirations=inspirations,
-            selection_stats=selection_stats,
-        )
-        if payload_overrides:
-            payload["extra_context"] = {
-                **payload.get("extra_context", {}),
-                **dict(payload_overrides),
-            }
+        iteration_hint = None
+        radius_used = selection_stats.get("radius_used")
+        initial_radius = selection_stats.get("initial_radius")
+        if radius_used is not None:
+            iteration_hint = f"MAP-Elites radius {radius_used} (initial {initial_radius})"
 
         exp_id: UUID | None = None
         if experiment_id is not None:
@@ -155,7 +144,8 @@ class MapElitesSampler:
             island_id=effective_island,
             base=base_record,
             inspirations=inspirations,
-            payload=payload,
+            selection_stats=selection_stats,
+            iteration_hint=iteration_hint,
             priority=priority,
             experiment_id=exp_id,
         )
@@ -172,7 +162,6 @@ class MapElitesSampler:
             island_id=effective_island,
             base=base_record,
             inspirations=inspirations,
-            payload=payload,
         )
 
     def _select_inspirations(
@@ -264,65 +253,39 @@ class MapElitesSampler:
         self._rng.shuffle(neighbors)
         return neighbors
 
-    def _build_job_payload(
-        self,
-        *,
-        island_id: str,
-        base: SupportsMapElitesRecord,
-        inspirations: Sequence[SupportsMapElitesRecord],
-        selection_stats: Mapping[str, Any],
-    ) -> dict[str, Any]:
-        payload = {
-            "island_id": island_id,
-            "grid": {
-                "shape": list(self._grid_shape),
-                "feature_bounds": {
-                    "lower": list(self._lower_bounds),
-                    "upper": list(self._upper_bounds),
-                },
-            },
-            "sampling": {
-                "requested_inspirations": self._inspiration_count,
-                "selection": dict(selection_stats),
-            },
-            "base": self._record_payload(base),
-            "inspirations": [self._record_payload(record) for record in inspirations],
-        }
-        return payload
-
-    def _record_payload(self, record: SupportsMapElitesRecord) -> dict[str, Any]:
-        payload: dict[str, Any] = {
-            "commit_hash": record.commit_hash,
-            "cell_index": record.cell_index,
-            "fitness": record.fitness,
-            "timestamp": self._format_timestamp(record.timestamp),
-        }
-        if record.measures:
-            payload["measures"] = [float(value) for value in record.measures]
-        if record.solution:
-            payload["solution"] = [float(value) for value in record.solution]
-        if self._include_metadata and record.metadata:
-            payload["metadata"] = dict(record.metadata)
-        return payload
-
     def _persist_job(
         self,
         *,
         island_id: str,
         base: SupportsMapElitesRecord,
         inspirations: Sequence[SupportsMapElitesRecord],
-        payload: Mapping[str, Any],
+        selection_stats: Mapping[str, Any],
+        iteration_hint: str | None,
         priority: int | None,
         experiment_id: UUID | None,
     ) -> EvolutionJob | None:
         job_priority = self._default_priority if priority is None else priority
+        goal = (self.settings.worker_evolution_global_goal or "").strip() or None
+        if not goal:
+            log.error("Cannot schedule job; WORKER_EVOLUTION_GLOBAL_GOAL is empty.")
+            return None
         job = EvolutionJob(
             status=JobStatus.PENDING,
             base_commit_hash=base.commit_hash,
             island_id=island_id,
             experiment_id=experiment_id,
             inspiration_commit_hashes=[record.commit_hash for record in inspirations],
-            payload=dict(payload),
+            goal=goal,
+            constraints=[],
+            acceptance_criteria=[],
+            notes=[],
+            tags=[],
+            iteration_hint=iteration_hint,
+            sampling_strategy="grid_neighbors",
+            sampling_initial_radius=int(selection_stats.get("initial_radius", 0)),
+            sampling_radius_used=int(selection_stats.get("radius_used", 0)),
+            sampling_fallback_inspirations=int(selection_stats.get("fallback_inspirations", 0)),
+            is_seed_job=False,
             priority=job_priority,
             scheduled_at=datetime.now(timezone.utc),
         )
@@ -334,8 +297,4 @@ class MapElitesSampler:
             log.error("Failed to persist evolution job for island {}: {}", island_id, exc)
             return None
         return job
-
-    @staticmethod
-    def _format_timestamp(value: float) -> str:
-        return datetime.fromtimestamp(value, tz=timezone.utc).isoformat()
 

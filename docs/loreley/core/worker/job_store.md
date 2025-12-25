@@ -7,22 +7,17 @@ Persistence adapter for the evolution worker, responsible for locking jobs, stor
 - **`EvolutionWorkerError`**: base runtime error used when the worker cannot complete or persist a job due to configuration, database, or repository issues.
 - **`JobLockConflict`**: raised when `start_job()` fails to obtain a NOWAIT lock on a job row, indicating that another worker is already processing the same job.
 - **`JobPreconditionError`**: raised when a job cannot start because preconditions are not satisfied (missing row, unsupported status, missing `base_commit_hash`, etc.).
-- **`LockedJob`**: dataclass snapshot of the locked `EvolutionJob` row containing the `job_id`, `base_commit_hash`, optional `island_id`, optional `experiment_id` and `repository_id`, the deserialised JSON `payload`, and the tuple of `inspiration_commit_hashes`. This is used by `EvolutionWorker` to build its `JobContext`.
+- **`LockedJob`**: dataclass snapshot of the locked `EvolutionJob` row containing the `job_id`, `base_commit_hash`, optional `island_id`, optional `experiment_id` and `repository_id`, the bounded job spec fields, and the tuple of `inspiration_commit_hashes`. This is used by `EvolutionWorker` to build its `JobContext`.
 
-## Serialization helpers
+## Artifacts
 
-- **`build_plan_payload(response)`**: converts a `PlanningAgentResponse` into a JSON-serialisable dict.
-  - Serialises the underlying `PlanningPlan` via `as_dict()`.
-  - Adds the planner `prompt`, raw Codex `raw_output`, CLI `command`, `stderr`, number of `attempts`, and total `duration_seconds` so downstream systems can introspect planner behaviour.
-- **`build_coding_payload(response)`**: converts a `CodingAgentResponse` into a dict that flattens both the `CodingPlanExecution` and transport metadata.
-  - Includes `implementation_summary`, final `commit_message`, detailed per-step outcomes, executed tests, recommended tests, follow-up items, notes, raw Codex output, prompt, command, stderr, attempts, and duration.
-- **`build_evaluation_payload(result)`**: converts an `EvaluationResult` into a dict containing its textual `summary`, a list of metric dicts via `metric.as_dict()`, `tests_executed`, `logs`, and an `extra` mapping.
+Large, audit/debug oriented payloads (prompts, raw outputs, logs) are written to disk and referenced from the database via `JobArtifacts` rather than being embedded in primary rows.
 
 ## EvolutionJobStore
 
 - **`EvolutionJobStore`**: database-facing adapter that encapsulates the lifecycle of an evolution job.
   - Constructed with `Settings` to attach worker/application metadata when persisting results.
-  - Uses `session_scope()` and the ORM models from `loreley.db.models` (`EvolutionJob`, `CommitMetadata`, `Metric`, `JobStatus`) to modify rows transactionally.
+  - Uses `session_scope()` and the ORM models from `loreley.db.models` (`EvolutionJob`, `CommitCard`, `JobArtifacts`, `Metric`, `JobStatus`) to modify rows transactionally.
 
 ### Job lifecycle methods
 
@@ -33,14 +28,10 @@ Persistence adapter for the evolution worker, responsible for locking jobs, stor
   - Wraps SQL errors into `JobLockConflict` when they indicate a lock-not-available condition, or `EvolutionWorkerError` otherwise.
 
 - **`persist_success(job_ctx, plan, coding, evaluation, commit_hash, commit_message)`**:
-  - Updates the `EvolutionJob` row to `SUCCEEDED`, sets `completed_at`, stores the plan summary, updated job `payload` (including a compact `result` section with commit/metric/test summaries), and clears `last_error`.
-  - Inserts a new `CommitMetadata` row representing the produced commit, with parent commit hash, island ID, author/email from settings, commit message, evaluation summary, tags, and a rich `extra_context` payload that includes:
-  - Job context (goal, constraints, acceptance criteria, notes, tags, raw payload) plus the resolved `experiment_id` and `repository_id` for the job when available.
-  - An `experiment` block containing stable experiment metadata such as `id`, `repository_id`, `name`, `config_hash`, and `repository_slug` when the experiment can be resolved from the database.
-  - Base and inspiration commit hashes.
-  - Detailed plan, coding, and evaluation payloads via the helper functions above.
-  - Worker metadata such as `app_name`, environment, and completion timestamp.
+  - Updates the `EvolutionJob` row to `SUCCEEDED`, sets `completed_at`, stores `plan_summary`, sets `result_commit_hash`, clears `last_error`, and resets ingestion tracking fields.
+  - Inserts a new `CommitCard` row representing the produced commit, with bounded `subject`, `change_summary`, `key_files`, `highlights`, and optional `evaluation_summary`.
   - Inserts one `Metric` row per evaluation metric for the new commit, copying numeric `value`, `unit`, `higher_is_better`, and any structured `details`.
+  - Writes planning/coding/evaluation artifacts to disk and upserts a `JobArtifacts` row containing the corresponding filesystem paths.
   - Wraps SQLAlchemy errors into `EvolutionWorkerError` so the caller can surface persistence failures cleanly.
 
 - **`mark_job_failed(job_id, message)`**:

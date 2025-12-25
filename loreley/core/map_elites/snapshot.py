@@ -67,7 +67,6 @@ class SnapshotCellUpsert:
     measures: Vector
     solution: Vector
     commit_hash: str
-    metadata: Mapping[str, Any]
     timestamp: float
 
 
@@ -322,7 +321,6 @@ class DatabaseSnapshotBackend(SnapshotBackend):
                         "objective": float(cell.objective),
                         "measures": [float(v) for v in cell.measures],
                         "solution": [float(v) for v in cell.solution],
-                        "metadata": dict(cell.metadata) if isinstance(cell.metadata, Mapping) else {},
                         "timestamp": float(cell.timestamp),
                     }
                     stmt = pg_insert(MapElitesArchiveCell.__table__).values(**values)
@@ -337,7 +335,6 @@ class DatabaseSnapshotBackend(SnapshotBackend):
                             "objective": stmt.excluded.objective,
                             "measures": stmt.excluded.measures,
                             "solution": stmt.excluded.solution,
-                            "metadata": stmt.excluded["metadata"],
                             "timestamp": stmt.excluded.timestamp,
                         },
                     )
@@ -411,7 +408,6 @@ class DatabaseSnapshotBackend(SnapshotBackend):
                     "measures": [float(v) for v in (row.measures or [])],
                     "solution": [float(v) for v in (row.solution or [])],
                     "commit_hash": str(row.commit_hash or ""),
-                    "metadata": dict(row.cell_metadata or {}),
                     "timestamp": float(row.timestamp or 0.0),
                 }
             )
@@ -516,7 +512,6 @@ class DatabaseSnapshotBackend(SnapshotBackend):
                     "objective": float(entry.get("objective", 0.0)),
                     "measures": [float(v) for v in measures],
                     "solution": [float(v) for v in solution],
-                    "metadata": _coerce_metadata(entry.get("metadata")),
                     "timestamp": float(entry.get("timestamp", 0.0)),
                 }
                 stmt = pg_insert(MapElitesArchiveCell.__table__).values(**values)
@@ -531,7 +526,6 @@ class DatabaseSnapshotBackend(SnapshotBackend):
                         "objective": stmt.excluded.objective,
                         "measures": stmt.excluded.measures,
                         "solution": stmt.excluded.solution,
-                        "metadata": stmt.excluded["metadata"],
                         "timestamp": stmt.excluded.timestamp,
                     },
                 )
@@ -771,7 +765,6 @@ def serialize_archive(archive: GridArchive) -> list[dict[str, Any]]:
     measures = to_list(data.get("measures"))
     solutions = to_list(data.get("solution"))
     commit_hashes = to_list(data.get("commit_hash"))
-    metadata_entries = to_list(data.get("metadata"))
     timestamps = to_list(data.get("timestamp"))
 
     entries: list[dict[str, Any]] = []
@@ -782,11 +775,6 @@ def serialize_archive(archive: GridArchive) -> list[dict[str, Any]]:
             "measures": array_to_list(measures[idx]) if idx < len(measures) else [],
             "solution": array_to_list(solutions[idx]) if idx < len(solutions) else [],
             "commit_hash": str(commit_hashes[idx]) if idx < len(commit_hashes) else "",
-            "metadata": (
-                _coerce_metadata(metadata_entries[idx])
-                if idx < len(metadata_entries)
-                else {}
-            ),
             "timestamp": float(timestamps[idx]) if idx < len(timestamps) else 0.0,
         }
         entries.append(entry)
@@ -817,7 +805,6 @@ def restore_archive_entries(
             dtype=np.float64,
         )
         commit_hash = str(entry.get("commit_hash", ""))
-        metadata = _coerce_metadata(entry.get("metadata"))
         timestamp_value = float(entry.get("timestamp", 0.0))
 
         archive.add(
@@ -825,7 +812,6 @@ def restore_archive_entries(
             objective,
             measures_batch,
             commit_hash=np.asarray([commit_hash], dtype=object),
-            metadata=np.asarray([metadata], dtype=object),
             timestamp=np.asarray([timestamp_value], dtype=np.float64),
         )
 
@@ -873,14 +859,6 @@ def to_list(values: Any) -> list[Any]:
     if isinstance(values, tuple):
         return list(values)
     return [values]
-
-
-def _coerce_metadata(payload: Any) -> dict[str, Any]:
-    """Ensure metadata payloads are plain dicts."""
-
-    if isinstance(payload, Mapping):
-        return dict(payload)
-    return {}
 
 
 def _coerce_int(value: Any, *, default: int) -> int:

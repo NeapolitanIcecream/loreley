@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from loreley.config import Settings, get_settings
 from loreley.db.base import session_scope
-from loreley.db.models import CommitMetadata, Metric
+from loreley.db.models import CommitCard, Metric
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,9 +67,9 @@ def build_commit_lineage_graph(
 
     with session_scope() as session:
         stmt = (
-            select(CommitMetadata)
-            .where(CommitMetadata.experiment_id == experiment_id)
-            .order_by(CommitMetadata.created_at.desc())
+            select(CommitCard)
+            .where(CommitCard.experiment_id == experiment_id)
+            .order_by(CommitCard.created_at.desc())
             .limit(limit)
         )
         commits = list(session.execute(stmt).scalars())
@@ -103,7 +103,7 @@ def build_commit_lineage_graph(
                 experiment_id=c.experiment_id,
                 created_at=c.created_at,
                 author=c.author,
-                message=c.message,
+                message=getattr(c, "subject", None),
                 metric_value=raw,
                 fitness=fitness,
                 extra={},

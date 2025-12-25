@@ -56,4 +56,34 @@ class LoreleyAPIClient:
         except json.JSONDecodeError as exc:
             raise APIError(f"Invalid JSON response: {exc}", status_code=int(status)) from exc
 
+    def get_bytes(self, path: str, *, params: dict[str, Any] | None = None) -> tuple[bytes, str | None]:
+        """GET raw bytes from the API (used for downloading artifacts)."""
+
+        relative = path.lstrip("/")
+        url = urljoin(self.base_url, relative)
+        if params:
+            url = f"{url}?{urlencode(params)}"
+
+        req = Request(url, method="GET")
+        try:
+            with urlopen(req, timeout=self.timeout_seconds) as resp:
+                status = getattr(resp, "status", 200)
+                content_type = None
+                try:
+                    content_type = resp.headers.get("Content-Type")
+                except Exception:
+                    content_type = None
+                body = resp.read()
+        except Exception as exc:  # pragma: no cover - network dependent
+            raise APIError(f"Failed to call API: {exc}") from exc
+
+        if status >= 400:
+            try:
+                message = body.decode("utf-8", errors="replace")
+            except Exception:
+                message = "API request failed"
+            raise APIError(message or "API request failed", status_code=int(status))
+
+        return body, content_type
+
 

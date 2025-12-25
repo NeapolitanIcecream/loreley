@@ -35,7 +35,6 @@ class DummyArchive:
         measures: np.ndarray,
         *,
         commit_hash: np.ndarray,
-        metadata: np.ndarray,
         timestamp: np.ndarray,
     ) -> None:
         # Capture arguments so tests can assert that entries were restored.
@@ -45,7 +44,6 @@ class DummyArchive:
                 "objective": objective,
                 "measures": measures,
                 "commit_hash": commit_hash,
-                "metadata": metadata,
                 "timestamp": timestamp,
             }
         )
@@ -97,7 +95,6 @@ def test_build_and_apply_snapshot_round_trip_basic() -> None:
         "measures": [[0.1, 0.2]],
         "solution": [[0.1, 0.2]],
         "commit_hash": ["c1"],
-        "metadata": [{"foo": "bar"}],
         "timestamp": [42.0],
     }
     penultimate = _make_penultimate()

@@ -31,7 +31,6 @@ def test_manager_lazy_loads_persisted_snapshot_for_stats_and_records(settings: S
                 "measures": [0.1, 0.1],
                 "solution": [0.1, 0.1],
                 "commit_hash": "c1",
-                "metadata": {"metrics": {"score": 1.23}},
                 "timestamp": 42.0,
             }
         ],
@@ -159,7 +158,6 @@ def test_ingest_builds_record_with_stubbed_dependencies(
         commit_hash: str,
         fitness: float,
         measures: np.ndarray,
-        metadata: Mapping[str, object],
     ) -> tuple[int, float, MapElitesRecord]:
         captured["measures"] = measures
         captured["fitness"] = fitness
@@ -170,7 +168,6 @@ def test_ingest_builds_record_with_stubbed_dependencies(
             fitness=fitness,
             measures=tuple(measures.tolist()),
             solution=tuple(measures.tolist()),
-            metadata=metadata,
             timestamp=123.0,
         )
         return 1, 0.1, record
@@ -192,4 +189,3 @@ def test_ingest_builds_record_with_stubbed_dependencies(
     assert result.artifacts.code_embedding is code_embedding
     assert result.artifacts.summary_embedding is None
     assert result.artifacts.final_embedding is final_embedding
-    assert result.record.metadata["metrics"]["score"] == 1.2

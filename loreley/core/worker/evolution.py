@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Sequence
 from uuid import UUID
 
 from loguru import logger
@@ -16,7 +16,6 @@ from loreley.core.worker.coding import (
     CodingAgentRequest,
     CodingAgentResponse,
     CodingError,
-    StepExecutionStatus,
 )
 from loreley.core.worker.evaluator import (
     Evaluator,
@@ -39,11 +38,10 @@ from loreley.core.worker.job_store import (
     EvolutionWorkerError,
     JobLockConflict,
     JobPreconditionError,
-    build_plan_payload,
 )
 from loreley.core.worker.repository import CheckoutContext, WorkerRepository, RepositoryError
 from loreley.db.base import session_scope
-from loreley.db.models import CommitMetadata, Metric
+from loreley.db.models import CommitCard, MapElitesArchiveCell, Metric
 
 console = Console()
 log = logger.bind(module="worker.evolution")
@@ -57,28 +55,6 @@ __all__ = [
 
 
 @dataclass(slots=True)
-class CommitSnapshot:
-    """Immutable snapshot of commit data for planning context construction."""
-
-    commit_hash: str
-    summary: str
-    evaluation_summary: str | None
-    highlights: tuple[str, ...]
-    metrics: tuple[CommitMetric, ...]
-    extra_context: dict[str, Any] = field(default_factory=dict)
-
-    def to_planning_context(self) -> CommitPlanningContext:
-        return CommitPlanningContext(
-            commit_hash=self.commit_hash,
-            summary=self.summary,
-            highlights=self.highlights,
-            evaluation_summary=self.evaluation_summary,
-            metrics=self.metrics,
-            extra_context=self.extra_context,
-        )
-
-
-@dataclass(slots=True)
 class JobContext:
     """Loaded job information used across the worker stages."""
 
@@ -87,9 +63,7 @@ class JobContext:
     island_id: str | None
     experiment_id: UUID | None
     repository_id: UUID | None
-    payload: dict[str, Any]
-    base_snapshot: CommitSnapshot
-    inspiration_snapshots: tuple[CommitSnapshot, ...]
+    inspiration_commit_hashes: tuple[str, ...]
     goal: str
     constraints: tuple[str, ...]
     acceptance_criteria: tuple[str, ...]
@@ -97,6 +71,10 @@ class JobContext:
     notes: tuple[str, ...]
     tags: tuple[str, ...]
     is_seed_job: bool
+    sampling_strategy: str | None
+    sampling_initial_radius: int | None
+    sampling_radius_used: int | None
+    sampling_fallback_inspirations: int | None
 
 
 @dataclass(slots=True)
@@ -193,6 +171,7 @@ class EvolutionWorker:
                 plan=plan_response,
                 coding=coding_response,
                 evaluation=evaluation_result,
+                worktree=checkout.worktree,
                 commit_hash=candidate_commit,
                 commit_message=commit_message,
             )
@@ -219,63 +198,38 @@ class EvolutionWorker:
 
     def _start_job(self, job_id: UUID) -> JobContext:
         locked_job = self.job_store.start_job(job_id)
-        payload = dict(locked_job.payload or {})
-        extra_context = self._extract_mapping(payload, "extra_context") or {}
-        base_payload = self._match_record_payload(payload.get("base"))
-        inspirations_payload = self._map_inspiration_payloads(payload.get("inspirations"))
-        base_snapshot = self._load_commit_snapshot(
-            commit_hash=locked_job.base_commit_hash,
-            fallback=base_payload,
-        )
-        inspiration_snapshots = tuple(
-            self._load_commit_snapshot(
-                commit_hash=commit_hash,
-                fallback=inspirations_payload.get(commit_hash),
+        goal = (locked_job.goal or "").strip()
+        if not goal:
+            goal = (self.settings.worker_evolution_global_goal or "").strip()
+        if not goal:
+            raise EvolutionWorkerError(
+                "No evolution goal configured. "
+                "Set WORKER_EVOLUTION_GLOBAL_GOAL or provide a per-job goal.",
             )
-            for commit_hash in locked_job.inspiration_commit_hashes
-        )
-        goal = self._extract_goal(
-            payload=payload,
-            extra_context=extra_context,
-        )
-        # Persist the resolved goal back into the payload so that downstream
-        # consumers see a normalised evolution objective instead of having to
-        # re-implement the extraction logic.
-        payload["goal"] = goal
-        constraints = self._coerce_str_sequence(
-            payload.get("constraints") or payload.get("guardrails") or extra_context.get("constraints"),
-        )
-        acceptance = self._coerce_str_sequence(
-            payload.get("acceptance_criteria")
-            or payload.get("definition_of_done")
-            or extra_context.get("acceptance_criteria"),
-        )
-        iteration_hint = self._extract_iteration_hint(payload, extra_context=extra_context)
-        notes = self._coerce_str_sequence(payload.get("notes") or extra_context.get("notes"))
-        tags = self._coerce_str_sequence(payload.get("tags") or extra_context.get("tags"))
 
-        # Identify cold-start seed jobs: base commit equals the configured root,
-        # no inspirations, and/or an explicit seed_job flag in extra_context.
-        root_hash = (self.settings.mapelites_experiment_root_commit or "").strip()
-        is_seed_job = bool(
-            root_hash
-            and locked_job.base_commit_hash == root_hash
-            and not locked_job.inspiration_commit_hashes
-        )
-        seed_flag = extra_context.get("seed_job")
-        if isinstance(seed_flag, str):
-            seed_flag = seed_flag.strip().lower() in {"1", "true", "yes", "y"}
-        if seed_flag:
-            is_seed_job = True
+        iteration_hint = (locked_job.iteration_hint or "").strip() or None
+        if not iteration_hint and locked_job.sampling_radius_used is not None:
+            iteration_hint = (
+                f"MAP-Elites radius {locked_job.sampling_radius_used} "
+                f"(initial {locked_job.sampling_initial_radius})"
+            )
 
-        if is_seed_job:
-            seed_hint = (
+        is_seed_job = bool(getattr(locked_job, "is_seed_job", False))
+        if not is_seed_job:
+            root_hash = (self.settings.mapelites_experiment_root_commit or "").strip()
+            is_seed_job = bool(
+                root_hash
+                and locked_job.base_commit_hash == root_hash
+                and not locked_job.inspiration_commit_hashes
+            )
+        if is_seed_job and iteration_hint:
+            iteration_hint = (
+                f"{iteration_hint} | Seed job: cold-start population design, focus on diverse starting directions."
+            )
+        elif is_seed_job:
+            iteration_hint = (
                 "Seed job: cold-start population design, focus on diverse starting directions."
             )
-            if iteration_hint:
-                iteration_hint = f"{iteration_hint} | {seed_hint}"
-            else:
-                iteration_hint = seed_hint
 
         return JobContext(
             job_id=locked_job.job_id,
@@ -283,16 +237,18 @@ class EvolutionWorker:
             island_id=locked_job.island_id,
             experiment_id=locked_job.experiment_id,
             repository_id=locked_job.repository_id,
-            payload=payload,
-            base_snapshot=base_snapshot,
-            inspiration_snapshots=inspiration_snapshots,
+            inspiration_commit_hashes=tuple(locked_job.inspiration_commit_hashes or ()),
             goal=goal,
-            constraints=constraints,
-            acceptance_criteria=acceptance,
+            constraints=tuple(locked_job.constraints or ()),
+            acceptance_criteria=tuple(locked_job.acceptance_criteria or ()),
             iteration_hint=iteration_hint,
-            notes=notes,
-            tags=tags,
+            notes=tuple(locked_job.notes or ()),
+            tags=tuple(locked_job.tags or ()),
             is_seed_job=is_seed_job,
+            sampling_strategy=locked_job.sampling_strategy,
+            sampling_initial_radius=locked_job.sampling_initial_radius,
+            sampling_radius_used=locked_job.sampling_radius_used,
+            sampling_fallback_inspirations=locked_job.sampling_fallback_inspirations,
         )
 
     def _run_planning(
@@ -300,26 +256,35 @@ class EvolutionWorker:
         job_ctx: JobContext,
         checkout: CheckoutContext,
     ) -> PlanningAgentResponse:
-        base_context = job_ctx.base_snapshot.to_planning_context()
+        base_context = self._load_commit_planning_context(
+            commit_hash=job_ctx.base_commit_hash,
+            experiment_id=job_ctx.experiment_id,
+            island_id=job_ctx.island_id,
+        )
         inspirations = tuple(
-            snapshot.to_planning_context() for snapshot in job_ctx.inspiration_snapshots
+            self._load_commit_planning_context(
+                commit_hash=commit_hash,
+                experiment_id=job_ctx.experiment_id,
+                island_id=job_ctx.island_id,
+            )
+            for commit_hash in job_ctx.inspiration_commit_hashes
         )
         cold_start = False
 
         if job_ctx.is_seed_job:
             # For seed jobs, hide historical metrics/highlights/evaluation details so the
             # planning agent relies purely on the global objective and constraints.
-            cleaned_extra = dict(base_context.extra_context or {})
-            for key in ("root_evaluation", "evaluation", "evaluation_summary", "metrics"):
-                cleaned_extra.pop(key, None)
-
             base_context = CommitPlanningContext(
                 commit_hash=base_context.commit_hash,
-                summary=base_context.summary,
+                subject=base_context.subject,
+                change_summary=base_context.change_summary,
+                key_files=base_context.key_files,
                 highlights=(),
                 evaluation_summary=None,
                 metrics=(),
-                extra_context=cleaned_extra,
+                map_elites_cell_index=base_context.map_elites_cell_index,
+                map_elites_objective=base_context.map_elites_objective,
+                map_elites_measures=base_context.map_elites_measures,
             )
             inspirations = ()
             cold_start = True
@@ -422,11 +387,16 @@ class EvolutionWorker:
                 "constraints": list(job_ctx.constraints),
                 "acceptance_criteria": list(job_ctx.acceptance_criteria),
                 "notes": list(job_ctx.notes),
+                "tags": list(job_ctx.tags),
             },
-            "plan": build_plan_payload(plan),
+            "plan": {
+                "summary": plan.plan.summary,
+                "focus_metrics": list(plan.plan.focus_metrics),
+                "guardrails": list(plan.plan.guardrails),
+            },
         }
         try:
-            context = EvaluationContext(
+            context = EvaluationContext(  # type: ignore[call-arg]
                 worktree=checkout.worktree,
                 base_commit_hash=job_ctx.base_commit_hash,
                 candidate_commit_hash=candidate_commit,
@@ -434,7 +404,15 @@ class EvolutionWorker:
                 goal=job_ctx.goal,
                 payload=payload,
                 plan_summary=plan.plan.summary,
-                metadata=dict(job_ctx.payload or {}),
+                metadata={
+                    "is_seed_job": bool(job_ctx.is_seed_job),
+                    "sampling": {
+                        "strategy": job_ctx.sampling_strategy,
+                        "initial_radius": job_ctx.sampling_initial_radius,
+                        "radius_used": job_ctx.sampling_radius_used,
+                        "fallback_inspirations": job_ctx.sampling_fallback_inspirations,
+                    },
+                },
             )
             return self.evaluator.evaluate(context)
         except EvaluationError as exc:
@@ -458,64 +436,50 @@ class EvolutionWorker:
 
     # Data extraction utilities -------------------------------------------
 
-    def _load_commit_snapshot(
+    def _load_commit_planning_context(
         self,
         *,
         commit_hash: str,
-        fallback: Mapping[str, Any] | None,
-    ) -> CommitSnapshot:
-        commit: CommitMetadata | None
+        experiment_id: UUID | None,
+        island_id: str | None,
+    ) -> CommitPlanningContext:
+        card: CommitCard | None = None
         metric_rows: Sequence[Metric] = ()
+        cell: MapElitesArchiveCell | None = None
         with session_scope() as session:
-            commit_stmt = select(CommitMetadata).where(
-                CommitMetadata.commit_hash == commit_hash,
-            )
-            commit = session.execute(commit_stmt).scalar_one_or_none()
-            if commit:
-                metric_rows = session.scalars(
-                    select(Metric).where(Metric.commit_hash == commit_hash)
-                ).all()
-        fallback_meta = self._extract_mapping(fallback, "metadata")
-        extra_context: dict[str, Any] = {}
-        if fallback:
-            extra_context["map_elites_record"] = dict(fallback)
-        if fallback_meta:
-            extra_context.setdefault("map_elites_metadata", dict(fallback_meta))
-        evaluation_summary = None
-        summary_candidates: list[str] = []
-        highlights_sources: list[Any] = []
+            card = session.get(CommitCard, commit_hash)
+            metric_rows = session.scalars(
+                select(Metric).where(Metric.commit_hash == commit_hash)
+            ).all()
+            if experiment_id and island_id:
+                cell = session.execute(
+                    select(MapElitesArchiveCell).where(
+                        MapElitesArchiveCell.experiment_id == experiment_id,
+                        MapElitesArchiveCell.island_id == island_id,
+                        MapElitesArchiveCell.commit_hash == commit_hash,
+                    )
+                ).scalar_one_or_none()
 
-        if commit:
-            extra_context.update(dict(commit.extra_context or {}))
-            evaluation_summary = commit.evaluation_summary
-            if commit.message:
-                summary_candidates.append(commit.message)
-            highlights_sources.append(extra_context.get("highlights"))
-            highlights_sources.append(extra_context.get("snippets"))
-        if fallback_meta:
-            summary_candidates.append(str(fallback_meta.get("summary") or ""))
-            evaluation_summary = evaluation_summary or fallback_meta.get("evaluation_summary")
-            highlights_sources.append(fallback_meta.get("highlights"))
+        subject = (getattr(card, "subject", None) or "").strip() or f"Commit {commit_hash}"
+        change_summary = (getattr(card, "change_summary", None) or "").strip() or "N/A"
+        key_files = tuple(getattr(card, "key_files", None) or ())
+        highlights = tuple(getattr(card, "highlights", None) or ())
+        if not highlights:
+            highlights = ("No highlights available.",)
+        evaluation_summary = getattr(card, "evaluation_summary", None)
+        metrics = tuple(self._metric_from_row(row) for row in metric_rows)
 
-        if fallback:
-            summary_candidates.append(str(fallback.get("summary") or ""))
-        summary_candidates.append(f"Commit {commit_hash}")
-
-        summary = self._first_non_empty(*summary_candidates) or f"Commit {commit_hash}"
-        highlights = self._extract_highlights(*highlights_sources)
-        metrics: list[CommitMetric] = []
-        if commit:
-            metrics.extend(self._metric_from_row(row) for row in metric_rows)
-        elif fallback_meta:
-            metrics.extend(self._metrics_from_payload(fallback_meta.get("metrics")))
-
-        return CommitSnapshot(
+        return CommitPlanningContext(
             commit_hash=commit_hash,
-            summary=summary,
-            evaluation_summary=evaluation_summary,
+            subject=subject,
+            change_summary=change_summary,
+            key_files=key_files,
             highlights=highlights,
-            metrics=tuple(metrics),
-            extra_context=extra_context,
+            evaluation_summary=evaluation_summary,
+            metrics=metrics,
+            map_elites_cell_index=int(cell.cell_index) if cell is not None else None,
+            map_elites_objective=float(cell.objective) if cell is not None else None,
+            map_elites_measures=tuple(float(v) for v in (cell.measures or ())) if cell is not None else (),
         )
 
     def _metric_from_row(self, row: Metric) -> CommitMetric:
@@ -532,189 +496,6 @@ class EvolutionWorker:
             higher_is_better=row.higher_is_better,
             summary=summary or None,
         )
-
-    def _metrics_from_payload(self, payload: Any) -> list[CommitMetric]:
-        if not payload:
-            return []
-        metrics: list[CommitMetric] = []
-        candidates: Sequence[Any]
-        if isinstance(payload, Mapping):
-            candidates = (payload,)
-        else:
-            try:
-                candidates = tuple(payload)
-            except TypeError:
-                return []
-        for item in candidates:
-            if not isinstance(item, Mapping):
-                continue
-            name = str(item.get("name") or item.get("metric") or "").strip()
-            value = item.get("value")
-            if not name or value is None:
-                continue
-            try:
-                numeric = float(value)
-            except (TypeError, ValueError):
-                continue
-            metrics.append(
-                CommitMetric(
-                    name=name,
-                    value=numeric,
-                    unit=(item.get("unit") or None),
-                    higher_is_better=item.get("higher_is_better"),
-                    summary=(item.get("summary") or None),
-                )
-            )
-        return metrics
-
-    def _extract_goal(
-        self,
-        *,
-        payload: Mapping[str, Any],
-        extra_context: Mapping[str, Any] | None,
-    ) -> str:
-        """Derive the evolution goal using job fields and global configuration.
-
-        Resolution order:
-        1. Job payload fields: ``goal`` / ``objective`` / ``description``.
-        2. ``extra_context["goal"]`` when present.
-        3. Global ``Settings.worker_evolution_global_goal`` value.
-
-        When neither explicit job fields nor a global goal are configured, the
-        worker fails fast with an EvolutionWorkerError.
-        """
-        goal = self._first_non_empty(
-            payload.get("goal"),
-            payload.get("objective"),
-            payload.get("description"),
-            (extra_context or {}).get("goal"),
-        )
-        if goal:
-            return goal
-        global_goal = (self.settings.worker_evolution_global_goal or "").strip()
-        if global_goal:
-            return global_goal
-        raise EvolutionWorkerError(
-            "No evolution goal configured. "
-            "Set WORKER_EVOLUTION_GLOBAL_GOAL or provide a 'goal' field in the job payload.",
-        )
-
-    def _extract_iteration_hint(
-        self,
-        payload: Mapping[str, Any],
-        *,
-        extra_context: Mapping[str, Any] | None = None,
-    ) -> str | None:
-        hint = self._first_non_empty(
-            payload.get("iteration_hint"),
-            (extra_context or {}).get("iteration_hint"),
-        )
-        if hint:
-            return hint
-        sampling = payload.get("sampling")
-        if isinstance(sampling, Mapping):
-            selection = sampling.get("selection")
-            if isinstance(selection, Mapping):
-                radius = selection.get("radius_used")
-                fallback = selection.get("initial_radius")
-                if radius is not None:
-                    return f"MAP-Elites radius {radius} (initial {fallback})"
-        return None
-
-    def _match_record_payload(self, payload: Any) -> Mapping[str, Any] | None:
-        if isinstance(payload, Mapping):
-            return dict(payload)
-        return None
-
-    def _map_inspiration_payloads(
-        self,
-        payload: Any,
-    ) -> dict[str, Mapping[str, Any]]:
-        mapping: dict[str, Mapping[str, Any]] = {}
-        if not payload:
-            return mapping
-        candidates: Sequence[Any]
-        if isinstance(payload, Mapping):
-            candidates = (payload,)
-        else:
-            try:
-                candidates = tuple(payload)
-            except TypeError:
-                return mapping
-        for item in candidates:
-            if not isinstance(item, Mapping):
-                continue
-            commit_hash = str(item.get("commit_hash") or "").strip()
-            if commit_hash:
-                mapping[commit_hash] = dict(item)
-        return mapping
-
-    def _extract_mapping(self, payload: Mapping[str, Any] | None, key: str) -> Mapping[str, Any] | None:
-        if not payload:
-            return None
-        candidate = payload.get(key)
-        if isinstance(candidate, Mapping):
-            return dict(candidate)
-        return None
-
-    def _extract_highlights(self, *sources: Any) -> tuple[str, ...]:
-        highlights: list[str] = []
-        for source in sources:
-            if not source:
-                continue
-            if isinstance(source, str):
-                candidate = source.strip()
-                if candidate:
-                    highlights.append(candidate)
-                continue
-            if isinstance(source, Mapping):
-                highlights.extend(
-                    self._extract_highlights(
-                        source.get("highlights"),
-                        source.get("snippets"),
-                        source.get("notes"),
-                        source.get("samples"),
-                    )
-                )
-                continue
-            if isinstance(source, Sequence) and not isinstance(source, (str, bytes)):
-                for item in source:
-                    highlights.extend(self._extract_highlights(item))
-        deduped: list[str] = []
-        seen: set[str] = set()
-        for entry in highlights:
-            if entry not in seen:
-                seen.add(entry)
-                deduped.append(entry)
-        return tuple(deduped)
-
-    def _first_non_empty(self, *values: Any) -> str | None:
-        for value in values:
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-        return None
-
-    def _coerce_str_sequence(self, value: Any) -> tuple[str, ...]:
-        if not value:
-            return tuple()
-        if isinstance(value, str):
-            text = value.strip()
-            return (text,) if text else tuple()
-        if isinstance(value, Mapping):
-            return tuple()
-        try:
-            items: list[str] = []
-            for item in value:
-                if item is None:
-                    continue
-                text = str(item).strip()
-                if text:
-                    items.append(text)
-            return tuple(items)
-        except TypeError:
-            text = str(value).strip()
-            return (text,) if text else tuple()
-
     def _coerce_uuid(self, value: str | UUID) -> UUID:
         if isinstance(value, UUID):
             return value

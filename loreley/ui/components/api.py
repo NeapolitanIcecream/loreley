@@ -40,3 +40,19 @@ def api_get_or_stop(base_url: str, path: str, *, params: dict[str, Any] | None =
         st.stop()
 
 
+def api_get_bytes_or_stop(
+    base_url: str,
+    path: str,
+    *,
+    params: dict[str, Any] | None = None,
+) -> tuple[bytes, str | None]:
+    """GET raw bytes, showing an error and stopping the page on failures."""
+
+    try:
+        client = LoreleyAPIClient(base_url)
+        return client.get_bytes(path, params=params)
+    except APIError as exc:
+        st.error(f"API error: {exc}")
+        st.stop()
+
+

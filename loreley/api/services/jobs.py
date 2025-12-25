@@ -2,36 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
 
 from loreley.db.base import session_scope
-from loreley.db.models import EvolutionJob, JobStatus
-
-
-def _payload_result_commit_hash(payload: Any) -> str | None:
-    if not isinstance(payload, dict):
-        return None
-    result = payload.get("result")
-    if not isinstance(result, dict):
-        return None
-    value = result.get("commit_hash")
-    return str(value).strip() if value else None
-
-
-def _payload_ingestion_status(payload: Any) -> str | None:
-    if not isinstance(payload, dict):
-        return None
-    ingestion = payload.get("ingestion")
-    if not isinstance(ingestion, dict):
-        return None
-    map_elites = ingestion.get("map_elites")
-    if not isinstance(map_elites, dict):
-        return None
-    value = map_elites.get("status")
-    return str(value).strip() if value else None
+from loreley.db.models import EvolutionJob, JobArtifacts, JobStatus
 
 
 def list_jobs(
@@ -64,10 +40,10 @@ def get_job(*, job_id: UUID) -> EvolutionJob | None:
         return session.get(EvolutionJob, job_id)
 
 
-def job_extracted_fields(job: EvolutionJob) -> tuple[str | None, str | None]:
-    """Extract (result_commit_hash, ingestion_status) from the job payload."""
+def get_job_artifacts(*, job_id: UUID) -> JobArtifacts | None:
+    """Return JobArtifacts row for a job."""
 
-    payload = getattr(job, "payload", None)
-    return _payload_result_commit_hash(payload), _payload_ingestion_status(payload)
+    with session_scope() as session:
+        return session.get(JobArtifacts, job_id)
 
 

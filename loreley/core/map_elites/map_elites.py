@@ -80,7 +80,6 @@ class MapElitesRecord:
     fitness: float
     measures: Vector
     solution: Vector
-    metadata: Mapping[str, Any]
     timestamp: float
 
     @property
@@ -160,7 +159,6 @@ class MapElitesManager:
         island_id: str | None = None,
         repo_root: Path | None = None,
         treeish: str | None = None,
-        metadata: Mapping[str, Any] | None = None,
         fitness_override: float | None = None,
     ) -> MapElitesInsertionResult:
         """Process a commit and attempt to insert it into the archive."""
@@ -265,19 +263,12 @@ class MapElitesManager:
                     message=message,
                 )
 
-            payload_metadata: dict[str, Any] = {"metrics": metrics_map}
-            if metadata:
-                payload_metadata.update(metadata)
-            if treeish:
-                payload_metadata.setdefault("treeish", treeish)
-
             status, delta, record = self._add_to_archive(
                 state=state,
                 island_id=effective_island,
                 commit_hash=commit_hash,
                 fitness=fitness,
                 measures=vector,
-                metadata=payload_metadata,
             )
 
             if update is not None and record is not None:
@@ -287,7 +278,6 @@ class MapElitesManager:
                     measures=tuple(float(v) for v in record.measures),
                     solution=tuple(float(v) for v in record.solution),
                     commit_hash=str(record.commit_hash),
-                    metadata=dict(record.metadata or {}),
                     timestamp=float(record.timestamp),
                 )
 
@@ -402,7 +392,6 @@ class MapElitesManager:
         commit_hash: str,
         fitness: float,
         measures: np.ndarray,
-        metadata: Mapping[str, Any],
     ) -> tuple[int, float, MapElitesRecord | None]:
         archive = state.archive
         measures_batch = measures.reshape(1, -1)
@@ -410,7 +399,6 @@ class MapElitesManager:
         objective = np.asarray([fitness], dtype=np.float64)
         timestamp = np.asarray([time.time()], dtype=np.float64)
         commit_field = np.asarray([commit_hash], dtype=object)
-        metadata_field = np.asarray([dict(metadata)], dtype=object)
 
         cell_index = int(np.asarray(archive.index_of(measures_batch)).item())
         previous_commit = state.index_to_commit.get(cell_index)
@@ -420,7 +408,6 @@ class MapElitesManager:
             objective,
             measures_batch,
             commit_hash=commit_field,
-            metadata=metadata_field,
             timestamp=timestamp,
         )
         status = int(add_info["status"][0])
@@ -465,17 +452,11 @@ class MapElitesManager:
         measures = to_list(data.get("measures"))
         solutions = to_list(data.get("solution"))
         commit_hashes = to_list(data.get("commit_hash"))
-        metadata_entries = to_list(data.get("metadata"))
         timestamps = to_list(data.get("timestamp"))
         records: list[MapElitesRecord] = []
         for idx, cell_index in enumerate(indices):
             commit_hash = str(commit_hashes[idx]) if idx < len(commit_hashes) else ""
             fitness = float(objectives[idx]) if idx < len(objectives) else 0.0
-            metadata = (
-                self._coerce_metadata(metadata_entries[idx])
-                if idx < len(metadata_entries)
-                else {}
-            )
             timestamp_value = (
                 float(timestamps[idx]) if idx < len(timestamps) else time.time()
             )
@@ -486,7 +467,6 @@ class MapElitesManager:
                 fitness=fitness,
                 measures=self._to_vector(measures[idx]) if idx < len(measures) else (),
                 solution=self._to_vector(solutions[idx]) if idx < len(solutions) else (),
-                metadata=metadata,
                 timestamp=timestamp_value,
             )
             records.append(record)
@@ -508,7 +488,6 @@ class MapElitesManager:
             fitness=float(data.get("objective", 0.0)),
             measures=MapElitesManager._to_vector(data.get("measures", ())),
             solution=MapElitesManager._to_vector(data.get("solution", ())),
-            metadata=MapElitesManager._coerce_metadata(data.get("metadata")),
             timestamp=float(data.get("timestamp", time.time())),
         )
 
@@ -548,7 +527,6 @@ class MapElitesManager:
         ranges = tuple(zip(self._lower_template.tolist(), self._upper_template.tolist()))
         extra_fields = {
             "commit_hash": ((), object),
-            "metadata": ((), object),
             "timestamp": ((), np.float64),
         }
         return GridArchive(
@@ -600,12 +578,6 @@ class MapElitesManager:
             return self.settings.mapelites_fitness_floor
         direction = 1.0 if self.settings.mapelites_fitness_higher_is_better else -1.0
         return float(value) * direction
-
-    @staticmethod
-    def _coerce_metadata(payload: Any) -> dict[str, Any]:
-        if isinstance(payload, Mapping):
-            return dict(payload)
-        return {}
 
     @staticmethod
     def _to_vector(values: Any) -> Vector:

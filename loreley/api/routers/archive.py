@@ -62,7 +62,6 @@ def get_records(
                 measures=[float(v) for v in getattr(r, "measures", ())],
                 solution=[float(v) for v in getattr(r, "solution", ())],
                 timestamp=float(getattr(r, "timestamp", 0.0)),
-                metadata=dict(getattr(r, "metadata", {}) or {}),
             )
         )
     return out
