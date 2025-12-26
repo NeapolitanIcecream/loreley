@@ -565,10 +565,6 @@ class Settings(BaseSettings):
         default=0,
         alias="MAPELITES_SAMPLER_DEFAULT_PRIORITY",
     )
-    mapelites_sampler_include_metadata: bool = Field(
-        default=True,
-        alias="MAPELITES_SAMPLER_INCLUDE_METADATA",
-    )
     mapelites_seed_population_size: int = Field(
         default=16,
         alias="MAPELITES_SEED_POPULATION_SIZE",

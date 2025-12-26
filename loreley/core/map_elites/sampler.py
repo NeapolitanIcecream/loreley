@@ -105,10 +105,7 @@ class MapElitesSampler:
             self.settings.mapelites_sampler_fallback_sample_size,
         )
         self._default_priority = self.settings.mapelites_sampler_default_priority
-        self._include_metadata = bool(self.settings.mapelites_sampler_include_metadata)
         self._default_island = self.settings.mapelites_default_island_id or "default"
-        self._lower_bounds = tuple(0.0 for _ in range(self._target_dims))
-        self._upper_bounds = tuple(1.0 for _ in range(self._target_dims))
 
     def schedule_job(
         self,
