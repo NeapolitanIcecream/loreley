@@ -147,7 +147,7 @@ def _import_backend_target(module_name: str, attr_path: str) -> Any:
     return target
 
 
-DEFAULT_CURSOR_MODEL = "gpt-5.1-codex-max-high"
+DEFAULT_CURSOR_MODEL = "gpt-5.2-xhigh"
 
 
 def load_agent_backend(ref: str, *, label: str) -> AgentBackend:

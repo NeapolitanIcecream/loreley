@@ -107,11 +107,11 @@ SCHEDULER_REPO_ROOT: Path | None = REPO_ROOT
 SCHEDULER_POLL_INTERVAL_SECONDS: float = 30.0
 
 # Maximum number of unfinished jobs (pending/queued/running) allowed at once.
-SCHEDULER_MAX_UNFINISHED_JOBS: int = 8
+SCHEDULER_MAX_UNFINISHED_JOBS: int = 1
 
 # Optional global limit on total jobs scheduled by this process.
 # Set to None for no global cap.
-SCHEDULER_MAX_TOTAL_JOBS: int | None = 100
+SCHEDULER_MAX_TOTAL_JOBS: int | None = 2
 
 # --- UI API / Streamlit UI configuration ------------------------------------
 
@@ -145,7 +145,7 @@ MAPELITES_EXPERIMENT_ROOT_COMMIT: str | None = "6dab191"
 # Size of the cold-start seed population created from the root commit. The
 # scheduler still respects SCHEDULER_MAX_UNFINISHED_JOBS and
 # SCHEDULER_MAX_TOTAL_JOBS when creating these jobs.
-MAPELITES_SEED_POPULATION_SIZE: int = 8
+MAPELITES_SEED_POPULATION_SIZE: int = 1
 
 # Behaviour space sized for <= ~200 total jobs.
 MAPELITES_DIMENSION_REDUCTION_TARGET_DIMS: int = 2
@@ -167,7 +167,7 @@ WORKER_CODING_BACKEND: str = "loreley.core.worker.agent_backend:CursorCliBackend
 # --- Model / LLM configuration (see loreley.config.Settings) ----------------
 
 # Evolution commit message model.
-WORKER_EVOLUTION_COMMIT_MODEL: str = "openai/gpt-5.1"
+WORKER_EVOLUTION_COMMIT_MODEL: str = "openai/gpt-5.2"
 WORKER_EVOLUTION_COMMIT_TEMPERATURE: float = 0.2
 WORKER_EVOLUTION_COMMIT_MAX_OUTPUT_TOKENS: int = 128
 WORKER_EVOLUTION_COMMIT_MAX_RETRIES: int = 3
@@ -190,7 +190,7 @@ MAPELITES_CODE_EMBEDDING_MAX_RETRIES: int = 3
 MAPELITES_CODE_EMBEDDING_RETRY_BACKOFF_SECONDS: float = 2.0
 
 # Natural-language summary model used for MAP-Elites.
-MAPELITES_SUMMARY_MODEL: str = "openai/gpt-5.1"
+MAPELITES_SUMMARY_MODEL: str = "openai/gpt-5.2"
 MAPELITES_SUMMARY_TEMPERATURE: float = 0.2
 MAPELITES_SUMMARY_MAX_OUTPUT_TOKENS: int = 512
 MAPELITES_SUMMARY_SOURCE_CHAR_LIMIT: int = 6000
