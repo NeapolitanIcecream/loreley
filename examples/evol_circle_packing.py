@@ -481,49 +481,36 @@ def _print_environment_summary() -> None:
 
 
 def _reset_database() -> None:
-    """Initialise the Loreley database by clearing all existing records.
+    """Initialise the Loreley database schema from the current ORM models.
 
-    This will TRUNCATE all ORM-managed tables on the configured ``DATABASE_URL``
-    while preserving the schema itself.
+    Loreley intentionally does not ship migrations. The most reliable way to
+    align the DB schema with the current code is to drop all ORM-managed tables
+    and recreate them. This helper also clears all Dramatiq queues in the
+    configured Redis namespace.
     """
 
     _apply_base_env()
     _ensure_repo_on_sys_path()
 
-    console.log("[bold yellow]Resetting Loreley database (TRUNCATE ALL TABLES)…[/]")
+    console.log("[bold yellow]Resetting Loreley database schema (DROP + CREATE)…[/]")
 
     try:
         # Import after environment is configured so that the engine is initialised
         # with the correct DATABASE_URL.
-        from sqlalchemy import text
-
-        from loreley.db.base import Base, engine, ensure_database_schema
+        from loreley.db.base import Base, reset_database_schema
         from loreley.tasks.broker import build_redis_broker
 
-        # Ensure schema exists so that all metadata tables are present.
-        ensure_database_schema()
-
-        # Collect all ORM table names and truncate them in one CASCADE statement.
-        table_names = [table.name for table in Base.metadata.sorted_tables]
-        if not table_names:
-            console.log(
-                "[bold yellow]No ORM tables found to truncate – schema appears empty.[/]",
-            )
-            return
-
-        truncate_sql = "TRUNCATE TABLE {} RESTART IDENTITY CASCADE;".format(
-            ", ".join(f'"{name}"' for name in table_names),
-        )
-
-        with engine.begin() as connection:
-            connection.execute(text(truncate_sql))
+        reset_database_schema(include_console_log=False)
 
         console.log(
-            "[bold green]Database reset complete[/] truncated_tables={}".format(
-                ", ".join(table_names),
+            "[bold green]Database schema reset complete[/] tables={}".format(
+                ", ".join(sorted(Base.metadata.tables.keys())),
             ),
         )
-        log.info("Database reset complete for tables: {}", ", ".join(table_names))
+        log.info(
+            "Database schema reset complete for tables: {}",
+            ", ".join(sorted(Base.metadata.tables.keys())),
+        )
 
         # Clear all Dramatiq message queues in the configured Redis namespace so
         # that no jobs from a previous run survive a fresh database initialisation.
@@ -670,8 +657,8 @@ def main(argv: list[str] | None = None) -> int:
     scheduler_parser.add_argument(
         "--init-db",
         action="store_true",
-        help="Initialise the DATABASE_URL by clearing all existing Loreley tables "
-        "and clearing all Dramatiq Redis task queues before running the scheduler.",
+        help="Initialise the DATABASE_URL by dropping and recreating all ORM-managed "
+        "tables and clearing all Dramatiq Redis task queues before running the scheduler.",
     )
 
     subparsers.add_parser(
@@ -740,4 +727,5 @@ if __name__ == "__main__":  # pragma: no cover
     except KeyboardInterrupt:
         console.log("[yellow]Keyboard interrupt received[/]; exiting...")
         raise SystemExit(130)
+
 

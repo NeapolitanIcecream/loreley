@@ -5,6 +5,7 @@ from typing import Iterator
 
 from loguru import logger
 from rich.console import Console
+from sqlalchemy import text
 from sqlalchemy import create_engine
 from sqlalchemy.engine import URL
 from sqlalchemy.engine.url import make_url
@@ -94,3 +95,36 @@ def ensure_database_schema() -> None:
         )
         log.exception("Failed to ensure database schema: {}", exc)
         raise
+
+
+def reset_database_schema(*, include_console_log: bool = True) -> None:
+    """Drop and recreate all Loreley ORM tables.
+
+    Loreley intentionally does not ship migrations. For development workflows,
+    the safest way to align the DB schema with the current ORM models is to
+    drop all ORM-managed tables and recreate them.
+
+    Notes:
+    - Uses `DROP TABLE ... CASCADE` to handle circular foreign key references.
+    - This is destructive and should only be used for local/dev databases.
+    """
+
+    # Import models so that all ORM tables are registered on ``Base.metadata``.
+    import loreley.db.models  # noqa: F401  # pylint: disable=unused-import
+
+    safe_dsn = _sanitize_dsn(settings.database_dsn)
+    if include_console_log:
+        console.log(f"[bold yellow]Resetting database schema[/] url={safe_dsn}")
+    log.warning("Resetting database schema (drop + create) url={}", safe_dsn)
+
+    tables = list(Base.metadata.tables.values())
+    with engine.begin() as conn:
+        # Drop in reverse definition order; CASCADE makes the order resilient.
+        for table in reversed(tables):
+            name = table.name.replace('"', '""')
+            conn.execute(text(f'DROP TABLE IF EXISTS "{name}" CASCADE'))
+
+    Base.metadata.create_all(bind=engine)
+    if include_console_log:
+        console.log("[bold green]Database schema reset complete[/]")
+    log.info("Database schema reset complete")

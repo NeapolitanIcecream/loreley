@@ -343,10 +343,39 @@ class MapElitesIngestion:
         metrics_payload = [metric.as_dict() for metric in result.metrics]
 
         with session_scope() as session:
-            commit_row = session.execute(
-                select(CommitCard).where(CommitCard.commit_hash == commit_hash)
-            ).scalar_one_or_none()
-            if commit_row is not None:
+            commit_row = session.get(CommitCard, commit_hash)
+            if commit_row is None:
+                # Ensure the commit record exists before writing metrics so that
+                # FK constraints are satisfied even if metadata initialisation
+                # was skipped or the DB was manually reset.
+                git_commit = self.repo.commit(commit_hash)
+                parent_hash = git_commit.parents[0].hexsha if git_commit.parents else None
+                author = getattr(getattr(git_commit, "author", None), "name", None)
+                message = getattr(git_commit, "message", None)
+                subject = (
+                    str(message or "").splitlines()[0].strip()
+                    if message
+                    else f"Commit {commit_hash}"
+                )
+                subject = subject[:72].strip() or f"Commit {commit_hash}"
+                default_island = self.settings.mapelites_default_island_id or "main"
+
+                commit_row = CommitCard(
+                    commit_hash=commit_hash,
+                    parent_commit_hash=parent_hash,
+                    island_id=default_island,
+                    experiment_id=getattr(self.experiment, "id", None),
+                    author=author,
+                    subject=subject,
+                    change_summary="Root baseline commit.",
+                    evaluation_summary=result.summary,
+                    tags=[],
+                    key_files=[],
+                    highlights=["Root baseline commit."],
+                    job_id=None,
+                )
+                session.add(commit_row)
+            else:
                 commit_row.evaluation_summary = result.summary
 
             for metric in result.metrics:

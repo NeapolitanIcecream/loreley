@@ -15,7 +15,7 @@ import sys
 from loguru import logger
 from rich.console import Console
 
-from loreley.db.base import Base, engine
+from loreley.db.base import reset_database_schema
 
 console = Console()
 log = logger.bind(module="script.reset_db")
@@ -35,18 +35,7 @@ def main(argv: list[str] | None = None) -> int:
         console.print("This will drop ALL tables and recreate them from ORM models.")
         return 2
 
-    # Import models so all tables are registered on Base.metadata.
-    import loreley.db.models  # noqa: F401  # pylint: disable=unused-import
-
-    dsn = getattr(engine, "url", None)
-    console.print(f"[yellow]Resetting database schema[/] url={dsn}")
-    log.warning("Resetting database schema (drop_all + create_all) url={}", dsn)
-
-    Base.metadata.drop_all(bind=engine)
-    Base.metadata.create_all(bind=engine)
-
-    console.print("[bold green]Database schema reset complete[/]")
-    log.info("Database schema reset complete")
+    reset_database_schema(include_console_log=True)
     return 0
 
 
