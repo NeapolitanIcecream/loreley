@@ -80,6 +80,50 @@ def test_coerce_plan_from_invocation_strict_parses_structured_output(settings: S
     assert plan.fallback_plan == "fallback"
 
 
+def test_coerce_plan_from_invocation_strict_strips_markdown_fences(settings: Settings) -> None:
+    settings.worker_planning_validation_mode = "strict"
+    agent = PlanningAgent(settings=settings, backend=_DummyBackend())
+    request = _make_request("Improve docs")
+    payload = {
+        "plan_summary": "summary",
+        "rationale": "because",
+        "focus_metrics": ["metric"],
+        "guardrails": ["guard"],
+        "risks": ["risk"],
+        "validation": ["run tests"],
+        "steps": [
+            {
+                "id": "s1",
+                "title": "T1",
+                "intent": "Do work",
+                "actions": ["a1"],
+                "files": ["f1"],
+                "validation": ["v1"],
+                "dependencies": ["dep"],
+                "risks": ["r1"],
+                "references": ["ref"],
+            }
+        ],
+        "handoff_notes": ["note"],
+        "fallback_plan": "fallback",
+    }
+    fenced = f"```json\n{json.dumps(payload)}\n```"
+    invocation = AgentInvocation(
+        command=("echo",),
+        stdout=fenced,
+        stderr="",
+        duration_seconds=1.0,
+    )
+
+    plan = agent._coerce_plan_from_invocation(  # type: ignore[attr-defined]
+        request=request,
+        invocation=invocation,
+    )
+
+    assert isinstance(plan, PlanningPlan)
+    assert plan.summary == "summary"
+
+
 def test_coerce_plan_from_invocation_lenient_falls_back_to_freeform(settings: Settings) -> None:
     settings.worker_planning_validation_mode = "lenient"
     agent = PlanningAgent(settings=settings, backend=_DummyBackend())

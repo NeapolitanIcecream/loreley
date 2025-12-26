@@ -21,6 +21,7 @@ from loreley.core.worker.agent_backend import (
     load_agent_backend,
     resolve_schema_mode,
 )
+from loreley.core.worker.output_sanitizer import sanitize_json_payload
 
 console = Console()
 log = logger.bind(module="worker.planning")
@@ -421,7 +422,9 @@ class PlanningAgent:
                     f"{schema_json}\n"
                 )
             json_requirement_line = (
-                "- Respond ONLY with a single JSON object that matches the expected schema."
+                "- Respond ONLY with a single JSON object that matches the expected schema. "
+                "Do NOT wrap the JSON in markdown code fences (no ``` or ```json) and do NOT "
+                "include any other text before/after the JSON."
             )
         elif self.validation_mode == "lenient":
             # In lenient mode, JSON is a best-effort contract rather than a hard requirement.
@@ -436,8 +439,8 @@ class PlanningAgent:
                     f"{schema_json}\n"
                 )
             json_requirement_line = (
-                "- Prefer returning a single JSON object that roughly follows the schema, "
-                "but free-form text is also acceptable."
+                "- Prefer returning a single JSON object that roughly follows the schema "
+                "(without markdown code fences such as ```json). Free-form text is also acceptable."
             )
         else:
             # In 'none' validation mode there is no expectation about JSON structure.
@@ -584,7 +587,8 @@ Deliverable requirements:
 
     def _parse_plan(self, payload: str) -> _PlanModel:
         """Validate JSON output from the planning backend against the schema."""
-        return _PlanModel.model_validate_json(payload)
+        cleaned = sanitize_json_payload(payload)
+        return _PlanModel.model_validate_json(cleaned)
 
     def _to_domain(self, plan_model: _PlanModel) -> PlanningPlan:
         steps = tuple(

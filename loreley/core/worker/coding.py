@@ -26,6 +26,7 @@ from loreley.core.worker.agent_backend import (
     resolve_schema_mode,
 )
 from loreley.core.worker.planning import PlanStep, PlanningPlan
+from loreley.core.worker.output_sanitizer import sanitize_json_payload
 
 console = Console()
 log = logger.bind(module="worker.coding")
@@ -346,7 +347,8 @@ class CodingAgent:
             json_requirements_block = (
                 "- summarise your work using the provided JSON schema\n"
                 "- respond ONLY with a single JSON object following that schema; "
-                "no prose outside JSON"
+                "no prose outside JSON\n"
+                "- do NOT wrap the JSON in markdown code fences (no ``` or ```json)"
             )
         elif self.validation_mode == "lenient":
             # In lenient mode, JSON is a best-effort contract rather than a hard requirement.
@@ -361,7 +363,8 @@ class CodingAgent:
                     f"{schema_json}\n"
                 )
             json_requirements_block = (
-                "- prefer summarising your work using the JSON schema below when convenient\n"
+                "- prefer summarising your work using the JSON schema below when convenient "
+                "(without markdown code fences such as ```json)\n"
                 "- it is acceptable to return free-form text if a structured JSON "
                 "object is difficult to produce"
             )
@@ -489,7 +492,8 @@ When you finish applying the plan:
         )
 
     def _parse_output(self, payload: str) -> _CodingOutputModel:
-        return _CodingOutputModel.model_validate_json(payload)
+        cleaned = sanitize_json_payload(payload)
+        return _CodingOutputModel.model_validate_json(cleaned)
 
     def _log_invalid_output(
         self,

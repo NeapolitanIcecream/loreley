@@ -103,6 +103,43 @@ def test_coding_agent_implements_plan_with_strict_validation(tmp_path: Path, set
     assert backend.calls
 
 
+def test_coding_agent_strict_strips_markdown_fences(tmp_path: Path, settings: Settings, monkeypatch) -> None:
+    settings.worker_coding_validation_mode = "strict"
+
+    payload = {
+        "implementation_summary": "done",
+        "commit_message": "message",
+        "step_results": [
+            {
+                "step_id": "s1",
+                "status": StepExecutionStatus.COMPLETED.value,
+                "summary": "ok",
+                "files": ["file.py"],
+                "commands": ["cmd"],
+            }
+        ],
+        "tests_executed": ["pytest"],
+        "tests_recommended": ["tox"],
+        "follow_up_items": ["docs"],
+        "notes": ["note"],
+    }
+
+    fenced = f"```json\n{json.dumps(payload)}\n```"
+    backend = _DummyBackend(fenced)
+    agent = CodingAgent(settings=settings, backend=backend)
+
+    states = iter([("clean",), ("dirty",)])
+    monkeypatch.setattr(agent, "_snapshot_worktree_state", lambda _w: next(states, ("dirty",)))
+    monkeypatch.setattr(agent, "_dump_debug_artifact", lambda **kwargs: None)
+
+    request = CodingAgentRequest(goal="goal", plan=_make_plan(), base_commit="abc123")
+    response = agent.implement(request, working_dir=tmp_path)
+
+    assert response.execution.implementation_summary == "done"
+    assert response.execution.commit_message == "message"
+    assert response.execution.step_results[0].status is StepExecutionStatus.COMPLETED
+
+
 def test_coding_agent_lenient_falls_back_to_freeform_output(tmp_path: Path, settings: Settings, monkeypatch) -> None:
     settings.worker_coding_validation_mode = "lenient"
 
