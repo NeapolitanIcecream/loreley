@@ -79,9 +79,7 @@ class CommitCard(BaseModel):
 
     subject: SubjectText
     change_summary: ChangeSummaryText
-    key_files: Annotated[list[FilePathText], Field(default_factory=list, max_length=20)] = Field(
-        default_factory=list,
-    )
+    key_files: list[FilePathText] = Field(default_factory=list, max_length=20)
     highlights: Annotated[list[HighlightText], Field(min_length=1, max_length=8)]
     evaluation_summary: EvaluationSummaryText | None = None
 
@@ -119,23 +117,24 @@ class EvolutionJobSpec(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     goal: Annotated[str, Field(min_length=1, max_length=512)]
-    constraints: Annotated[list[Annotated[str, Field(min_length=1, max_length=200)]], Field(default_factory=list, max_length=20)] = Field(
+    constraints: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(
         default_factory=list,
+        max_length=20,
     )
-    acceptance_criteria: Annotated[
-        list[Annotated[str, Field(min_length=1, max_length=200)]],
-        Field(default_factory=list, max_length=20),
-    ] = Field(default_factory=list)
-    notes: Annotated[list[Annotated[str, Field(min_length=1, max_length=200)]], Field(default_factory=list, max_length=20)] = Field(
+    acceptance_criteria: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(
         default_factory=list,
+        max_length=20,
     )
-    tags: Annotated[list[ShortTagText], Field(default_factory=list, max_length=20)] = Field(
+    notes: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(
         default_factory=list,
+        max_length=20,
     )
+    tags: list[ShortTagText] = Field(default_factory=list, max_length=20)
 
     base_commit_hash: Annotated[str, Field(min_length=1, max_length=64)]
-    inspiration_commit_hashes: Annotated[list[Annotated[str, Field(min_length=1, max_length=64)]], Field(default_factory=list, max_length=10)] = Field(
+    inspiration_commit_hashes: list[Annotated[str, Field(min_length=1, max_length=64)]] = Field(
         default_factory=list,
+        max_length=10,
     )
 
     sampling_strategy: Annotated[str | None, Field(max_length=64)] = None
