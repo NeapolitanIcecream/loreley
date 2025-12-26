@@ -1,4 +1,4 @@
-# loreley.core.map-elites.map-elites
+# loreley.core.map_elites.map_elites
 
 High-level manager that runs the MAP-Elites pipeline on git commits and maintains per-island archives backed by the database.
 

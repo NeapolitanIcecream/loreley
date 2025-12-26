@@ -1,4 +1,4 @@
-# loreley.core.map-elites.preprocess
+# loreley.core.map_elites.preprocess
 
 Preprocessing utilities for turning raw repository code files into cleaned code snippets suitable for embedding and feature extraction.
 

@@ -50,6 +50,8 @@ FastAPI also exposes OpenAPI docs by default:
 - `GET /experiments/{experiment_id}`
 - `GET /jobs`
 - `GET /jobs/{job_id}`
+- `GET /jobs/{job_id}/artifacts`
+- `GET /jobs/{job_id}/artifacts/{artifact_key}`
 - `GET /commits`
 - `GET /commits/{commit_hash}`
 - `GET /archive/islands`
@@ -63,4 +65,8 @@ FastAPI also exposes OpenAPI docs by default:
 
 - **Authentication**: there is no authentication layer. Deploy behind your internal network controls if exposing remotely.
 - **Read-only contract**: treat this API as an observability surface, not a control plane.
+- **Job artifacts**: large, audit/debug oriented payloads (planning/coding prompts, raw outputs, evaluation logs) are stored on disk and referenced via `JobArtifacts`. The API exposes:
+  - `GET /jobs/{job_id}/artifacts` as an index of available URLs
+  - `GET /jobs/{job_id}/artifacts/{artifact_key}` for direct downloads
+  Supported keys: `planning_prompt`, `planning_raw_output`, `planning_plan_json`, `coding_prompt`, `coding_raw_output`, `coding_execution_json`, `evaluation_json`, `evaluation_logs`.
 

@@ -203,6 +203,8 @@ Use this index as a quick map of the rest of the documentation:
   - [ORM models](loreley/db/models.md)
 - **Experiments**
   - [Repository & experiment helpers](loreley/core/experiments.md)
+- **Core contracts**
+  - [Hot-path contracts](loreley/core/contracts.md)
 - **MAP-Elites core**
   - [Overview & archive](loreley/core/map-elites/map-elites.md)
   - [Preprocessing](loreley/core/map-elites/preprocess.md)
@@ -217,7 +219,9 @@ Use this index as a quick map of the rest of the documentation:
   - [Coding agent](loreley/core/worker/coding.md)
   - [Evaluator](loreley/core/worker/evaluator.md)
   - [Evolution loop](loreley/core/worker/evolution.md)
+  - [Commit cards](loreley/core/worker/commit_card.md)
   - [Commit summaries](loreley/core/worker/commit_summary.md)
+  - [Artifacts](loreley/core/worker/artifacts.md)
   - [Job store](loreley/core/worker/job_store.md)
   - [Worker repository](loreley/core/worker/repository.md)
 - **Scheduler & tasks**
@@ -230,6 +234,9 @@ Use this index as a quick map of the rest of the documentation:
 - **Operational scripts**
   - [Run scheduler script](script/run_scheduler.md)
   - [Run worker script](script/run_worker.md)
+  - [Run UI API script](script/run_api.md)
+  - [Run UI script](script/run_ui.md)
+  - [Reset database schema](script/reset_db.md)
 
 ---
 

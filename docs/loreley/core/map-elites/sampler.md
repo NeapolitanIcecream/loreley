@@ -1,4 +1,4 @@
-# loreley.core.map-elites.sampler
+# loreley.core.map_elites.sampler
 
 Sampler that turns MAP-Elites archive records into concrete `EvolutionJob` rows for further evolution.
 

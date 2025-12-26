@@ -17,8 +17,8 @@ Central orchestration loop that keeps the Loreley evolution pipeline moving by c
   - marks rows as `QUEUED` and sends them to the `run_evolution_job` actor in priority order.
 - **MAP-Elites maintenance**: ingestion of succeeded jobs is handled by `loreley.scheduler.ingestion.MapElitesIngestion`, which:
   - scans for `SUCCEEDED` jobs that have not yet been fully ingested,
-  - reads `result_commit_hash`, fetches the corresponding git commit, and computes per-file change counts,
-  - calls `MapElitesManager.ingest(...)` with metrics (loaded from the `metrics` table), and
+  - reads `result_commit_hash` and ensures the corresponding git commit is available locally (fetching from remotes when needed),
+  - loads metrics from the `metrics` table and calls `MapElitesManager.ingest(...)`, and
   - writes ingestion status back onto the job row (attempts, delta, placement/cell index, and any error messages).
 
 ## Configuration
@@ -43,7 +43,7 @@ uv run python -m loreley.scheduler.main --once # single tick (cron / smoke tests
 For details about the dedicated CLI wrapper script (including logging setup and
 recommended usage), see `docs/script/run_scheduler.md`.
 
-Running the module imports `loreley.tasks.workers`, so the Dramatiq broker is configured before the first dispatch. Rich console output summarises each tick, while Loguru records detailed diagnostics for ingestion, scheduling, and dispatching via the dedicated `job_scheduler` and `ingestion` helper classes. This makes the scheduler easy to supervise either interactively or under a process manager. 
+Running the module imports `loreley.tasks.workers`, so the Dramatiq broker is configured before the first dispatch. Rich console output summarises each tick, while Loguru records detailed diagnostics for ingestion, scheduling, and dispatching via the dedicated `job_scheduler` and `ingestion` helper classes. This makes the scheduler easy to supervise either interactively or under a process manager.
 
 For more detailed information about these helper modules, see:
 

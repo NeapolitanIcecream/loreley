@@ -9,6 +9,7 @@ nav:
   - Loreley:
       - Configuration: loreley/config.md
       - Experiments: loreley/core/experiments.md
+      - Core contracts: loreley/core/contracts.md
       - Scheduler:
           - Overview: loreley/scheduler/main.md
           - Job scheduling: loreley/scheduler/job_scheduler.md
@@ -33,7 +34,9 @@ nav:
           - Coding: loreley/core/worker/coding.md
           - Evaluation: loreley/core/worker/evaluator.md
           - Evolution loop: loreley/core/worker/evolution.md
+          - Commit cards: loreley/core/worker/commit_card.md
           - Commit summaries: loreley/core/worker/commit_summary.md
+          - Artifacts: loreley/core/worker/artifacts.md
           - Job store: loreley/core/worker/job_store.md
       - Tasks:
           - Broker: loreley/tasks/broker.md
@@ -45,6 +48,7 @@ nav:
       - Running the worker: script/run_worker.md
       - Running the UI API: script/run_api.md
       - Running the UI: script/run_ui.md
+      - Resetting the database: script/reset_db.md
 
 markdown_extensions:
   - admonition

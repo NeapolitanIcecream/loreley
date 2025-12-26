@@ -1,4 +1,4 @@
-# loreley.core.map-elites.summarization_embedding
+# loreley.core.map_elites.summarization_embedding
 
 Optional summary-level embedding utilities that turn preprocessed code into structured natural-language summaries and a commit-level embedding vector. In repo-state mode (`MAPELITES_EMBEDDING_MODE=repo_state`), MAP-Elites uses code-only repo-state embeddings and does not currently include these summary vectors.
 

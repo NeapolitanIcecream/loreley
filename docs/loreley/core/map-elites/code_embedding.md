@@ -1,4 +1,4 @@
-# loreley.core.map-elites.code_embedding
+# loreley.core.map_elites.code_embedding
 
 Commit-level code embedding utilities that consume chunked code artifacts and talk to the OpenAI embeddings API as part of the Map-Elites pipeline.
 

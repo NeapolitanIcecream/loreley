@@ -1,4 +1,4 @@
-# loreley.core.map-elites.dimension_reduction
+# loreley.core.map_elites.dimension_reduction
 
 PCA-based dimensionality reduction of commit embeddings before they are fed into the MAP-Elites archive. In repo-state mode, the commit embedding is the repo-state code vector.
 

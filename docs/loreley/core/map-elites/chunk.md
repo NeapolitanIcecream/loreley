@@ -1,4 +1,4 @@
-# loreley.core.map-elites.chunk
+# loreley.core.map_elites.chunk
 
 Chunking utilities for turning preprocessed code into semantically meaningful segments that can be embedded and explored by map-elites.
 

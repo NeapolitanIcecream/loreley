@@ -1,4 +1,4 @@
-# loreley.core.map-elites.snapshot
+# loreley.core.map_elites.snapshot
 
 Helpers and backends for serialising and persisting MAP-Elites archive snapshots.
 

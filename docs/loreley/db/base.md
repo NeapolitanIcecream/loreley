@@ -12,3 +12,7 @@ Database engine and session management for Loreley.
 
 - **`Base`**: shared declarative base class used by all ORM models in `loreley.db.models`.
 - **`session_scope()`**: context manager that yields a `Session`, commits on success, rolls back on exception, logs failures with `loguru`, and always disposes of the session via `SessionLocal.remove()`.
+
+## Schema helpers
+
+- **`ensure_database_schema()`**: imports `loreley.db.models` and calls `Base.metadata.create_all(bind=engine)` to create any missing tables. This is safe to call multiple times and is used by the UI API at startup.
