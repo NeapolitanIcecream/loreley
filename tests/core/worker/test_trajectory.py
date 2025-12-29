@@ -94,10 +94,10 @@ def test_get_full_chunk_pairs_from_tip_produces_root_aligned_pairs() -> None:
 
 
 def test_build_rollup_renders_bounded_raw_sections_and_omission_count(settings: Settings) -> None:
-    # r -> c1 -> ... -> c20 with base=c3 (unique path length 17: c4..c20)
+    # r -> c1 -> ... -> c40 with base=c3 (unique path length 37: c4..c40)
     cards: dict[str, Any] = {"r": _card("r", None, "root")}
     parent = "r"
-    for i in range(1, 21):
+    for i in range(1, 41):
         commit = f"c{i}"
         cards[commit] = _card(commit, parent, f"step {i}")
         parent = commit
@@ -109,20 +109,20 @@ def test_build_rollup_renders_bounded_raw_sections_and_omission_count(settings: 
 
     rollup = build_inspiration_trajectory_rollup(
         base_commit_hash="c3",
-        inspiration_commit_hash="c20",
+        inspiration_commit_hash="c40",
         session=session,
         settings=settings,
     )
 
-    assert rollup.meta["unique_steps_count"] == 17
-    assert rollup.meta["omitted_steps"] == 6
+    assert rollup.meta["unique_steps_count"] == 37
+    assert rollup.meta["omitted_steps"] == 24
     text = "\n".join(rollup.lines)
-    assert "unique_steps_count: 17" in text
+    assert "unique_steps_count: 37" in text
     assert "Earliest unique steps" in text
     assert "Recent unique steps" in text
     assert "c4:" in text
-    assert "c15:" in text
-    assert "Omitted 6 older unique step" in text
+    assert "c33:" in text
+    assert "Omitted 24 older unique step" in text
 
 
 def test_build_rollup_does_not_duplicate_when_path_is_short(settings: Settings) -> None:
@@ -148,6 +148,33 @@ def test_build_rollup_does_not_duplicate_when_path_is_short(settings: Settings) 
     assert "Recent unique steps" in text
     assert "Earliest unique steps" not in text
     assert rollup.meta["omitted_steps"] == 0
+
+
+def test_build_rollup_forces_earliest_steps_when_no_partial_block(settings: Settings) -> None:
+    # r -> c1 -> ... -> c40 with base=r (unique path starts on a chunk boundary)
+    cards: dict[str, Any] = {"r": _card("r", None, "root")}
+    parent = "r"
+    for i in range(1, 41):
+        commit = f"c{i}"
+        cards[commit] = _card(commit, parent, f"step {i}")
+        parent = commit
+
+    session = cast(Session, _FakeSession(cards))
+    settings.worker_planning_trajectory_block_size = 8
+    settings.worker_planning_trajectory_max_raw_steps = 6
+    settings.worker_planning_trajectory_max_chunks = 0
+
+    rollup = build_inspiration_trajectory_rollup(
+        base_commit_hash="r",
+        inspiration_commit_hash="c40",
+        session=session,
+        settings=settings,
+    )
+
+    text = "\n".join(rollup.lines)
+    assert "Earliest unique steps" in text
+    assert "c1:" in text
+    assert "c2:" in text
 
 
 def test_build_rollup_marks_zero_unique_steps_for_ancestor_inspiration(settings: Settings) -> None:

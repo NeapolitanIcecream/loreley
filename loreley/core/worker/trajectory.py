@@ -420,18 +420,17 @@ def build_inspiration_trajectory_rollup(
         else "chain_root"
     )
 
-    # Always include the freshest raw steps; reuse max_raw_steps knob as K (bounded).
-    # (This keeps the prompt size predictable without adding another knob.)
-    recent_raw_count = min(max_raw_steps, unique_steps_count) if max_raw_steps > 0 else 0
-    recent_start_index = unique_steps_count - recent_raw_count
-    recent_raw = list(steps[recent_start_index:]) if recent_raw_count else []
-    included_indices: set[int] = set(range(recent_start_index, unique_steps_count))
-
     depths_raw = [
         anchor_index.depth_by_hash.get((getattr(card, "commit_hash", None) or "").strip())
         for card in steps
     ]
     if not depths_raw or any(depth is None for depth in depths_raw):
+        # Always include the freshest raw steps; reuse max_raw_steps knob as K (bounded).
+        recent_raw_count = min(max_raw_steps, unique_steps_count) if max_raw_steps > 0 else 0
+        recent_start_index = unique_steps_count - recent_raw_count
+        recent_raw = list(steps[recent_start_index:]) if recent_raw_count else []
+        included_indices: set[int] = set(range(recent_start_index, unique_steps_count))
+
         # If the depth index is incomplete, fall back to a pure raw-tail rendering.
         omitted = max(0, unique_steps_count - len(included_indices))
         meta["omitted_steps"] = omitted
@@ -446,6 +445,11 @@ def build_inspiration_trajectory_rollup(
 
     depths: list[int] = [depth for depth in depths_raw if depth is not None]
     if len(depths) != unique_steps_count:
+        recent_raw_count = min(max_raw_steps, unique_steps_count) if max_raw_steps > 0 else 0
+        recent_start_index = unique_steps_count - recent_raw_count
+        recent_raw = list(steps[recent_start_index:]) if recent_raw_count else []
+        included_indices = set(range(recent_start_index, unique_steps_count))
+
         omitted = max(0, unique_steps_count - len(included_indices))
         meta["omitted_steps"] = omitted
         lines = [f"  - unique_steps_count: {unique_steps_count} (lca={lca[:12]})"]
@@ -457,6 +461,17 @@ def build_inspiration_trajectory_rollup(
             lines.append(f"  - Omitted {omitted} older unique step(s).")
         return TrajectoryRollup(lines=tuple(lines), meta=meta)
 
+    # Recent raw steps: align the start to the nearest root-aligned chunk boundary
+    # so we do not create a "gap" when MAX_RAW_STEPS < block_size.
+    base_recent_raw_count = min(max_raw_steps, unique_steps_count) if max_raw_steps > 0 else 0
+    recent_start_index = unique_steps_count - base_recent_raw_count
+    if base_recent_raw_count > 0:
+        depth_at_recent_start = depths[recent_start_index]
+        offset_within_chunk = (depth_at_recent_start - 1) % block_size
+        recent_start_index = max(0, recent_start_index - offset_within_chunk)
+    recent_raw = list(steps[recent_start_index:]) if base_recent_raw_count > 0 else []
+    included_indices = set(range(recent_start_index, unique_steps_count))
+
     first_depth = depths[0]
     partial_len = 0
     if first_depth % block_size != 1:
@@ -465,6 +480,10 @@ def build_inspiration_trajectory_rollup(
             unique_steps_count,
         )
     earliest_raw_end = min(partial_len, max_raw_steps, recent_start_index) if max_raw_steps > 0 else 0
+    if earliest_raw_end == 0 and max_raw_steps > 0 and recent_start_index > 0:
+        # Even when the unique path starts on a chunk boundary, show 1-2 earliest
+        # raw steps to make the divergence from the base more legible.
+        earliest_raw_end = min(2, max_raw_steps, recent_start_index)
     earliest_raw = list(steps[:earliest_raw_end]) if earliest_raw_end else []
 
     # Identify root-aligned full chunks within the unique path.
