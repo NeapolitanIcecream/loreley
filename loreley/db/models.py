@@ -214,7 +214,7 @@ class CommitChunkSummary(TimestampMixin, Base):
         Index("ix_commit_chunk_summaries_end_hash", "end_commit_hash"),
     )
 
-    # Cache key is stable for tip-aligned full chunks.
+    # Cache key is stable for root-aligned full chunks on the CommitCard parent chain.
     start_commit_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
     end_commit_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
     block_size: Mapped[int] = mapped_column(Integer, primary_key=True)

@@ -21,8 +21,10 @@ unique path `LCA(base,inspiration) -> inspiration` and rendering a bounded summa
 - Always includes `unique_steps_count` and the `lca` short hash.
 - Includes a bounded number of raw step summaries near the LCA ("Earliest unique steps")
   and near the inspiration tip ("Recent unique steps").
-- Optionally includes cached LLM summaries for older full chunks (tip-aligned fixed-size
-  blocks) to keep prompts short while preserving long-horizon context.
+- Optionally includes cached LLM summaries for older full chunks (root-aligned fixed-size
+  blocks anchored at the experiment root commit, falling back to the earliest known
+  CommitCard ancestor when the configured root is not reachable) to keep prompts short
+  while preserving long-horizon context.
 - Reports a single "Omitted N older unique step(s)" line when the unique path is longer
   than the configured budgets.
 
