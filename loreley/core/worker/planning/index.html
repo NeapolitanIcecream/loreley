@@ -1063,6 +1063,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#inspiration-trajectory-rollups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inspiration trajectory rollups
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#json-schema-and-validation" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1742,6 +1753,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#inspiration-trajectory-rollups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inspiration trajectory rollups
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#json-schema-and-validation" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1796,11 +1818,29 @@
 <h2 id="domain-types">Domain types<a class="headerlink" href="#domain-types" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong><code>CommitMetric</code></strong>: lightweight value object describing a single evaluation metric (<code>name</code>, numeric <code>value</code>, optional <code>unit</code>, <code>higher_is_better</code> flag, and human-readable <code>summary</code>).</li>
-<li><strong><code>CommitPlanningContext</code></strong>: shared context for one commit, including the <code>commit_hash</code>, bounded <code>subject</code> and <code>change_summary</code>, optional <code>key_files</code>, bounded <code>highlights</code>, an optional <code>evaluation_summary</code>, a sequence of <code>CommitMetric</code> instances, and optional MAP-Elites context (<code>cell_index</code>, <code>objective</code>, <code>measures</code>); normalises all collections to tuples on initialisation.</li>
+<li><strong><code>CommitPlanningContext</code></strong>: shared context for one commit, including the <code>commit_hash</code>, bounded <code>subject</code> and <code>change_summary</code>, optional <code>trajectory</code> rollup lines (baseline-aligned unique-path summary), optional <code>trajectory_meta</code> counters, optional <code>key_files</code>, bounded <code>highlights</code>, an optional <code>evaluation_summary</code>, a sequence of <code>CommitMetric</code> instances, and optional MAP-Elites context (<code>cell_index</code>, <code>objective</code>, <code>measures</code>); normalises all collections to tuples on initialisation.</li>
 <li><strong><code>PlanningAgentRequest</code></strong>: input payload for the planning agent containing the <code>base</code> commit context, a sequence of <code>inspirations</code>, the plain-language global evolution <code>goal</code>, optional <code>constraints</code> and <code>acceptance_criteria</code> bullet lists, an optional <code>iteration_hint</code>, and a boolean <code>cold_start</code> flag; when <code>cold_start=True</code>, the planning agent treats the request as a cold-start seed population design run and adjusts the prompt accordingly. All list-like fields are normalised to tuples.</li>
 <li><strong><code>PlanStep</code></strong>: single actionable step in the generated plan (<code>step_id</code>, <code>title</code>, <code>intent</code>, <code>actions</code>, <code>files</code>, <code>dependencies</code>, <code>validation</code>, <code>risks</code>, <code>references</code>) with an <code>as_dict()</code> helper that converts all tuples back to plain lists for serialisation.</li>
 <li><strong><code>PlanningPlan</code></strong>: structured planning output that aggregates the global <code>summary</code>, <code>rationale</code>, <code>focus_metrics</code>, <code>guardrails</code>, <code>risks</code>, overall <code>validation</code> bullets, the ordered <code>steps</code>, optional <code>handoff_notes</code>, and an optional free-form <code>fallback_plan</code>, again with <code>as_dict()</code> for JSON-friendly output.</li>
 <li><strong><code>PlanningAgentResponse</code></strong>: envelope returned from the planner containing the domain <code>plan</code>, raw backend JSON <code>raw_output</code>, the rendered <code>prompt</code>, executed backend <code>command</code>, captured <code>stderr</code>, number of <code>attempts</code>, and total <code>duration_seconds</code>.</li>
+</ul>
+<h2 id="inspiration-trajectory-rollups">Inspiration trajectory rollups<a class="headerlink" href="#inspiration-trajectory-rollups" title="Permanent link">&para;</a></h2>
+<p>When building the planning prompt, inspirations are enriched with a baseline-aligned
+trajectory section labelled <strong>"Trajectory (unique vs base)"</strong>. This section is derived
+from the CommitCard evolution chain (<code>CommitCard.parent_commit_hash</code>) by extracting the
+unique path <code>LCA(base,inspiration) -&gt; inspiration</code> and rendering a bounded summary:</p>
+<ul>
+<li>Always includes <code>unique_steps_count</code> and the <code>lca</code> short hash.</li>
+<li>Includes a bounded number of raw step summaries near the LCA ("Earliest unique steps")
+  and near the inspiration tip ("Recent unique steps").</li>
+<li>The "Recent unique steps" section is aligned to the nearest chunk boundary to avoid
+  gaps when <code>WORKER_PLANNING_TRAJECTORY_MAX_RAW_STEPS &lt; WORKER_PLANNING_TRAJECTORY_BLOCK_SIZE</code>.</li>
+<li>Optionally includes cached LLM summaries for older full chunks (root-aligned fixed-size
+  blocks anchored at the experiment root commit, falling back to the earliest known
+  CommitCard ancestor when the configured root is not reachable) to keep prompts short
+  while preserving long-horizon context.</li>
+<li>Reports a single "Omitted N older unique step(s)" line when the unique path is longer
+  than the configured budgets.</li>
 </ul>
 <h2 id="json-schema-and-validation">JSON schema and validation<a class="headerlink" href="#json-schema-and-validation" title="Permanent link">&para;</a></h2>
 <ul>
