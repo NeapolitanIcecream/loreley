@@ -314,6 +314,48 @@ class Settings(BaseSettings):
         alias="WORKER_EVOLUTION_COMMIT_SUBJECT_MAX_CHARS",
     )
 
+    # Planning-time inspiration trajectory rollups (LCA-aware).
+    worker_planning_trajectory_block_size: int = Field(
+        default=8,
+        alias="WORKER_PLANNING_TRAJECTORY_BLOCK_SIZE",
+    )
+    worker_planning_trajectory_max_chunks: int = Field(
+        default=3,
+        alias="WORKER_PLANNING_TRAJECTORY_MAX_CHUNKS",
+    )
+    worker_planning_trajectory_max_raw_steps: int = Field(
+        default=6,
+        alias="WORKER_PLANNING_TRAJECTORY_MAX_RAW_STEPS",
+    )
+    worker_planning_trajectory_summary_model: str | None = Field(
+        default=None,
+        alias="WORKER_PLANNING_TRAJECTORY_SUMMARY_MODEL",
+    )
+    worker_planning_trajectory_summary_temperature: float = Field(
+        default=0.0,
+        alias="WORKER_PLANNING_TRAJECTORY_SUMMARY_TEMPERATURE",
+    )
+    worker_planning_trajectory_summary_max_output_tokens: int = Field(
+        default=256,
+        alias="WORKER_PLANNING_TRAJECTORY_SUMMARY_MAX_OUTPUT_TOKENS",
+    )
+    worker_planning_trajectory_summary_max_retries: int = Field(
+        default=3,
+        alias="WORKER_PLANNING_TRAJECTORY_SUMMARY_MAX_RETRIES",
+    )
+    worker_planning_trajectory_summary_retry_backoff_seconds: float = Field(
+        default=2.0,
+        alias="WORKER_PLANNING_TRAJECTORY_SUMMARY_RETRY_BACKOFF_SECONDS",
+    )
+    worker_planning_trajectory_summary_max_chars: int = Field(
+        default=800,
+        alias="WORKER_PLANNING_TRAJECTORY_SUMMARY_MAX_CHARS",
+    )
+    worker_planning_trajectory_summary_prompt_signature: str = Field(
+        default="v1",
+        alias="WORKER_PLANNING_TRAJECTORY_SUMMARY_PROMPT_SIGNATURE",
+    )
+
     mapelites_preprocess_max_files: int = Field(
         default=6,
         alias="MAPELITES_PREPROCESS_MAX_FILES",

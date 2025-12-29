@@ -60,6 +60,8 @@ class CommitPlanningContext:
     commit_hash: str
     subject: str
     change_summary: str
+    trajectory: Sequence[str] = field(default_factory=tuple)
+    trajectory_meta: dict[str, Any] | None = None
     key_files: Sequence[str] = field(default_factory=tuple)
     highlights: Sequence[str] = field(default_factory=tuple)
     evaluation_summary: str | None = None
@@ -71,6 +73,7 @@ class CommitPlanningContext:
     def __post_init__(self) -> None:
         self.subject = " ".join((self.subject or "").split()).strip() or f"Commit {self.commit_hash}"
         self.change_summary = (self.change_summary or "").strip() or "N/A"
+        self.trajectory = tuple(self.trajectory or ())
         self.key_files = tuple(self.key_files or ())
         self.highlights = tuple(self.highlights or ())
         self.metrics = tuple(self.metrics or ())
@@ -507,6 +510,7 @@ Deliverable requirements:
         key_files_block = (
             "\n".join(f"  - {self._truncate(path)}" for path in key_files) if key_files else "  - None"
         )
+        trajectory_block = "\n".join(context.trajectory) if context.trajectory else "  - None"
         evaluation_summary = self._truncate(context.evaluation_summary or "N/A")
         map_elites_block = ""
         if context.map_elites_cell_index is not None:
@@ -531,6 +535,7 @@ Deliverable requirements:
             f"- Hash: {context.commit_hash}\n"
             f"- Subject: {self._truncate(context.subject)}\n"
             f"- Change summary: {self._truncate(context.change_summary, limit=512)}\n"
+            f"- Trajectory (unique vs base):\n{trajectory_block}\n"
             f"- Key files:\n{key_files_block}\n"
             f"- Evaluation summary: {evaluation_summary}\n"
             f"- Highlights:\n{highlight_block}\n"

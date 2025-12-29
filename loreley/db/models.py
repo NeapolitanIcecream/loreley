@@ -206,6 +206,32 @@ class CommitCard(TimestampMixin, Base):
         )
 
 
+class CommitChunkSummary(TimestampMixin, Base):
+    """Cached LLM summary for a fixed-size block of commit-to-parent steps."""
+
+    __tablename__ = "commit_chunk_summaries"
+    __table_args__ = (
+        Index("ix_commit_chunk_summaries_end_hash", "end_commit_hash"),
+    )
+
+    # Cache key is stable for tip-aligned full chunks.
+    start_commit_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    end_commit_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    block_size: Mapped[int] = mapped_column(Integer, primary_key=True)
+    model: Mapped[str] = mapped_column(String(255), primary_key=True)
+    prompt_signature: Mapped[str] = mapped_column(String(64), primary_key=True)
+
+    step_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return (
+            "<CommitChunkSummary "
+            f"start={self.start_commit_hash[:12]!r} end={self.end_commit_hash[:12]!r} "
+            f"block={self.block_size!r} model={self.model!r} sig={self.prompt_signature!r}>"
+        )
+
+
 class Metric(TimestampMixin, Base):
     """Metric captured from evaluation step."""
 

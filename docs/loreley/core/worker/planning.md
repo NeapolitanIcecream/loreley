@@ -5,11 +5,26 @@ Planning utilities for Loreley's autonomous worker, responsible for turning comm
 ## Domain types
 
 - **`CommitMetric`**: lightweight value object describing a single evaluation metric (`name`, numeric `value`, optional `unit`, `higher_is_better` flag, and human-readable `summary`).
-- **`CommitPlanningContext`**: shared context for one commit, including the `commit_hash`, bounded `subject` and `change_summary`, optional `key_files`, bounded `highlights`, an optional `evaluation_summary`, a sequence of `CommitMetric` instances, and optional MAP-Elites context (`cell_index`, `objective`, `measures`); normalises all collections to tuples on initialisation.
+- **`CommitPlanningContext`**: shared context for one commit, including the `commit_hash`, bounded `subject` and `change_summary`, optional `trajectory` rollup lines (baseline-aligned unique-path summary), optional `trajectory_meta` counters, optional `key_files`, bounded `highlights`, an optional `evaluation_summary`, a sequence of `CommitMetric` instances, and optional MAP-Elites context (`cell_index`, `objective`, `measures`); normalises all collections to tuples on initialisation.
 - **`PlanningAgentRequest`**: input payload for the planning agent containing the `base` commit context, a sequence of `inspirations`, the plain-language global evolution `goal`, optional `constraints` and `acceptance_criteria` bullet lists, an optional `iteration_hint`, and a boolean `cold_start` flag; when `cold_start=True`, the planning agent treats the request as a cold-start seed population design run and adjusts the prompt accordingly. All list-like fields are normalised to tuples.
 - **`PlanStep`**: single actionable step in the generated plan (`step_id`, `title`, `intent`, `actions`, `files`, `dependencies`, `validation`, `risks`, `references`) with an `as_dict()` helper that converts all tuples back to plain lists for serialisation.
 - **`PlanningPlan`**: structured planning output that aggregates the global `summary`, `rationale`, `focus_metrics`, `guardrails`, `risks`, overall `validation` bullets, the ordered `steps`, optional `handoff_notes`, and an optional free-form `fallback_plan`, again with `as_dict()` for JSON-friendly output.
 - **`PlanningAgentResponse`**: envelope returned from the planner containing the domain `plan`, raw backend JSON `raw_output`, the rendered `prompt`, executed backend `command`, captured `stderr`, number of `attempts`, and total `duration_seconds`.
+
+## Inspiration trajectory rollups
+
+When building the planning prompt, inspirations are enriched with a baseline-aligned
+trajectory section labelled **"Trajectory (unique vs base)"**. This section is derived
+from the CommitCard evolution chain (`CommitCard.parent_commit_hash`) by extracting the
+unique path `LCA(base,inspiration) -> inspiration` and rendering a bounded summary:
+
+- Always includes `unique_steps_count` and the `lca` short hash.
+- Includes a bounded number of raw step summaries near the LCA ("Earliest unique steps")
+  and near the inspiration tip ("Recent unique steps").
+- Optionally includes cached LLM summaries for older full chunks (tip-aligned fixed-size
+  blocks) to keep prompts short while preserving long-horizon context.
+- Reports a single "Omitted N older unique step(s)" line when the unique path is longer
+  than the configured budgets.
 
 ## JSON schema and validation
 

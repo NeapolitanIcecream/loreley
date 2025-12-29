@@ -33,6 +33,7 @@ from loreley.core.worker.planning import (
     PlanningPlan,
 )
 from loreley.core.worker.commit_summary import CommitSummarizer, CommitSummaryError
+from loreley.core.worker.trajectory import build_inspiration_trajectory_rollup
 from loreley.core.worker.job_store import (
     EvolutionJobStore,
     EvolutionWorkerError,
@@ -261,14 +262,38 @@ class EvolutionWorker:
             experiment_id=job_ctx.experiment_id,
             island_id=job_ctx.island_id,
         )
-        inspirations = tuple(
+        inspiration_contexts = [
             self._load_commit_planning_context(
                 commit_hash=commit_hash,
                 experiment_id=job_ctx.experiment_id,
                 island_id=job_ctx.island_id,
             )
             for commit_hash in job_ctx.inspiration_commit_hashes
-        )
+        ]
+        if inspiration_contexts:
+            with session_scope() as session:
+                for ctx in inspiration_contexts:
+                    try:
+                        rollup = build_inspiration_trajectory_rollup(
+                            base_commit_hash=base_context.commit_hash,
+                            inspiration_commit_hash=ctx.commit_hash,
+                            session=session,
+                            settings=self.settings,
+                        )
+                        ctx.trajectory = rollup.lines
+                        ctx.trajectory_meta = rollup.meta
+                    except Exception as exc:  # pragma: no cover - best-effort enrichment
+                        log.warning(
+                            "Failed to build trajectory rollup for base={} insp={}: {}",
+                            base_context.commit_hash[:12],
+                            ctx.commit_hash[:12],
+                            exc,
+                        )
+                        ctx.trajectory = (
+                            "  - Trajectory unavailable: internal error while building rollup.",
+                        )
+                        ctx.trajectory_meta = {"error": str(exc)}
+        inspirations = tuple(inspiration_contexts)
         cold_start = False
 
         if job_ctx.is_seed_job:
@@ -278,6 +303,8 @@ class EvolutionWorker:
                 commit_hash=base_context.commit_hash,
                 subject=base_context.subject,
                 change_summary=base_context.change_summary,
+                trajectory=(),
+                trajectory_meta=None,
                 key_files=base_context.key_files,
                 highlights=(),
                 evaluation_summary=None,
