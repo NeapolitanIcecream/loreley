@@ -178,7 +178,21 @@ If you already have an environment, you can pin dependencies without creating a 
 uv sync --no-workspace
 ```
 
-#### 2. Configure
+#### 2. Bring up PostgreSQL + Redis (recommended for local dev)
+
+Loreley requires PostgreSQL (metadata store) and Redis (Dramatiq broker). If you have Docker installed, you can start both with:
+
+```bash
+docker compose up -d postgres redis
+```
+
+#### 3. Configure
+
+Copy the example environment file and edit the values:
+
+```bash
+cp env.example .env
+```
 
 All runtime settings come from environment variables consumed by `loreley.config.Settings`. Common examples:
 
@@ -219,6 +233,12 @@ All runtime settings come from environment variables consumed by `loreley.config
   - `MAPELITES_SUMMARY_*`, `MAPELITES_SUMMARY_EMBEDDING_*` (optional summary embedding utilities; not used for MAP-Elites behaviour descriptors in repo-state mode)
 
 See `docs/loreley/config.md` for the exhaustive list.
+
+Before starting long-running processes, you can run a quick preflight check:
+
+```bash
+uv run python script/doctor.py --role all
+```
 
 ---
 

@@ -44,6 +44,7 @@ nav:
       - UI API: loreley/api.md
       - Streamlit UI: loreley/ui.md
   - Operations:
+      - Doctor (environment checks): script/doctor.md
       - Running the scheduler: script/run_scheduler.md
       - Running the worker: script/run_worker.md
       - Running the UI API: script/run_api.md

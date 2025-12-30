@@ -81,9 +81,23 @@ cd loreley
 uv sync
 ```
 
+### Start PostgreSQL + Redis (recommended for local dev)
+
+If you have Docker installed, you can start the required services with:
+
+```bash
+docker compose up -d postgres redis
+```
+
 ### Configure
 
 All runtime configuration is provided via environment variables and loaded by `loreley.config.Settings`. Start with:
+
+Copy the example env file:
+
+```bash
+cp env.example .env
+```
 
 - `APP_NAME`, `APP_ENV`, `LOG_LEVEL`
 - `DATABASE_URL`
@@ -93,6 +107,12 @@ All runtime configuration is provided via environment variables and loaded by `l
 See: [Configuration](loreley/config.md)
 
 ### Run
+
+Preflight checks:
+
+```bash
+uv run python script/doctor.py --role all
+```
 
 ```bash
 uv run python script/run_scheduler.py
