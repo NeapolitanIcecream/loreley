@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import uuid
 
 import pytest
@@ -19,11 +20,11 @@ class _DummyGitError(Exception):
 
 class _FakeGit:
     def __init__(self) -> None:
+        self.worktree_calls: list[tuple[str, ...]] = []
         self.checkout_calls: list[tuple[str, ...]] = []
-        self.rev_parse_calls: list[tuple[str, ...]] = []
 
-    def rev_parse(self, *args: str) -> None:
-        self.rev_parse_calls.append(tuple(args))
+    def worktree(self, *args: str) -> None:
+        self.worktree_calls.append(tuple(args))
 
     def checkout(self, *args: str) -> None:
         self.checkout_calls.append(tuple(args))
@@ -76,22 +77,36 @@ def test_wrap_git_error_sanitises_command(tmp_path, settings: Settings) -> None:
 
 def test_checkout_for_job_creates_branch(monkeypatch: pytest.MonkeyPatch, tmp_path, settings: Settings) -> None:
     repo = _make_repo(settings, tmp_path)
-    fake_git = _FakeGit()
-    fake_repo = _FakeRepo(fake_git)
-    calls: dict[str, str] = {}
+    repo.git_dir.mkdir(parents=True, exist_ok=True)
+    base_git = _FakeGit()
+    base_repo = _FakeRepo(base_git)
+    job_git = _FakeGit()
+    job_repo = _FakeRepo(job_git)
 
-    monkeypatch.setattr(repo, "prepare", lambda: calls.setdefault("prepare", "done"))
-    monkeypatch.setattr(repo, "clean_worktree", lambda: calls.setdefault("clean", "done"))
-    monkeypatch.setattr(repo, "_ensure_commit_available", lambda base_commit, repo=None: calls.setdefault("ensure", base_commit))
-    monkeypatch.setattr(repo, "_get_repo", lambda: fake_repo)
+    @contextmanager
+    def _noop_lock():
+        yield
 
-    ctx = repo.checkout_for_job(job_id=uuid.uuid4(), base_commit="abc123", create_branch=True)
+    job_id = uuid.uuid4()
+    worktree_path = tmp_path / "job-worktree"
 
-    expected_branch = repo._format_job_branch(ctx.job_id)
-    assert ctx.branch_name == expected_branch
-    assert fake_git.rev_parse_calls[0] == ("--verify", "abc123")
-    assert fake_git.checkout_calls[0] == ("-B", expected_branch, "abc123")
-    assert calls["ensure"] == "abc123"
+    monkeypatch.setattr(repo, "_repo_lock", _noop_lock)
+    monkeypatch.setattr(repo, "prepare", lambda: None)
+    monkeypatch.setattr(repo, "_ensure_commit_available", lambda base_commit, repo=None: None)
+    monkeypatch.setattr(repo, "_get_repo", lambda: base_repo)
+    monkeypatch.setattr(repo, "_open_repo", lambda path: job_repo)
+    monkeypatch.setattr(repo, "_allocate_job_worktree_path", lambda job_id, base_commit: worktree_path)
+    monkeypatch.setattr(repo, "_ensure_worktree_path_available", lambda path, repo: None)
+
+    with repo.checkout_lease_for_job(job_id=job_id, base_commit="abc123", create_branch=True) as ctx:
+        assert ctx.worktree == worktree_path
+        expected_branch = repo._format_job_branch(job_id)
+        assert ctx.branch_name == expected_branch
+        assert ctx.job_id == str(job_id)
+
+    assert ("add", "--detach", str(worktree_path), "abc123") in base_git.worktree_calls
+    assert ("remove", "--force", str(worktree_path)) in base_git.worktree_calls
+    assert job_git.checkout_calls[0] == ("-B", repo._format_job_branch(job_id), "abc123")
 
 
 def test_checkout_for_job_detaches_when_branch_not_requested(
@@ -100,15 +115,69 @@ def test_checkout_for_job_detaches_when_branch_not_requested(
     settings: Settings,
 ) -> None:
     repo = _make_repo(settings, tmp_path)
-    fake_git = _FakeGit()
-    fake_repo = _FakeRepo(fake_git)
+    repo.git_dir.mkdir(parents=True, exist_ok=True)
+    base_git = _FakeGit()
+    base_repo = _FakeRepo(base_git)
+    job_git = _FakeGit()
+    job_repo = _FakeRepo(job_git)
 
+    @contextmanager
+    def _noop_lock():
+        yield
+
+    worktree_path = tmp_path / "detached-worktree"
+
+    monkeypatch.setattr(repo, "_repo_lock", _noop_lock)
     monkeypatch.setattr(repo, "prepare", lambda: None)
-    monkeypatch.setattr(repo, "clean_worktree", lambda: None)
     monkeypatch.setattr(repo, "_ensure_commit_available", lambda base_commit, repo=None: None)
-    monkeypatch.setattr(repo, "_get_repo", lambda: fake_repo)
+    monkeypatch.setattr(repo, "_get_repo", lambda: base_repo)
+    monkeypatch.setattr(repo, "_open_repo", lambda path: job_repo)
+    monkeypatch.setattr(repo, "_allocate_job_worktree_path", lambda job_id, base_commit: worktree_path)
+    monkeypatch.setattr(repo, "_ensure_worktree_path_available", lambda path, repo: None)
 
-    ctx = repo.checkout_for_job(job_id=None, base_commit="def456", create_branch=False)
+    with repo.checkout_lease_for_job(job_id=None, base_commit="def456", create_branch=False) as ctx:
+        assert ctx.branch_name is None
+        assert ctx.job_id is None
+        assert ctx.worktree == worktree_path
 
-    assert ctx.branch_name is None
-    assert fake_git.checkout_calls[0] == ("--detach", "def456")
+    assert ("add", "--detach", str(worktree_path), "def456") in base_git.worktree_calls
+    assert ("remove", "--force", str(worktree_path)) in base_git.worktree_calls
+    assert job_git.checkout_calls[0] == ("--detach", "def456")
+
+
+def test_checkout_lease_preserves_worktree_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    settings: Settings,
+) -> None:
+    repo = _make_repo(settings, tmp_path)
+    repo.git_dir.mkdir(parents=True, exist_ok=True)
+    base_git = _FakeGit()
+    base_repo = _FakeRepo(base_git)
+    job_git = _FakeGit()
+    job_repo = _FakeRepo(job_git)
+
+    @contextmanager
+    def _noop_lock():
+        yield
+
+    worktree_path = tmp_path / "failed-worktree"
+
+    monkeypatch.setattr(repo, "_repo_lock", _noop_lock)
+    monkeypatch.setattr(repo, "prepare", lambda: None)
+    monkeypatch.setattr(repo, "_ensure_commit_available", lambda base_commit, repo=None: None)
+    monkeypatch.setattr(repo, "_get_repo", lambda: base_repo)
+    monkeypatch.setattr(repo, "_open_repo", lambda path: job_repo)
+    monkeypatch.setattr(repo, "_allocate_job_worktree_path", lambda job_id, base_commit: worktree_path)
+    monkeypatch.setattr(repo, "_ensure_worktree_path_available", lambda path, repo: None)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        with repo.checkout_lease_for_job(
+            job_id=uuid.uuid4(),
+            base_commit="deadbeef",
+            keep_worktree_on_failure=True,
+        ):
+            raise RuntimeError("boom")
+
+    assert ("add", "--detach", str(worktree_path), "deadbeef") in base_git.worktree_calls
+    assert not any(call[:1] == ("remove",) for call in base_git.worktree_calls)

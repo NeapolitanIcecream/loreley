@@ -301,11 +301,53 @@ class MapElitesIngestion:
             return
 
         try:
-            checkout = worker_repo.checkout_for_job(
+            with worker_repo.checkout_lease_for_job(
                 job_id=None,
                 base_commit=commit_hash,
                 create_branch=False,
-            )
+            ) as checkout:
+                goal = f"Baseline evaluation for root commit {commit_hash}"
+                default_island = self.settings.mapelites_default_island_id or "main"
+                payload: dict[str, Any] = {
+                    "job": {
+                        "id": None,
+                        "island_id": default_island,
+                        "experiment_id": str(self.experiment.id),
+                        "repository_id": str(self.repository.id) if self.repository is not None else None,
+                        "goal": goal,
+                        "constraints": [],
+                        "acceptance_criteria": [],
+                        "notes": [],
+                    },
+                    "plan": {
+                        "summary": goal,
+                    },
+                }
+
+                evaluator = Evaluator(self.settings)
+                context = EvaluationContext(
+                    worktree=checkout.worktree,
+                    base_commit_hash=None,
+                    candidate_commit_hash=commit_hash,
+                    job_id=None,
+                    goal=goal,
+                    payload=payload,
+                    plan_summary=goal,
+                    metadata={
+                        "root_commit": True,
+                        "experiment_id": str(self.experiment.id),
+                        "repository_id": str(self.repository.id) if self.repository is not None else None,
+                    },
+                )  # type: ignore[call-arg]
+
+                try:
+                    result = evaluator.evaluate(context)
+                except EvaluationError as exc:
+                    self.console.log(
+                        f"[bold red]Root commit evaluation failed[/] commit={commit_hash} reason={exc}",
+                    )
+                    log.error("Root commit evaluation failed for {}: {}", commit_hash, exc)
+                    return
         except RepositoryError as exc:
             self.console.log(
                 "[yellow]Skipping root commit evaluation; checkout failed[/] "
@@ -316,49 +358,6 @@ class MapElitesIngestion:
                 commit_hash,
                 exc,
             )
-            return
-
-        goal = f"Baseline evaluation for root commit {commit_hash}"
-        default_island = self.settings.mapelites_default_island_id or "main"
-        payload: dict[str, Any] = {
-            "job": {
-                "id": None,
-                "island_id": default_island,
-                "experiment_id": str(self.experiment.id),
-                "repository_id": str(self.repository.id) if self.repository is not None else None,
-                "goal": goal,
-                "constraints": [],
-                "acceptance_criteria": [],
-                "notes": [],
-            },
-            "plan": {
-                "summary": goal,
-            },
-        }
-
-        evaluator = Evaluator(self.settings)
-        context = EvaluationContext(
-            worktree=checkout.worktree,
-            base_commit_hash=None,
-            candidate_commit_hash=commit_hash,
-            job_id=None,
-            goal=goal,
-            payload=payload,
-            plan_summary=goal,
-            metadata={
-                "root_commit": True,
-                "experiment_id": str(self.experiment.id),
-                "repository_id": str(self.repository.id) if self.repository is not None else None,
-            },
-        )  # type: ignore[call-arg]
-
-        try:
-            result = evaluator.evaluate(context)
-        except EvaluationError as exc:
-            self.console.log(
-                f"[bold red]Root commit evaluation failed[/] commit={commit_hash} reason={exc}",
-            )
-            log.error("Root commit evaluation failed for {}: {}", commit_hash, exc)
             return
 
         metrics_payload = [metric.as_dict() for metric in result.metrics]

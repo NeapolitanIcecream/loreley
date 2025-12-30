@@ -23,7 +23,7 @@ Autonomous evolution worker that orchestrates planning, coding, evaluation, repo
   - **`run(job_id)`**:
     - Coerces the `job_id` into a `UUID`.
     - Calls `_start_job()` to lock and validate the job row, building a `JobContext`.
-    - Checks out the base commit via `WorkerRepository.checkout_for_job()`.
+    - Creates an isolated per-job git worktree via `WorkerRepository.checkout_lease_for_job()`.
     - Runs planning (`_run_planning()`), coding (`_run_coding()`), and evaluation (`_run_evaluation()`) in sequence.
     - Prepares a commit message via `_prepare_commit_message()`, then creates and pushes a new commit via `_create_commit()`.
     - Persists success artifacts and metrics through `EvolutionJobStore.persist_success()` and prunes stale job branches.
@@ -38,7 +38,7 @@ Autonomous evolution worker that orchestrates planning, coding, evaluation, repo
 - **`_run_planning(job_ctx, checkout)`**: builds a `PlanningAgentRequest` from commit snapshots and job fields, invokes `PlanningAgent.plan()`, and wraps `PlanningError` into `EvolutionWorkerError`. For seed jobs, `_run_planning` clears metrics, highlights, and evaluation details from the base planning context, drops all inspirations, and passes `cold_start=True` so that the planning agent treats the request as a cold-start seed population design run.
 - **`_run_coding(job_ctx, plan, checkout)`**: builds a `CodingAgentRequest` from the plan and job context, runs `CodingAgent.implement()`, and wraps `CodingError` into `EvolutionWorkerError`.
 - **`_prepare_commit_message(job_ctx, plan, coding)`**: delegates to `CommitSummarizer.generate()` to generate an LLM-backed git subject line; if summarisation fails, falls back to the coding agent's suggested `commit_message`, plan `summary`, or a generic `"Evolution job <id>"` string.
-- **`_create_commit(checkout, commit_message)`**: ensures the checkout is on a branch and that the repository contains changes, stages everything, creates a commit, and pushes the per-job branch using `force-with-lease`.
+- **`_create_commit(checkout, commit_message)`**: ensures the checkout is on a branch and that the job worktree contains changes, stages everything, creates a commit, and pushes the per-job branch using `force-with-lease`.
 - **`_run_evaluation(job_ctx, checkout, plan, candidate_commit)`**: constructs an `EvaluationContext` payload that includes only bounded job and plan fields (no raw prompts/JSON dumps), then calls `Evaluator.evaluate()` and wraps `EvaluationError` into `EvolutionWorkerError`.
 - **`_prune_job_branches()`**: calls `WorkerRepository.prune_stale_job_branches()` and logs the number of branches removed, swallowing repository errors into warnings.
 - **`_mark_job_failed(job_id, exc)`**: logs a red failure message and forwards the concise error text to `EvolutionJobStore.mark_job_failed()`, ensuring job rows still capture failures even when other parts of the worker raise.
