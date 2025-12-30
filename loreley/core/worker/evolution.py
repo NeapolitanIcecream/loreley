@@ -147,36 +147,37 @@ class EvolutionWorker:
             f"base={job_ctx.base_commit_hash}",
         )
         try:
-            checkout = self.repository.checkout_for_job(
+            with self.repository.checkout_lease_for_job(
                 job_id=job_uuid,
                 base_commit=job_ctx.base_commit_hash,
-            )
-            plan_response = self._run_planning(job_ctx, checkout)
-            coding_response = self._run_coding(job_ctx, plan_response, checkout)
-            commit_message = self._prepare_commit_message(
-                job_ctx=job_ctx,
-                plan=plan_response,
-                coding=coding_response,
-            )
-            candidate_commit = self._create_commit(
-                checkout=checkout,
-                commit_message=commit_message,
-            )
-            evaluation_result = self._run_evaluation(
-                job_ctx=job_ctx,
-                checkout=checkout,
-                plan=plan_response,
-                candidate_commit=candidate_commit,
-            )
-            self.job_store.persist_success(
-                job_ctx=job_ctx,
-                plan=plan_response,
-                coding=coding_response,
-                evaluation=evaluation_result,
-                worktree=checkout.worktree,
-                commit_hash=candidate_commit,
-                commit_message=commit_message,
-            )
+            ) as checkout:
+                plan_response = self._run_planning(job_ctx, checkout)
+                coding_response = self._run_coding(job_ctx, plan_response, checkout)
+                commit_message = self._prepare_commit_message(
+                    job_ctx=job_ctx,
+                    plan=plan_response,
+                    coding=coding_response,
+                )
+                candidate_commit = self._create_commit(
+                    checkout=checkout,
+                    commit_message=commit_message,
+                )
+                evaluation_result = self._run_evaluation(
+                    job_ctx=job_ctx,
+                    checkout=checkout,
+                    plan=plan_response,
+                    candidate_commit=candidate_commit,
+                )
+                self.job_store.persist_success(
+                    job_ctx=job_ctx,
+                    plan=plan_response,
+                    coding=coding_response,
+                    evaluation=evaluation_result,
+                    worktree=checkout.worktree,
+                    commit_hash=candidate_commit,
+                    commit_message=commit_message,
+                )
+
             self._prune_job_branches()
             console.log(
                 f"[bold green]Evolution worker[/] job={job_uuid} "
@@ -399,11 +400,15 @@ class EvolutionWorker:
             raise EvolutionWorkerError(
                 "Checkout context is detached; cannot publish commit without a branch.",
             )
-        if not self.repository.has_changes():
+        if not self.repository.has_changes(worktree=checkout.worktree):
             raise EvolutionWorkerError("Coding agent produced no changes to commit.")
-        self.repository.stage_all()
-        commit_hash = self.repository.commit(commit_message)
-        self.repository.push_branch(checkout.branch_name, force_with_lease=True)
+        self.repository.stage_all(worktree=checkout.worktree)
+        commit_hash = self.repository.commit(commit_message, worktree=checkout.worktree)
+        self.repository.push_branch(
+            checkout.branch_name,
+            worktree=checkout.worktree,
+            force_with_lease=True,
+        )
         console.log(
             f"[green]Created worker commit[/] hash={commit_hash} "
             f"branch={checkout.branch_name or 'detached'}",

@@ -35,7 +35,8 @@ On startup the script:
    actor and its queue settings) after logging is configured; any import/startup
    failure is reported with a concise console message and exit code `1`.
 7. Logs a short “worker online” message including `TASKS_QUEUE_NAME` and
-   `WORKER_REPO_WORKTREE`.
+   `WORKER_REPO_WORKTREE` (the base clone; per-job worktrees are created under
+   `<WORKER_REPO_WORKTREE>-worktrees/`).
 8. Creates a `dramatiq.Worker` with:
    - `broker` set to the global Redis broker instance.
    - `worker_threads=1` to ensure a single-threaded execution model.
@@ -83,7 +84,10 @@ The script uses `loreley.config.Settings` for:
   - `WORKER_REPO_REMOTE_URL`, `WORKER_REPO_BRANCH`, `WORKER_REPO_WORKTREE`,
     `WORKER_REPO_WORKTREE_RANDOMIZE`, `WORKER_REPO_WORKTREE_RANDOM_SUFFIX_LEN`,
     and related `WORKER_REPO_*` options used by
-    `loreley.core.worker.repository.WorkerRepository`.
+    `loreley.core.worker.repository.WorkerRepository`. The worker maintains a
+    base clone at `WORKER_REPO_WORKTREE` and creates isolated per-job worktrees
+    (removed after each job) under `<WORKER_REPO_WORKTREE>-worktrees/` so
+    multiple worker processes can run concurrently on the same host.
 
 For a full description of these settings, see `docs/loreley/config.md` and the
 worker module documentation in `docs/loreley/tasks/workers.md`.

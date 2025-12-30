@@ -3,12 +3,15 @@ from __future__ import annotations
 import os
 import re
 import shlex
+import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Iterator, Sequence
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
+import uuid
 
 from loguru import logger
 from rich.console import Console
@@ -95,10 +98,122 @@ class WorkerRepository:
         if self.git_bin:
             self._git_env.setdefault("GIT_PYTHON_GIT_EXECUTABLE", self.git_bin)
 
+        self._lock_path = self._resolve_lock_path()
+
     @property
     def git_dir(self) -> Path:
         """Return the .git directory location."""
         return self.worktree / ".git"
+
+    @property
+    def job_worktrees_root(self) -> Path:
+        """Return the directory root used for per-job worktrees."""
+        return self.worktree.parent / f"{self.worktree.name}-worktrees"
+
+    @contextmanager
+    def checkout_lease_for_job(
+        self,
+        *,
+        job_id: str | UUID | None,
+        base_commit: str,
+        create_branch: bool = True,
+        keep_worktree_on_failure: bool | None = None,
+    ) -> Iterator[CheckoutContext]:
+        """Yield an isolated git worktree for a single job.
+
+        The worktree is created via `git worktree add` and removed when the
+        context exits (unless keep_worktree_on_failure is enabled and an error
+        is raised inside the context).
+        """
+        if not base_commit:
+            raise RepositoryError("Base commit hash must be provided.")
+
+        job_uuid: UUID | None
+        if isinstance(job_id, UUID):
+            job_uuid = job_id
+        elif job_id is None:
+            job_uuid = None
+        else:
+            job_uuid = UUID(str(job_id))
+
+        keep_on_failure = bool(keep_worktree_on_failure) if keep_worktree_on_failure is not None else False
+
+        branch_name: str | None = None
+        worktree_path: Path | None = None
+
+        with self._repo_lock():
+            self.prepare()
+            base_repo = self._get_repo()
+            # Ensure the base commit is present locally before creating the worktree.
+            self._ensure_commit_available(base_commit, repo=base_repo)
+            self._prune_worktrees(repo=base_repo)
+
+            worktree_path = self._allocate_job_worktree_path(
+                job_id=job_uuid,
+                base_commit=base_commit,
+            )
+            self._ensure_worktree_path_available(worktree_path, repo=base_repo)
+
+            try:
+                base_repo.git.worktree("add", "--detach", str(worktree_path), base_commit)
+            except GitCommandError as exc:
+                raise self._wrap_git_error(
+                    exc,
+                    f"Failed to create job worktree at {worktree_path}",
+                ) from exc
+
+        # Branch checkout happens in the job worktree (outside the base lock).
+        job_repo = self._open_repo(worktree_path)
+        job_label = str(job_uuid) if job_uuid is not None else "N/A"
+        try:
+            if create_branch and job_uuid is not None:
+                branch_name = self._format_job_branch(job_uuid)
+                job_repo.git.checkout("-B", branch_name, base_commit)
+            else:
+                job_repo.git.checkout("--detach", base_commit)
+        except GitCommandError as exc:
+            # Best-effort cleanup on checkout failures.
+            with self._repo_lock():
+                try:
+                    self._remove_worktree(worktree_path)
+                except Exception:
+                    pass
+            raise self._wrap_git_error(exc, f"Failed to checkout commit {base_commit}") from exc
+
+        ctx = CheckoutContext(
+            job_id=str(job_uuid) if job_uuid else None,
+            branch_name=branch_name,
+            base_commit=base_commit,
+            worktree=worktree_path,
+        )
+
+        console.log(
+            f"[bold green]Checked out base commit[/] job={job_label} commit={base_commit} "
+            f"worktree={worktree_path}",
+        )
+        log.info(
+            "Checked out base commit {} for job {} in worktree {}",
+            base_commit,
+            job_uuid,
+            worktree_path,
+        )
+
+        try:
+            yield ctx
+        except Exception:
+            if keep_on_failure:
+                log.warning(
+                    "Preserving failed job worktree for inspection job={} worktree={}",
+                    job_uuid,
+                    worktree_path,
+                )
+                raise
+            with self._repo_lock():
+                self._remove_worktree(worktree_path)
+            raise
+        else:
+            with self._repo_lock():
+                self._remove_worktree(worktree_path)
 
     def prepare(self) -> None:
         """Ensure the worktree exists and matches the upstream state."""
@@ -120,54 +235,86 @@ class WorkerRepository:
         base_commit: str,
         create_branch: bool = True,
     ) -> CheckoutContext:
-        """Checkout the requested base commit and optionally create a job branch."""
+        """Checkout the requested base commit and optionally create a job branch.
+
+        Note: This method returns a checkout context but does not automatically
+        clean up any worktree. Prefer `checkout_lease_for_job()` for workers.
+        """
         if not base_commit:
             raise RepositoryError("Base commit hash must be provided.")
 
-        self.prepare()
-        self.clean_worktree()
+        job_uuid: UUID | None
+        if isinstance(job_id, UUID):
+            job_uuid = job_id
+        elif job_id is None:
+            job_uuid = None
+        else:
+            job_uuid = UUID(str(job_id))
 
-        # Ensure the base commit is present locally.
-        repo = self._get_repo()
-        self._ensure_commit_available(base_commit, repo=repo)
-        try:
-            repo.git.rev_parse("--verify", base_commit)
-        except GitCommandError as exc:
-            raise self._wrap_git_error(exc, f"Failed to verify commit {base_commit}") from exc
+        with self._repo_lock():
+            self.prepare()
+            base_repo = self._get_repo()
+            self._ensure_commit_available(base_commit, repo=base_repo)
+            self._prune_worktrees(repo=base_repo)
+            worktree_path = self._allocate_job_worktree_path(
+                job_id=job_uuid,
+                base_commit=base_commit,
+            )
+            self._ensure_worktree_path_available(worktree_path, repo=base_repo)
+            try:
+                base_repo.git.worktree("add", "--detach", str(worktree_path), base_commit)
+            except GitCommandError as exc:
+                raise self._wrap_git_error(
+                    exc,
+                    f"Failed to create job worktree at {worktree_path}",
+                ) from exc
 
+        job_repo = self._open_repo(worktree_path)
         branch_name: str | None = None
         try:
-            if create_branch and job_id:
-                branch_name = self._format_job_branch(job_id)
-                repo.git.checkout("-B", branch_name, base_commit)
+            if create_branch and job_uuid is not None:
+                branch_name = self._format_job_branch(job_uuid)
+                job_repo.git.checkout("-B", branch_name, base_commit)
             else:
-                repo.git.checkout("--detach", base_commit)
+                job_repo.git.checkout("--detach", base_commit)
         except GitCommandError as exc:
             raise self._wrap_git_error(exc, f"Failed to checkout commit {base_commit}") from exc
 
-        job_label = str(job_id) if job_id is not None else "N/A"
+        job_label = str(job_uuid) if job_uuid is not None else "N/A"
         console.log(
-            f"[bold green]Checked out base commit[/] job={job_label} "
-            f"commit={base_commit}",
+            f"[bold green]Checked out base commit[/] job={job_label} commit={base_commit} worktree={worktree_path}",
         )
         log.info(
-            "Checked out base commit {} for job {}",
+            "Checked out base commit {} for job {} in worktree {}",
             base_commit,
-            job_id,
+            job_uuid,
+            worktree_path,
         )
 
         return CheckoutContext(
-            job_id=str(job_id) if job_id else None,
+            job_id=str(job_uuid) if job_uuid else None,
             branch_name=branch_name,
             base_commit=base_commit,
-            worktree=self.worktree,
+            worktree=worktree_path,
         )
 
-    def clean_worktree(self) -> None:
+    def _resolve_worktree_path(self, worktree: Path | None) -> Path:
+        if worktree is None:
+            return self.worktree
+        return Path(worktree).expanduser().resolve()
+
+    def _repo_for_worktree(self, worktree: Path | None = None) -> Repo:
+        resolved = self._resolve_worktree_path(worktree)
+        if resolved == self.worktree:
+            return self._get_repo()
+        return self._open_repo(resolved)
+
+    def clean_worktree(self, *, worktree: Path | None = None) -> None:
         """Reset tracked files and drop untracked artifacts."""
-        if not self.git_dir.exists():
+        target = self._resolve_worktree_path(worktree)
+        if not (target / ".git").exists():
             return
-        repo = self._get_repo()
+        repo = self._repo_for_worktree(target)
         try:
             repo.git.reset("--hard")
             clean_args = ["-xdf"]
@@ -177,27 +324,27 @@ class WorkerRepository:
         except GitCommandError as exc:
             raise self._wrap_git_error(exc, "Failed to clean worker worktree") from exc
 
-    def current_commit(self) -> str:
+    def current_commit(self, *, worktree: Path | None = None) -> str:
         """Return the current HEAD commit hash."""
-        repo = self._get_repo()
+        repo = self._repo_for_worktree(worktree)
         return repo.head.commit.hexsha
 
-    def has_changes(self) -> bool:
+    def has_changes(self, *, worktree: Path | None = None) -> bool:
         """Return True if the worktree contains staged or unstaged changes."""
-        repo = self._get_repo()
+        repo = self._repo_for_worktree(worktree)
         return repo.is_dirty(untracked_files=True)
 
-    def stage_all(self) -> None:
+    def stage_all(self, *, worktree: Path | None = None) -> None:
         """Stage all tracked and untracked changes."""
-        repo = self._get_repo()
+        repo = self._repo_for_worktree(worktree)
         try:
             repo.git.add("--all")
         except GitCommandError as exc:
             raise self._wrap_git_error(exc, "Failed to stage worktree changes") from exc
 
-    def commit(self, message: str) -> str:
+    def commit(self, message: str, *, worktree: Path | None = None) -> str:
         """Create a commit with the staged changes and return the hash."""
-        repo = self._get_repo()
+        repo = self._repo_for_worktree(worktree)
         try:
             repo.git.commit("-m", message)
         except GitCommandError as exc:
@@ -208,6 +355,7 @@ class WorkerRepository:
         self,
         branch_name: str,
         *,
+        worktree: Path | None = None,
         remote: str = "origin",
         force_with_lease: bool = False,
     ) -> None:
@@ -216,7 +364,7 @@ class WorkerRepository:
         if not branch:
             raise RepositoryError("Branch name must be provided when pushing.")
         remote_name = remote.strip() or "origin"
-        repo = self._get_repo()
+        repo = self._repo_for_worktree(worktree)
         push_args = []
         if force_with_lease:
             push_args.append("--force-with-lease")
@@ -260,7 +408,9 @@ class WorkerRepository:
         cutoff_ts = datetime.now(timezone.utc).timestamp() - (ttl_hours * 3600)
         repo = self._get_repo()
         try:
-            self._fetch(repo=repo)
+            # Protect fetch/prune operations because they mutate the shared base clone.
+            with self._repo_lock():
+                self._fetch(repo=repo)
         except RepositoryError as exc:
             log.warning("Skipping job branch pruning; fetch failed: {}", exc)
             return 0
@@ -544,4 +694,107 @@ class WorkerRepository:
         except GitCommandError:
             return False
         return result.strip().lower() == "true"
+
+    # Worktree leasing / locking ------------------------------------------
+
+    def _resolve_lock_path(self) -> Path:
+        # Keep lock adjacent to the base worktree so multiple worker processes
+        # sharing WORKER_REPO_WORKTREE coordinate without additional services.
+        return self.worktree.parent / f".{self.worktree.name}.lock"
+
+    @contextmanager
+    def _repo_lock(self) -> Iterator[None]:
+        """Cross-process lock protecting base repo mutations.
+
+        This lock should be held only for short-lived operations such as clone,
+        fetch/sync, and worktree add/remove/prune. Planning/coding/evaluation
+        happens in per-job worktrees and should not be performed under this lock.
+        """
+        self._lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fh = open(self._lock_path, "a+", encoding="utf-8")
+        try:
+            if os.name == "posix":
+                import fcntl
+
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            else:  # pragma: no cover - Windows fallback
+                import msvcrt
+
+                fh.seek(0)
+                if fh.tell() == 0:
+                    fh.write("\n")
+                    fh.flush()
+                msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+            yield
+        finally:
+            try:
+                if os.name == "posix":
+                    import fcntl
+
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+                else:  # pragma: no cover - Windows fallback
+                    import msvcrt
+
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+            except Exception:
+                pass
+            fh.close()
+
+    def _open_repo(self, worktree: Path) -> Repo:
+        """Open a Repo instance for the given worktree path."""
+        try:
+            repo = Repo(worktree)
+        except (InvalidGitRepositoryError, NoSuchPathError) as exc:
+            raise RepositoryError(
+                f"Worktree {worktree} is not a git repository.",
+            ) from exc
+        if self._git_env:
+            repo.git.update_environment(**self._git_env)
+        return repo
+
+    def _allocate_job_worktree_path(self, *, job_id: UUID | None, base_commit: str) -> Path:
+        root = self.job_worktrees_root
+        if job_id is not None:
+            name = str(job_id)
+        else:
+            suffix = uuid.uuid4().hex[:8]
+            short = base_commit[:12] if base_commit else "commit"
+            name = f"detached-{short}-{suffix}"
+        safe = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-") or "job"
+        return root / safe
+
+    def _ensure_worktree_path_available(self, path: Path, *, repo: Repo) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            return
+
+        # Attempt to deregister the worktree first; if that fails, remove the
+        # directory from disk to avoid `worktree add` collisions.
+        try:
+            repo.git.worktree("remove", "--force", str(path))
+        except GitCommandError:
+            pass
+        shutil.rmtree(path, ignore_errors=True)
+        try:
+            self._prune_worktrees(repo=repo)
+        except Exception:
+            pass
+
+    def _remove_worktree(self, path: Path) -> None:
+        """Remove a previously created worktree (best-effort)."""
+        if not self.git_dir.exists():
+            return
+        repo = self._get_repo()
+        try:
+            repo.git.worktree("remove", "--force", str(path))
+        except GitCommandError as exc:
+            log.warning("Failed to remove worktree {}: {}", path, exc)
+        shutil.rmtree(path, ignore_errors=True)
+        self._prune_worktrees(repo=repo)
+
+    def _prune_worktrees(self, *, repo: Repo) -> None:
+        try:
+            repo.git.worktree("prune")
+        except GitCommandError as exc:
+            log.debug("Worktree prune skipped: {}", exc)
 
