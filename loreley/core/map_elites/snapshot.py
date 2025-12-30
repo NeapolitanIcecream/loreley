@@ -323,7 +323,7 @@ class DatabaseSnapshotBackend(SnapshotBackend):
                         "solution": [float(v) for v in cell.solution],
                         "timestamp": float(cell.timestamp),
                     }
-                    stmt = pg_insert(MapElitesArchiveCell.__table__).values(**values)
+                    stmt = pg_insert(MapElitesArchiveCell).values(**values)
                     stmt = stmt.on_conflict_do_update(
                         index_elements=[
                             MapElitesArchiveCell.__table__.c.experiment_id,
@@ -514,7 +514,7 @@ class DatabaseSnapshotBackend(SnapshotBackend):
                     "solution": [float(v) for v in solution],
                     "timestamp": float(entry.get("timestamp", 0.0)),
                 }
-                stmt = pg_insert(MapElitesArchiveCell.__table__).values(**values)
+                stmt = pg_insert(MapElitesArchiveCell).values(**values)
                 stmt = stmt.on_conflict_do_update(
                     index_elements=[
                         MapElitesArchiveCell.__table__.c.experiment_id,
