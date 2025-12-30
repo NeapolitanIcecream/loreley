@@ -18,15 +18,18 @@ This script performs quick preflight checks to reduce onboarding friction before
 ## Usage
 
 ```bash
+uv run loreley doctor --role all
+
+# legacy wrapper (still supported)
 uv run python script/doctor.py --role all
 ```
 
 Validate only one component:
 
 ```bash
-uv run python script/doctor.py --role scheduler
-uv run python script/doctor.py --role worker
-uv run python script/doctor.py --role ui
+uv run loreley doctor --role scheduler
+uv run loreley doctor --role worker
+uv run loreley doctor --role ui
 ```
 
 Adjust network timeouts:

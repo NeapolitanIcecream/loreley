@@ -36,6 +36,9 @@ ui = [
     "uvicorn[standard]>=0.38.0",
 ]
 
+[project.scripts]
+loreley = "loreley.cli:main"
+
 [build-system]
 requires = [
     "hatchling>=1.28.0",

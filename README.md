@@ -237,7 +237,7 @@ See `docs/loreley/config.md` for the exhaustive list.
 Before starting long-running processes, you can run a quick preflight check:
 
 ```bash
-uv run python script/doctor.py --role all
+uv run loreley doctor --role all
 ```
 
 ---
@@ -249,6 +249,10 @@ uv run python script/doctor.py --role all
 The scheduler drives ingestion, scheduling, dispatch, seeding, and archive maintenance:
 
 ```bash
+uv run loreley scheduler        # continuous loop
+uv run loreley scheduler --once # single tick
+
+# legacy wrappers (still supported)
 uv run python script/run_scheduler.py        # continuous loop
 uv run python script/run_scheduler.py --once # single tick
 
@@ -264,6 +268,9 @@ See `docs/script/run_scheduler.md` and `docs/loreley/scheduler/main.md` for deta
 A worker process consumes jobs from Dramatiq, applies planning/coding/evaluation, and pushes results back into the database:
 
 ```bash
+uv run loreley worker
+
+# legacy wrapper (still supported)
 uv run python script/run_worker.py
 ```
 

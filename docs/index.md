@@ -111,10 +111,14 @@ See: [Configuration](loreley/config.md)
 Preflight checks:
 
 ```bash
-uv run python script/doctor.py --role all
+uv run loreley doctor --role all
 ```
 
 ```bash
+uv run loreley scheduler
+uv run loreley worker
+
+# legacy wrappers (still supported)
 uv run python script/run_scheduler.py
 uv run python script/run_worker.py
 ```

@@ -13,12 +13,18 @@ uv sync --extra ui
 Start the API first:
 
 ```bash
+uv run loreley api
+
+# legacy wrapper (still supported)
 uv run python script/run_api.py
 ```
 
 Then start Streamlit:
 
 ```bash
+uv run loreley ui --api-base-url http://127.0.0.1:8000
+
+# legacy wrapper (still supported)
 uv run python script/run_ui.py --api-base-url http://127.0.0.1:8000
 ```
 
