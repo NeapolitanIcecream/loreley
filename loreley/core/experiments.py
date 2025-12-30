@@ -48,15 +48,18 @@ def _coerce_json_compatible(value: Any) -> Any:
 
     PostgreSQL JSONB does not accept NaN/Infinity values, but some Settings
     defaults (e.g. mapelites_archive_threshold_min=-inf) rely on them
-    internally. For persistence we coerce all non-finite floats to null to
-    keep snapshots JSON-compatible without affecting runtime behaviour.
+    internally. For persistence we encode non-finite floats as a reversible
+    JSON-compatible sentinel so that experiment hashes remain collision-free.
     """
 
     if isinstance(value, float):
         if math.isfinite(value):
             return value
-        # Represent NaN/±inf as JSON null.
-        return None
+        if math.isnan(value):
+            return {"__float__": "nan"}
+        if value > 0:
+            return {"__float__": "inf"}
+        return {"__float__": "-inf"}
     if isinstance(value, Mapping):
         return {str(k): _coerce_json_compatible(v) for k, v in value.items()}
     if isinstance(value, (list, tuple, set)):

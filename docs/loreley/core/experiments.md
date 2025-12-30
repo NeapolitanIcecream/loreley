@@ -25,7 +25,10 @@ Helpers for deriving canonical repository and experiment context from the curren
 - **`build_experiment_config_snapshot(settings)`**: extracts just the configuration fields that define an experiment.  
   - Starts from `settings.model_dump()`.  
   - Keeps only keys with prefixes `mapelites_` and `worker_evaluator_`, so that experiments stay stable across unrelated configuration changes (logging, Redis URLs, etc.).  
-  - Recursively applies `_coerce_json_compatible()` so that non‑finite floats (NaN/±inf) and nested containers are converted into JSON‑serialisable equivalents, making the snapshot safe for PostgreSQL JSONB.
+  - Recursively applies `_coerce_json_compatible()` so that non‑finite floats (NaN/±inf) are encoded as a reversible JSON sentinel, keeping snapshots safe for PostgreSQL JSONB and avoiding experiment-hash collisions:
+    - `-inf` → `{"__float__":"-inf"}`
+    - `inf` → `{"__float__":"inf"}`
+    - `nan` → `{"__float__":"nan"}`
 
 - **`hash_experiment_config(snapshot)`**: computes a stable SHA‑256 hash for a configuration snapshot.  
   - Serialises the snapshot with `json.dumps(..., sort_keys=True, separators=(",", ":"), default=str)` so that key ordering does not affect the result.  

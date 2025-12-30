@@ -56,6 +56,37 @@ def test_experiment_config_hash_changes_when_experiment_knob_changes(
     assert hash_1 != hash_2
 
 
+def test_experiment_config_snapshot_encodes_default_negative_infinity(settings: Settings) -> None:
+    snapshot = build_experiment_config_snapshot(settings)
+    assert snapshot["mapelites_archive_threshold_min"] == {"__float__": "-inf"}
+
+
+def test_experiment_config_hash_distinguishes_non_finite_floats(settings: Settings) -> None:
+    settings.mapelites_archive_threshold_min = float("-inf")
+    snapshot_minf = build_experiment_config_snapshot(settings)
+    hash_minf = hash_experiment_config(snapshot_minf)
+
+    settings.mapelites_archive_threshold_min = float("inf")
+    snapshot_inf = build_experiment_config_snapshot(settings)
+    hash_inf = hash_experiment_config(snapshot_inf)
+
+    settings.mapelites_archive_threshold_min = float("nan")
+    snapshot_nan = build_experiment_config_snapshot(settings)
+    hash_nan = hash_experiment_config(snapshot_nan)
+
+    assert snapshot_minf["mapelites_archive_threshold_min"] == {"__float__": "-inf"}
+    assert snapshot_inf["mapelites_archive_threshold_min"] == {"__float__": "inf"}
+    assert snapshot_nan["mapelites_archive_threshold_min"] == {"__float__": "nan"}
+
+    assert snapshot_minf != snapshot_inf
+    assert snapshot_minf != snapshot_nan
+    assert snapshot_inf != snapshot_nan
+
+    assert hash_minf != hash_inf
+    assert hash_minf != hash_nan
+    assert hash_inf != hash_nan
+
+
 def test_normalise_remote_url_canonicalises_and_strips_credentials() -> None:
     https = "https://user:pass@example.com:8443/Owner/Repo.git"
     ssh = "git@github.com:Owner/Repo.git"
