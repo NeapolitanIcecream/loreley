@@ -290,6 +290,7 @@ class EvolutionWorker:
                         rollup = build_inspiration_trajectory_rollup(
                             base_commit_hash=base_context.commit_hash,
                             inspiration_commit_hash=ctx.commit_hash,
+                            experiment_id=job_ctx.experiment_id,
                             session=session,
                             settings=self.settings,
                             client=shared_client,
@@ -488,10 +489,21 @@ class EvolutionWorker:
         metric_rows: Sequence[Metric] = ()
         cell: MapElitesArchiveCell | None = None
         with session_scope() as session:
-            card = session.get(CommitCard, commit_hash)
-            metric_rows = session.scalars(
-                select(Metric).where(Metric.commit_hash == commit_hash)
-            ).all()
+            if experiment_id is not None:
+                card = session.execute(
+                    select(CommitCard).where(
+                        CommitCard.experiment_id == experiment_id,
+                        CommitCard.commit_hash == commit_hash,
+                    )
+                ).scalar_one_or_none()
+            else:
+                card = None
+            if card is not None:
+                metric_rows = session.scalars(
+                    select(Metric).where(Metric.commit_card_id == card.id)
+                ).all()
+            else:
+                metric_rows = ()
             if experiment_id and island_id:
                 cell = session.execute(
                     select(MapElitesArchiveCell).where(

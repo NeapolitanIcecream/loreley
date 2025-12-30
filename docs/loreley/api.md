@@ -53,7 +53,7 @@ FastAPI also exposes OpenAPI docs by default:
 - `GET /jobs/{job_id}/artifacts`
 - `GET /jobs/{job_id}/artifacts/{artifact_key}`
 - `GET /commits`
-- `GET /commits/{commit_hash}`
+- `GET /commits/{commit_hash}` (requires `experiment_id` query parameter)
 - `GET /archive/islands`
 - `GET /archive/records`
 - `GET /archive/snapshot_meta`

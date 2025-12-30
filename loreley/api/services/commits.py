@@ -33,19 +33,26 @@ def list_commits(
         return list(session.execute(stmt).scalars())
 
 
-def get_commit(*, commit_hash: str) -> CommitCard | None:
-    """Return a commit metadata row by hash."""
+def get_commit(*, experiment_id: UUID, commit_hash: str) -> CommitCard | None:
+    """Return a commit metadata row by (experiment_id, commit_hash)."""
 
     with session_scope() as session:
-        stmt = select(CommitCard).where(CommitCard.commit_hash == commit_hash)
+        stmt = select(CommitCard).where(
+            CommitCard.experiment_id == experiment_id,
+            CommitCard.commit_hash == commit_hash,
+        )
         return session.execute(stmt).scalar_one_or_none()
 
 
-def list_metrics(*, commit_hash: str) -> list[Metric]:
-    """Return metrics for a commit ordered by name."""
+def list_metrics(*, commit_card_id: UUID) -> list[Metric]:
+    """Return metrics for a commit card ordered by name."""
 
     with session_scope() as session:
-        stmt = select(Metric).where(Metric.commit_hash == commit_hash).order_by(Metric.name.asc())
+        stmt = (
+            select(Metric)
+            .where(Metric.commit_card_id == commit_card_id)
+            .order_by(Metric.name.asc())
+        )
         return list(session.execute(stmt).scalars())
 
 

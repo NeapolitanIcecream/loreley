@@ -136,7 +136,11 @@ def render() -> None:
     if sel:
         commit_hash = sel[0].get("commit_hash")
         if commit_hash:
-            detail = api_get_or_stop(api_base_url, f"/api/v1/commits/{commit_hash}")
+            detail = api_get_or_stop(
+                api_base_url,
+                f"/api/v1/commits/{commit_hash}",
+                params={"experiment_id": experiment_id},
+            )
             with st.expander("Selected commit detail", expanded=False):
                 st.json(detail)
 

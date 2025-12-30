@@ -334,7 +334,7 @@ class EvolutionScheduler:
                     CommitCard.island_id,
                     Metric.value,
                 )
-                .join(Metric, Metric.commit_hash == CommitCard.commit_hash)
+                .join(Metric, Metric.commit_card_id == CommitCard.id)
                 .where(*conditions)
                 .order_by(order_column)
                 .limit(1)

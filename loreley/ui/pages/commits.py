@@ -94,7 +94,11 @@ def render() -> None:
         st.info("Select a commit to see details.")
         return
 
-    detail = api_get_or_stop(api_base_url, f"/api/v1/commits/{commit_hash}")
+    detail = api_get_or_stop(
+        api_base_url,
+        f"/api/v1/commits/{commit_hash}",
+        params={"experiment_id": experiment_id},
+    )
     st.subheader(f"Commit detail: {commit_hash}")
 
     if not isinstance(detail, dict):

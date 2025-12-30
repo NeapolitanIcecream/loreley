@@ -139,22 +139,33 @@ class CommitCard(TimestampMixin, Base):
 
     __tablename__ = "commit_cards"
     __table_args__ = (
+        UniqueConstraint(
+            "experiment_id",
+            "commit_hash",
+            name="uq_commit_cards_experiment_commit_hash",
+        ),
         Index("ix_commit_cards_island_id", "island_id"),
         Index("ix_commit_cards_parent_hash", "parent_commit_hash"),
+        Index("ix_commit_cards_experiment_created_at", "experiment_id", "created_at"),
+        Index("ix_commit_cards_experiment_island_id", "experiment_id", "island_id"),
     )
 
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
     commit_hash: Mapped[str] = mapped_column(
         String(64),
-        primary_key=True,
         nullable=False,
         index=True,
     )
     parent_commit_hash: Mapped[str | None] = mapped_column(String(64))
     island_id: Mapped[str | None] = mapped_column(String(64))
-    experiment_id: Mapped[uuid.UUID | None] = mapped_column(
+    experiment_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("experiments.id", ondelete="SET NULL"),
-        nullable=True,
+        ForeignKey("experiments.id", ondelete="CASCADE"),
+        nullable=False,
         index=True,
     )
     job_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -189,19 +200,14 @@ class CommitCard(TimestampMixin, Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
-    jobs_as_base: Mapped[list["EvolutionJob"]] = relationship(
-        back_populates="base_commit",
-        foreign_keys="EvolutionJob.base_commit_hash",
-        passive_deletes=True,
-    )
-    experiment: Mapped["Experiment | None"] = relationship(
+    experiment: Mapped["Experiment"] = relationship(
         back_populates="commits",
         foreign_keys=[experiment_id],
     )
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return (
-            f"<CommitCard commit_hash={self.commit_hash!r} "
+            f"<CommitCard id={self.id!r} commit_hash={self.commit_hash!r} "
             f"island={self.island_id!r} experiment_id={self.experiment_id!r}>"
         )
 
@@ -211,10 +217,15 @@ class CommitChunkSummary(TimestampMixin, Base):
 
     __tablename__ = "commit_chunk_summaries"
     __table_args__ = (
-        Index("ix_commit_chunk_summaries_end_hash", "end_commit_hash"),
+        Index("ix_commit_chunk_summaries_end_hash", "experiment_id", "end_commit_hash"),
     )
 
     # Cache key is stable for root-aligned full chunks on the CommitCard parent chain.
+    experiment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("experiments.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
     start_commit_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
     end_commit_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
     block_size: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -237,8 +248,8 @@ class Metric(TimestampMixin, Base):
 
     __tablename__ = "metrics"
     __table_args__ = (
-        UniqueConstraint("commit_hash", "name", name="uq_metric_commit_name"),
-        Index("ix_metrics_commit_hash", "commit_hash"),
+        UniqueConstraint("commit_card_id", "name", name="uq_metric_commit_card_name"),
+        Index("ix_metrics_commit_card_id", "commit_card_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -246,9 +257,9 @@ class Metric(TimestampMixin, Base):
         primary_key=True,
         default=uuid.uuid4,
     )
-    commit_hash: Mapped[str] = mapped_column(
-        String(64),
-        ForeignKey("commit_cards.commit_hash", ondelete="CASCADE"),
+    commit_card_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("commit_cards.id", ondelete="CASCADE"),
         nullable=False,
     )
     name: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -263,12 +274,15 @@ class Metric(TimestampMixin, Base):
 
     commit: Mapped["CommitCard"] = relationship(
         back_populates="metrics",
-        primaryjoin="CommitCard.commit_hash == Metric.commit_hash",
-        foreign_keys=[commit_hash],
+        primaryjoin="CommitCard.id == Metric.commit_card_id",
+        foreign_keys=[commit_card_id],
     )
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
-        return f"<Metric commit={self.commit_hash!r} name={self.name!r} value={self.value!r}>"
+        return (
+            f"<Metric commit_card_id={self.commit_card_id!r} "
+            f"name={self.name!r} value={self.value!r}>"
+        )
 
 
 class EvolutionJob(TimestampMixin, Base):
@@ -292,7 +306,6 @@ class EvolutionJob(TimestampMixin, Base):
     )
     base_commit_hash: Mapped[str | None] = mapped_column(
         String(64),
-        ForeignKey("commit_cards.commit_hash", ondelete="SET NULL"),
         nullable=True,
     )
     island_id: Mapped[str | None] = mapped_column(String(64))
@@ -350,10 +363,6 @@ class EvolutionJob(TimestampMixin, Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
 
-    base_commit: Mapped["CommitCard"] = relationship(
-        back_populates="jobs_as_base",
-        foreign_keys=[base_commit_hash],
-    )
     experiment: Mapped["Experiment | None"] = relationship(
         back_populates="jobs",
         foreign_keys=[experiment_id],

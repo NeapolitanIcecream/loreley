@@ -16,15 +16,17 @@ ORM models and enums for tracking evolutionary jobs, commits, and associated met
   - References a `repository_id`, a stable `config_hash` computed from a subset of `Settings`, an optional human-readable `name`, a JSONB `config_snapshot` of the relevant settings, and a free-form `status`.
   - Relates to `EvolutionJob`, `CommitCard`, and `MapElitesState` so that jobs, commits, and archive state can all be grouped by experiment.
 - **`CommitCard`** (`commit_cards` table): stores a lightweight, size-bounded commit representation used for inspiration and UI.
-  - Tracks commit hash, parent hash, optional island identifier, optional `experiment_id`, optional `job_id`, author, subject, change summary, evaluation summary, tags, key files, and highlights.
-  - Defines relationships to associated `Metric` records and jobs that use this commit as their base, and back to the owning `Experiment` when one exists.
+  - Primary key: `id` (UUID).
+  - Scoped by `experiment_id` (required); the `(experiment_id, commit_hash)` pair is unique so the same git commit hash can appear in multiple experiments with independent metadata.
+  - Tracks commit hash, parent hash, optional island identifier, optional `job_id`, author, subject, change summary, evaluation summary, tags, key files, and highlights.
+  - Defines relationships to associated `Metric` records (via `Metric.commit_card_id`) and back to the owning `Experiment`.
 - **`Metric`** (`metrics` table): records individual evaluation metrics for a commit.
   - Stores metric `name`, numeric `value`, optional `unit`, whether higher values are better, and a JSONB `details` payload.
-  - Links back to `CommitCard` via `commit_hash` and maintains uniqueness per `(commit_hash, name)`.
+  - Links back to `CommitCard` via `commit_card_id` and maintains uniqueness per `(commit_card_id, name)`.
 - **`EvolutionJob`** (`evolution_jobs` table): represents a single evolution iteration scheduled by the system.
   - Tracks current `status`, base commit, island ID, optional `experiment_id`, inspiration commit hashes, size-bounded job spec fields (`goal`, `constraints`, `acceptance_criteria`, `notes`, `tags`, sampling hints), human-readable `plan_summary`, priority, scheduling/processing timestamps, and last error if any.
   - Stores result/ingestion indexing fields (`result_commit_hash`, ingestion status/attempts/delta/cell index) without embedding large JSON payloads.
-  - Relates back to `CommitCard` via `base_commit_hash` and to `Experiment` via `experiment_id`, enabling efficient queries per base commit or experiment.
+  - Relates back to `Experiment` via `experiment_id`, enabling efficient per-experiment queries. `base_commit_hash` is a git commit hash string (not a foreign key).
 - **`JobArtifacts`** (`job_artifacts` table): filesystem references for cold-path artifacts produced by the worker.
   - Stores paths to planning/coding/evaluation prompts, raw outputs, and logs.
 - **`MapElitesState`** (`map_elites_states` table): persists per-experiment, per-island snapshots of the MAP-Elites archive.

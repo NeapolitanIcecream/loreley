@@ -59,11 +59,16 @@ def get_commits(
 
 
 @router.get("/commits/{commit_hash}", response_model=CommitDetailOut)
-def get_commit_detail(commit_hash: str) -> CommitDetailOut:
-    commit = get_commit(commit_hash=commit_hash)
+def get_commit_detail(
+    commit_hash: str,
+    experiment_id: UUID | None = Query(default=None),
+) -> CommitDetailOut:
+    if experiment_id is None:
+        raise HTTPException(status_code=400, detail="experiment_id is required.")
+    commit = get_commit(experiment_id=experiment_id, commit_hash=commit_hash)
     if commit is None:
         raise HTTPException(status_code=404, detail="Commit not found.")
-    metrics = list_metrics(commit_hash=commit_hash)
+    metrics = list_metrics(commit_card_id=commit.id)
     artifacts = None
     job_id = getattr(commit, "job_id", None)
     if isinstance(job_id, UUID):
