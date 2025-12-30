@@ -61,6 +61,57 @@ def test_manager_lazy_loads_persisted_snapshot_for_stats_and_records(settings: S
     assert records[0].commit_hash == "c1"
 
 
+def test_manager_adopts_snapshot_dimensionality_when_settings_mismatch(settings: Settings) -> None:
+    settings.mapelites_dimensionality_target_dims = 4
+    settings.mapelites_archive_cells_per_dim = 4
+
+    snapshot = {
+        "island_id": "main",
+        "lower_bounds": [0.0, 0.0],
+        "upper_bounds": [1.0, 1.0],
+        "history": [],
+        "projection": None,
+        "archive": [
+            {
+                "index": 0,
+                "objective": 1.23,
+                "measures": [0.1, 0.1],
+                "solution": [0.1, 0.1],
+                "commit_hash": "c1",
+                "timestamp": 42.0,
+            }
+        ],
+    }
+
+    class DummySnapshotBackend:
+        def __init__(self, payload: dict[str, object]) -> None:
+            self._payload = payload
+
+        def load(self, island_id: str) -> dict[str, object] | None:
+            if island_id != "main":
+                return None
+            return dict(self._payload)
+
+        def save(self, island_id: str, payload: object) -> None:
+            return None
+
+    manager = MapElitesManager(
+        settings=settings,
+        repo_root=Path("."),
+        experiment_id="00000000-0000-0000-0000-000000000000",
+    )
+    manager._snapshot_backend = DummySnapshotBackend(snapshot)  # type: ignore[attr-defined]
+
+    stats = manager.describe_island("main")
+    assert stats["cells"] == 16
+    assert stats["occupied"] == 1
+    assert manager._target_dims == 2  # Snapshot dimensionality is authoritative for persisted experiments.
+
+    records = manager.get_records("main")
+    assert len(records) == 1
+    assert len(records[0].measures) == 2
+
+
 def test_ingest_short_circuits_when_no_repo_state_embedding(
     monkeypatch: pytest.MonkeyPatch, settings: Settings
 ) -> None:

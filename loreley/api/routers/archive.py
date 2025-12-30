@@ -25,7 +25,14 @@ def get_islands(experiment_id: UUID) -> list[IslandStatsOut]:
     islands = list_islands(experiment_id=experiment_id)
     out: list[IslandStatsOut] = []
     for island_id in islands:
-        stats = describe_island(experiment_id=experiment_id, island_id=island_id, settings=settings)
+        try:
+            stats = describe_island(
+                experiment_id=experiment_id,
+                island_id=island_id,
+                settings=settings,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
         out.append(
             IslandStatsOut(
                 island_id=str(stats.get("island_id", island_id)),
@@ -74,10 +81,10 @@ def get_snapshot_meta(
 ) -> ArchiveSnapshotMetaOut:
     settings = get_settings()
     effective_island = island_id.strip() or (settings.mapelites_default_island_id or "main")
-    dims = max(1, int(settings.mapelites_dimensionality_target_dims))
     cells_per_dim = max(2, int(settings.mapelites_archive_cells_per_dim))
 
     meta = snapshot_meta(experiment_id=experiment_id, island_id=effective_island, settings=settings)
+    dims = max(1, len(meta.lower_bounds))
     updated_at = snapshot_updated_at(experiment_id=experiment_id, island_id=effective_island)
 
     return ArchiveSnapshotMetaOut(

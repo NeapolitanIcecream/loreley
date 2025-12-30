@@ -150,6 +150,44 @@ class MapElitesManager:
         # Backend that knows how to load and persist archive snapshots.
         self._snapshot_backend: SnapshotBackend = build_snapshot_backend(self._experiment_id)
 
+    @staticmethod
+    def _infer_snapshot_target_dims(snapshot: Mapping[str, Any]) -> int | None:
+        """Infer the archive dimensionality from a persisted snapshot payload.
+
+        This is used to keep long-lived experiments readable even when the current
+        process settings differ from the settings used when the snapshot was written.
+        """
+
+        if not snapshot:
+            return None
+
+        # Prefer archive entries because they directly encode the stored vector shapes.
+        archive_entries = snapshot.get("archive")
+        if isinstance(archive_entries, (list, tuple)) and archive_entries:
+            for entry in archive_entries:
+                if not isinstance(entry, Mapping):
+                    continue
+                measures = entry.get("measures")
+                if isinstance(measures, (list, tuple)) and measures:
+                    return len(measures)
+                solution = entry.get("solution")
+                if isinstance(solution, (list, tuple)) and solution:
+                    return len(solution)
+
+        for key in ("lower_bounds", "upper_bounds"):
+            bounds = snapshot.get(key)
+            if isinstance(bounds, (list, tuple)) and bounds:
+                return len(bounds)
+        return None
+
+    def _adopt_target_dims(self, target_dims: int) -> None:
+        target = max(1, int(target_dims))
+        if target == self._target_dims:
+            return
+        self._target_dims = target
+        self._lower_template, self._upper_template = self._build_feature_bounds()
+        self._grid_shape = tuple(self._cells_per_dim for _ in range(self._target_dims))
+
     def ingest(
         self,
         *,
@@ -379,7 +417,7 @@ class MapElitesManager:
         return {
             "island_id": effective_island,
             "occupied": int(getattr(stats, "num_elites", 0)),
-            "cells": int(np.prod(self._grid_shape)),
+            "cells": int(np.prod(getattr(archive, "dims", self._grid_shape))),
             "qd_score": float(getattr(stats, "qd_score", 0.0)),
             "best_fitness": float(best or 0.0),
         }
@@ -495,13 +533,49 @@ class MapElitesManager:
         state = self._archives.get(island_id)
         if state:
             return state
-        archive = self._build_archive()
+
+        snapshot = self._snapshot_backend.load(island_id)
+        snapshot_dims = self._infer_snapshot_target_dims(snapshot) if snapshot else None
+        effective_dims = self._target_dims
+        if snapshot_dims and snapshot_dims != self._target_dims:
+            if not self._archives:
+                log.warning(
+                    "Adopting snapshot dimensionality for experiment {} island {} (settings_dims={} snapshot_dims={})",
+                    self._experiment_id,
+                    island_id,
+                    self._target_dims,
+                    snapshot_dims,
+                )
+                self._adopt_target_dims(snapshot_dims)
+                effective_dims = self._target_dims
+            else:
+                log.warning(
+                    "Snapshot dimensionality differs from current manager configuration; building archive per-island "
+                    "(experiment={} island={} settings_dims={} snapshot_dims={})",
+                    self._experiment_id,
+                    island_id,
+                    self._target_dims,
+                    snapshot_dims,
+                )
+                effective_dims = int(snapshot_dims)
+
+        if effective_dims == self._target_dims:
+            archive = self._build_archive()
+            lower_template = self._lower_template
+            upper_template = self._upper_template
+        else:
+            lower_template, upper_template = self._build_feature_bounds(target_dims=effective_dims)
+            archive = self._build_archive(
+                target_dims=effective_dims,
+                lower_bounds=lower_template,
+                upper_bounds=upper_template,
+            )
+
         state = IslandState(
             archive=archive,
-            lower_bounds=self._lower_template.copy(),
-            upper_bounds=self._upper_template.copy(),
+            lower_bounds=np.asarray(lower_template, dtype=np.float64).copy(),
+            upper_bounds=np.asarray(upper_template, dtype=np.float64).copy(),
         )
-        snapshot = self._snapshot_backend.load(island_id)
         if snapshot:
             apply_snapshot(
                 state=state,
@@ -513,25 +587,38 @@ class MapElitesManager:
         log.info(
             "Initialized MAP-Elites archive for island {} (cells={} dims={})",
             island_id,
-            np.prod(self._grid_shape),
-            self._target_dims,
+            int(np.prod(getattr(archive, "dims", self._grid_shape))),
+            int(len(getattr(archive, "dims", self._grid_shape))),
         )
         return state
 
-    def _build_feature_bounds(self) -> tuple[np.ndarray, np.ndarray]:
-        lower = np.zeros(self._target_dims, dtype=np.float64)
-        upper = np.ones(self._target_dims, dtype=np.float64)
+    def _build_feature_bounds(self, *, target_dims: int | None = None) -> tuple[np.ndarray, np.ndarray]:
+        dims = int(target_dims) if target_dims is not None else int(self._target_dims)
+        lower = np.zeros(dims, dtype=np.float64)
+        upper = np.ones(dims, dtype=np.float64)
         return lower, upper
 
-    def _build_archive(self) -> GridArchive:
-        ranges = tuple(zip(self._lower_template.tolist(), self._upper_template.tolist()))
+    def _build_archive(
+        self,
+        *,
+        target_dims: int | None = None,
+        lower_bounds: np.ndarray | None = None,
+        upper_bounds: np.ndarray | None = None,
+    ) -> GridArchive:
+        dims = int(target_dims) if target_dims is not None else int(self._target_dims)
+        lower = np.asarray(lower_bounds if lower_bounds is not None else self._lower_template, dtype=np.float64)
+        upper = np.asarray(upper_bounds if upper_bounds is not None else self._upper_template, dtype=np.float64)
+        if lower.shape[0] != dims or upper.shape[0] != dims:
+            lower, upper = self._build_feature_bounds(target_dims=dims)
+
+        ranges = tuple(zip(lower.tolist(), upper.tolist()))
         extra_fields = {
             "commit_hash": ((), object),
             "timestamp": ((), np.float64),
         }
         return GridArchive(
-            solution_dim=self._target_dims,
-            dims=self._grid_shape,
+            solution_dim=dims,
+            dims=tuple(self._cells_per_dim for _ in range(dims)),
             ranges=ranges,
             learning_rate=self.settings.mapelites_archive_learning_rate,
             threshold_min=self.settings.mapelites_archive_threshold_min,

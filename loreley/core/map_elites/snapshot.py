@@ -790,6 +790,14 @@ def restore_archive_entries(
     """Restore archive entries and commit mappings from snapshot data."""
 
     archive: GridArchive = getattr(state, "archive")
+    expected_solution_dim = getattr(archive, "solution_dim", None)
+    expected_measures_dim = len(getattr(archive, "dims", ())) or None
+    expected_cell_count = None
+    if expected_measures_dim is not None:
+        try:
+            expected_cell_count = int(np.prod(getattr(archive, "dims", ())))
+        except Exception:  # pragma: no cover - defensive
+            expected_cell_count = None
     for entry in entries:
         solution_values = array_to_list(entry.get("solution"))
         measures_values = array_to_list(entry.get("measures"))
@@ -800,6 +808,27 @@ def restore_archive_entries(
         measures = np.asarray(measures_values, dtype=np.float64)
         solution_batch = solution.reshape(1, -1)
         measures_batch = measures.reshape(1, -1)
+
+        if expected_solution_dim is not None and solution_batch.shape[1] != int(expected_solution_dim):
+            log.warning(
+                "Skipping snapshot archive entry due to incompatible solution_dim "
+                "(experiment={} island={} expected={} got={})",
+                getattr(getattr(archive, "experiment_id", None), "hex", None) or "?",
+                island_id,
+                int(expected_solution_dim),
+                int(solution_batch.shape[1]),
+            )
+            continue
+        if expected_measures_dim is not None and measures_batch.shape[1] != int(expected_measures_dim):
+            log.warning(
+                "Skipping snapshot archive entry due to incompatible measures dimensionality "
+                "(island={} expected={} got={})",
+                island_id,
+                int(expected_measures_dim),
+                int(measures_batch.shape[1]),
+            )
+            continue
+
         objective = np.asarray(
             [float(entry.get("objective", 0.0))],
             dtype=np.float64,
@@ -807,18 +836,32 @@ def restore_archive_entries(
         commit_hash = str(entry.get("commit_hash", ""))
         timestamp_value = float(entry.get("timestamp", 0.0))
 
-        archive.add(
-            solution_batch,
-            objective,
-            measures_batch,
-            commit_hash=np.asarray([commit_hash], dtype=object),
-            timestamp=np.asarray([timestamp_value], dtype=np.float64),
-        )
+        try:
+            archive.add(
+                solution_batch,
+                objective,
+                measures_batch,
+                commit_hash=np.asarray([commit_hash], dtype=object),
+                timestamp=np.asarray([timestamp_value], dtype=np.float64),
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            log.warning(
+                "Failed to restore snapshot entry into GridArchive (island={} commit_hash={}): {}",
+                island_id,
+                commit_hash,
+                exc,
+            )
+            continue
 
         stored_index = entry.get("index")
         if stored_index is not None:
-            cell_index = int(stored_index)
+            try:
+                cell_index = int(stored_index)
+            except (TypeError, ValueError):
+                cell_index = int(np.asarray(archive.index_of(measures_batch)).item())
         else:
+            cell_index = int(np.asarray(archive.index_of(measures_batch)).item())
+        if expected_cell_count is not None and (cell_index < 0 or cell_index >= expected_cell_count):
             cell_index = int(np.asarray(archive.index_of(measures_batch)).item())
 
         state.index_to_commit[cell_index] = commit_hash
