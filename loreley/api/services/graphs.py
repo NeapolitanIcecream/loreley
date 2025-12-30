@@ -76,21 +76,21 @@ def build_commit_lineage_graph(
 
         metric_map: dict[str, float] = {}
         if metric_name and commits:
-            hashes = [c.commit_hash for c in commits]
+            commit_ids = [c.id for c in commits]
             metric_stmt = (
-                select(Metric.commit_hash, Metric.value)
-                .where(Metric.commit_hash.in_(hashes), Metric.name == metric_name)
+                select(Metric.commit_card_id, Metric.value)
+                .where(Metric.commit_card_id.in_(commit_ids), Metric.name == metric_name)
             )
-            for commit_hash, value in session.execute(metric_stmt).all():
-                if commit_hash and value is not None:
-                    metric_map[str(commit_hash)] = float(value)
+            for commit_card_id, value in session.execute(metric_stmt).all():
+                if commit_card_id and value is not None:
+                    metric_map[str(commit_card_id)] = float(value)
 
     commit_set = {c.commit_hash for c in commits}
     nodes: list[CommitNode] = []
     edges: list[CommitEdge] = []
 
     for c in commits:
-        raw = metric_map.get(c.commit_hash)
+        raw = metric_map.get(str(c.id))
         if raw is None:
             fitness = fitness_floor
         else:

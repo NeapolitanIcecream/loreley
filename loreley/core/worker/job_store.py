@@ -195,6 +195,11 @@ class EvolutionJobStore:
                     raise EvolutionWorkerError(
                         f"Evolution job {job_ctx.job_id} disappeared during persistence.",
                     )
+                if not job_ctx.experiment_id:
+                    raise EvolutionWorkerError(
+                        f"Evolution job {job_ctx.job_id} is missing experiment_id; "
+                        "cannot persist experiment-scoped CommitCard/Metric rows.",
+                    )
                 job.status = JobStatus.SUCCEEDED
                 job.completed_at = _utc_now()
                 job.plan_summary = plan.plan.summary
@@ -231,7 +236,7 @@ class EvolutionJobStore:
                 for metric in evaluation.metrics:
                     session.add(
                         Metric(
-                            commit_hash=commit_hash,
+                            commit=card,
                             name=metric.name,
                             value=metric.value,
                             unit=metric.unit,

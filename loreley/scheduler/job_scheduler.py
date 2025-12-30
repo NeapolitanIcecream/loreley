@@ -54,6 +54,7 @@ class JobScheduler:
             stmt = (
                 select(func.count(EvolutionJob.id))
                 .where(EvolutionJob.status.in_(unfinished_statuses))
+                .where(EvolutionJob.experiment_id == self.experiment_id)
             )
             return int(session.execute(stmt).scalar_one())
 
@@ -230,7 +231,10 @@ class JobScheduler:
         with session_scope() as session:
             stmt = (
                 select(EvolutionJob.id)
-                .where(EvolutionJob.status == JobStatus.PENDING)
+                .where(
+                    EvolutionJob.status == JobStatus.PENDING,
+                    EvolutionJob.experiment_id == self.experiment_id,
+                )
                 .order_by(
                     EvolutionJob.priority.desc(),
                     EvolutionJob.scheduled_at.asc(),

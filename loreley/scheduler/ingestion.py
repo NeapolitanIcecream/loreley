@@ -105,7 +105,10 @@ class MapElitesIngestion:
         with session_scope() as session:
             stmt = (
                 select(EvolutionJob)
-                .where(EvolutionJob.status == JobStatus.SUCCEEDED)
+                .where(
+                    EvolutionJob.status == JobStatus.SUCCEEDED,
+                    EvolutionJob.experiment_id == getattr(self.experiment, "id", None),
+                )
                 .order_by(EvolutionJob.completed_at.asc())
                 .limit(batch_limit)
             )
@@ -153,16 +156,27 @@ class MapElitesIngestion:
             return False
         metrics_payload: list[dict[str, Any]] = []
         with session_scope() as session:
-            rows = session.scalars(select(Metric).where(Metric.commit_hash == commit_hash)).all()
-            for row in rows:
-                metrics_payload.append(
-                    {
-                        "name": row.name,
-                        "value": float(row.value),
-                        "unit": row.unit,
-                        "higher_is_better": bool(row.higher_is_better),
-                    }
-                )
+            commit_row = None
+            if snapshot.experiment_id is not None:
+                commit_row = session.execute(
+                    select(CommitCard).where(
+                        CommitCard.experiment_id == snapshot.experiment_id,
+                        CommitCard.commit_hash == commit_hash,
+                    )
+                ).scalar_one_or_none()
+            if commit_row is not None:
+                rows = session.scalars(
+                    select(Metric).where(Metric.commit_card_id == commit_row.id)
+                ).all()
+                for row in rows:
+                    metrics_payload.append(
+                        {
+                            "name": row.name,
+                            "value": float(row.value),
+                            "unit": row.unit,
+                            "higher_is_better": bool(row.higher_is_better),
+                        }
+                    )
         try:
             insertion = self.manager.ingest(
                 commit_hash=commit_hash,
@@ -257,11 +271,18 @@ class MapElitesIngestion:
 
         # Skip evaluation when metrics already exist for this commit.
         with session_scope() as session:
-            existing = session.execute(
-                select(Metric.id).where(Metric.commit_hash == commit_hash)
+            commit_row = session.execute(
+                select(CommitCard).where(
+                    CommitCard.experiment_id == getattr(self.experiment, "id", None),
+                    CommitCard.commit_hash == commit_hash,
+                )
             ).scalar_one_or_none()
-            if existing is not None:
-                return
+            if commit_row is not None:
+                existing = session.execute(
+                    select(Metric.id).where(Metric.commit_card_id == commit_row.id)
+                ).scalar_one_or_none()
+                if existing is not None:
+                    return
 
         # Prepare a detached checkout of the root commit using the worker repo.
         try:
@@ -343,7 +364,12 @@ class MapElitesIngestion:
         metrics_payload = [metric.as_dict() for metric in result.metrics]
 
         with session_scope() as session:
-            commit_row = session.get(CommitCard, commit_hash)
+            commit_row = session.execute(
+                select(CommitCard).where(
+                    CommitCard.experiment_id == getattr(self.experiment, "id", None),
+                    CommitCard.commit_hash == commit_hash,
+                )
+            ).scalar_one_or_none()
             if commit_row is None:
                 # Ensure the commit record exists before writing metrics so that
                 # FK constraints are satisfied even if metadata initialisation
@@ -381,7 +407,7 @@ class MapElitesIngestion:
             for metric in result.metrics:
                 existing_metric = session.execute(
                     select(Metric).where(
-                        Metric.commit_hash == commit_hash,
+                        Metric.commit_card_id == commit_row.id,
                         Metric.name == metric.name,
                     )
                 ).scalar_one_or_none()
@@ -393,7 +419,7 @@ class MapElitesIngestion:
                 else:
                     session.add(
                         Metric(
-                            commit_hash=commit_hash,
+                            commit=commit_row,
                             name=metric.name,
                             value=metric.value,
                             unit=metric.unit,
@@ -423,15 +449,15 @@ class MapElitesIngestion:
         message = getattr(git_commit, "message", None)
 
         with session_scope() as session:
-            stmt = select(CommitCard).where(CommitCard.commit_hash == commit_hash)
+            stmt = select(CommitCard).where(
+                CommitCard.commit_hash == commit_hash,
+                CommitCard.experiment_id == self.experiment.id,
+            )
             existing = session.execute(stmt).scalar_one_or_none()
             default_island = self.settings.mapelites_default_island_id or "main"
 
             if existing:
                 updated = False
-                if existing.experiment_id is None and self.experiment is not None:
-                    existing.experiment_id = self.experiment.id
-                    updated = True
                 if existing.island_id is None:
                     existing.island_id = default_island
                     updated = True
