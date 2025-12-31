@@ -1,6 +1,6 @@
 ## Loreley
 
-> Whole-repository Quality‑Diversity (QD) optimization for real git codebases.
+> Whole-repository Quality‑Diversity optimization for real git codebases.
 
 Loreley is a distributed system that **evolves entire git repositories** (the unit of search is a git commit). It continuously samples base commits, asks external planning/coding agents to implement repo-wide changes, evaluates the result with your evaluator, and stores metrics plus a MAP‑Elites archive in Postgres for later sampling and reuse.
 
