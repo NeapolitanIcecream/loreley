@@ -48,6 +48,8 @@ uv run loreley api
 uv run loreley ui
 ```
 
+![](./docs/assets/ui.jpeg)
+
 ### Documentation
 
 - [`docs/index.md`](docs/index.md) (local)
