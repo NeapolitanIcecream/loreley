@@ -4,6 +4,8 @@
 
 Loreley is a distributed system that **evolves entire git repositories** (the unit of search is a git commit). It continuously samples base commits, asks external planning/coding agents to implement repo-wide changes, evaluates the result with your evaluator, and stores metrics plus a MAP‑Elites archive in Postgres for later sampling and reuse.
 
+![](./docs/assets/loreley.svg)
+
 ### Why use it
 
 - **Whole-repo evolution**: cross-module refactors and “production-style” changes are first-class.
