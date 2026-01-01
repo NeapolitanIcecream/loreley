@@ -323,6 +323,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#start-postgresql-redis-recommended-for-local-dev" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Start PostgreSQL + Redis (recommended for local dev)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#configure" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1713,6 +1724,34 @@
   
   
     <li class="md-nav__item">
+      <a href="script/doctor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Doctor (environment checks)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="script/run_scheduler/" class="md-nav__link">
         
   
@@ -1947,6 +1986,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#start-postgresql-redis-recommended-for-local-dev" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Start PostgreSQL + Redis (recommended for local dev)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#configure" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2174,8 +2224,15 @@
 <span class="nb">cd</span><span class="w"> </span>loreley
 uv<span class="w"> </span>sync
 </code></pre></div>
+<h3 id="start-postgresql-redis-recommended-for-local-dev">Start PostgreSQL + Redis (recommended for local dev)<a class="headerlink" href="#start-postgresql-redis-recommended-for-local-dev" title="Permanent link">&para;</a></h3>
+<p>If you have Docker installed, you can start the required services with:</p>
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d<span class="w"> </span>postgres<span class="w"> </span>redis
+</code></pre></div>
 <h3 id="configure">Configure<a class="headerlink" href="#configure" title="Permanent link">&para;</a></h3>
 <p>All runtime configuration is provided via environment variables and loaded by <code>loreley.config.Settings</code>. Start with:</p>
+<p>Copy the example env file:</p>
+<div class="highlight"><pre><span></span><code>cp<span class="w"> </span>env.example<span class="w"> </span>.env
+</code></pre></div>
 <ul>
 <li><code>APP_NAME</code>, <code>APP_ENV</code>, <code>LOG_LEVEL</code></li>
 <li><code>DATABASE_URL</code></li>
@@ -2184,7 +2241,14 @@ uv<span class="w"> </span>sync
 </ul>
 <p>See: <a href="loreley/config/">Configuration</a></p>
 <h3 id="run">Run<a class="headerlink" href="#run" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_scheduler.py
+<p>Preflight checks:</p>
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>doctor<span class="w"> </span>--role<span class="w"> </span>all
+</code></pre></div>
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>scheduler
+uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>worker
+
+<span class="c1"># legacy wrappers (still supported)</span>
+uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_scheduler.py
 uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_worker.py
 </code></pre></div>
 <p>See: <a href="script/run_scheduler/">Running the scheduler</a>, <a href="script/run_worker/">Running the worker</a></p>

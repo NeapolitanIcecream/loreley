@@ -1471,6 +1471,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../doctor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Doctor (environment checks)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../run_scheduler/" class="md-nav__link">
         
   
@@ -1845,7 +1873,8 @@ process.</p>
    actor and its queue settings) after logging is configured; any import/startup
    failure is reported with a concise console message and exit code <code>1</code>.</li>
 <li>Logs a short “worker online” message including <code>TASKS_QUEUE_NAME</code> and
-   <code>WORKER_REPO_WORKTREE</code>.</li>
+   <code>WORKER_REPO_WORKTREE</code> (the base clone; per-job worktrees are created under
+   <code>&lt;WORKER_REPO_WORKTREE&gt;-worktrees/</code>).</li>
 <li>Creates a <code>dramatiq.Worker</code> with:</li>
 <li><code>broker</code> set to the global Redis broker instance.</li>
 <li><code>worker_threads=1</code> to ensure a single-threaded execution model.</li>
@@ -1885,7 +1914,10 @@ still read from <code>loreley.config.Settings</code>.</p>
 <li><code>WORKER_REPO_REMOTE_URL</code>, <code>WORKER_REPO_BRANCH</code>, <code>WORKER_REPO_WORKTREE</code>,
     <code>WORKER_REPO_WORKTREE_RANDOMIZE</code>, <code>WORKER_REPO_WORKTREE_RANDOM_SUFFIX_LEN</code>,
     and related <code>WORKER_REPO_*</code> options used by
-    <code>loreley.core.worker.repository.WorkerRepository</code>.</li>
+    <code>loreley.core.worker.repository.WorkerRepository</code>. The worker maintains a
+    base clone at <code>WORKER_REPO_WORKTREE</code> and creates isolated per-job worktrees
+    (removed after each job) under <code>&lt;WORKER_REPO_WORKTREE&gt;-worktrees/</code> so
+    multiple worker processes can run concurrently on the same host.</li>
 </ul>
 <p>For a full description of these settings, see <code>docs/loreley/config.md</code> and the
 worker module documentation in <code>docs/loreley/tasks/workers.md</code>.</p>

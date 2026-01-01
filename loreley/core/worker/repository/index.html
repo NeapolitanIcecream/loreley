@@ -1542,6 +1542,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../../script/doctor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Doctor (environment checks)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../../script/run_scheduler/" class="md-nav__link">
         
   
@@ -1748,7 +1776,10 @@
 
 
 <h1 id="loreleycoreworkerrepository">loreley.core.worker.repository<a class="headerlink" href="#loreleycoreworkerrepository" title="Permanent link">&para;</a></h1>
-<p>Git worktree management for Loreley worker processes, responsible for cloning, syncing, cleaning, and publishing the upstream repository used for evolutionary jobs.</p>
+<p>Git repository management for Loreley worker processes. The worker maintains a
+single <strong>base clone</strong> (configured via <code>WORKER_REPO_WORKTREE</code>) and creates
+short-lived <strong>per-job worktrees</strong> via <code>git worktree</code> so concurrent jobs do not
+share a mutable working directory.</p>
 <h2 id="types">Types<a class="headerlink" href="#types" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong><code>RepositoryError</code></strong>: custom runtime error raised when a git operation fails, capturing the command, return code, stdout, and stderr for easier debugging.</li>
@@ -1756,15 +1787,21 @@
 </ul>
 <h2 id="repository">Repository<a class="headerlink" href="#repository" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>WorkerRepository</code></strong>: high-level manager for the worker git worktree built on top of <code>git.Repo</code>.</li>
-<li>Configured via <code>loreley.config.Settings</code> worker repository options (<code>WORKER_REPO_REMOTE_URL</code>, <code>WORKER_REPO_BRANCH</code>, <code>WORKER_REPO_WORKTREE</code>, <code>WORKER_REPO_WORKTREE_RANDOMIZE</code>, <code>WORKER_REPO_WORKTREE_RANDOM_SUFFIX_LEN</code>, <code>WORKER_REPO_GIT_BIN</code>, <code>WORKER_REPO_FETCH_DEPTH</code>, <code>WORKER_REPO_CLEAN_EXCLUDES</code>, <code>WORKER_REPO_JOB_BRANCH_PREFIX</code>, <code>WORKER_REPO_ENABLE_LFS</code>, <code>WORKER_REPO_JOB_BRANCH_TTL_HOURS</code>) and honours commit author settings for worker-produced commits. <code>WORKER_REPO_REMOTE_URL</code> is mandatory; when it is absent the repository raises <code>RepositoryError</code> during construction. When <code>WORKER_REPO_WORKTREE_RANDOMIZE</code> is true, the final path segment of <code>WORKER_REPO_WORKTREE</code> gains a random hexadecimal suffix (length controlled by <code>WORKER_REPO_WORKTREE_RANDOM_SUFFIX_LEN</code>, default 8) so multiple workers on the same host can use isolated clones.</li>
-<li><code>prepare()</code> ensures the worktree directory exists, clones the remote with the configured depth/branch if necessary, aligns the local tracking branch with the configured upstream, and refreshes tags/LFS where enabled, logging progress via <code>rich</code> and <code>loguru</code>.</li>
-<li><code>checkout_for_job(job_id, base_commit, create_branch=True)</code> cleans the worktree, ensures the <code>base_commit</code> object is available locally (unshallows the repository when needed), then either checks out that commit in detached mode or creates a per-job branch under the configured job-branch prefix, returning a <code>CheckoutContext</code>.</li>
-<li><code>clean_worktree()</code> hard-resets tracked files and runs <code>git clean -xdf</code>, preserving any paths configured in <code>WORKER_REPO_CLEAN_EXCLUDES</code>.</li>
-<li><code>current_commit()</code> returns the current HEAD commit hash for observability and scheduling.</li>
-<li><code>has_changes()</code> reports whether the worktree is dirty (including untracked files), which the evolution worker uses to decide if there is anything to commit after coding.</li>
-<li><code>stage_all()</code> stages all tracked and untracked changes, and <code>commit(message)</code> creates a commit and returns its hash, using GitPython under the hood.</li>
-<li><code>push_branch(branch_name, remote=\"origin\", force_with_lease=False)</code> pushes the current branch to the configured remote (optionally with <code>--force-with-lease</code>), and <code>delete_remote_branch(branch_name, remote=\"origin\")</code> removes remote job branches without affecting local history.</li>
+<li><strong><code>WorkerRepository</code></strong>: high-level manager for the worker git repository built on top of <code>git.Repo</code>.</li>
+<li>Configured via <code>loreley.config.Settings</code> worker repository options (<code>WORKER_REPO_REMOTE_URL</code>, <code>WORKER_REPO_BRANCH</code>, <code>WORKER_REPO_WORKTREE</code>, <code>WORKER_REPO_WORKTREE_RANDOMIZE</code>, <code>WORKER_REPO_WORKTREE_RANDOM_SUFFIX_LEN</code>, <code>WORKER_REPO_GIT_BIN</code>, <code>WORKER_REPO_FETCH_DEPTH</code>, <code>WORKER_REPO_CLEAN_EXCLUDES</code>, <code>WORKER_REPO_JOB_BRANCH_PREFIX</code>, <code>WORKER_REPO_ENABLE_LFS</code>, <code>WORKER_REPO_JOB_BRANCH_TTL_HOURS</code>) and honours commit author settings for worker-produced commits. <code>WORKER_REPO_REMOTE_URL</code> is mandatory; when it is absent the repository raises <code>RepositoryError</code> during construction. When <code>WORKER_REPO_WORKTREE_RANDOMIZE</code> is true, the final path segment of <code>WORKER_REPO_WORKTREE</code> gains a random hexadecimal suffix (length controlled by <code>WORKER_REPO_WORKTREE_RANDOM_SUFFIX_LEN</code>, default 8) so multiple workers on the same host can use isolated base clones.</li>
+<li><strong>Concurrency model</strong>:<ul>
+<li>The base clone is protected by a cross-process file lock (<code>.&lt;WORKER_REPO_WORKTREE basename&gt;.lock</code>) to avoid races during clone/fetch and worktree bookkeeping.</li>
+<li>Each job runs inside its own git worktree under <code>&lt;WORKER_REPO_WORKTREE&gt;-worktrees/</code>, so multiple worker processes can execute jobs concurrently without sharing a mutable working directory.</li>
+</ul>
+</li>
+<li><code>prepare()</code> ensures the base clone exists, clones the remote with the configured depth/branch if necessary, aligns the local tracking branch with the configured upstream, and refreshes tags/LFS where enabled, logging progress via <code>rich</code> and <code>loguru</code>.</li>
+<li><code>checkout_lease_for_job(job_id, base_commit, create_branch=True)</code> is the recommended API: it creates an isolated per-job worktree, checks out the requested commit (optionally creating a job branch), yields a <code>CheckoutContext</code>, and removes the worktree when the context exits.</li>
+<li><code>checkout_for_job(job_id, base_commit, create_branch=True)</code> is a low-level helper that returns a <code>CheckoutContext</code> for a newly created per-job worktree but does not automatically clean up the worktree; prefer <code>checkout_lease_for_job()</code> in long-running workers.</li>
+<li><code>clean_worktree(worktree=...)</code> hard-resets tracked files and runs <code>git clean -xdf</code>, preserving any paths configured in <code>WORKER_REPO_CLEAN_EXCLUDES</code>.</li>
+<li><code>current_commit(worktree=...)</code> returns the current HEAD commit hash for observability and debugging.</li>
+<li><code>has_changes(worktree=...)</code> reports whether a worktree is dirty (including untracked files).</li>
+<li><code>stage_all(worktree=...)</code> stages all tracked and untracked changes, and <code>commit(message, worktree=...)</code> creates a commit and returns its hash.</li>
+<li><code>push_branch(branch_name, worktree=..., remote=\"origin\", force_with_lease=False)</code> pushes the named branch to the configured remote (optionally with <code>--force-with-lease</code>), and <code>delete_remote_branch(branch_name, remote=\"origin\")</code> removes remote job branches without affecting local history.</li>
 <li><code>prune_stale_job_branches()</code> enumerates remote job branches under the configured job-branch prefix and deletes those whose last commit is older than <code>WORKER_REPO_JOB_BRANCH_TTL_HOURS</code>, logging a concise summary of how many branches were pruned.</li>
 <li>Internal helpers such as <code>_ensure_worktree_ready()</code>, <code>_sync_upstream()</code>, <code>_ensure_remote_origin()</code>, <code>_fetch()</code>, <code>_sync_lfs()</code>, <code>_ensure_commit_available()</code>, and <code>_wrap_git_error()</code> encapsulate the GitPython integration, remote configuration, LFS sync, shallow/unshallow behaviour, and consistent error wrapping with sanitised git commands.</li>
 </ul>

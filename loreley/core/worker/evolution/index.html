@@ -1564,6 +1564,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../../script/doctor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Doctor (environment checks)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../../script/run_scheduler/" class="md-nav__link">
         
   
@@ -1816,7 +1844,7 @@
 <li><strong><code>run(job_id)</code></strong>:<ul>
 <li>Coerces the <code>job_id</code> into a <code>UUID</code>.</li>
 <li>Calls <code>_start_job()</code> to lock and validate the job row, building a <code>JobContext</code>.</li>
-<li>Checks out the base commit via <code>WorkerRepository.checkout_for_job()</code>.</li>
+<li>Creates an isolated per-job git worktree via <code>WorkerRepository.checkout_lease_for_job()</code>.</li>
 <li>Runs planning (<code>_run_planning()</code>), coding (<code>_run_coding()</code>), and evaluation (<code>_run_evaluation()</code>) in sequence.</li>
 <li>Prepares a commit message via <code>_prepare_commit_message()</code>, then creates and pushes a new commit via <code>_create_commit()</code>.</li>
 <li>Persists success artifacts and metrics through <code>EvolutionJobStore.persist_success()</code> and prunes stale job branches.</li>
@@ -1833,7 +1861,7 @@
 <li><strong><code>_run_planning(job_ctx, checkout)</code></strong>: builds a <code>PlanningAgentRequest</code> from commit snapshots and job fields, invokes <code>PlanningAgent.plan()</code>, and wraps <code>PlanningError</code> into <code>EvolutionWorkerError</code>. For seed jobs, <code>_run_planning</code> clears metrics, highlights, and evaluation details from the base planning context, drops all inspirations, and passes <code>cold_start=True</code> so that the planning agent treats the request as a cold-start seed population design run.</li>
 <li><strong><code>_run_coding(job_ctx, plan, checkout)</code></strong>: builds a <code>CodingAgentRequest</code> from the plan and job context, runs <code>CodingAgent.implement()</code>, and wraps <code>CodingError</code> into <code>EvolutionWorkerError</code>.</li>
 <li><strong><code>_prepare_commit_message(job_ctx, plan, coding)</code></strong>: delegates to <code>CommitSummarizer.generate()</code> to generate an LLM-backed git subject line; if summarisation fails, falls back to the coding agent's suggested <code>commit_message</code>, plan <code>summary</code>, or a generic <code>"Evolution job &lt;id&gt;"</code> string.</li>
-<li><strong><code>_create_commit(checkout, commit_message)</code></strong>: ensures the checkout is on a branch and that the repository contains changes, stages everything, creates a commit, and pushes the per-job branch using <code>force-with-lease</code>.</li>
+<li><strong><code>_create_commit(checkout, commit_message)</code></strong>: ensures the checkout is on a branch and that the job worktree contains changes, stages everything, creates a commit, and pushes the per-job branch using <code>force-with-lease</code>.</li>
 <li><strong><code>_run_evaluation(job_ctx, checkout, plan, candidate_commit)</code></strong>: constructs an <code>EvaluationContext</code> payload that includes only bounded job and plan fields (no raw prompts/JSON dumps), then calls <code>Evaluator.evaluate()</code> and wraps <code>EvaluationError</code> into <code>EvolutionWorkerError</code>.</li>
 <li><strong><code>_prune_job_branches()</code></strong>: calls <code>WorkerRepository.prune_stale_job_branches()</code> and logs the number of branches removed, swallowing repository errors into warnings.</li>
 <li><strong><code>_mark_job_failed(job_id, exc)</code></strong>: logs a red failure message and forwards the concise error text to <code>EvolutionJobStore.mark_job_failed()</code>, ensuring job rows still capture failures even when other parts of the worker raise.</li>

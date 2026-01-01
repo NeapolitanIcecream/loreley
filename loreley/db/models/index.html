@@ -1542,6 +1542,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../script/doctor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Doctor (environment checks)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../script/run_scheduler/" class="md-nav__link">
         
   
@@ -1763,15 +1791,17 @@
 <li>References a <code>repository_id</code>, a stable <code>config_hash</code> computed from a subset of <code>Settings</code>, an optional human-readable <code>name</code>, a JSONB <code>config_snapshot</code> of the relevant settings, and a free-form <code>status</code>.</li>
 <li>Relates to <code>EvolutionJob</code>, <code>CommitCard</code>, and <code>MapElitesState</code> so that jobs, commits, and archive state can all be grouped by experiment.</li>
 <li><strong><code>CommitCard</code></strong> (<code>commit_cards</code> table): stores a lightweight, size-bounded commit representation used for inspiration and UI.</li>
-<li>Tracks commit hash, parent hash, optional island identifier, optional <code>experiment_id</code>, optional <code>job_id</code>, author, subject, change summary, evaluation summary, tags, key files, and highlights.</li>
-<li>Defines relationships to associated <code>Metric</code> records and jobs that use this commit as their base, and back to the owning <code>Experiment</code> when one exists.</li>
+<li>Primary key: <code>id</code> (UUID).</li>
+<li>Scoped by <code>experiment_id</code> (required); the <code>(experiment_id, commit_hash)</code> pair is unique so the same git commit hash can appear in multiple experiments with independent metadata.</li>
+<li>Tracks commit hash, parent hash, optional island identifier, optional <code>job_id</code>, author, subject, change summary, evaluation summary, tags, key files, and highlights.</li>
+<li>Defines relationships to associated <code>Metric</code> records (via <code>Metric.commit_card_id</code>) and back to the owning <code>Experiment</code>.</li>
 <li><strong><code>Metric</code></strong> (<code>metrics</code> table): records individual evaluation metrics for a commit.</li>
 <li>Stores metric <code>name</code>, numeric <code>value</code>, optional <code>unit</code>, whether higher values are better, and a JSONB <code>details</code> payload.</li>
-<li>Links back to <code>CommitCard</code> via <code>commit_hash</code> and maintains uniqueness per <code>(commit_hash, name)</code>.</li>
+<li>Links back to <code>CommitCard</code> via <code>commit_card_id</code> and maintains uniqueness per <code>(commit_card_id, name)</code>.</li>
 <li><strong><code>EvolutionJob</code></strong> (<code>evolution_jobs</code> table): represents a single evolution iteration scheduled by the system.</li>
 <li>Tracks current <code>status</code>, base commit, island ID, optional <code>experiment_id</code>, inspiration commit hashes, size-bounded job spec fields (<code>goal</code>, <code>constraints</code>, <code>acceptance_criteria</code>, <code>notes</code>, <code>tags</code>, sampling hints), human-readable <code>plan_summary</code>, priority, scheduling/processing timestamps, and last error if any.</li>
 <li>Stores result/ingestion indexing fields (<code>result_commit_hash</code>, ingestion status/attempts/delta/cell index) without embedding large JSON payloads.</li>
-<li>Relates back to <code>CommitCard</code> via <code>base_commit_hash</code> and to <code>Experiment</code> via <code>experiment_id</code>, enabling efficient queries per base commit or experiment.</li>
+<li>Relates back to <code>Experiment</code> via <code>experiment_id</code>, enabling efficient per-experiment queries. <code>base_commit_hash</code> is a git commit hash string (not a foreign key).</li>
 <li><strong><code>JobArtifacts</code></strong> (<code>job_artifacts</code> table): filesystem references for cold-path artifacts produced by the worker.</li>
 <li>Stores paths to planning/coding/evaluation prompts, raw outputs, and logs.</li>
 <li><strong><code>MapElitesState</code></strong> (<code>map_elites_states</code> table): persists per-experiment, per-island snapshots of the MAP-Elites archive.</li>

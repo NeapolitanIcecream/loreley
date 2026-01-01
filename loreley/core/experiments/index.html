@@ -1573,6 +1573,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../script/doctor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Doctor (environment checks)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../script/run_scheduler/" class="md-nav__link">
         
   
@@ -1839,7 +1867,12 @@
 <li>Starts from <code>settings.model_dump()</code>.  </li>
 <li>Keeps only keys with prefixes <code>mapelites_</code> and <code>worker_evaluator_</code>, so that experiments stay stable across unrelated configuration changes (logging, Redis URLs, etc.).  </li>
 <li>
-<p>Recursively applies <code>_coerce_json_compatible()</code> so that non‑finite floats (NaN/±inf) and nested containers are converted into JSON‑serialisable equivalents, making the snapshot safe for PostgreSQL JSONB.</p>
+<p>Recursively applies <code>_coerce_json_compatible()</code> so that non‑finite floats (NaN/±inf) are encoded as a reversible JSON sentinel, keeping snapshots safe for PostgreSQL JSONB and avoiding experiment-hash collisions:</p>
+<ul>
+<li><code>-inf</code> → <code>{"__float__":"-inf"}</code></li>
+<li><code>inf</code> → <code>{"__float__":"inf"}</code></li>
+<li><code>nan</code> → <code>{"__float__":"nan"}</code></li>
+</ul>
 </li>
 <li>
 <p><strong><code>hash_experiment_config(snapshot)</code></strong>: computes a stable SHA‑256 hash for a configuration snapshot.  </p>

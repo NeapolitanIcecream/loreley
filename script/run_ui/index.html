@@ -1471,6 +1471,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../doctor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Doctor (environment checks)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../run_scheduler/" class="md-nav__link">
         
   
@@ -1792,10 +1820,16 @@
 </code></pre></div>
 <h2 id="start">Start<a class="headerlink" href="#start" title="Permanent link">&para;</a></h2>
 <p>Start the API first:</p>
-<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_api.py
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>api
+
+<span class="c1"># legacy wrapper (still supported)</span>
+uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_api.py
 </code></pre></div>
 <p>Then start Streamlit:</p>
-<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_ui.py<span class="w"> </span>--api-base-url<span class="w"> </span>http://127.0.0.1:8000
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>ui<span class="w"> </span>--api-base-url<span class="w"> </span>http://127.0.0.1:8000
+
+<span class="c1"># legacy wrapper (still supported)</span>
+uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_ui.py<span class="w"> </span>--api-base-url<span class="w"> </span>http://127.0.0.1:8000
 </code></pre></div>
 <h2 id="options">Options<a class="headerlink" href="#options" title="Permanent link">&para;</a></h2>
 <ul>
