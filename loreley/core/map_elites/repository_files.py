@@ -317,9 +317,11 @@ class RepositoryFileCatalog:
             try:
                 content = self._repo.git.show(f"{self.commit_hash}:.gitignore")
             except (GitCommandError, BadName):
-                content = None
-        if content is None:
-            # Fall back to working tree .gitignore when available.
+                # When a commit hash is requested, do not fall back to the working tree.
+                # If `.gitignore` does not exist at that commit, treat it as absent.
+                return None
+        else:
+            # Fall back to working tree `.gitignore` when commit hash is not specified.
             git_root = self._git_root or self.repo_root
             path = (git_root / ".gitignore").resolve()
             try:

@@ -111,6 +111,36 @@ def test_repository_file_catalog_respects_gitignore_and_extension_filter(
     assert files[0].size_bytes > 0
 
 
+def test_repository_file_catalog_does_not_fallback_to_worktree_gitignore_when_commit_hash_specified(
+    tmp_path: Path,
+    settings: Settings,
+) -> None:
+    repo = _init_repo(tmp_path)
+
+    # Create a commit WITHOUT `.gitignore`.
+    (tmp_path / "a.py").write_text("print('a')\n", encoding="utf-8")
+    (tmp_path / "ignored.py").write_text("print('ignored')\n", encoding="utf-8")
+    commit = _commit_all(repo, "init")
+
+    # Create a worktree-only `.gitignore` AFTER the commit. When selecting by commit hash,
+    # `.gitignore` should be read strictly from that commit (or treated as absent).
+    (tmp_path / ".gitignore").write_text("ignored.py\n", encoding="utf-8")
+
+    settings.mapelites_preprocess_allowed_extensions = [".py"]
+    settings.mapelites_preprocess_allowed_filenames = []
+    settings.mapelites_preprocess_excluded_globs = []
+    settings.mapelites_preprocess_max_file_size_kb = 64
+
+    files = list_repository_files(
+        repo_root=tmp_path,
+        commit_hash=commit,
+        settings=settings,
+        repo=repo,
+    )
+    paths = [f.path.as_posix() for f in files]
+    assert paths == ["a.py", "ignored.py"]
+
+
 def test_repository_file_catalog_respects_repo_state_max_files_cap(
     tmp_path: Path,
     settings: Settings,
