@@ -6,12 +6,12 @@ This page documents the repo-state embedding pipeline used by MAP-Elites.
 
 Repo-state embeddings represent the **entire repository state** at a commit by
 aggregating file-level embeddings into a single commit vector. This makes the
-behaviour descriptor depend on the repository snapshot at `treeish`, not just a
+behaviour descriptor depend on the repository snapshot at `commit_hash`, not just a
 subset of changed files.
 
 ## High-level pipeline
 
-At a given `treeish` (typically a commit hash), we:
+At a given `commit_hash`, we:
 
 1. Try to reuse a persisted **repo-state aggregate** for the commit (fast path).
 2. If missing, derive it from:
@@ -36,7 +36,7 @@ Eligibility is determined by a combination of:
 - `MAPELITES_REPO_STATE_MAX_FILES` (optional cap; when set, the eligible list is deterministically sub-sampled).
 
 !!! note
-    `.gitignore` filtering is currently **best-effort** and only uses the repository root `.gitignore` at the requested `treeish`. Nested `.gitignore` files and global excludes are not applied.
+    `.gitignore` filtering is currently **best-effort** and only uses the repository root `.gitignore` at the requested `commit_hash`. Nested `.gitignore` files and global excludes are not applied.
 
 For each eligible file we keep:
 

@@ -122,7 +122,7 @@ def test_repo_state_incremental_aggregate_add_and_modify(
     def _fake_embed_cache_misses(  # type: ignore[no-untyped-def]
         *,
         root: Path,
-        treeish: str,
+        commit_hash: str,
         repo_files,
         missing_blob_shas,
     ):
@@ -148,7 +148,7 @@ def test_repo_state_incremental_aggregate_add_and_modify(
     monkeypatch.setattr(embedder, "_load_file_cache_metadata", _fake_load_file_cache_metadata)
     monkeypatch.setattr(embedder, "_embed_cache_misses", _fake_embed_cache_misses)
 
-    embedding, stats = embedder.run(commit_hash=c2, repo_root=tmp_path, treeish=c2)
+    embedding, stats = embedder.run(commit_hash=c2, repo_root=tmp_path)
     assert embedding is not None
     assert stats.files_aggregated == 3
 

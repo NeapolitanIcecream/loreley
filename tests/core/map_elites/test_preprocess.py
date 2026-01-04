@@ -14,7 +14,7 @@ from loreley.core.map_elites.preprocess import (
 
 def make_preprocessor(tmp_path: Path, *, settings: Settings | None = None) -> CodePreprocessor:
     test_settings = settings or Settings()
-    return CodePreprocessor(repo_root=tmp_path, settings=test_settings, treeish=None)
+    return CodePreprocessor(repo_root=tmp_path, settings=test_settings, commit_hash=None)
 
 
 def test_changed_file_normalises_path() -> None:
@@ -169,7 +169,7 @@ def test_run_and_wrapper_preprocess_changed_files(
         changed_files,
         repo_root=tmp_path,
         settings=settings,
-        treeish=None,
+        commit_hash=None,
         repo=None,
     )
     assert len(wrapped) == 1

@@ -101,7 +101,7 @@ def test_repository_file_catalog_respects_gitignore_and_extension_filter(
 
     files = list_repository_files(
         repo_root=tmp_path,
-        treeish=commit,
+        commit_hash=commit,
         settings=settings,
         repo=repo,
     )
@@ -129,7 +129,7 @@ def test_repository_file_catalog_respects_repo_state_max_files_cap(
 
     files = list_repository_files(
         repo_root=tmp_path,
-        treeish=commit,
+        commit_hash=commit,
         settings=settings,
         repo=repo,
     )
@@ -139,7 +139,7 @@ def test_repository_file_catalog_respects_repo_state_max_files_cap(
     # Deterministic across calls.
     files_again = list_repository_files(
         repo_root=tmp_path,
-        treeish=commit,
+        commit_hash=commit,
         settings=settings,
         repo=repo,
     )
@@ -170,7 +170,7 @@ def test_repository_state_embedder_uses_cache_hits_and_misses(
 
     embedder = RepositoryStateEmbedder(settings=settings, cache_backend="memory", repo=repo)
 
-    e1, s1 = embedder.run(commit_hash=c1, repo_root=tmp_path, treeish=c1)
+    e1, s1 = embedder.run(commit_hash=c1, repo_root=tmp_path)
     assert e1 is not None
     assert s1.eligible_files == 2
     assert s1.unique_blobs == 2
@@ -179,7 +179,7 @@ def test_repository_state_embedder_uses_cache_hits_and_misses(
     assert calls["count"] == 1
     assert calls["file_counts"][-1] == 2
 
-    e2, s2 = embedder.run(commit_hash=c2, repo_root=tmp_path, treeish=c2)
+    e2, s2 = embedder.run(commit_hash=c2, repo_root=tmp_path)
     assert e2 is not None
     assert s2.eligible_files == 3
     assert s2.unique_blobs == 3
@@ -189,7 +189,7 @@ def test_repository_state_embedder_uses_cache_hits_and_misses(
     assert calls["file_counts"][-1] == 2
 
     # Commit vector is uniform mean across all eligible file paths.
-    repo_files = list_repository_files(repo_root=tmp_path, treeish=c2, settings=settings, repo=repo)
+    repo_files = list_repository_files(repo_root=tmp_path, commit_hash=c2, settings=settings, repo=repo)
     cached = embedder.cache.get_many(sorted({f.blob_sha for f in repo_files}))
     expected = _mean([cached[f.blob_sha] for f in repo_files])
     assert e2.vector == pytest.approx(expected)
@@ -214,7 +214,7 @@ def test_repository_state_embedder_deduplicates_duplicate_blobs(
     calls = _stub_embed_chunked_files(monkeypatch)
     embedder = RepositoryStateEmbedder(settings=settings, cache_backend="memory", repo=repo)
 
-    embedding, stats = embedder.run(commit_hash=c1, repo_root=tmp_path, treeish=c1)
+    embedding, stats = embedder.run(commit_hash=c1, repo_root=tmp_path)
     assert embedding is not None
     assert stats.eligible_files == 2
     assert stats.unique_blobs == 1

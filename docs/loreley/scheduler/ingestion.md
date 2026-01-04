@@ -45,7 +45,7 @@ Internally, `_ingest_snapshot(...)`:
    - `commit_hash`,
    - `metrics`,
    - `island_id`,
-   - `repo_root` and `treeish`,
+   - `repo_root`,
 4. Writes ingestion state back onto the job row, including:
    - `status` (`"succeeded"` or `"skipped"`),
    - `delta`, `status_code`, and `message` from the ingest result,

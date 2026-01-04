@@ -1,7 +1,7 @@
 """Repository file enumeration utilities for repo-state embeddings.
 
 This module provides a lightweight way to enumerate *eligible* files for a given
-git treeish (commit hash, tag, etc.) while applying basic filtering:
+git commit hash while applying basic filtering:
 
 - Respect the repository root `.gitignore` (best-effort, glob-based matching).
 - Respect MAP-Elites preprocessing filters (allowed extensions/filenames, excluded globs).
@@ -37,7 +37,7 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class RepositoryFile:
-    """File entry resolved from a git treeish."""
+    """File entry resolved from a git commit hash."""
 
     path: Path
     blob_sha: str
@@ -153,19 +153,19 @@ class GitignoreMatcher:
 
 
 class RepositoryFileCatalog:
-    """Enumerate eligible repository files at a given treeish."""
+    """Enumerate eligible repository files at a given commit hash."""
 
     def __init__(
         self,
         *,
         repo_root: Path | None = None,
         settings: Settings | None = None,
-        treeish: str | None = None,
+        commit_hash: str | None = None,
         repo: Repo | None = None,
     ) -> None:
         self.repo_root = Path(repo_root or Path.cwd()).resolve()
         self.settings = settings or get_settings()
-        self.treeish = treeish
+        self.commit_hash = commit_hash
         self._repo = repo or self._init_repo()
         self._git_root, self._git_prefix = self._resolve_git_root_and_prefix()
 
@@ -173,7 +173,7 @@ class RepositoryFileCatalog:
         self._preprocess_filter = CodePreprocessor(
             repo_root=self.repo_root,
             settings=self.settings,
-            treeish=None,  # only using filtering helpers; content loads happen elsewhere
+            commit_hash=None,  # only using filtering helpers; content loads happen elsewhere
         )
 
         self._max_file_size_bytes = (
@@ -187,15 +187,15 @@ class RepositoryFileCatalog:
         Returned paths are relative to `repo_root`.
         """
 
-        if not self.treeish:
-            raise ValueError("RepositoryFileCatalog requires treeish for git-tree enumeration.")
+        if not self.commit_hash:
+            raise ValueError("RepositoryFileCatalog requires commit_hash for git-tree enumeration.")
         if not self._repo:
             return []
 
         try:
-            tree = self._repo.tree(self.treeish)
+            tree = self._repo.tree(self.commit_hash)
         except BadName as exc:
-            raise ValueError(f"Unknown treeish {self.treeish!r}") from exc
+            raise ValueError(f"Unknown commit {self.commit_hash!r}") from exc
 
         prefix = self._git_prefix
         prefix_str = prefix.as_posix().rstrip("/") if prefix else ""
@@ -264,9 +264,9 @@ class RepositoryFileCatalog:
                 limit,
             )
         log.info(
-            "Enumerated {} eligible repository files at treeish={} (repo_root={})",
+            "Enumerated {} eligible repository files at commit {} (repo_root={})",
             len(results),
-            self.treeish,
+            self.commit_hash,
             self.repo_root,
         )
         return results
@@ -288,10 +288,10 @@ class RepositoryFileCatalog:
             prefix = self.repo_root.relative_to(git_root)
         except ValueError:
             log.warning(
-                "Cannot align repo_root={} with git root={} (treeish={})",
+                "Cannot align repo_root={} with git root={} (commit_hash={})",
                 self.repo_root,
                 git_root,
-                self.treeish,
+                self.commit_hash,
             )
             prefix = None
         if prefix and str(prefix) == ".":
@@ -308,14 +308,14 @@ class RepositoryFileCatalog:
         return git_rel_path
 
     def _load_root_gitignore(self) -> GitignoreMatcher | None:
-        """Load `.gitignore` from git root at the requested treeish."""
+        """Load `.gitignore` from git root at the requested commit hash."""
         if not self._repo:
             return None
 
         content: str | None = None
-        if self.treeish:
+        if self.commit_hash:
             try:
-                content = self._repo.git.show(f"{self.treeish}:.gitignore")
+                content = self._repo.git.show(f"{self.commit_hash}:.gitignore")
             except (GitCommandError, BadName):
                 content = None
         if content is None:
@@ -336,14 +336,14 @@ class RepositoryFileCatalog:
 def list_repository_files(
     *,
     repo_root: Path | None = None,
-    treeish: str | None = None,
+    commit_hash: str | None = None,
     settings: Settings | None = None,
     repo: Repo | None = None,
 ) -> list[RepositoryFile]:
     """Convenience wrapper for `RepositoryFileCatalog`."""
     catalog = RepositoryFileCatalog(
         repo_root=repo_root,
-        treeish=treeish,
+        commit_hash=commit_hash,
         settings=settings,
         repo=repo,
     )

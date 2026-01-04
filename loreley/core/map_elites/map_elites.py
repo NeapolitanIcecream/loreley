@@ -196,7 +196,6 @@ class MapElitesManager:
         metrics: Sequence[Mapping[str, Any]] | Mapping[str, Any] | None = None,
         island_id: str | None = None,
         repo_root: Path | None = None,
-        treeish: str | None = None,
         fitness_override: float | None = None,
     ) -> MapElitesInsertionResult:
         """Process a commit and attempt to insert it into the archive."""
@@ -204,15 +203,12 @@ class MapElitesManager:
         state = self._ensure_island(effective_island)
         working_dir = Path(repo_root or self.repo_root).resolve()
         embedding_mode = getattr(self.settings, "mapelites_embedding_mode", "repo_state")
-        effective_treeish = (treeish or commit_hash).strip() or None
 
         log.info(
-            "Ingesting commit {} for island {} (embedding_mode={} treeish={} treeish_source={})",
+            "Ingesting commit {} for island {} (embedding_mode={})",
             commit_hash,
             effective_island,
             embedding_mode,
-            effective_treeish or "<missing>",
-            "explicit" if treeish else "defaulted_to_commit_hash",
         )
 
         update: SnapshotUpdate | None = None
@@ -221,7 +217,6 @@ class MapElitesManager:
             code_embedding, repo_stats = embed_repository_state(
                 commit_hash=commit_hash,
                 repo_root=working_dir,
-                treeish=effective_treeish,
                 settings=self.settings,
                 # Prefer the configured backend; default is DB.
                 cache_backend=(self.settings.mapelites_file_embedding_cache_backend or "db"),

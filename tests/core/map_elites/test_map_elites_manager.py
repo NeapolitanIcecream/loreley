@@ -116,7 +116,7 @@ def test_ingest_short_circuits_when_no_repo_state_embedding(
     monkeypatch: pytest.MonkeyPatch, settings: Settings
 ) -> None:
     stats = RepoStateEmbeddingStats(
-        treeish="abc",
+        commit_hash="abc",
         eligible_files=0,
         files_embedded=0,
         files_aggregated=0,
@@ -159,7 +159,7 @@ def test_ingest_builds_record_with_stubbed_dependencies(
         dimensions=2,
     )
     stats = RepoStateEmbeddingStats(
-        treeish="abc",
+        commit_hash="abc",
         eligible_files=2,
         files_embedded=1,
         files_aggregated=2,

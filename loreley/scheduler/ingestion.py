@@ -183,7 +183,6 @@ class MapElitesIngestion:
                 metrics=metrics_payload,
                 island_id=snapshot.island_id,
                 repo_root=self.repo_root,
-                treeish=commit_hash,
             )
         except Exception as exc:  # pragma: no cover - defensive
             self._record_ingestion_state(

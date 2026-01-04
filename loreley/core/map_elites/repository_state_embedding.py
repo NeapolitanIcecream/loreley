@@ -2,7 +2,7 @@
 
 This module implements the repo-state embedding design:
 
-- Enumerate eligible files for a given commit (`treeish`) respecting `.gitignore`
+- Enumerate eligible files for a given commit hash respecting `.gitignore`
   and basic MAP-Elites preprocessing filters.
 - Reuse a file-level embedding cache keyed by git blob SHA.
 - Only embed cache misses (new/modified files).
@@ -47,7 +47,7 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class RepoStateEmbeddingStats:
-    treeish: str | None
+    commit_hash: str | None
     eligible_files: int
     files_embedded: int
     files_aggregated: int
@@ -83,14 +83,13 @@ class RepositoryStateEmbedder:
         *,
         commit_hash: str,
         repo_root: Path | None = None,
-        treeish: str | None = None,
     ) -> tuple[CommitCodeEmbedding | None, RepoStateEmbeddingStats]:
         """Return a commit-level embedding representing the repo state."""
 
-        effective_treeish = (treeish or commit_hash).strip() or None
-        if not effective_treeish:
+        requested_commit = str(commit_hash).strip() or None
+        if not requested_commit:
             stats = RepoStateEmbeddingStats(
-                treeish=effective_treeish,
+                commit_hash=requested_commit,
                 eligible_files=0,
                 files_embedded=0,
                 files_aggregated=0,
@@ -104,12 +103,37 @@ class RepositoryStateEmbedder:
 
         root = Path(repo_root or Path.cwd()).resolve()
 
+        repo = self._repo
+        if repo is None:
+            try:
+                repo = Repo(root, search_parent_directories=True)
+            except Exception:
+                stats = RepoStateEmbeddingStats(
+                    commit_hash=requested_commit,
+                    eligible_files=0,
+                    files_embedded=0,
+                    files_aggregated=0,
+                    unique_blobs=0,
+                    cache_hits=0,
+                    cache_misses=0,
+                    skipped_empty_after_preprocess=0,
+                    skipped_failed_embedding=0,
+                )
+                return None, stats
+
+        try:
+            canonical = str(getattr(repo.commit(requested_commit), "hexsha", "") or "").strip()
+        except Exception as exc:
+            raise ValueError(f"Unknown commit {requested_commit!r}") from exc
+        if not canonical:
+            raise ValueError(f"Unknown commit {requested_commit!r}")
+
         # Fast path: use persisted aggregate when available (requires experiment_id + DB cache backend).
-        aggregate = self._load_aggregate(commit_hash=effective_treeish, repo_root=root)
+        aggregate = self._load_aggregate(commit_hash=canonical, repo_root=root)
         if aggregate is not None:
             vector = _divide_vector(tuple(float(v) for v in aggregate.sum_vector), int(aggregate.file_count))
             stats = RepoStateEmbeddingStats(
-                treeish=effective_treeish,
+                commit_hash=canonical,
                 eligible_files=int(aggregate.file_count),
                 files_embedded=0,
                 files_aggregated=int(aggregate.file_count),
@@ -128,9 +152,8 @@ class RepositoryStateEmbedder:
                 dimensions=len(vector),
             )
             log.info(
-                "Repo-state aggregate cache hit for commit {} (treeish={} files={} dims={} capped={})",
-                commit_hash,
-                effective_treeish,
+                "Repo-state aggregate cache hit for commit {} (files={} dims={} capped={})",
+                canonical,
                 aggregate.file_count,
                 aggregate.dimensions,
                 aggregate.capped,
@@ -138,11 +161,11 @@ class RepositoryStateEmbedder:
             return embedding, stats
 
         # Attempt diff-based incremental aggregation when possible.
-        incremental = self._try_incremental_aggregate(commit_hash=effective_treeish, repo_root=root)
+        incremental = self._try_incremental_aggregate(commit_hash=canonical, repo_root=root)
         if incremental is not None:
             agg_row, vector = incremental
             stats = RepoStateEmbeddingStats(
-                treeish=effective_treeish,
+                commit_hash=canonical,
                 eligible_files=int(agg_row.file_count),
                 files_embedded=0,
                 files_aggregated=int(agg_row.file_count),
@@ -161,8 +184,8 @@ class RepositoryStateEmbedder:
                 dimensions=len(vector),
             )
             log.info(
-                "Repo-state aggregate incrementally updated for treeish={} files={} dims={} capped={}",
-                effective_treeish,
+                "Repo-state aggregate incrementally updated for commit {} (files={} dims={} capped={})",
+                canonical,
                 agg_row.file_count,
                 agg_row.dimensions,
                 agg_row.capped,
@@ -171,13 +194,13 @@ class RepositoryStateEmbedder:
 
         repo_files = list_repository_files(
             repo_root=root,
-            treeish=effective_treeish,
+            commit_hash=canonical,
             settings=self.settings,
-            repo=self._repo,
+            repo=repo,
         )
         if not repo_files:
             stats = RepoStateEmbeddingStats(
-                treeish=effective_treeish,
+                commit_hash=canonical,
                 eligible_files=0,
                 files_embedded=0,
                 files_aggregated=0,
@@ -199,7 +222,7 @@ class RepositoryStateEmbedder:
 
         vectors_for_misses, embedded_count, skipped_empty = self._embed_cache_misses(
             root=root,
-            treeish=effective_treeish,
+            commit_hash=canonical,
             repo_files=repo_files,
             missing_blob_shas=misses,
         )
@@ -219,7 +242,7 @@ class RepositoryStateEmbedder:
 
         commit_vector, sum_vector, aggregated_count = _mean_and_sum_vectors(file_vectors)
         stats = RepoStateEmbeddingStats(
-            treeish=effective_treeish,
+            commit_hash=canonical,
             eligible_files=len(repo_files),
             files_embedded=embedded_count,
             files_aggregated=aggregated_count,
@@ -240,9 +263,8 @@ class RepositoryStateEmbedder:
             dimensions=len(commit_vector),
         )
         log.info(
-            "Repo-state embedding for commit {} (treeish={}): files={} blobs={} hits={} misses={} agg_files={} dims={}",
-            commit_hash,
-            effective_treeish,
+            "Repo-state embedding for commit {}: files={} blobs={} hits={} misses={} agg_files={} dims={}",
+            canonical,
             stats.eligible_files,
             stats.unique_blobs,
             stats.cache_hits,
@@ -253,7 +275,7 @@ class RepositoryStateEmbedder:
 
         # Persist aggregate for reuse when enabled.
         self._persist_aggregate(
-            commit_hash=effective_treeish,
+            commit_hash=canonical,
             repo_root=root,
             sum_vector=sum_vector,
             file_count=aggregated_count,
@@ -489,7 +511,7 @@ class RepositoryStateEmbedder:
         preprocess_filter = CodePreprocessor(
             repo_root=repo_root,
             settings=self.settings,
-            treeish=None,
+            commit_hash=None,
         )
         max_bytes = max(int(self.settings.mapelites_preprocess_max_file_size_kb), 1) * 1024
 
@@ -568,7 +590,7 @@ class RepositoryStateEmbedder:
         if missing_new:
             vectors_for_misses, _embedded_count, _skipped_empty = self._embed_cache_misses(
                 root=repo_root,
-                treeish=commit_hash,
+                commit_hash=commit_hash,
                 repo_files=repo_files_for_new_misses,
                 missing_blob_shas=missing_new,
             )
@@ -641,7 +663,7 @@ class RepositoryStateEmbedder:
         self,
         *,
         root: Path,
-        treeish: str,
+        commit_hash: str,
         repo_files: Sequence[RepositoryFile],
         missing_blob_shas: Sequence[str],
     ) -> tuple[dict[str, Vector], int, int]:
@@ -663,7 +685,7 @@ class RepositoryStateEmbedder:
         preprocessor = CodePreprocessor(
             repo_root=root,
             settings=self.settings,
-            treeish=treeish,
+            commit_hash=commit_hash,
             repo=self._repo,
         )
 
@@ -712,7 +734,6 @@ def embed_repository_state(
     *,
     commit_hash: str,
     repo_root: Path | None = None,
-    treeish: str | None = None,
     settings: Settings | None = None,
     cache: FileEmbeddingCache | None = None,
     cache_backend: str | None = None,
@@ -731,7 +752,6 @@ def embed_repository_state(
     return embedder.run(
         commit_hash=commit_hash,
         repo_root=repo_root,
-        treeish=treeish,
     )
 
 
@@ -861,17 +881,17 @@ def _is_null_sha(sha: str | None) -> bool:
     return not value or set(value) == {"0"}
 
 
-def _gitignore_blob_sha(repo: Repo, treeish: str) -> str | None:
+def _gitignore_blob_sha(repo: Repo, commit_hash: str) -> str | None:
     try:
-        value = repo.git.rev_parse(f"{treeish}:.gitignore").strip()
+        value = repo.git.rev_parse(f"{commit_hash}:.gitignore").strip()
         return value or None
     except GitCommandError:
         return None
 
 
-def _load_root_gitignore_matcher(repo: Repo, treeish: str) -> GitignoreMatcher | None:
+def _load_root_gitignore_matcher(repo: Repo, commit_hash: str) -> GitignoreMatcher | None:
     try:
-        content = repo.git.show(f"{treeish}:.gitignore")
+        content = repo.git.show(f"{commit_hash}:.gitignore")
     except GitCommandError:
         return None
     if not content:

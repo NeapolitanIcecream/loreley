@@ -56,12 +56,12 @@ class CodePreprocessor:
         repo_root: Path | None = None,
         *,
         settings: Settings | None = None,
-        treeish: str | None = None,
+        commit_hash: str | None = None,
         repo: Repo | None = None,
     ) -> None:
         self.repo_root = Path(repo_root or Path.cwd()).resolve()
         self.settings = settings or get_settings()
-        self.treeish = treeish
+        self.commit_hash = commit_hash
         self._allowed_extensions = {
             ext if ext.startswith(".") else f".{ext}"
             for ext in self.settings.mapelites_preprocess_allowed_extensions
@@ -82,7 +82,7 @@ class CodePreprocessor:
         )
         self._repo: Repo | None = None
         self._git_prefix: Path | None = None
-        if self.treeish:
+        if self.commit_hash:
             self._repo = repo or self._init_repo()
             if self._repo and self._repo.working_tree_dir:
                 git_root = Path(self._repo.working_tree_dir).resolve()
@@ -90,10 +90,10 @@ class CodePreprocessor:
                     self._git_prefix = self.repo_root.relative_to(git_root)
                 except ValueError:
                     log.warning(
-                        "Cannot align repo_root={} with git root={} for treeish={}",
+                        "Cannot align repo_root={} with git root={} for commit_hash={}",
                         self.repo_root,
                         git_root,
-                        self.treeish,
+                        self.commit_hash,
                     )
                     self._git_prefix = None
 
@@ -175,7 +175,7 @@ class CodePreprocessor:
         return self._cleanup_text(content)
 
     def load_text(self, relative_path: Path) -> str | None:
-        """Load file content either from `treeish` or from disk."""
+        """Load file content either from `commit_hash` or from disk."""
         return self._load_text(relative_path)
 
     def _select_candidates(
@@ -343,36 +343,36 @@ class CodePreprocessor:
             return Repo(self.repo_root, search_parent_directories=True)
         except InvalidGitRepositoryError:
             log.warning(
-                "Unable to locate git repository for repo_root={} when treeish={} requested",
+                "Unable to locate git repository for repo_root={} when commit_hash={} requested",
                 self.repo_root,
-                self.treeish,
+                self.commit_hash,
             )
             return None
 
     def _load_text(self, relative_path: Path) -> str | None:
-        if self.treeish:
+        if self.commit_hash:
             git_content = self._read_from_git(relative_path)
             if git_content is not None:
                 return git_content
         return self._read_from_disk(relative_path)
 
     def _read_from_git(self, relative_path: Path) -> str | None:
-        if not self.treeish or not self._repo or not self._git_prefix:
+        if not self.commit_hash or not self._repo or not self._git_prefix:
             return None
         git_path = (self._git_prefix / relative_path).as_posix()
-        spec = f"{self.treeish}:{git_path}"
+        spec = f"{self.commit_hash}:{git_path}"
         try:
             size_str = self._repo.git.cat_file("-s", spec)
             blob_size = int(size_str.strip())
         except (GitCommandError, BadName, ValueError) as exc:
-            log.error("Unable to stat {} at {}: {}", git_path, self.treeish, exc)
+            log.error("Unable to stat {} at {}: {}", git_path, self.commit_hash, exc)
             return None
 
         if self._exceeds_size_limit(blob_size):
             log.info(
                 "Skipping {}@{} because it exceeds {} KB",
                 git_path,
-                self.treeish,
+                self.commit_hash,
                 self.settings.mapelites_preprocess_max_file_size_kb,
             )
             return None
@@ -380,7 +380,7 @@ class CodePreprocessor:
         try:
             return self._repo.git.show(spec)
         except (GitCommandError, BadName) as exc:
-            log.error("Unable to read {} at {}: {}", git_path, self.treeish, exc)
+            log.error("Unable to read {} at {}: {}", git_path, self.commit_hash, exc)
             return None
 
     def _read_from_disk(self, relative_path: Path) -> str | None:
@@ -432,14 +432,14 @@ def preprocess_changed_files(
     *,
     repo_root: Path | None = None,
     settings: Settings | None = None,
-    treeish: str | None = None,
+    commit_hash: str | None = None,
     repo: Repo | None = None,
 ) -> list[PreprocessedFile]:
     """Functional wrapper for the preprocessor."""
     preprocessor = CodePreprocessor(
         repo_root=repo_root,
         settings=settings,
-        treeish=treeish,
+        commit_hash=commit_hash,
         repo=repo,
     )
     return preprocessor.run(changed_files)
