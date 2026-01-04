@@ -13,9 +13,11 @@ subset of changed files.
 
 At a given `treeish` (typically a commit hash), we:
 
-1. Enumerate eligible files and resolve their **git blob SHA** fingerprints.
-2. Look up each blob SHA in a **file embedding cache**.
-3. Embed only cache misses (new/changed blobs).
+1. Try to reuse a persisted **repo-state aggregate** for the commit (fast path).
+2. If missing, derive it from:
+   - a parent aggregate plus a parent..child diff (incremental path), or
+   - a full enumeration of eligible files (fallback path).
+3. Look up each blob SHA in the **file embedding cache** and embed only cache misses.
 4. Aggregate per-file embeddings into one commit vector via **uniform mean**.
 5. Feed the commit vector into PCA → MAP-Elites as the behaviour descriptor.
 
@@ -64,6 +66,30 @@ the pipeline changes).
 Backend selection:
 
 - `MAPELITES_FILE_EMBEDDING_CACHE_BACKEND=db|memory` (default: `db`)
+
+## Repo-state aggregate cache (commit-level)
+
+When `MapElitesManager` is constructed with an `experiment_id` (the scheduler does this),
+repo-state embeddings persist a commit-level aggregate so future ingests can avoid
+re-enumerating the full tree.
+
+Stored in:
+
+- ORM table: `loreley.db.models.MapElitesRepoStateAggregate`
+
+The aggregate stores:
+
+- `sum_vector`: sum of all per-file vectors included in the commit representation
+- `file_count`: number of file paths contributing to `sum_vector`
+
+The commit vector is derived as `sum_vector / file_count`.
+
+### Incremental updates
+
+When a parent aggregate exists and `.gitignore` is unchanged, the child aggregate is derived
+from the parent by applying the parent..child diff (add/modify/delete/rename) and embedding
+only the new/changed blobs. If `MAPELITES_REPO_STATE_MAX_FILES` might affect selection, the
+pipeline falls back to a full recompute for correctness.
 
 ## Commit aggregation
 

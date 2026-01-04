@@ -555,3 +555,56 @@ class MapElitesFileEmbeddingCache(TimestampMixin, Base):
             f"blob_sha={self.blob_sha!r} model={self.embedding_model!r} "
             f"dims={self.dimensions!r} sig={self.pipeline_signature[:8]!r}>"
         )
+
+
+class MapElitesRepoStateAggregate(TimestampMixin, Base):
+    """Persisted repo-state aggregate per commit.
+
+    Stores the sum of file embedding vectors and the number of files contributing
+    to the sum so the commit vector can be derived as sum/count.
+    """
+
+    __tablename__ = "map_elites_repo_state_aggregates"
+    __table_args__ = (
+        Index(
+            "ix_map_elites_repo_state_aggregates_commit",
+            "experiment_id",
+            "commit_hash",
+        ),
+        Index(
+            "ix_map_elites_repo_state_aggregates_signature",
+            "pipeline_signature",
+            "filter_signature",
+        ),
+    )
+
+    experiment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("experiments.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    commit_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+
+    embedding_model: Mapped[str] = mapped_column(String(255), primary_key=True)
+    dimensions: Mapped[int] = mapped_column(Integer, primary_key=True)
+    pipeline_signature: Mapped[str] = mapped_column(String(128), primary_key=True)
+    filter_signature: Mapped[str] = mapped_column(String(128), primary_key=True)
+
+    file_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    sum_vector: Mapped[list[float]] = mapped_column(
+        MutableList.as_mutable(ARRAY(Float)),
+        default=list,
+        nullable=False,
+    )
+
+    # When True, the aggregate was computed under a repo-state max-files cap and
+    # should not be used as an incremental base.
+    capped: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return (
+            "<MapElitesRepoStateAggregate "
+            f"experiment_id={self.experiment_id!r} commit={self.commit_hash[:12]!r} "
+            f"model={self.embedding_model!r} dims={self.dimensions!r} "
+            f"files={self.file_count!r} capped={self.capped!r}>"
+        )

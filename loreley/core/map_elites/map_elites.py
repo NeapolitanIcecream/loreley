@@ -225,6 +225,7 @@ class MapElitesManager:
                 settings=self.settings,
                 # Prefer the configured backend; default is DB.
                 cache_backend=(self.settings.mapelites_file_embedding_cache_backend or "db"),
+                experiment_id=self._experiment_id,
             )
             if not code_embedding or not code_embedding.vector:
                 artifacts = self._build_artifacts(repo_stats, (), None, None)
