@@ -462,8 +462,11 @@ class Settings(BaseSettings):
         default="text-embedding-3-small",
         alias="MAPELITES_CODE_EMBEDDING_MODEL",
     )
-    mapelites_code_embedding_dimensions: int | None = Field(
-        default=None,
+    # Fixed embedding dimensionality for the entire experiment lifecycle.
+    # This value is part of the experiment config snapshot/hash and therefore must
+    # remain stable within one experiment run.
+    mapelites_code_embedding_dimensions: int = Field(
+        default=2,
         alias="MAPELITES_CODE_EMBEDDING_DIMENSIONS",
     )
     mapelites_code_embedding_batch_size: int = Field(

@@ -47,7 +47,7 @@ class FileEmbeddingCache(Protocol):
     """Abstract cache interface keyed by blob sha."""
 
     embedding_model: str
-    requested_dimensions: int | None
+    requested_dimensions: int
     pipeline_signature: str
 
     def get_many(self, blob_shas: Sequence[str]) -> dict[str, Vector]:
@@ -85,11 +85,7 @@ def build_pipeline_signature(*, settings: Settings | None = None) -> str:
         },
         "embedding": {
             "model": str(s.mapelites_code_embedding_model),
-            "requested_dimensions": (
-                int(s.mapelites_code_embedding_dimensions)
-                if s.mapelites_code_embedding_dimensions is not None
-                else None
-            ),
+            "requested_dimensions": int(s.mapelites_code_embedding_dimensions),
         },
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
@@ -103,7 +99,7 @@ class InMemoryFileEmbeddingCache:
     """Simple in-memory cache used for tests/local runs."""
 
     embedding_model: str
-    requested_dimensions: int | None
+    requested_dimensions: int
     pipeline_signature: str
 
     _store: dict[str, Vector]
@@ -112,7 +108,7 @@ class InMemoryFileEmbeddingCache:
         self,
         *,
         embedding_model: str,
-        requested_dimensions: int | None,
+        requested_dimensions: int,
         pipeline_signature: str,
     ) -> None:
         self.embedding_model = embedding_model
@@ -142,7 +138,7 @@ class InMemoryFileEmbeddingCache:
     def _validate_vector(self, vector: Vector) -> None:
         if not vector:
             raise ValueError("Cannot cache an empty embedding vector.")
-        if self.requested_dimensions is not None and len(vector) != self.requested_dimensions:
+        if len(vector) != int(self.requested_dimensions):
             raise ValueError(
                 "Embedding dimension mismatch for cache insert "
                 f"(expected {self.requested_dimensions} got {len(vector)})"
@@ -154,13 +150,17 @@ class DatabaseFileEmbeddingCache:
     """Postgres-backed cache using `MapElitesFileEmbeddingCache` table."""
 
     embedding_model: str
-    requested_dimensions: int | None
+    requested_dimensions: int
     pipeline_signature: str
 
     def get_many(self, blob_shas: Sequence[str]) -> dict[str, Vector]:
         cleaned = _unique_clean_blob_shas(blob_shas)
         if not cleaned:
             return {}
+
+        dims = int(self.requested_dimensions)
+        if dims <= 0:
+            raise ValueError("Requested embedding dimensions must be a positive integer.")
 
         found: dict[str, Vector] = {}
         try:
@@ -170,65 +170,22 @@ class DatabaseFileEmbeddingCache:
                         MapElitesFileEmbeddingCache.blob_sha.in_(batch),
                         MapElitesFileEmbeddingCache.embedding_model == self.embedding_model,
                         MapElitesFileEmbeddingCache.pipeline_signature == self.pipeline_signature,
+                        MapElitesFileEmbeddingCache.dimensions == dims,
                     ]
-                    if self.requested_dimensions is not None:
-                        base_conditions.append(
-                            MapElitesFileEmbeddingCache.dimensions
-                            == int(self.requested_dimensions)
-                        )
 
                     stmt = select(MapElitesFileEmbeddingCache).where(*base_conditions)
                     rows = list(session.execute(stmt).scalars())
                     if not rows:
                         continue
 
-                    # When no explicit dimensions are requested, we may observe multiple
-                    # rows per blob (same signature) with different dimensions.
-                    # Select a single, deterministic dimension for this read batch and
-                    # only return vectors matching it.
-                    if self.requested_dimensions is None:
-                        candidates: dict[int, dict[str, Vector]] = {}
-                        for row in rows:
-                            vector = tuple(float(v) for v in (row.vector or []))
-                            if not vector:
-                                continue
-                            dims = int(row.dimensions or len(vector))
-                            if dims != len(vector):
-                                continue
-                            candidates.setdefault(dims, {})[str(row.blob_sha)] = vector
-
-                        if not candidates:
-                            continue
-                        if len(candidates) == 1:
-                            found.update(next(iter(candidates.values())))
-                            continue
-
-                        chosen_dims = max(
-                            candidates.keys(),
-                            key=lambda d: (len(candidates[d]), d),
-                        )
-                        log.warning(
-                            "Multiple embedding dimensions found for model={} signature={} (dims={} chosen={} batch_size={})",
-                            self.embedding_model,
-                            self.pipeline_signature[:12],
-                            sorted(candidates.keys()),
-                            chosen_dims,
-                            len(batch),
-                        )
-                        found.update(candidates[chosen_dims])
-                        continue
-
-                    # Explicit dimensions: accept rows directly (already filtered).
+                    # Fixed dimensions: accept rows directly (already filtered).
                     for row in rows:
                         vector = tuple(float(v) for v in (row.vector or []))
                         if not vector:
                             continue
                         if row.dimensions and len(vector) != int(row.dimensions):
                             continue
-                        if (
-                            self.requested_dimensions is not None
-                            and len(vector) != self.requested_dimensions
-                        ):
+                        if len(vector) != dims:
                             continue
                         found[str(row.blob_sha)] = vector
         except SQLAlchemyError as exc:
@@ -241,6 +198,10 @@ class DatabaseFileEmbeddingCache:
         if not vectors:
             return
 
+        dims = int(self.requested_dimensions)
+        if dims <= 0:
+            raise ValueError("Requested embedding dimensions must be a positive integer.")
+
         values: list[dict[str, object]] = []
         for sha, vector in vectors.items():
             key = str(sha).strip()
@@ -249,10 +210,10 @@ class DatabaseFileEmbeddingCache:
             vec = tuple(float(v) for v in vector)
             if not vec:
                 continue
-            if self.requested_dimensions is not None and len(vec) != self.requested_dimensions:
+            if len(vec) != dims:
                 raise ValueError(
                     "Embedding dimension mismatch for cache insert "
-                    f"(expected {self.requested_dimensions} got {len(vec)})"
+                    f"(expected {dims} got {len(vec)})"
                 )
             values.append(
                 {
@@ -306,11 +267,9 @@ def build_file_embedding_cache(
 
     pipeline_signature = build_pipeline_signature(settings=s)
     embedding_model = str(s.mapelites_code_embedding_model)
-    requested_dimensions = (
-        int(s.mapelites_code_embedding_dimensions)
-        if s.mapelites_code_embedding_dimensions is not None
-        else None
-    )
+    requested_dimensions = int(s.mapelites_code_embedding_dimensions)
+    if requested_dimensions <= 0:
+        raise ValueError("MAPELITES_CODE_EMBEDDING_DIMENSIONS must be a positive integer.")
 
     if chosen == "memory":
         return InMemoryFileEmbeddingCache(

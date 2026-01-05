@@ -183,7 +183,7 @@ WORKER_EVOLUTION_GLOBAL_GOAL: str = (
 
 # Code embedding model used for MAP-Elites preprocessing.
 MAPELITES_CODE_EMBEDDING_MODEL: str = "text-embedding-3-large"
-MAPELITES_CODE_EMBEDDING_DIMENSIONS: int | None = None
+MAPELITES_CODE_EMBEDDING_DIMENSIONS: int = 2
 MAPELITES_CODE_EMBEDDING_BATCH_SIZE: int = 12
 MAPELITES_CODE_EMBEDDING_MAX_CHUNKS_PER_COMMIT: int = 512
 MAPELITES_CODE_EMBEDDING_MAX_RETRIES: int = 3
@@ -356,11 +356,10 @@ def _apply_base_env(*, include_worker_repo: bool = False) -> None:
     )
 
     _set_env_if_unset("MAPELITES_CODE_EMBEDDING_MODEL", MAPELITES_CODE_EMBEDDING_MODEL)
-    if MAPELITES_CODE_EMBEDDING_DIMENSIONS is not None:
-        _set_env_if_unset(
-            "MAPELITES_CODE_EMBEDDING_DIMENSIONS",
-            MAPELITES_CODE_EMBEDDING_DIMENSIONS,
-        )
+    _set_env_if_unset(
+        "MAPELITES_CODE_EMBEDDING_DIMENSIONS",
+        MAPELITES_CODE_EMBEDDING_DIMENSIONS,
+    )
     _set_env_if_unset(
         "MAPELITES_CODE_EMBEDDING_BATCH_SIZE",
         MAPELITES_CODE_EMBEDDING_BATCH_SIZE,

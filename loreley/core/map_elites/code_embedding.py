@@ -86,6 +86,8 @@ class CodeEmbedder:
             )
         self._model = self.settings.mapelites_code_embedding_model
         self._dimensions = self.settings.mapelites_code_embedding_dimensions
+        if int(self._dimensions or 0) <= 0:
+            raise ValueError("MAPELITES_CODE_EMBEDDING_DIMENSIONS must be a positive integer.")
         self._batch_size = max(1, self.settings.mapelites_code_embedding_batch_size)
         self._max_chunks = max(
             0,
@@ -206,17 +208,11 @@ class CodeEmbedder:
             attempt += 1
             try:
                 client = self._get_client()
-                if self._dimensions:
-                    response = client.embeddings.create(
-                        model=self._model,
-                        input=payload,
-                        dimensions=self._dimensions,
-                    )
-                else:
-                    response = client.embeddings.create(
-                        model=self._model,
-                        input=payload,
-                    )
+                response = client.embeddings.create(
+                    model=self._model,
+                    input=payload,
+                    dimensions=int(self._dimensions),
+                )
                 return [tuple(item.embedding) for item in response.data]
             except OpenAIError as exc:
                 if attempt >= self._max_retries:

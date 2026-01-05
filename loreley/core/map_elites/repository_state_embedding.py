@@ -316,7 +316,9 @@ class RepositoryStateEmbedder:
         repo_prefix = _resolve_git_prefix(repo, repo_root)
         filter_sig = _build_filter_signature(settings=self.settings, repo_prefix=repo_prefix)
 
-        requested_dims = getattr(self.cache, "requested_dimensions", None)
+        requested_dims = int(getattr(self.cache, "requested_dimensions", 0))
+        if requested_dims <= 0:
+            return None
         try:
             with session_scope() as session:
                 stmt = select(MapElitesRepoStateAggregate).where(
@@ -325,9 +327,8 @@ class RepositoryStateEmbedder:
                     MapElitesRepoStateAggregate.embedding_model == str(self.cache.embedding_model),
                     MapElitesRepoStateAggregate.pipeline_signature == str(self.cache.pipeline_signature),
                     MapElitesRepoStateAggregate.filter_signature == str(filter_sig),
+                    MapElitesRepoStateAggregate.dimensions == requested_dims,
                 )
-                if requested_dims is not None:
-                    stmt = stmt.where(MapElitesRepoStateAggregate.dimensions == int(requested_dims))
                 row = session.execute(stmt).scalar_one_or_none()
         except Exception as exc:  # pragma: no cover - DB failure handling
             log.warning("Repo-state aggregate read failed for {}: {}", commit_hash, exc)
