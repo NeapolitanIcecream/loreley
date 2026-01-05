@@ -16,7 +16,7 @@ def test_jobs_requiring_ingestion_filters_by_experiment_id(
 ) -> None:
     """Ensure ingestion never scans SUCCEEDED jobs across experiments."""
 
-    settings = Settings()
+    settings = Settings(mapelites_code_embedding_dimensions=8)
     experiment_id = uuid.uuid4()
     experiment = SimpleNamespace(id=experiment_id)
     repository = SimpleNamespace(id=uuid.uuid4())

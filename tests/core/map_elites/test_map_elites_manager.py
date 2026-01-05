@@ -61,7 +61,7 @@ def test_manager_lazy_loads_persisted_snapshot_for_stats_and_records(settings: S
     assert records[0].commit_hash == "c1"
 
 
-def test_manager_adopts_snapshot_dimensionality_when_settings_mismatch(settings: Settings) -> None:
+def test_manager_rejects_snapshot_dimensionality_when_settings_mismatch(settings: Settings) -> None:
     settings.mapelites_dimensionality_target_dims = 4
     settings.mapelites_archive_cells_per_dim = 4
 
@@ -102,14 +102,8 @@ def test_manager_adopts_snapshot_dimensionality_when_settings_mismatch(settings:
     )
     manager._snapshot_backend = DummySnapshotBackend(snapshot)  # type: ignore[attr-defined]
 
-    stats = manager.describe_island("main")
-    assert stats["cells"] == 16
-    assert stats["occupied"] == 1
-    assert manager._target_dims == 2  # Snapshot dimensionality is authoritative for persisted experiments.
-
-    records = manager.get_records("main")
-    assert len(records) == 1
-    assert len(records[0].measures) == 2
+    with pytest.raises(ValueError, match="Snapshot dimensionality mismatch"):
+        _ = manager.describe_island("main")
 
 
 def test_ingest_short_circuits_when_no_repo_state_embedding(

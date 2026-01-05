@@ -37,17 +37,19 @@ def _stub_embed_chunked_files(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]
 
     calls: dict[str, Any] = {"count": 0, "file_counts": []}
 
-    def _vector_for_content(text: str) -> tuple[float, float]:
+    def _vector_for_content(text: str, *, dims: int) -> tuple[float, ...]:
         digest = hashlib.sha1(text.encode("utf-8")).digest()
-        return (digest[0] / 255.0, digest[1] / 255.0)
+        width = max(1, int(dims))
+        return tuple(digest[i % len(digest)] / 255.0 for i in range(width))
 
     def _fake_embed(chunked_files, *, settings=None, client=None):  # type: ignore[no-untyped-def]
         calls["count"] += 1
         calls["file_counts"].append(len(chunked_files))
         file_embeddings: list[FileEmbedding] = []
+        requested_dims = int(getattr(settings, "mapelites_code_embedding_dimensions", 2) or 2)
         for file in chunked_files:
             text = "\n".join(chunk.content for chunk in file.chunks)
-            vec = _vector_for_content(text)
+            vec = _vector_for_content(text, dims=requested_dims)
             file_embeddings.append(
                 FileEmbedding(
                     file=file,

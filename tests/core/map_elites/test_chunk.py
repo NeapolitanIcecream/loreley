@@ -8,7 +8,7 @@ from loreley.core.map_elites.chunk import CodeChunker, chunk_preprocessed_files
 
 
 def make_chunker(settings: Settings | None = None) -> CodeChunker:
-    test_settings = settings or Settings()
+    test_settings = settings or Settings(mapelites_code_embedding_dimensions=8)
     return CodeChunker(settings=test_settings)
 
 

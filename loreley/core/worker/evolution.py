@@ -35,6 +35,7 @@ from loreley.core.worker.planning import (
 )
 from loreley.core.worker.commit_summary import CommitSummarizer, CommitSummaryError
 from loreley.core.worker.trajectory import build_inspiration_trajectory_rollup
+from loreley.core.experiment_config import resolve_experiment_settings
 from loreley.core.worker.job_store import (
     EvolutionJobStore,
     EvolutionWorkerError,
@@ -201,6 +202,17 @@ class EvolutionWorker:
 
     def _start_job(self, job_id: UUID) -> JobContext:
         locked_job = self.job_store.start_job(job_id)
+
+        if locked_job.experiment_id is not None:
+            self.settings = resolve_experiment_settings(
+                experiment_id=locked_job.experiment_id,
+                base_settings=self.settings,
+            )
+            # Evaluator behaviour is experiment-scoped; rebuild to pick up the
+            # effective snapshot settings (plugin ref, timeout, etc.).
+            if isinstance(self.evaluator, Evaluator):
+                self.evaluator = Evaluator(self.settings)
+
         goal = (locked_job.goal or "").strip()
         if not goal:
             goal = (self.settings.worker_evolution_global_goal or "").strip()

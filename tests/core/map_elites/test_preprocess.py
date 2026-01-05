@@ -13,7 +13,7 @@ from loreley.core.map_elites.preprocess import (
 
 
 def make_preprocessor(tmp_path: Path, *, settings: Settings | None = None) -> CodePreprocessor:
-    test_settings = settings or Settings()
+    test_settings = settings or Settings(mapelites_code_embedding_dimensions=8)
     return CodePreprocessor(repo_root=tmp_path, settings=test_settings, commit_hash=None)
 
 

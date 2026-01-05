@@ -9,6 +9,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 
 from loreley.config import Settings, get_settings
+from loreley.core.experiment_config import ExperimentConfigError, resolve_experiment_settings
 from loreley.core.map_elites.map_elites import MapElitesManager
 from loreley.db.base import session_scope
 from loreley.db.models import MapElitesArchiveCell, MapElitesPcaHistory, MapElitesState
@@ -34,8 +35,15 @@ def list_islands(*, experiment_id: UUID) -> list[str]:
     if values:
         return values
 
-    settings = get_settings()
-    default_island = (settings.mapelites_default_island_id or "main").strip() or "main"
+    base_settings = get_settings()
+    try:
+        effective_settings = resolve_experiment_settings(
+            experiment_id=experiment_id,
+            base_settings=base_settings,
+        )
+    except ExperimentConfigError:
+        effective_settings = base_settings
+    default_island = (effective_settings.mapelites_default_island_id or "main").strip() or "main"
     return [default_island]
 
 
@@ -47,7 +55,11 @@ def describe_island(
 ) -> dict[str, Any]:
     """Return MAP-Elites stats for an island using MapElitesManager."""
 
-    effective_settings = settings or get_settings()
+    base_settings = settings or get_settings()
+    effective_settings = resolve_experiment_settings(
+        experiment_id=experiment_id,
+        base_settings=base_settings,
+    )
     manager = MapElitesManager(settings=effective_settings, experiment_id=experiment_id)
     return dict(manager.describe_island(island_id))
 
@@ -60,7 +72,11 @@ def list_records(
 ) -> list[Any]:
     """Return all elite records for an island."""
 
-    effective_settings = settings or get_settings()
+    base_settings = settings or get_settings()
+    effective_settings = resolve_experiment_settings(
+        experiment_id=experiment_id,
+        base_settings=base_settings,
+    )
     manager = MapElitesManager(settings=effective_settings, experiment_id=experiment_id)
     return list(manager.get_records(island_id))
 
@@ -73,7 +89,11 @@ def snapshot_meta(
 ) -> SnapshotMeta:
     """Return lightweight metadata about the stored snapshot (without reconstructing the archive)."""
 
-    effective_settings = settings or get_settings()
+    base_settings = settings or get_settings()
+    effective_settings = resolve_experiment_settings(
+        experiment_id=experiment_id,
+        base_settings=base_settings,
+    )
     dims = max(1, int(effective_settings.mapelites_dimensionality_target_dims))
 
     with session_scope() as session:

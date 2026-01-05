@@ -466,8 +466,8 @@ class Settings(BaseSettings):
     # This value is part of the experiment config snapshot/hash and therefore must
     # remain stable within one experiment run.
     mapelites_code_embedding_dimensions: int = Field(
-        default=2,
         alias="MAPELITES_CODE_EMBEDDING_DIMENSIONS",
+        gt=0,
     )
     mapelites_code_embedding_batch_size: int = Field(
         default=12,
@@ -684,7 +684,7 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     """Load and cache application settings."""
-    settings = Settings()
+    settings = Settings()  # type: ignore[call-arg]  # Loaded from environment via pydantic-settings.
     console.log(
         f"[bold green]Loaded settings[/] env={settings.environment!r} "
         f"db_host={settings.db_host!r}",

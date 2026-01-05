@@ -33,7 +33,7 @@ def test_root_initialisation_evaluates_without_ingesting_into_archive(
     archive or rely on placeholder files.
     """
 
-    settings = Settings()
+    settings = Settings(mapelites_code_embedding_dimensions=8)
     manager = DummyManager()
     experiment = SimpleNamespace(id="exp-123")
     repository = SimpleNamespace(id="repo-456")

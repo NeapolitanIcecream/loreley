@@ -154,8 +154,9 @@ class MapElitesManager:
     def _infer_snapshot_target_dims(snapshot: Mapping[str, Any]) -> int | None:
         """Infer the archive dimensionality from a persisted snapshot payload.
 
-        This is used to keep long-lived experiments readable even when the current
-        process settings differ from the settings used when the snapshot was written.
+        Persisted MAP-Elites state is experiment-scoped. When the current process
+        settings disagree with the stored snapshot dimensionality, we fail fast
+        instead of silently adopting a different dimensionality.
         """
 
         if not snapshot:
@@ -179,14 +180,6 @@ class MapElitesManager:
             if isinstance(bounds, (list, tuple)) and bounds:
                 return len(bounds)
         return None
-
-    def _adopt_target_dims(self, target_dims: int) -> None:
-        target = max(1, int(target_dims))
-        if target == self._target_dims:
-            return
-        self._target_dims = target
-        self._lower_template, self._upper_template = self._build_feature_bounds()
-        self._grid_shape = tuple(self._cells_per_dim for _ in range(self._target_dims))
 
     def ingest(
         self,
@@ -532,40 +525,16 @@ class MapElitesManager:
 
         snapshot = self._snapshot_backend.load(island_id)
         snapshot_dims = self._infer_snapshot_target_dims(snapshot) if snapshot else None
-        effective_dims = self._target_dims
         if snapshot_dims and snapshot_dims != self._target_dims:
-            if not self._archives:
-                log.warning(
-                    "Adopting snapshot dimensionality for experiment {} island {} (settings_dims={} snapshot_dims={})",
-                    self._experiment_id,
-                    island_id,
-                    self._target_dims,
-                    snapshot_dims,
-                )
-                self._adopt_target_dims(snapshot_dims)
-                effective_dims = self._target_dims
-            else:
-                log.warning(
-                    "Snapshot dimensionality differs from current manager configuration; building archive per-island "
-                    "(experiment={} island={} settings_dims={} snapshot_dims={})",
-                    self._experiment_id,
-                    island_id,
-                    self._target_dims,
-                    snapshot_dims,
-                )
-                effective_dims = int(snapshot_dims)
-
-        if effective_dims == self._target_dims:
-            archive = self._build_archive()
-            lower_template = self._lower_template
-            upper_template = self._upper_template
-        else:
-            lower_template, upper_template = self._build_feature_bounds(target_dims=effective_dims)
-            archive = self._build_archive(
-                target_dims=effective_dims,
-                lower_bounds=lower_template,
-                upper_bounds=upper_template,
+            raise ValueError(
+                "Snapshot dimensionality mismatch "
+                f"(experiment={self._experiment_id} island={island_id} "
+                f"settings_dims={self._target_dims} snapshot_dims={snapshot_dims})."
             )
+
+        archive = self._build_archive()
+        lower_template = self._lower_template
+        upper_template = self._upper_template
 
         state = IslandState(
             archive=archive,
