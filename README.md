@@ -44,7 +44,6 @@ uv run loreley worker
 
 ```bash
 uv sync --extra ui
-uv run loreley api
 uv run loreley ui
 ```
 
