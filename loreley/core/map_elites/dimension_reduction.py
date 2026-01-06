@@ -1,4 +1,4 @@
-"""Fuse embeddings and run PCA to derive MAP-Elites features."""
+"""Run PCA over commit embeddings to derive MAP-Elites features."""
 
 from __future__ import annotations
 
@@ -147,9 +147,7 @@ class DimensionReducer:
             0,
             self.settings.mapelites_dimensionality_refit_interval,
         )
-        self._normalise_penultimate = (
-            self.settings.mapelites_dimensionality_penultimate_normalize
-        )
+        self._normalize_input = self.settings.mapelites_dimensionality_penultimate_normalize
 
         self._history: OrderedDict[str, PcaHistoryEntry] = OrderedDict()
         self._projection: PCAProjection | None = projection
@@ -187,8 +185,8 @@ class DimensionReducer:
             return None
 
         vector = tuple(code_embedding.vector)
-        if self._normalise_penultimate:
-            vector = self._l2_normalise(vector)
+        if self._normalize_input:
+            vector = self._l2_normalize(vector)
 
         return PcaHistoryEntry(
             commit_hash=commit_hash,
@@ -350,7 +348,7 @@ class DimensionReducer:
         return tuple(padded)
 
     @staticmethod
-    def _l2_normalise(vector: Vector) -> Vector:
+    def _l2_normalize(vector: Vector) -> Vector:
         magnitude = math.sqrt(sum(value * value for value in vector))
         if magnitude == 0.0:
             return vector

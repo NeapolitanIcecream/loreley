@@ -475,7 +475,7 @@ class MapElitesArchiveCell(TimestampMixin, Base):
 
 
 class MapElitesPcaHistory(TimestampMixin, Base):
-    """Penultimate embedding history entries persisted for PCA reconstruction.
+    """Commit embedding history entries persisted for PCA reconstruction.
 
     Rows are keyed by commit hash so updates are idempotent and `last_seen_at`
     can be used to load the most recent history window after restarts.
