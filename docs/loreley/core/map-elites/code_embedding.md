@@ -11,7 +11,7 @@ Commit-level code embedding utilities that consume chunked code artifacts and ta
 ## Embedder
 
 - **`CodeEmbedder`**: orchestrates calls to the OpenAI embeddings API and aggregation logic.
-  - Configured via `Settings` map-elites code embedding options (`MAPELITES_CODE_EMBEDDING_*`) controlling model name, optional output dimensions, batch size, maximum chunks per commit, retry count, and retry backoff.
+  - Configured via `Settings` map-elites code embedding options (`MAPELITES_CODE_EMBEDDING_*`) controlling model name, output dimensions, batch size, maximum chunks per commit, retry count, and retry backoff.
   - `run(chunked_files)` filters out empty inputs, flattens chunks into a payload, embeds them in batches with a `rich` progress spinner, and turns raw vectors into `ChunkEmbedding`, `FileEmbedding`, and `CommitCodeEmbedding` objects using weighted averaging.
   - Logs detailed progress and warnings with `loguru`, including mismatched response sizes, missing owners for chunks, and empty aggregation results.
 
