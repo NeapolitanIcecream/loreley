@@ -30,9 +30,41 @@ log = logger.bind(module="map_elites.repository_files")
 __all__ = [
     "RepositoryFile",
     "GitignoreMatcher",
+    "ROOT_IGNORE_FILES",
+    "load_root_ignore_matcher_from_commit",
     "RepositoryFileCatalog",
     "list_repository_files",
 ]
+
+ROOT_IGNORE_FILES: tuple[str, ...] = (".gitignore", ".loreleyignore")
+
+
+def load_root_ignore_matcher_from_commit(repo: Repo, commit_hash: str) -> GitignoreMatcher | None:
+    """Load repository-root ignore rules from a specific commit.
+
+    Files:
+    - `.gitignore`
+    - `.loreleyignore`
+
+    Notes:
+    - Files are read strictly from the specified commit; missing files are treated as absent.
+    - Rules are applied in order: `.gitignore` first, then `.loreleyignore`.
+    """
+    commit = str(commit_hash or "").strip()
+    if not commit:
+        return None
+
+    chunks: list[str] = []
+    for filename in ROOT_IGNORE_FILES:
+        try:
+            chunks.append(repo.git.show(f"{commit}:{filename}"))
+        except (GitCommandError, BadName):
+            chunks.append("")
+
+    combined = "\n".join(chunks).strip()
+    if not combined:
+        return None
+    return GitignoreMatcher.from_gitignore_text(combined)
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,7 +211,7 @@ class RepositoryFileCatalog:
         self._max_file_size_bytes = (
             max(self.settings.mapelites_preprocess_max_file_size_kb, 1) * 1024
         )
-        self._gitignore = self._load_root_gitignore()
+        self._ignore_matcher = self._load_root_ignore_matcher()
 
     def list_files(self) -> list[RepositoryFile]:
         """Return eligible files for this catalog.
@@ -216,8 +248,8 @@ class RepositoryFileCatalog:
                 except ValueError:
                     continue
 
-            # Apply .gitignore filtering relative to git root.
-            if self._gitignore and self._gitignore.is_ignored(git_rel):
+            # Apply root ignore filtering relative to git root.
+            if self._ignore_matcher and self._ignore_matcher.is_ignored(git_rel):
                 continue
 
             repo_rel = self._to_repo_relative(git_rel)
@@ -307,7 +339,7 @@ class RepositoryFileCatalog:
                 return None
         return git_rel_path
 
-    def _load_root_gitignore(self) -> GitignoreMatcher | None:
+    def _load_root_ignore_matcher(self) -> GitignoreMatcher | None:
         """Load ignore rules from git root at the requested commit hash.
 
         Files:
@@ -319,24 +351,17 @@ class RepositoryFileCatalog:
         if not self._repo:
             return None
 
-        gitignore: str | None = None
-        loreleyignore: str | None = None
         if self.commit_hash:
-            try:
-                gitignore = self._repo.git.show(f"{self.commit_hash}:.gitignore")
-            except (GitCommandError, BadName):
-                # When a commit hash is requested, do not fall back to the working tree.
-                # If `.gitignore` does not exist at that commit, treat it as absent.
-                gitignore = None
-            try:
-                loreleyignore = self._repo.git.show(f"{self.commit_hash}:.loreleyignore")
-            except (GitCommandError, BadName):
-                loreleyignore = None
+            # When a commit hash is requested, do not fall back to the working tree.
+            # If ignore files do not exist at that commit, treat them as absent.
+            return load_root_ignore_matcher_from_commit(self._repo, self.commit_hash)
         else:
-            # Fall back to working tree `.gitignore` when commit hash is not specified.
+            # Fall back to working tree ignore files when commit hash is not specified.
             git_root = self._git_root or self.repo_root
             gitignore_path = (git_root / ".gitignore").resolve()
             loreleyignore_path = (git_root / ".loreleyignore").resolve()
+            gitignore: str | None = None
+            loreleyignore: str | None = None
             try:
                 if gitignore_path.exists():
                     gitignore = gitignore_path.read_text(encoding="utf-8", errors="ignore")

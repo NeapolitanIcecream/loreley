@@ -32,7 +32,12 @@ from .chunk import PreprocessedArtifact, chunk_preprocessed_files
 from .code_embedding import CommitCodeEmbedding, embed_chunked_files
 from .file_embedding_cache import DatabaseFileEmbeddingCache, FileEmbeddingCache, build_file_embedding_cache
 from .preprocess import CodePreprocessor, PreprocessedFile
-from .repository_files import GitignoreMatcher, RepositoryFile, list_repository_files
+from .repository_files import (
+    ROOT_IGNORE_FILES,
+    RepositoryFile,
+    list_repository_files,
+    load_root_ignore_matcher_from_commit,
+)
 
 log = logger.bind(module="map_elites.repository_state_embedding")
 
@@ -492,12 +497,11 @@ class RepositoryStateEmbedder:
             return None
 
         # Conservative correctness guard: root ignore file changes can affect eligibility of many files.
-        parent_gitignore = _root_file_blob_sha(repo, parent_hash, ".gitignore")
-        child_gitignore = _root_file_blob_sha(repo, commit_hash, ".gitignore")
-        parent_loreleyignore = _root_file_blob_sha(repo, parent_hash, ".loreleyignore")
-        child_loreleyignore = _root_file_blob_sha(repo, commit_hash, ".loreleyignore")
-        if parent_gitignore != child_gitignore or parent_loreleyignore != child_loreleyignore:
-            return None
+        for filename in ROOT_IGNORE_FILES:
+            if _root_file_blob_sha(repo, parent_hash, filename) != _root_file_blob_sha(
+                repo, commit_hash, filename
+            ):
+                return None
 
         parent_time = getattr(parent_agg, "updated_at", None) or getattr(parent_agg, "created_at", None)
         if parent_time is None:
@@ -510,7 +514,7 @@ class RepositoryStateEmbedder:
         file_count = int(parent_agg.file_count)
 
         repo_prefix = _resolve_git_prefix(repo, repo_root)
-        gitignore = _load_root_gitignore_matcher(repo, commit_hash)
+        ignore_matcher = load_root_ignore_matcher_from_commit(repo, commit_hash)
         preprocess_filter = CodePreprocessor(
             repo_root=repo_root,
             settings=self.settings,
@@ -554,7 +558,7 @@ class RepositoryStateEmbedder:
             git_path = path_str.strip().lstrip("/")
             if not git_path:
                 return False, None, None
-            if gitignore and gitignore.is_ignored(git_path):
+            if ignore_matcher and ignore_matcher.is_ignored(git_path):
                 return False, None, None
             repo_rel = _git_path_to_repo_rel(git_path, repo_prefix=repo_prefix)
             if repo_rel is None:
@@ -900,24 +904,6 @@ def _root_file_blob_sha(repo: Repo, commit_hash: str, path: str) -> str | None:
         return value or None
     except GitCommandError:
         return None
-
-
-def _load_root_gitignore_matcher(repo: Repo, commit_hash: str) -> GitignoreMatcher | None:
-    gitignore: str | None = None
-    loreleyignore: str | None = None
-    try:
-        gitignore = repo.git.show(f"{commit_hash}:.gitignore")
-    except GitCommandError:
-        gitignore = None
-    try:
-        loreleyignore = repo.git.show(f"{commit_hash}:.loreleyignore")
-    except GitCommandError:
-        loreleyignore = None
-
-    combined = "\n".join([gitignore or "", loreleyignore or ""]).strip()
-    if not combined:
-        return None
-    return GitignoreMatcher.from_gitignore_text(combined)
 
 
 def _resolve_git_prefix(repo: Repo, repo_root: Path) -> str | None:
