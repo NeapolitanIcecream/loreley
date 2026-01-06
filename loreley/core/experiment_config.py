@@ -82,15 +82,18 @@ def apply_experiment_config_snapshot(
     if not isinstance(restored, Mapping):
         raise ExperimentConfigError("Experiment config snapshot must be a mapping.")
 
-    payload = base_settings.model_dump()
-    payload.update(
-        {
-            str(k): v
-            for k, v in restored.items()
-            if str(k).startswith(BEHAVIOR_SNAPSHOT_PREFIXES)
-        }
-    )
-    return Settings.model_validate(payload)
+    overrides = {
+        str(k): v for k, v in restored.items() if str(k).startswith(BEHAVIOR_SNAPSHOT_PREFIXES)
+    }
+    if not overrides:
+        return base_settings
+
+    # NOTE: `Settings` inherits from `BaseSettings`, where environment variables may take
+    # precedence over explicit constructor inputs. For experiment-scoped interpretation we
+    # must ensure the persisted snapshot wins over the process environment, therefore we
+    # apply overrides onto the already-loaded Settings instance.
+    valid = {k: v for k, v in overrides.items() if k in type(base_settings).model_fields}
+    return base_settings.model_copy(update=valid)
 
 
 def resolve_experiment_settings(
