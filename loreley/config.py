@@ -7,7 +7,7 @@ from typing import Any, Literal
 from urllib.parse import quote_plus
 
 from loguru import logger
-from pydantic import Field, computed_field
+from pydantic import Field, PositiveInt, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from rich.console import Console
 
@@ -459,11 +459,14 @@ class Settings(BaseSettings):
         alias="MAPELITES_CODE_EMBEDDING_MODEL",
     )
     # Fixed embedding dimensionality for the entire experiment lifecycle.
-    # This value is part of the experiment config snapshot/hash and therefore must
-    # remain stable within one experiment run.
-    mapelites_code_embedding_dimensions: int = Field(
+    #
+    # This is an experiment-scoped behaviour parameter persisted in the DB via
+    # `Experiment.config_snapshot`. The scheduler must set it when deriving an
+    # experiment; UI/API/workers should load it from the persisted snapshot and
+    # should not require it at process startup.
+    mapelites_code_embedding_dimensions: PositiveInt | None = Field(
+        default=None,
         alias="MAPELITES_CODE_EMBEDDING_DIMENSIONS",
-        gt=0,
     )
     mapelites_code_embedding_batch_size: int = Field(
         default=12,

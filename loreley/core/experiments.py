@@ -251,6 +251,13 @@ def build_experiment_config_snapshot(settings: Settings) -> dict[str, Any]:
     experiments are stable across non-functional configuration changes.
     """
 
+    dims = getattr(settings, "mapelites_code_embedding_dimensions", None)
+    if dims is None or int(dims) <= 0:
+        raise ExperimentError(
+            "MAPELITES_CODE_EMBEDDING_DIMENSIONS is required to derive an experiment config snapshot. "
+            "Configure it for the scheduler so it can persist a stable experiment-scoped behaviour snapshot.",
+        )
+
     payload = settings.model_dump()
     prefixes = ("mapelites_", "worker_evaluator_")
     snapshot: dict[str, Any] = {}

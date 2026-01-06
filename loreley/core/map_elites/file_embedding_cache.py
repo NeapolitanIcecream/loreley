@@ -59,6 +59,28 @@ class FileEmbeddingCache(Protocol):
         ...
 
 
+def _resolve_requested_dimensions(settings: Settings) -> int:
+    """Return configured embedding dimensionality or raise a helpful error.
+
+    The embedding dimensionality is an experiment-scoped invariant persisted in
+    `Experiment.config_snapshot`. Long-running services should load it from the
+    DB snapshot (via `resolve_experiment_settings`) instead of relying on local
+    environment variables.
+    """
+
+    raw = getattr(settings, "mapelites_code_embedding_dimensions", None)
+    if raw is None:
+        raise ValueError(
+            "MAPELITES_CODE_EMBEDDING_DIMENSIONS is not configured. "
+            "This value is experiment-scoped and must be provided by the scheduler "
+            "when deriving an experiment, then loaded from the DB snapshot by other services.",
+        )
+    dims = int(raw)
+    if dims <= 0:
+        raise ValueError("MAPELITES_CODE_EMBEDDING_DIMENSIONS must be a positive integer.")
+    return dims
+
+
 def build_pipeline_signature(*, settings: Settings | None = None) -> str:
     """Hash all knobs that affect file-level embeddings.
 
@@ -68,6 +90,7 @@ def build_pipeline_signature(*, settings: Settings | None = None) -> str:
     """
 
     s = settings or get_settings()
+    dims = _resolve_requested_dimensions(s)
     payload = {
         "version": 1,
         "preprocess": {
@@ -85,7 +108,7 @@ def build_pipeline_signature(*, settings: Settings | None = None) -> str:
         },
         "embedding": {
             "model": str(s.mapelites_code_embedding_model),
-            "requested_dimensions": int(s.mapelites_code_embedding_dimensions),
+            "requested_dimensions": int(dims),
         },
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
@@ -267,9 +290,7 @@ def build_file_embedding_cache(
 
     pipeline_signature = build_pipeline_signature(settings=s)
     embedding_model = str(s.mapelites_code_embedding_model)
-    requested_dimensions = int(s.mapelites_code_embedding_dimensions)
-    if requested_dimensions <= 0:
-        raise ValueError("MAPELITES_CODE_EMBEDDING_DIMENSIONS must be a positive integer.")
+    requested_dimensions = _resolve_requested_dimensions(s)
 
     if chosen == "memory":
         return InMemoryFileEmbeddingCache(
