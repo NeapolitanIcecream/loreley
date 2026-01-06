@@ -78,6 +78,53 @@ def test_select_inspirations_respects_inspiration_count(settings: Settings) -> N
     assert stats["radius_used"] <= settings.mapelites_sampler_neighbor_max_radius
 
 
+def test_select_inspirations_does_not_call_neighbor_indices(monkeypatch, settings: Settings) -> None:
+    import random
+
+    settings.mapelites_dimensionality_target_dims = 12
+    settings.mapelites_archive_cells_per_dim = 4
+    settings.mapelites_sampler_inspiration_count = 3
+    settings.mapelites_sampler_neighbor_radius = 2
+    settings.mapelites_sampler_neighbor_max_radius = 3
+    settings.mapelites_sampler_fallback_sample_size = 0
+
+    shape = tuple(
+        settings.mapelites_archive_cells_per_dim for _ in range(settings.mapelites_dimensionality_target_dims)
+    )
+    base_coord = tuple(1 for _ in range(settings.mapelites_dimensionality_target_dims))
+    base_index = int(np.ravel_multi_index(base_coord, shape))
+
+    neighbor1 = list(base_coord)
+    neighbor1[0] = 2
+    neighbor1_index = int(np.ravel_multi_index(tuple(neighbor1), shape))
+
+    neighbor2 = list(base_coord)
+    neighbor2[1] = 3
+    neighbor2_index = int(np.ravel_multi_index(tuple(neighbor2), shape))
+
+    records = [
+        FakeRecord(commit_hash="base", cell_index=base_index),
+        FakeRecord(commit_hash="n1", cell_index=neighbor1_index),
+        FakeRecord(commit_hash="n2", cell_index=neighbor2_index),
+    ]
+    sampler = MapElitesSampler(
+        manager=FakeManager(records),
+        settings=settings,
+        rng=random.Random(1234),
+    )
+    records_by_cell: Mapping[int, FakeRecord] = {record.cell_index: record for record in records}
+
+    def explode(self, center_index: int, radius: int) -> list[int]:  # noqa: ARG001
+        raise RuntimeError("_neighbor_indices should not be used by _select_inspirations")
+
+    monkeypatch.setattr(MapElitesSampler, "_neighbor_indices", explode)
+
+    inspirations, stats = sampler._select_inspirations(records_by_cell[base_index], records_by_cell)  # type: ignore[attr-defined]
+    assert len(inspirations) <= settings.mapelites_sampler_inspiration_count
+    assert "base" not in {rec.commit_hash for rec in inspirations}
+    assert stats["radius_used"] <= settings.mapelites_sampler_neighbor_max_radius
+
+
 def test_schedule_job_with_and_without_records(monkeypatch, settings: Settings) -> None:
     empty_manager = FakeManager(records=[])
     sampler_empty = MapElitesSampler(manager=empty_manager, settings=settings)

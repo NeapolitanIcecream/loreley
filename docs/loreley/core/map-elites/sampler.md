@@ -18,5 +18,5 @@ Sampler that turns MAP-Elites archive records into concrete `EvolutionJob` rows 
 
 ## Neighbourhood selection
 
-- **`_select_inspirations(...)`**: internal helper that walks outward from the base cell over the discretised behaviour grid, gathering nearby elites up to the requested inspiration count and recording selection statistics.
-- **`_neighbor_indices(center_index, radius)`**: converts a flat cell index and radius into neighbouring cell indices using numpy's `unravel_index`/`ravel_multi_index`, respecting grid bounds.
+- **`_select_inspirations(...)`**: internal helper that computes Chebyshev (L∞) distances from the base cell to occupied archive cells in a vectorized pass, then samples inspiration records by increasing radius (with optional fallback sampling) and records selection statistics.
+- **`_neighbor_indices(center_index, radius)`**: helper that enumerates neighbouring cell indices for small grids (used by tests), respecting grid bounds.

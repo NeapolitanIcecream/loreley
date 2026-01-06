@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from itertools import product
+from math import prod
 import random
 from typing import Any, Mapping, Protocol, Sequence
 from uuid import UUID
@@ -180,23 +181,68 @@ class MapElitesSampler:
         max_radius = max(min_radius, self._max_neighbor_radius)
         radius = max(1, min_radius) if max_radius > 0 else 1
 
-        while radius <= max_radius and len(selected) < self._inspiration_count:
-            neighbor_indices = self._neighbor_indices(base.cell_index, radius)
-            added_this_radius = False
-            for idx in neighbor_indices:
-                record = records_by_cell.get(idx)
-                if not record:
-                    continue
-                if record.commit_hash in selected_commits:
-                    continue
-                selected.append(record)
-                selected_commits.add(record.commit_hash)
-                added_this_radius = True
-                if len(selected) >= self._inspiration_count:
-                    break
-            if added_this_radius:
-                radius_used = radius
-            radius += 1
+        if records_by_cell and max_radius > 0:
+            try:
+                base_coords = np.asarray(
+                    np.unravel_index(base.cell_index, self._grid_shape),
+                    dtype=np.int64,
+                )
+            except ValueError:
+                base_coords = None
+
+            if base_coords is not None:
+                # We only care about occupied archive cells. Enumerating the full
+                # Chebyshev ball in d dimensions is (2r+1)^d and quickly becomes
+                # intractable; instead we compute Chebyshev distances to occupied
+                # cells in a single vectorized pass (O(N * d)).
+                items = tuple(records_by_cell.items())
+                cell_indices = np.asarray([idx for idx, _ in items], dtype=np.int64)
+                records = [record for _, record in items]
+                max_index = prod(self._grid_shape) - 1
+                if max_index >= 0:
+                    valid_mask = (cell_indices >= 0) & (cell_indices <= max_index)
+                    if not np.all(valid_mask):
+                        mask_list = valid_mask.tolist()
+                        cell_indices = cell_indices[valid_mask]
+                        records = [rec for rec, keep in zip(records, mask_list) if keep]
+                if cell_indices.size > 0:
+                    try:
+                        coords = np.asarray(
+                            np.unravel_index(cell_indices, self._grid_shape),
+                            dtype=np.int64,
+                        ).T
+                    except ValueError:
+                        coords = None
+
+                    if coords is not None:
+                        dist = np.max(np.abs(coords - base_coords), axis=1)
+
+                        while radius <= max_radius and len(selected) < self._inspiration_count:
+                            # Preserve the existing semantics:
+                            # - The first iteration considers all occupied cells within
+                            #   the configured initial radius (<= radius).
+                            # - Subsequent iterations only consider the new shell
+                            #   (distance == radius) to avoid redundant rescans.
+                            if radius == max(1, min_radius):
+                                candidate_positions = np.flatnonzero((dist > 0) & (dist <= radius))
+                            else:
+                                candidate_positions = np.flatnonzero(dist == radius)
+
+                            positions = candidate_positions.tolist()
+                            self._rng.shuffle(positions)
+                            added_this_radius = False
+                            for pos in positions:
+                                record = records[pos]
+                                if record.commit_hash in selected_commits:
+                                    continue
+                                selected.append(record)
+                                selected_commits.add(record.commit_hash)
+                                added_this_radius = True
+                                if len(selected) >= self._inspiration_count:
+                                    break
+                            if added_this_radius:
+                                radius_used = radius
+                            radius += 1
 
         fallback_inspirations = 0
         if len(selected) < self._inspiration_count and self._fallback_sample_size > 0:
