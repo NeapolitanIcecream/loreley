@@ -29,14 +29,14 @@ Implemented by:
 
 Eligibility is determined by a combination of:
 
-- Root `.gitignore` (best-effort glob matching).
+- Root `.gitignore` + `.loreleyignore` (best-effort glob matching).
 - `MAPELITES_PREPROCESS_ALLOWED_EXTENSIONS` / `MAPELITES_PREPROCESS_ALLOWED_FILENAMES`.
 - `MAPELITES_PREPROCESS_EXCLUDED_GLOBS`.
 - `MAPELITES_PREPROCESS_MAX_FILE_SIZE_KB` (oversized blobs are skipped).
 - `MAPELITES_REPO_STATE_MAX_FILES` (optional cap; when set, the eligible list is deterministically sub-sampled).
 
 !!! note
-    `.gitignore` filtering is currently **best-effort** and only uses the repository root `.gitignore` at the requested `commit_hash`. Nested `.gitignore` files and global excludes are not applied.
+    Ignore filtering is currently **best-effort** and only uses the repository root `.gitignore` and `.loreleyignore` at the requested `commit_hash`. `.loreleyignore` rules are applied after `.gitignore` (so `!pattern` can re-include). Nested `.gitignore` files and global excludes are not applied.
 
 For each eligible file we keep:
 
@@ -86,7 +86,7 @@ The commit vector is derived as `sum_vector / file_count`.
 
 ### Incremental updates
 
-When a parent aggregate exists and `.gitignore` is unchanged, the child aggregate is derived
+When a parent aggregate exists and root ignore files (`.gitignore` and `.loreleyignore`) are unchanged, the child aggregate is derived
 from the parent by applying the parent..child diff (add/modify/delete/rename) and embedding
 only the new/changed blobs. If `MAPELITES_REPO_STATE_MAX_FILES` might affect selection, the
 pipeline falls back to a full recompute for correctness.

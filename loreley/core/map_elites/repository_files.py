@@ -3,7 +3,7 @@
 This module provides a lightweight way to enumerate *eligible* files for a given
 git commit hash while applying basic filtering:
 
-- Respect the repository root `.gitignore` (best-effort, glob-based matching).
+- Respect the repository root `.gitignore` and `.loreleyignore` (best-effort, glob-based matching).
 - Respect MAP-Elites preprocessing filters (allowed extensions/filenames, excluded globs).
 - Exclude obviously unsuitable files (oversized blobs).
 
@@ -55,7 +55,7 @@ class _IgnoreRule:
 
 
 class GitignoreMatcher:
-    """Best-effort `.gitignore` matcher for repository-relative paths.
+    """Best-effort `.gitignore`-style matcher for repository-relative paths.
 
     Notes:
     - This intentionally implements a pragmatic subset of gitignore semantics,
@@ -308,31 +308,50 @@ class RepositoryFileCatalog:
         return git_rel_path
 
     def _load_root_gitignore(self) -> GitignoreMatcher | None:
-        """Load `.gitignore` from git root at the requested commit hash."""
+        """Load ignore rules from git root at the requested commit hash.
+
+        Files:
+        - `.gitignore`
+        - `.loreleyignore`
+
+        Rules are applied in order: `.gitignore` first, then `.loreleyignore`.
+        """
         if not self._repo:
             return None
 
-        content: str | None = None
+        gitignore: str | None = None
+        loreleyignore: str | None = None
         if self.commit_hash:
             try:
-                content = self._repo.git.show(f"{self.commit_hash}:.gitignore")
+                gitignore = self._repo.git.show(f"{self.commit_hash}:.gitignore")
             except (GitCommandError, BadName):
                 # When a commit hash is requested, do not fall back to the working tree.
                 # If `.gitignore` does not exist at that commit, treat it as absent.
-                return None
+                gitignore = None
+            try:
+                loreleyignore = self._repo.git.show(f"{self.commit_hash}:.loreleyignore")
+            except (GitCommandError, BadName):
+                loreleyignore = None
         else:
             # Fall back to working tree `.gitignore` when commit hash is not specified.
             git_root = self._git_root or self.repo_root
-            path = (git_root / ".gitignore").resolve()
+            gitignore_path = (git_root / ".gitignore").resolve()
+            loreleyignore_path = (git_root / ".loreleyignore").resolve()
             try:
-                if path.exists():
-                    content = path.read_text(encoding="utf-8", errors="ignore")
+                if gitignore_path.exists():
+                    gitignore = gitignore_path.read_text(encoding="utf-8", errors="ignore")
             except OSError:  # pragma: no cover - filesystem edge cases
-                content = None
+                gitignore = None
+            try:
+                if loreleyignore_path.exists():
+                    loreleyignore = loreleyignore_path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:  # pragma: no cover - filesystem edge cases
+                loreleyignore = None
 
-        if not content:
+        combined = "\n".join([gitignore or "", loreleyignore or ""]).strip()
+        if not combined:
             return None
-        return GitignoreMatcher.from_gitignore_text(content)
+        return GitignoreMatcher.from_gitignore_text(combined)
 
 
 def list_repository_files(

@@ -2,8 +2,8 @@
 
 This module implements the repo-state embedding design:
 
-- Enumerate eligible files for a given commit hash respecting `.gitignore`
-  and basic MAP-Elites preprocessing filters.
+- Enumerate eligible files for a given commit hash respecting `.gitignore` and
+  `.loreleyignore` and basic MAP-Elites preprocessing filters.
 - Reuse a file-level embedding cache keyed by git blob SHA.
 - Only embed cache misses (new/modified files).
 - Aggregate all file embeddings into a single commit vector via **uniform mean**
@@ -491,10 +491,12 @@ class RepositoryStateEmbedder:
         if cap_value > 0 and int(parent_agg.file_count) > cap_value:
             return None
 
-        # Conservative correctness guard: `.gitignore` changes can affect eligibility of many files.
-        parent_gitignore = _gitignore_blob_sha(repo, parent_hash)
-        child_gitignore = _gitignore_blob_sha(repo, commit_hash)
-        if parent_gitignore != child_gitignore:
+        # Conservative correctness guard: root ignore file changes can affect eligibility of many files.
+        parent_gitignore = _root_file_blob_sha(repo, parent_hash, ".gitignore")
+        child_gitignore = _root_file_blob_sha(repo, commit_hash, ".gitignore")
+        parent_loreleyignore = _root_file_blob_sha(repo, parent_hash, ".loreleyignore")
+        child_loreleyignore = _root_file_blob_sha(repo, commit_hash, ".loreleyignore")
+        if parent_gitignore != child_gitignore or parent_loreleyignore != child_loreleyignore:
             return None
 
         parent_time = getattr(parent_agg, "updated_at", None) or getattr(parent_agg, "created_at", None)
@@ -800,8 +802,8 @@ def _coerce_uuid(value: UUID | str | None) -> UUID | None:
 def _build_filter_signature(*, settings: Settings, repo_prefix: str | None) -> str:
     """Hash all knobs that affect repo-state file selection (not embedding output)."""
     payload = {
-        "version": 1,
-        "gitignore": "root_only_best_effort_v1",
+        "version": 2,
+        "gitignore": "root_only_best_effort_v2_gitignore_plus_loreleyignore",
         "repo_prefix": repo_prefix or None,
         "filters": {
             "allowed_extensions": list(settings.mapelites_preprocess_allowed_extensions or []),
@@ -882,22 +884,40 @@ def _is_null_sha(sha: str | None) -> bool:
     return not value or set(value) == {"0"}
 
 
-def _gitignore_blob_sha(repo: Repo, commit_hash: str) -> str | None:
+def _root_file_blob_sha(repo: Repo, commit_hash: str, path: str) -> str | None:
+    """Return the blob SHA for a root-level file at a commit.
+
+    Args:
+        repo: GitPython repository.
+        commit_hash: Commit-ish to resolve against.
+        path: Root-relative path (e.g. ".gitignore", ".loreleyignore").
+    """
+    raw = str(path or "").strip().lstrip("/")
+    if not raw:
+        return None
     try:
-        value = repo.git.rev_parse(f"{commit_hash}:.gitignore").strip()
+        value = repo.git.rev_parse(f"{commit_hash}:{raw}").strip()
         return value or None
     except GitCommandError:
         return None
 
 
 def _load_root_gitignore_matcher(repo: Repo, commit_hash: str) -> GitignoreMatcher | None:
+    gitignore: str | None = None
+    loreleyignore: str | None = None
     try:
-        content = repo.git.show(f"{commit_hash}:.gitignore")
+        gitignore = repo.git.show(f"{commit_hash}:.gitignore")
     except GitCommandError:
+        gitignore = None
+    try:
+        loreleyignore = repo.git.show(f"{commit_hash}:.loreleyignore")
+    except GitCommandError:
+        loreleyignore = None
+
+    combined = "\n".join([gitignore or "", loreleyignore or ""]).strip()
+    if not combined:
         return None
-    if not content:
-        return None
-    return GitignoreMatcher.from_gitignore_text(content)
+    return GitignoreMatcher.from_gitignore_text(combined)
 
 
 def _resolve_git_prefix(repo: Repo, repo_root: Path) -> str | None:
