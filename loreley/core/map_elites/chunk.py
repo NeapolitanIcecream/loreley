@@ -249,7 +249,7 @@ def chunk_preprocessed_files(
     *,
     settings: Settings | None = None,
 ) -> list[ChunkedFile]:
-    """Convenience function mirroring :func:`preprocess_changed_files`."""
+    """Convenience function for chunking preprocessed files."""
     chunker = CodeChunker(settings=settings)
     return chunker.run(files)
 

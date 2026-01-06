@@ -26,7 +26,6 @@ nav:
           - Dimensionality reduction: loreley/core/map-elites/dimension_reduction.md
           - Sampler: loreley/core/map-elites/sampler.md
           - Snapshots: loreley/core/map-elites/snapshot.md
-          - Summary embeddings: loreley/core/map-elites/summarization_embedding.md
       - Worker pipeline:
           - Repository: loreley/core/worker/repository.md
           - Planning: loreley/core/worker/planning.md

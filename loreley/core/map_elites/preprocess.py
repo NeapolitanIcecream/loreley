@@ -5,35 +5,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import re
-from typing import Mapping, Sequence
+from typing import Sequence
 
 from git import Repo
 from git.exc import BadName, GitCommandError, InvalidGitRepositoryError
 from loguru import logger
-from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from loreley.config import Settings, get_settings
 
 log = logger.bind(module="map_elites.preprocess")
 
 __all__ = [
-    "ChangedFile",
     "PreprocessedFile",
     "CodePreprocessor",
-    "preprocess_changed_files",
 ]
-
-
-@dataclass(slots=True, frozen=True)
-class ChangedFile:
-    """Minimal information about a file touched by a commit."""
-
-    path: Path
-    change_count: int = 0
-    content: str | None = None
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "path", Path(self.path))
 
 
 @dataclass(slots=True, frozen=True)
@@ -46,7 +31,7 @@ class PreprocessedFile:
 
 
 class CodePreprocessor:
-    """Filter and cleanup changed files prior to embedding."""
+    """Filter and cleanup repository files prior to embedding."""
 
     _block_comment_pattern = re.compile(r"/\*.*?\*/", re.DOTALL)
     _single_line_comment_prefixes = ("#", "//", "--")
@@ -97,69 +82,6 @@ class CodePreprocessor:
                     )
                     self._git_prefix = None
 
-    def run(self, changed_files: Sequence[ChangedFile | Mapping[str, object]]) -> list[PreprocessedFile]:
-        """Return cleaned textual content for top-N changed files."""
-        candidates = self._select_candidates(changed_files)
-        if not candidates:
-            log.info("No eligible files for preprocessing.")
-            return []
-
-        artifacts: list[PreprocessedFile] = []
-        progress = self._build_progress()
-
-        with progress:
-            task_id = progress.add_task(
-                "[cyan]Preprocessing changed files",
-                total=len(candidates),
-            )
-            for candidate in candidates:
-                relative_path = self._relative_path(candidate.path)
-                if relative_path is None:
-                    log.warning("Skipping file outside repository root: {}", candidate.path)
-                    progress.update(task_id, advance=1)
-                    continue
-
-                inline_content = candidate.content
-                if inline_content is not None:
-                    byte_size = len(inline_content.encode("utf-8"))
-                    if self._exceeds_size_limit(byte_size):
-                        log.info(
-                            "Skipping {} because provided content exceeds {} KB",
-                            relative_path,
-                            self.settings.mapelites_preprocess_max_file_size_kb,
-                        )
-                        progress.update(task_id, advance=1)
-                        continue
-                    raw_text = inline_content
-                else:
-                    raw_text = self._load_text(relative_path)
-
-                if raw_text is None:
-                    log.warning(
-                        "Unable to load content for {}; skipping",
-                        relative_path,
-                    )
-                    progress.update(task_id, advance=1)
-                    continue
-
-                processed = self._cleanup_text(raw_text)
-                if not processed:
-                    log.debug("File {} became empty after cleanup; skipping", relative_path)
-                    progress.update(task_id, advance=1)
-                    continue
-
-                artifacts.append(
-                    PreprocessedFile(
-                        path=relative_path,
-                        change_count=candidate.change_count,
-                        content=processed,
-                    )
-                )
-                progress.update(task_id, advance=1)
-
-        log.info("Preprocessed {} files.", len(artifacts))
-        return artifacts
-
     # Public helpers -------------------------------------------------------
 
     def is_code_file(self, relative_path: Path) -> bool:
@@ -177,88 +99,6 @@ class CodePreprocessor:
     def load_text(self, relative_path: Path) -> str | None:
         """Load file content either from `commit_hash` or from disk."""
         return self._load_text(relative_path)
-
-    def _select_candidates(
-        self,
-        changed_files: Sequence[ChangedFile | Mapping[str, object]],
-    ) -> list[ChangedFile]:
-        normalised = [
-            cf
-            for cf in (self._coerce_changed_file(entry) for entry in changed_files)
-            if cf is not None
-        ]
-
-        filtered: list[ChangedFile] = []
-        for file in normalised:
-            rel_path = self._relative_path(file.path)
-            if rel_path is None:
-                continue
-            if self._is_excluded(rel_path):
-                continue
-            if not self._is_code_file(rel_path):
-                continue
-            filtered.append(
-                ChangedFile(
-                    path=rel_path,
-                    change_count=file.change_count,
-                    content=file.content,
-                )
-            )
-
-        filtered.sort(key=lambda item: item.change_count, reverse=True)
-        limit = max(self.settings.mapelites_preprocess_max_files, 0)
-        if limit:
-            filtered = filtered[:limit]
-
-        return filtered
-
-    def _coerce_changed_file(
-        self,
-        entry: ChangedFile | Mapping[str, object],
-    ) -> ChangedFile | None:
-        if isinstance(entry, ChangedFile):
-            return entry
-
-        if isinstance(entry, (str, Path)):
-            return ChangedFile(path=Path(entry), change_count=0)
-
-        if isinstance(entry, (tuple, list)) and len(entry) == 2:
-            raw_path, raw_delta = entry
-            if not isinstance(raw_path, (str, Path)):
-                return None
-            delta = self._coerce_int(raw_delta)
-            return ChangedFile(path=Path(raw_path), change_count=delta)
-
-        if isinstance(entry, Mapping):
-            path_value = entry.get("path") or entry.get("file") or entry.get("filename")
-            if not path_value:
-                return None
-            if not isinstance(path_value, (str, Path)):
-                return None
-            change_count_value = entry.get("change_count") or entry.get("lines_changed") or entry.get("delta")
-            content_value = entry.get("content")
-            change_count = self._coerce_int(change_count_value)
-            return ChangedFile(
-                path=Path(path_value),
-                change_count=change_count,
-                content=content_value if isinstance(content_value, str) else None,
-            )
-
-        return None
-
-    def _relative_path(self, candidate: Path) -> Path | None:
-        candidate_path = Path(candidate)
-        combined = (
-            candidate_path if candidate_path.is_absolute() else self.repo_root / candidate_path
-        )
-        try:
-            absolute = combined.resolve()
-        except OSError:
-            return None
-        try:
-            return absolute.relative_to(self.repo_root)
-        except ValueError:
-            return None
 
     def _resolve_on_disk(self, relative_path: Path) -> Path | None:
         absolute = (self.repo_root / relative_path).resolve()
@@ -329,14 +169,6 @@ class CodePreprocessor:
 
         cleaned = "\n".join(lines).strip()
         return cleaned
-
-    def _build_progress(self) -> Progress:
-        return Progress(
-            SpinnerColumn(style="green"),
-            TextColumn("{task.description}"),
-            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-            transient=True,
-        )
 
     def _init_repo(self) -> Repo | None:
         try:
@@ -425,22 +257,4 @@ class CodePreprocessor:
             except ValueError:
                 return 0
         return 0
-
-
-def preprocess_changed_files(
-    changed_files: Sequence[ChangedFile | Mapping[str, object]],
-    *,
-    repo_root: Path | None = None,
-    settings: Settings | None = None,
-    commit_hash: str | None = None,
-    repo: Repo | None = None,
-) -> list[PreprocessedFile]:
-    """Functional wrapper for the preprocessor."""
-    preprocessor = CodePreprocessor(
-        repo_root=repo_root,
-        settings=settings,
-        commit_hash=commit_hash,
-        repo=repo,
-    )
-    return preprocessor.run(changed_files)
 

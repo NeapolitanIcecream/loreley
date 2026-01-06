@@ -189,17 +189,6 @@ MAPELITES_CODE_EMBEDDING_MAX_CHUNKS_PER_COMMIT: int = 512
 MAPELITES_CODE_EMBEDDING_MAX_RETRIES: int = 3
 MAPELITES_CODE_EMBEDDING_RETRY_BACKOFF_SECONDS: float = 2.0
 
-# Natural-language summary model used for MAP-Elites.
-MAPELITES_SUMMARY_MODEL: str = "openai/gpt-5.2"
-MAPELITES_SUMMARY_TEMPERATURE: float = 0.2
-MAPELITES_SUMMARY_MAX_OUTPUT_TOKENS: int = 512
-MAPELITES_SUMMARY_SOURCE_CHAR_LIMIT: int = 6000
-MAPELITES_SUMMARY_MAX_RETRIES: int = 3
-MAPELITES_SUMMARY_RETRY_BACKOFF_SECONDS: float = 2.0
-MAPELITES_SUMMARY_EMBEDDING_MODEL: str = "text-embedding-3-large"
-MAPELITES_SUMMARY_EMBEDDING_DIMENSIONS: int | None = None
-MAPELITES_SUMMARY_EMBEDDING_BATCH_SIZE: int = 16
-
 
 # --- Optional OpenAI-compatible API configuration -------------------------
 # OPENAI_API_KEY is intentionally NOT hard-coded; it is always read from the
@@ -375,41 +364,6 @@ def _apply_base_env(*, include_worker_repo: bool = False) -> None:
     _set_env_if_unset(
         "MAPELITES_CODE_EMBEDDING_RETRY_BACKOFF_SECONDS",
         MAPELITES_CODE_EMBEDDING_RETRY_BACKOFF_SECONDS,
-    )
-
-    _set_env_if_unset("MAPELITES_SUMMARY_MODEL", MAPELITES_SUMMARY_MODEL)
-    _set_env_if_unset(
-        "MAPELITES_SUMMARY_TEMPERATURE",
-        MAPELITES_SUMMARY_TEMPERATURE,
-    )
-    _set_env_if_unset(
-        "MAPELITES_SUMMARY_MAX_OUTPUT_TOKENS",
-        MAPELITES_SUMMARY_MAX_OUTPUT_TOKENS,
-    )
-    _set_env_if_unset(
-        "MAPELITES_SUMMARY_SOURCE_CHAR_LIMIT",
-        MAPELITES_SUMMARY_SOURCE_CHAR_LIMIT,
-    )
-    _set_env_if_unset(
-        "MAPELITES_SUMMARY_MAX_RETRIES",
-        MAPELITES_SUMMARY_MAX_RETRIES,
-    )
-    _set_env_if_unset(
-        "MAPELITES_SUMMARY_RETRY_BACKOFF_SECONDS",
-        MAPELITES_SUMMARY_RETRY_BACKOFF_SECONDS,
-    )
-    _set_env_if_unset(
-        "MAPELITES_SUMMARY_EMBEDDING_MODEL",
-        MAPELITES_SUMMARY_EMBEDDING_MODEL,
-    )
-    if MAPELITES_SUMMARY_EMBEDDING_DIMENSIONS is not None:
-        _set_env_if_unset(
-            "MAPELITES_SUMMARY_EMBEDDING_DIMENSIONS",
-            MAPELITES_SUMMARY_EMBEDDING_DIMENSIONS,
-        )
-    _set_env_if_unset(
-        "MAPELITES_SUMMARY_EMBEDDING_BATCH_SIZE",
-        MAPELITES_SUMMARY_EMBEDDING_BATCH_SIZE,
     )
 
     # OpenAI-compatible model endpoint (API key remains external).

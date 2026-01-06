@@ -42,7 +42,7 @@ ORM models and enums for tracking evolutionary jobs, commits, and associated met
   - Enables cheap per-cell upserts when a commit improves a specific cell.
 - **`MapElitesPcaHistory`** (`map_elites_pca_history` table): incremental PCA history entries used to restore dimensionality reduction state.
   - Primary key: `(experiment_id, island_id, commit_hash)`.
-  - Stores the commit's penultimate embedding `vector` plus embedding provenance (dimensions/models) and a `last_seen_at` marker used
+  - Stores the commit embedding `vector` plus the `embedding_model` name and a `last_seen_at` marker used
     to restore ordered, bounded history windows across restarts.
 - **`MapElitesFileEmbeddingCache`** (`map_elites_file_embedding_cache` table): persistent file-level embedding cache keyed by git blob SHA.
   - Uses a composite primary key `(blob_sha, embedding_model, dimensions, pipeline_signature)`.

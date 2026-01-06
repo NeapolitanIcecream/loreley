@@ -13,10 +13,9 @@ from sklearn.decomposition import PCA
 
 from loreley.config import Settings, get_settings
 from .code_embedding import CommitCodeEmbedding
-from .summarization_embedding import CommitSummaryEmbedding
 
 __all__ = [
-    "PenultimateEmbedding",
+    "PcaHistoryEntry",
     "PCAProjection",
     "FinalEmbedding",
     "DimensionReducer",
@@ -29,16 +28,12 @@ log = logger.bind(module="map_elites.dimension_reduction")
 
 
 @dataclass(slots=True, frozen=True)
-class PenultimateEmbedding:
-    """Concatenated code + summary embedding for a single commit."""
+class PcaHistoryEntry:
+    """Commit embedding recorded in PCA history."""
 
     commit_hash: str
     vector: Vector
-    code_dimensions: int
-    summary_dimensions: int
-    code_model: str | None
-    summary_model: str | None
-    summary_embedding_model: str | None
+    embedding_model: str
 
     @property
     def dimensions(self) -> int:
@@ -123,7 +118,7 @@ class FinalEmbedding:
     commit_hash: str
     vector: Vector
     dimensions: int
-    penultimate: PenultimateEmbedding
+    history_entry: PcaHistoryEntry
     projection: PCAProjection | None
 
 
@@ -134,7 +129,7 @@ class DimensionReducer:
         self,
         *,
         settings: Settings | None = None,
-        history: Sequence[PenultimateEmbedding] | None = None,
+        history: Sequence[PcaHistoryEntry] | None = None,
         projection: PCAProjection | None = None,
     ) -> None:
         self.settings = settings or get_settings()
@@ -156,7 +151,7 @@ class DimensionReducer:
             self.settings.mapelites_dimensionality_penultimate_normalize
         )
 
-        self._history: OrderedDict[str, PenultimateEmbedding] = OrderedDict()
+        self._history: OrderedDict[str, PcaHistoryEntry] = OrderedDict()
         self._projection: PCAProjection | None = projection
         self._feature_count: int | None = (
             projection.feature_count if projection else None
@@ -168,8 +163,8 @@ class DimensionReducer:
                 self._record_history(entry, count_for_refit=False)
 
     @property
-    def history(self) -> tuple[PenultimateEmbedding, ...]:
-        """Return stored penultimate embeddings."""
+    def history(self) -> tuple[PcaHistoryEntry, ...]:
+        """Return stored PCA history entries."""
         return tuple(self._history.values())
 
     @property
@@ -177,91 +172,68 @@ class DimensionReducer:
         """Return the currently active PCA projection."""
         return self._projection
 
-    def build_penultimate(
+    def build_history_entry(
         self,
         *,
         commit_hash: str,
         code_embedding: CommitCodeEmbedding | None = None,
-        summary_embedding: CommitSummaryEmbedding | None = None,
-    ) -> PenultimateEmbedding | None:
-        """Concatenate embeddings into a single vector."""
-        vector_parts: list[float] = []
-        code_dims = 0
-        summary_dims = 0
-        code_model = None
-        summary_model = None
-        summary_embedding_model = None
-
-        if code_embedding and code_embedding.vector:
-            vector_parts.extend(code_embedding.vector)
-            code_dims = len(code_embedding.vector)
-            code_model = code_embedding.model
-
-        if summary_embedding and summary_embedding.vector:
-            vector_parts.extend(summary_embedding.vector)
-            summary_dims = len(summary_embedding.vector)
-            summary_model = summary_embedding.summary_model
-            summary_embedding_model = summary_embedding.embedding_model
-
-        if not vector_parts:
+    ) -> PcaHistoryEntry | None:
+        """Prepare a PCA history entry from the commit embedding."""
+        if not code_embedding or not code_embedding.vector:
             log.warning(
                 "Commit {} produced no embeddings; skipping PCA preparation.",
                 commit_hash,
             )
             return None
 
-        vector = tuple(vector_parts)
+        vector = tuple(code_embedding.vector)
         if self._normalise_penultimate:
             vector = self._l2_normalise(vector)
 
-        return PenultimateEmbedding(
+        return PcaHistoryEntry(
             commit_hash=commit_hash,
             vector=vector,
-            code_dimensions=code_dims,
-            summary_dimensions=summary_dims,
-            code_model=code_model,
-            summary_model=summary_model,
-            summary_embedding_model=summary_embedding_model,
+            embedding_model=str(code_embedding.model),
         )
 
     def reduce(
         self,
-        penultimate: PenultimateEmbedding,
+        entry: PcaHistoryEntry,
         *,
         refit: bool | None = None,
     ) -> FinalEmbedding | None:
-        """Track penultimate embedding and project to the target space."""
-        if not penultimate.vector:
+        """Track a PCA history entry and project it to the target space."""
+        if not entry.vector:
             log.warning(
-                "Penultimate embedding for commit {} is empty.",
-                penultimate.commit_hash,
+                "PCA history entry for commit {} is empty.",
+                entry.commit_hash,
             )
             return None
 
-        self._record_history(penultimate)
+        self._record_history(entry)
         if refit is True or (refit is None and self._should_refit()):
             self._fit_projection()
 
-        reduced = self._project(penultimate)
+        reduced = self._project(entry)
         if not reduced:
             return None
 
         return FinalEmbedding(
-            commit_hash=penultimate.commit_hash,
+            commit_hash=entry.commit_hash,
             vector=reduced,
             dimensions=len(reduced),
-            penultimate=penultimate,
+            history_entry=entry,
             projection=self._projection,
         )
 
     def _record_history(
         self,
-        embedding: PenultimateEmbedding,
+        entry: PcaHistoryEntry,
         *,
         count_for_refit: bool = True,
     ) -> None:
         """Store embeddings while respecting history bounds."""
-        dimensions = embedding.dimensions
+        dimensions = entry.dimensions
         if dimensions == 0:
             return
 
@@ -269,7 +241,7 @@ class DimensionReducer:
             self._feature_count = dimensions
         elif dimensions != self._feature_count:
             log.warning(
-                "Penultimate dimensions changed from {} to {}; resetting PCA state.",
+                "PCA input dimensions changed from {} to {}; resetting PCA state.",
                 self._feature_count,
                 dimensions,
             )
@@ -278,11 +250,11 @@ class DimensionReducer:
             self._feature_count = dimensions
             self._samples_since_fit = 0
 
-        commit_hash = embedding.commit_hash
+        commit_hash = entry.commit_hash
         is_new_entry = commit_hash not in self._history
         if not is_new_entry:
             self._history.pop(commit_hash)
-        self._history[commit_hash] = embedding
+        self._history[commit_hash] = entry
 
         if len(self._history) > self._history_limit:
             dropped_hash, _ = self._history.popitem(last=False)
@@ -350,9 +322,9 @@ class DimensionReducer:
         )
         return projection
 
-    def _project(self, penultimate: PenultimateEmbedding) -> Vector:
+    def _project(self, entry: PcaHistoryEntry) -> Vector:
         """Apply PCA projection (or fallback) and enforce target dims."""
-        vector = penultimate.vector
+        vector = entry.vector
         projection = self._projection
         if projection:
             try:
@@ -360,11 +332,11 @@ class DimensionReducer:
             except ValueError as exc:
                 log.error(
                     "Stored PCA projection incompatible with commit {}: {}",
-                    penultimate.commit_hash,
+                    entry.commit_hash,
                     exc,
                 )
                 self._projection = None
-                vector = penultimate.vector
+                vector = entry.vector
 
         return self._pad_or_trim(vector)
 
@@ -389,13 +361,12 @@ def reduce_commit_embeddings(
     *,
     commit_hash: str,
     code_embedding: CommitCodeEmbedding | None,
-    summary_embedding: CommitSummaryEmbedding | None,
-    history: Sequence[PenultimateEmbedding] | None = None,
+    history: Sequence[PcaHistoryEntry] | None = None,
     projection: PCAProjection | None = None,
     settings: Settings | None = None,
 ) -> tuple[
     FinalEmbedding | None,
-    tuple[PenultimateEmbedding, ...],
+    tuple[PcaHistoryEntry, ...],
     PCAProjection | None,
 ]:
     """Convenience helper that runs the full reduction pipeline once.
@@ -408,14 +379,13 @@ def reduce_commit_embeddings(
         history=history,
         projection=projection,
     )
-    penultimate = reducer.build_penultimate(
+    entry = reducer.build_history_entry(
         commit_hash=commit_hash,
         code_embedding=code_embedding,
-        summary_embedding=summary_embedding,
     )
-    if not penultimate:
+    if not entry:
         return None, reducer.history, reducer.projection
 
-    reduced = reducer.reduce(penultimate)
+    reduced = reducer.reduce(entry)
     return reduced, reducer.history, reducer.projection
 

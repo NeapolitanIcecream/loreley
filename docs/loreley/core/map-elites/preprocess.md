@@ -4,17 +4,18 @@ Preprocessing utilities for turning raw repository code files into cleaned code 
 
 ## Data structures
 
-- **`ChangedFile`**: lightweight description of a file touched by a commit (path, approximate `change_count`, optional inline `content` override).
-- **`PreprocessedFile`**: output record capturing the repository-relative `path`, accumulated `change_count`, and cleaned textual `content` after preprocessing.
+- **`PreprocessedFile`**: lightweight record capturing the repository-relative `path`, a scalar `change_count` used for downstream weighting, and cleaned textual `content` after preprocessing.
 
 ## Preprocessor
 
 - **`CodePreprocessor`**: filters and normalises files before embedding.
   - Uses `Settings` map-elites preprocessing options to enforce maximum file count/size, allowed extensions/filenames, and excluded glob patterns.
   - Loads file contents either from the working tree or a specific `commit_hash` via GitPython, applies comment stripping, tab-to-spaces conversion, blank-line collapse, and basic normalisation.
-  - Exposes `run(changed_files)` which returns a list of `PreprocessedFile` objects ordered by `change_count`.
-  - Reports progress via a `rich` `Progress` spinner and logs structured messages through `loguru`.
+  - Exposes small helpers used by the repo-state embedding pipeline:
+    - `is_code_file(path)`, `is_excluded(path)` for selection,
+    - `load_text(path)` for loading content from git or disk,
+    - `cleanup_text(content)` for normalisation and comment stripping.
 
 ## Convenience API
 
-- **`preprocess_changed_files(changed_files, repo_root=None, settings=None, commit_hash=None, repo=None)`**: functional helper that instantiates a `CodePreprocessor` and runs it over the provided list of changed files.
+This module does not expose a changed-files preprocessing pipeline. Repo-state embeddings enumerate eligible files directly from the git tree and use `CodePreprocessor` for filtering and cleanup.

@@ -31,7 +31,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from loreley.config import get_settings
 from loreley.db.base import session_scope
 from loreley.db.models import MapElitesArchiveCell, MapElitesPcaHistory, MapElitesState
-from .dimension_reduction import PCAProjection, PenultimateEmbedding
+from .dimension_reduction import PCAProjection, PcaHistoryEntry
 
 log = logger.bind(module="map_elites.snapshot")
 
@@ -78,7 +78,7 @@ class SnapshotUpdate:
     upper_bounds: Sequence[float] | None = None
     projection: PCAProjection | None = None
 
-    history_upsert: PenultimateEmbedding | None = None
+    history_upsert: PcaHistoryEntry | None = None
     history_seen_at: float | None = None
 
     cell_upsert: SnapshotCellUpsert | None = None
@@ -270,7 +270,7 @@ class DatabaseSnapshotBackend(SnapshotBackend):
                 meta.pop("history", None)
 
                 meta["schema_version"] = 2
-                meta["storage_backend"] = "cells_history_v1"
+                meta["storage_backend"] = "cells_history_v2"
                 meta["last_update_at"] = now
 
                 if update.history_limit is not None:
@@ -348,11 +348,7 @@ class DatabaseSnapshotBackend(SnapshotBackend):
                         "island_id": island_id,
                         "commit_hash": str(entry.commit_hash),
                         "vector": [float(v) for v in entry.vector],
-                        "code_dimensions": int(entry.code_dimensions),
-                        "summary_dimensions": int(entry.summary_dimensions),
-                        "code_model": entry.code_model,
-                        "summary_model": entry.summary_model,
-                        "summary_embedding_model": entry.summary_embedding_model,
+                        "embedding_model": str(entry.embedding_model),
                         "last_seen_at": float(now),
                     }
                     stmt = pg_insert(MapElitesPcaHistory).values(**values)
@@ -364,11 +360,7 @@ class DatabaseSnapshotBackend(SnapshotBackend):
                         ],
                         set_={
                             "vector": stmt.excluded.vector,
-                            "code_dimensions": stmt.excluded.code_dimensions,
-                            "summary_dimensions": stmt.excluded.summary_dimensions,
-                            "code_model": stmt.excluded.code_model,
-                            "summary_model": stmt.excluded.summary_model,
-                            "summary_embedding_model": stmt.excluded.summary_embedding_model,
+                            "embedding_model": stmt.excluded.embedding_model,
                             "last_seen_at": stmt.excluded.last_seen_at,
                         },
                     )
@@ -453,11 +445,7 @@ class DatabaseSnapshotBackend(SnapshotBackend):
                 {
                     "commit_hash": str(row.commit_hash or ""),
                     "vector": [float(v) for v in (row.vector or [])],
-                    "code_dimensions": int(row.code_dimensions or 0),
-                    "summary_dimensions": int(row.summary_dimensions or 0),
-                    "code_model": row.code_model,
-                    "summary_model": row.summary_model,
-                    "summary_embedding_model": row.summary_embedding_model,
+                    "embedding_model": str(getattr(row, "embedding_model", "") or ""),
                 }
             )
         return payload
@@ -544,16 +532,21 @@ class DatabaseSnapshotBackend(SnapshotBackend):
                 if not isinstance(vec_values, (list, tuple)):
                     vec_values = []
                 last_seen_at = now - float(max(0, (n - 1) - idx))
+                embedding_model = (
+                    str(
+                        entry.get("embedding_model")
+                        or entry.get("code_model")
+                        or entry.get("model")
+                        or ""
+                    )
+                    .strip()
+                )
                 values = {
                     "experiment_id": self.experiment_id,
                     "island_id": island_id,
                     "commit_hash": commit_hash,
                     "vector": [float(v) for v in vec_values],
-                    "code_dimensions": int(entry.get("code_dimensions", 0)),
-                    "summary_dimensions": int(entry.get("summary_dimensions", 0)),
-                    "code_model": entry.get("code_model"),
-                    "summary_model": entry.get("summary_model"),
-                    "summary_embedding_model": entry.get("summary_embedding_model"),
+                    "embedding_model": embedding_model,
                     "last_seen_at": float(last_seen_at),
                 }
                 stmt = pg_insert(MapElitesPcaHistory).values(**values)
@@ -565,11 +558,7 @@ class DatabaseSnapshotBackend(SnapshotBackend):
                     ],
                     set_={
                         "vector": stmt.excluded.vector,
-                        "code_dimensions": stmt.excluded.code_dimensions,
-                        "summary_dimensions": stmt.excluded.summary_dimensions,
-                        "code_model": stmt.excluded.code_model,
-                        "summary_model": stmt.excluded.summary_model,
-                        "summary_embedding_model": stmt.excluded.summary_embedding_model,
+                        "embedding_model": stmt.excluded.embedding_model,
                         "last_seen_at": stmt.excluded.last_seen_at,
                     },
                 )
@@ -580,7 +569,7 @@ class DatabaseSnapshotBackend(SnapshotBackend):
         cleaned.pop("archive", None)
         cleaned.pop("history", None)
         cleaned["schema_version"] = 2
-        cleaned["storage_backend"] = "cells_history_v1"
+        cleaned["storage_backend"] = "cells_history_v2"
         cleaned["last_update_at"] = now
         cleaned.setdefault("last_migrated_at", now)
         state_row.snapshot = cleaned
@@ -664,7 +653,7 @@ def apply_snapshot(
         restore_archive_entries(state, archive_entries, island_id, commit_to_island)
 
 
-def serialize_history(history: Sequence[PenultimateEmbedding]) -> list[dict[str, Any]]:
+def serialize_history(history: Sequence[PcaHistoryEntry]) -> list[dict[str, Any]]:
     """Convert PCA history into a JSON-compatible list of dicts."""
 
     payload: list[dict[str, Any]] = []
@@ -673,11 +662,7 @@ def serialize_history(history: Sequence[PenultimateEmbedding]) -> list[dict[str,
             {
                 "commit_hash": entry.commit_hash,
                 "vector": [float(value) for value in entry.vector],
-                "code_dimensions": entry.code_dimensions,
-                "summary_dimensions": entry.summary_dimensions,
-                "code_model": entry.code_model,
-                "summary_model": entry.summary_model,
-                "summary_embedding_model": entry.summary_embedding_model,
+                "embedding_model": str(entry.embedding_model),
             }
         )
     return payload
@@ -685,22 +670,18 @@ def serialize_history(history: Sequence[PenultimateEmbedding]) -> list[dict[str,
 
 def deserialize_history(
     payload: Sequence[Mapping[str, Any]],
-) -> tuple[PenultimateEmbedding, ...]:
+) -> tuple[PcaHistoryEntry, ...]:
     """Rebuild PCA history from a JSON-compatible payload."""
 
-    history: list[PenultimateEmbedding] = []
+    history: list[PcaHistoryEntry] = []
     for item in payload:
         vector_values = item.get("vector") or []
         vector = tuple(float(value) for value in vector_values)
         history.append(
-            PenultimateEmbedding(
+            PcaHistoryEntry(
                 commit_hash=str(item.get("commit_hash", "")),
                 vector=vector,
-                code_dimensions=int(item.get("code_dimensions", 0)),
-                summary_dimensions=int(item.get("summary_dimensions", 0)),
-                code_model=item.get("code_model"),
-                summary_model=item.get("summary_model"),
-                summary_embedding_model=item.get("summary_embedding_model"),
+                embedding_model=str(item.get("embedding_model", "") or ""),
             )
         )
     return tuple(history)

@@ -7,7 +7,7 @@ import uuid
 
 import numpy as np
 
-from loreley.core.map_elites.dimension_reduction import PCAProjection, PenultimateEmbedding
+from loreley.core.map_elites.dimension_reduction import PCAProjection, PcaHistoryEntry
 from loreley.core.map_elites.snapshot import (
     DatabaseSnapshotBackend,
     NullSnapshotBackend,
@@ -56,21 +56,17 @@ class DummyState:
     archive: DummyArchive
     lower_bounds: np.ndarray = field(default_factory=lambda: np.array([-1.0, -1.0]))
     upper_bounds: np.ndarray = field(default_factory=lambda: np.array([1.0, 1.0]))
-    history: tuple[PenultimateEmbedding, ...] = field(default_factory=tuple)
+    history: tuple[PcaHistoryEntry, ...] = field(default_factory=tuple)
     projection: PCAProjection | None = None
     commit_to_index: dict[str, int] = field(default_factory=dict)
     index_to_commit: dict[int, str] = field(default_factory=dict)
 
 
-def _make_penultimate() -> PenultimateEmbedding:
-    return PenultimateEmbedding(
+def _make_history_entry() -> PcaHistoryEntry:
+    return PcaHistoryEntry(
         commit_hash="c1",
         vector=(1.0, 2.0),
-        code_dimensions=2,
-        summary_dimensions=0,
-        code_model="code",
-        summary_model=None,
-        summary_embedding_model=None,
+        embedding_model="code",
     )
 
 
@@ -97,12 +93,12 @@ def test_build_and_apply_snapshot_round_trip_basic() -> None:
         "commit_hash": ["c1"],
         "timestamp": [42.0],
     }
-    penultimate = _make_penultimate()
+    entry = _make_history_entry()
     original_state = DummyState(
         archive=DummyArchive(archive_data),
         lower_bounds=np.array([-2.0, -2.0]),
         upper_bounds=np.array([2.0, 2.0]),
-        history=(penultimate,),
+        history=(entry,),
         projection=_make_projection(),
     )
 
@@ -123,7 +119,7 @@ def test_build_and_apply_snapshot_round_trip_basic() -> None:
     assert np.allclose(restored_state.lower_bounds, original_state.lower_bounds)
     assert np.allclose(restored_state.upper_bounds, original_state.upper_bounds)
     assert len(restored_state.history) == 1
-    assert restored_state.history[0].commit_hash == penultimate.commit_hash
+    assert restored_state.history[0].commit_hash == entry.commit_hash
     assert restored_state.projection is not None
     assert restored_state.projection.feature_count == original_state.projection.feature_count  # type: ignore[union-attr]
 

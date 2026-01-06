@@ -17,11 +17,11 @@ from loreley.config import Settings, get_settings
 from .code_embedding import CommitCodeEmbedding
 from .dimension_reduction import (
     FinalEmbedding,
-    PenultimateEmbedding,
+    PcaHistoryEntry,
     PCAProjection,
     reduce_commit_embeddings,
 )
-from .preprocess import ChangedFile, PreprocessedFile
+from .preprocess import PreprocessedFile
 from .repository_state_embedding import RepoStateEmbeddingStats, embed_repository_state
 from .snapshot import (
     SnapshotBackend,
@@ -31,7 +31,6 @@ from .snapshot import (
     build_snapshot_backend,
     to_list,
 )
-from .summarization_embedding import CommitSummaryEmbedding
 
 if TYPE_CHECKING:  # pragma: no cover
     from .sampler import SupportsMapElitesRecord
@@ -55,7 +54,6 @@ class CommitEmbeddingArtifacts:
     repo_state_stats: RepoStateEmbeddingStats | None
     preprocessed_files: tuple[PreprocessedFile, ...]
     code_embedding: CommitCodeEmbedding | None
-    summary_embedding: CommitSummaryEmbedding | None
     final_embedding: FinalEmbedding | None
 
     @property
@@ -109,7 +107,7 @@ class IslandState:
     archive: GridArchive
     lower_bounds: np.ndarray
     upper_bounds: np.ndarray
-    history: tuple[PenultimateEmbedding, ...] = field(default_factory=tuple)
+    history: tuple[PcaHistoryEntry, ...] = field(default_factory=tuple)
     projection: PCAProjection | None = None
     commit_to_index: dict[str, int] = field(default_factory=dict)
     index_to_commit: dict[int, str] = field(default_factory=dict)
@@ -185,7 +183,6 @@ class MapElitesManager:
         self,
         *,
         commit_hash: str,
-        changed_files: Sequence[ChangedFile | Mapping[str, object]] | None = None,
         metrics: Sequence[Mapping[str, Any]] | Mapping[str, Any] | None = None,
         island_id: str | None = None,
         repo_root: Path | None = None,
@@ -195,13 +192,11 @@ class MapElitesManager:
         effective_island = island_id or self._default_island
         state = self._ensure_island(effective_island)
         working_dir = Path(repo_root or self.repo_root).resolve()
-        embedding_mode = getattr(self.settings, "mapelites_embedding_mode", "repo_state")
 
         log.info(
-            "Ingesting commit {} for island {} (embedding_mode={})",
+            "Ingesting commit {} for island {}",
             commit_hash,
             effective_island,
-            embedding_mode,
         )
 
         update: SnapshotUpdate | None = None
@@ -227,11 +222,9 @@ class MapElitesManager:
                     message=message,
                 )
             summary_embedding = None
-
             final_embedding, history, projection = reduce_commit_embeddings(
                 commit_hash=commit_hash,
                 code_embedding=code_embedding,
-                summary_embedding=summary_embedding,
                 history=state.history,
                 projection=state.projection,
                 settings=self.settings,
@@ -244,7 +237,7 @@ class MapElitesManager:
                 lower_bounds=state.lower_bounds.tolist(),
                 upper_bounds=state.upper_bounds.tolist(),
                 projection=state.projection,
-                history_upsert=final_embedding.penultimate if final_embedding else None,
+                history_upsert=final_embedding.history_entry if final_embedding else None,
                 history_seen_at=time.time(),
                 history_limit=self._resolve_history_limit(),
             )
@@ -680,7 +673,6 @@ class MapElitesManager:
             repo_state_stats=repo_state_stats,
             preprocessed_files=tuple(preprocessed),
             code_embedding=code_embedding,
-            summary_embedding=None,
             final_embedding=final_embedding,
         )
 

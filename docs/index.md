@@ -149,7 +149,7 @@ Quality-diversity methods require a behaviour space. Hand-crafted behaviour desc
 
 ![hand-craft-feature](./assets/hand-craft-feature.png)
 
-Loreley derives behaviour descriptors from **repo-state code embeddings** (file-level embeddings cached by git blob SHA and aggregated into a commit vector), optionally reduced with PCA. Summary embeddings remain available as an optional utility, but are not used for MAP-Elites behaviour descriptors in repo-state mode.
+Loreley derives behaviour descriptors from **repo-state code embeddings** (file-level embeddings cached by git blob SHA and aggregated into a commit vector), optionally reduced with PCA.
 
 Under similar fitness, the archive can preserve structurally different improvements (refactors vs micro-optimisations vs feature shifts) as distinct behavioural niches, enabling exploration without collapsing to a single style of change.
 
@@ -237,7 +237,6 @@ Use this index as a quick map of the rest of the documentation:
   - [Dimensionality reduction](loreley/core/map-elites/dimension_reduction.md)
   - [Sampler](loreley/core/map-elites/sampler.md)
   - [Snapshots](loreley/core/map-elites/snapshot.md)
-  - [Summary embeddings](loreley/core/map-elites/summarization_embedding.md)
 - **Worker pipeline**
   - [Planning agent](loreley/core/worker/planning.md)
   - [Coding agent](loreley/core/worker/coding.md)

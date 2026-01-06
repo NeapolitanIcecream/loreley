@@ -10,21 +10,16 @@ from loreley.core.map_elites.dimension_reduction import (
     DimensionReducer,
     FinalEmbedding,
     PCAProjection,
-    PenultimateEmbedding,
+    PcaHistoryEntry,
     reduce_commit_embeddings,
 )
-from loreley.core.map_elites.summarization_embedding import CommitSummaryEmbedding
 
 
-def _make_penultimate(vector: Sequence[float], commit_hash: str = "c") -> PenultimateEmbedding:
-    return PenultimateEmbedding(
+def _make_entry(vector: Sequence[float], commit_hash: str = "c") -> PcaHistoryEntry:
+    return PcaHistoryEntry(
         commit_hash=commit_hash,
         vector=tuple(float(v) for v in vector),
-        code_dimensions=len(vector),
-        summary_dimensions=0,
-        code_model="code",
-        summary_model=None,
-        summary_embedding_model=None,
+        embedding_model="code",
     )
 
 
@@ -47,39 +42,27 @@ def test_pca_projection_transform_basic() -> None:
         projection.transform((1.0, 2.0, 3.0))
 
 
-def test_build_penultimate_concatenates_and_normalises(settings: Settings) -> None:
+def test_build_history_entry_returns_code_vector(settings: Settings) -> None:
     code_embedding = CommitCodeEmbedding(
         files=(),
         vector=(1.0, 2.0),
         model="code-model",
         dimensions=2,
     )
-    summary_embedding = CommitSummaryEmbedding(
-        summaries=(),
-        vector=(3.0, 4.0),
-        summary_model="summary-model",
-        embedding_model="emb-model",
-        dimensions=2,
-    )
 
     settings.mapelites_dimensionality_penultimate_normalize = False
     reducer = DimensionReducer(settings=settings)
 
-    penultimate = reducer.build_penultimate(
+    entry = reducer.build_history_entry(
         commit_hash="abc",
         code_embedding=code_embedding,
-        summary_embedding=summary_embedding,
     )
-    assert penultimate is not None
-    assert penultimate.vector == (1.0, 2.0, 3.0, 4.0)
-    assert penultimate.code_dimensions == 2
-    assert penultimate.summary_dimensions == 2
-    assert penultimate.code_model == "code-model"
-    assert penultimate.summary_model == "summary-model"
-    assert penultimate.summary_embedding_model == "emb-model"
+    assert entry is not None
+    assert entry.vector == (1.0, 2.0)
+    assert entry.embedding_model == "code-model"
 
     # When no embeddings are provided, return None
-    empty = reducer.build_penultimate(commit_hash="empty")
+    empty = reducer.build_history_entry(commit_hash="empty")
     assert empty is None
 
 
@@ -87,8 +70,8 @@ def test_history_resets_on_dimension_change(settings: Settings) -> None:
     settings.mapelites_dimensionality_penultimate_normalize = False
     reducer = DimensionReducer(settings=settings)
 
-    first = _make_penultimate((1.0, 0.0), commit_hash="a")
-    second = _make_penultimate((1.0, 0.0, 0.0), commit_hash="b")
+    first = _make_entry((1.0, 0.0), commit_hash="a")
+    second = _make_entry((1.0, 0.0, 0.0), commit_hash="b")
 
     reducer._record_history(first)  # type: ignore[attr-defined]
     assert len(reducer.history) == 1
@@ -106,8 +89,8 @@ def test_fit_projection_respects_min_samples_and_target_dims(settings: Settings)
 
     reducer = DimensionReducer(settings=settings)
 
-    first = _make_penultimate((1.0, 0.0), commit_hash="a")
-    second = _make_penultimate((0.0, 1.0), commit_hash="b")
+    first = _make_entry((1.0, 0.0), commit_hash="a")
+    second = _make_entry((0.0, 1.0), commit_hash="b")
 
     reducer._record_history(first)  # type: ignore[attr-defined]
     assert reducer._fit_projection() is None  # type: ignore[attr-defined]
@@ -129,18 +112,10 @@ def test_reduce_commit_embeddings_end_to_end(settings: Settings) -> None:
         model="code-model",
         dimensions=2,
     )
-    summary_embedding = CommitSummaryEmbedding(
-        summaries=(),
-        vector=(0.0, 1.0),
-        summary_model="summary-model",
-        embedding_model="emb-model",
-        dimensions=2,
-    )
 
     final, history, projection = reduce_commit_embeddings(
         commit_hash="abc",
         code_embedding=code_embedding,
-        summary_embedding=summary_embedding,
         history=None,
         projection=None,
         settings=settings,
@@ -149,6 +124,7 @@ def test_reduce_commit_embeddings_end_to_end(settings: Settings) -> None:
     assert isinstance(final, FinalEmbedding)
     assert final.commit_hash == "abc"
     assert len(final.vector) == settings.mapelites_dimensionality_target_dims
+    assert final.history_entry.embedding_model == "code-model"
     assert len(history) >= 1
 
 

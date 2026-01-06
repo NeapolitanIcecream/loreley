@@ -9,7 +9,7 @@ import pytest
 import loreley.core.map_elites.map_elites as map_elites_module
 from loreley.config import Settings
 from loreley.core.map_elites.code_embedding import CommitCodeEmbedding
-from loreley.core.map_elites.dimension_reduction import FinalEmbedding, PenultimateEmbedding
+from loreley.core.map_elites.dimension_reduction import FinalEmbedding, PcaHistoryEntry
 from loreley.core.map_elites.map_elites import MapElitesManager, MapElitesRecord
 from loreley.core.map_elites.repository_state_embedding import RepoStateEmbeddingStats
 
@@ -129,7 +129,6 @@ def test_ingest_short_circuits_when_no_repo_state_embedding(
     manager = MapElitesManager(settings=settings, repo_root=Path("."))
     result = manager.ingest(
         commit_hash="abc",
-        changed_files=[{"path": "a.py", "change_count": 1}],
     )
 
     assert result.status == 0
@@ -163,20 +162,16 @@ def test_ingest_builds_record_with_stubbed_dependencies(
         skipped_empty_after_preprocess=0,
         skipped_failed_embedding=0,
     )
-    penultimate = PenultimateEmbedding(
+    entry = PcaHistoryEntry(
         commit_hash="abc",
         vector=(0.5, -0.5),
-        code_dimensions=2,
-        summary_dimensions=0,
-        code_model="code",
-        summary_model=None,
-        summary_embedding_model=None,
+        embedding_model="code",
     )
     final_embedding = FinalEmbedding(
         commit_hash="abc",
         vector=(0.2, 0.8),
         dimensions=2,
-        penultimate=penultimate,
+        history_entry=entry,
         projection=None,
     )
 
@@ -188,7 +183,7 @@ def test_ingest_builds_record_with_stubbed_dependencies(
     monkeypatch.setattr(
         map_elites_module,
         "reduce_commit_embeddings",
-        lambda **kwargs: (final_embedding, (penultimate,), None),
+        lambda **kwargs: (final_embedding, (entry,), None),
     )
 
     manager = MapElitesManager(settings=settings, repo_root=Path("."))
@@ -221,7 +216,6 @@ def test_ingest_builds_record_with_stubbed_dependencies(
 
     result = manager.ingest(
         commit_hash="abc",
-        changed_files=[{"path": "a.py", "change_count": 2}],
         metrics={"score": 1.2},
     )
 
@@ -232,5 +226,4 @@ def test_ingest_builds_record_with_stubbed_dependencies(
     assert result.record is not None
     assert result.record.commit_hash == "abc"
     assert result.artifacts.code_embedding is code_embedding
-    assert result.artifacts.summary_embedding is None
     assert result.artifacts.final_embedding is final_embedding

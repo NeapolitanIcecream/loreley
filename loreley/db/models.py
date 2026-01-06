@@ -504,11 +504,7 @@ class MapElitesPcaHistory(TimestampMixin, Base):
         default=list,
         nullable=False,
     )
-    code_dimensions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    summary_dimensions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    code_model: Mapped[str | None] = mapped_column(String(255))
-    summary_model: Mapped[str | None] = mapped_column(String(255))
-    summary_embedding_model: Mapped[str | None] = mapped_column(String(255))
+    embedding_model: Mapped[str] = mapped_column(String(255), default="", nullable=False)
 
     # Epoch seconds used to restore ordered, bounded history windows.
     last_seen_at: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)

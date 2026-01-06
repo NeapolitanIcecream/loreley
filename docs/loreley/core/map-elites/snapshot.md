@@ -5,7 +5,7 @@ Helpers and backends for serialising and persisting MAP-Elites archive snapshots
 ## Responsibilities
 
 - **Serialisation helpers**:
-  - Convert per-island PCA history (`PenultimateEmbedding`), `PCAProjection`, and `GridArchive` contents into JSON-compatible snapshot payloads.
+  - Convert per-island PCA history (`PcaHistoryEntry`), `PCAProjection`, and `GridArchive` contents into JSON-compatible snapshot payloads.
   - `PCAProjection` payloads include components, mean, explained variance, explained variance ratio, whiten flag, sample count, and fitted timestamp.
   - Restore bounds, history, projection, archive entries, and commit-to-cell mappings from previously stored snapshots.
 - **Backends**:
