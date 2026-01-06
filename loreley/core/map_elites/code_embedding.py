@@ -85,8 +85,8 @@ class CodeEmbedder:
                 else OpenAI()
             )
         self._model = self.settings.mapelites_code_embedding_model
-        self._dimensions = self.settings.mapelites_code_embedding_dimensions
-        if int(self._dimensions or 0) <= 0:
+        self._dimensions = int(self.settings.mapelites_code_embedding_dimensions or 0)
+        if self._dimensions <= 0:
             raise ValueError("MAPELITES_CODE_EMBEDDING_DIMENSIONS must be a positive integer.")
         self._batch_size = max(1, self.settings.mapelites_code_embedding_batch_size)
         self._max_chunks = max(
@@ -202,6 +202,9 @@ class CodeEmbedder:
         return embeddings
 
     def _embed_batch(self, inputs: Sequence[str]) -> list[Vector]:
+        if not inputs:
+            return []
+
         payload = list(inputs)
         attempt = 0
         while True:
@@ -211,9 +214,29 @@ class CodeEmbedder:
                 response = client.embeddings.create(
                     model=self._model,
                     input=payload,
-                    dimensions=int(self._dimensions),
+                    dimensions=self._dimensions,
                 )
-                return [tuple(item.embedding) for item in response.data]
+                vectors: list[Vector | None] = [None] * len(payload)
+                for item in response.data:
+                    index = getattr(item, "index", None)
+                    if index is None:
+                        raise RuntimeError("Embedding response item is missing 'index'.")
+                    if not isinstance(index, int):
+                        raise RuntimeError(f"Embedding response 'index' must be int, got {type(index)!r}.")
+                    if index < 0 or index >= len(payload):
+                        raise RuntimeError(
+                            "Embedding response 'index' out of range: "
+                            f"{index} for payload size {len(payload)}."
+                        )
+                    if vectors[index] is not None:
+                        raise RuntimeError(f"Duplicate embedding index returned: {index}.")
+                    vectors[index] = tuple(item.embedding)
+
+                missing = [idx for idx, vector in enumerate(vectors) if vector is None]
+                if missing:
+                    raise RuntimeError(f"Embedding response missing indices: {missing}.")
+
+                return [vector for vector in vectors if vector is not None]
             except OpenAIError as exc:
                 if attempt >= self._max_retries:
                     log.error("Embedding batch failed after {} attempts: {}", attempt, exc)

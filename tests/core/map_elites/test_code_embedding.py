@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -87,3 +88,39 @@ def test_weighted_average_falls_back_to_mean_when_weights_zero() -> None:
     result = CodeEmbedder._weighted_average(vectors, weights)
 
     assert result == (2.0, 3.0)
+
+
+def test_embed_batch_aligns_vectors_by_response_index(settings: Settings) -> None:
+    dims = int(settings.mapelites_code_embedding_dimensions or 0)
+
+    response = SimpleNamespace(
+        data=[
+            SimpleNamespace(index=2, embedding=[2.0] * dims),
+            SimpleNamespace(index=0, embedding=[0.0] * dims),
+            SimpleNamespace(index=1, embedding=[1.0] * dims),
+        ],
+    )
+
+    class _FakeEmbeddings:
+        def __init__(self, response_obj):  # type: ignore[no-untyped-def]
+            self._response = response_obj
+
+        def create(self, *, model, input, dimensions):  # type: ignore[no-untyped-def]
+            assert model == settings.mapelites_code_embedding_model
+            assert input == ["a", "b", "c"]
+            assert dimensions == dims
+            return self._response
+
+    class _FakeClient:
+        def __init__(self, response_obj):  # type: ignore[no-untyped-def]
+            self.embeddings = _FakeEmbeddings(response_obj)
+
+    embedder = CodeEmbedder(settings=settings, client=_FakeClient(response))  # type: ignore[arg-type]
+
+    vectors = embedder._embed_batch(["a", "b", "c"])
+
+    assert vectors == [
+        (0.0,) * dims,
+        (1.0,) * dims,
+        (2.0,) * dims,
+    ]
