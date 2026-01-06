@@ -11,10 +11,6 @@
       
       
       
-        <link rel="prev" href="../run_api/">
-      
-      
-        <link rel="next" href="../reset_db/">
       
       
         
@@ -25,7 +21,7 @@
     
     
       
-        <title>Running the UI - Loreley</title>
+        <title>ADR 0001: Incremental repo-state embeddings (diff-based) - Loreley</title>
       
     
     
@@ -66,7 +62,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#running-the-streamlit-ui" class="md-skip">
+        <a href="#adr-0001-incremental-repo-state-embeddings-diff-based" class="md-skip">
           Skip to content
         </a>
       
@@ -102,7 +98,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Running the UI
+              ADR 0001: Incremental repo-state embeddings (diff-based)
             
           </span>
         </div>
@@ -1391,20 +1387,18 @@
       
   
   
-    
   
   
-  
     
     
     
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
         
           
           <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
@@ -1425,7 +1419,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1443,7 +1437,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../doctor/" class="md-nav__link">
+      <a href="../../script/doctor/" class="md-nav__link">
         
   
   
@@ -1471,7 +1465,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../run_scheduler/" class="md-nav__link">
+      <a href="../../script/run_scheduler/" class="md-nav__link">
         
   
   
@@ -1499,7 +1493,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../run_worker/" class="md-nav__link">
+      <a href="../../script/run_worker/" class="md-nav__link">
         
   
   
@@ -1527,7 +1521,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../run_api/" class="md-nav__link">
+      <a href="../../script/run_api/" class="md-nav__link">
         
   
   
@@ -1552,35 +1546,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Running the UI
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../script/run_ui/" class="md-nav__link">
         
   
   
@@ -1596,68 +1565,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#running-the-streamlit-ui" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Running the Streamlit UI
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#install-ui-dependencies" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Install UI dependencies
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#start" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Start
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#options" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Options
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1670,7 +1577,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../reset_db/" class="md-nav__link">
+      <a href="../../script/reset_db/" class="md-nav__link">
         
   
   
@@ -1715,58 +1622,8 @@
   
   
   
+    
   
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#running-the-streamlit-ui" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Running the Streamlit UI
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#install-ui-dependencies" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Install UI dependencies
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#start" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Start
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#options" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Options
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
   
 </nav>
                   </div>
@@ -1783,36 +1640,13 @@
 
 
 
-  <h1>Running the UI</h1>
-
-<h2 id="running-the-streamlit-ui">Running the Streamlit UI<a class="headerlink" href="#running-the-streamlit-ui" title="Permanent link">&para;</a></h2>
-<p>The Streamlit UI is a read-only dashboard that calls the UI API.</p>
-<h2 id="install-ui-dependencies">Install UI dependencies<a class="headerlink" href="#install-ui-dependencies" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>sync<span class="w"> </span>--extra<span class="w"> </span>ui
-</code></pre></div>
-<h2 id="start">Start<a class="headerlink" href="#start" title="Permanent link">&para;</a></h2>
-<p>When the UI API is not running and <code>--api-base-url</code> points to a local HTTP URL
-(<code>http://127.0.0.1:&lt;port&gt;</code>, <code>http://localhost:&lt;port&gt;</code>, or <code>http://[::1]:&lt;port&gt;</code>),
-starting the UI will automatically start the UI API in a subprocess.</p>
-<p>You can still start the API manually:</p>
-<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>api
-
-<span class="c1"># legacy wrapper (still supported)</span>
-uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_api.py
-</code></pre></div>
-<p>Start Streamlit:</p>
-<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>ui<span class="w"> </span>--api-base-url<span class="w"> </span>http://127.0.0.1:8000
-
-<span class="c1"># legacy wrapper (still supported)</span>
-uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_ui.py<span class="w"> </span>--api-base-url<span class="w"> </span>http://127.0.0.1:8000
-</code></pre></div>
-<h2 id="options">Options<a class="headerlink" href="#options" title="Permanent link">&para;</a></h2>
-<ul>
-<li><code>--api-base-url</code>: base URL of the UI API (also available via <code>LORELEY_UI_API_BASE_URL</code>)</li>
-<li><code>--host</code>: Streamlit bind host (default: <code>127.0.0.1</code>)</li>
-<li><code>--port</code>: Streamlit bind port (default: <code>8501</code>)</li>
-<li><code>--headless</code>: run without opening a browser</li>
-</ul>
+<h1 id="adr-0001-incremental-repo-state-embeddings-diff-based">ADR 0001: Incremental repo-state embeddings (diff-based)<a class="headerlink" href="#adr-0001-incremental-repo-state-embeddings-diff-based" title="Permanent link">&para;</a></h1>
+<p>Date: 2026-01-04
+Commits: a00c179</p>
+<p>Context: Repo-state ingest enumerates the full git tree at each commit and performs per-file filtering; on large repositories this can dominate scheduler throughput.
+Decision: Persist a per-commit repo-state aggregate (sum vector + eligible file count) and derive child aggregates by applying parent..child diffs (add/modify/delete/rename) using GitPython, embedding only missing blobs via the existing file cache.
+Constraints: Treat <code>MAPELITES_REPO_STATE_MAX_FILES</code> as a rare safety cap; if the diff-updated count would exceed the cap or root ignore files change (<code>.gitignore</code>, <code>.loreleyignore</code>), fall back to a full recompute for correctness.
+Consequences: Most ingests become O(changed_files) and avoid full-tree traversal and full-cache reads; merges and cap-triggering commits may still require full recomputation.</p>
 
 
 

@@ -789,6 +789,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#repo-state-aggregate-cache-commit-level" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Repo-state aggregate cache (commit-level)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Repo-state aggregate cache (commit-level)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#incremental-updates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Incremental updates
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#commit-aggregation" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -963,34 +991,6 @@
     
   
     Snapshots
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../summarization_embedding/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Summary embeddings
   
 
     
@@ -1814,6 +1814,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#repo-state-aggregate-cache-commit-level" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Repo-state aggregate cache (commit-level)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Repo-state aggregate cache (commit-level)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#incremental-updates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Incremental updates
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#commit-aggregation" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1846,14 +1874,16 @@
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <p>Repo-state embeddings represent the <strong>entire repository state</strong> at a commit by
 aggregating file-level embeddings into a single commit vector. This makes the
-behaviour descriptor depend on the repository snapshot at <code>treeish</code>, not just a
+behaviour descriptor depend on the repository snapshot at <code>commit_hash</code>, not just a
 subset of changed files.</p>
 <h2 id="high-level-pipeline">High-level pipeline<a class="headerlink" href="#high-level-pipeline" title="Permanent link">&para;</a></h2>
-<p>At a given <code>treeish</code> (typically a commit hash), we:</p>
+<p>At a given <code>commit_hash</code>, we:</p>
 <ol>
-<li>Enumerate eligible files and resolve their <strong>git blob SHA</strong> fingerprints.</li>
-<li>Look up each blob SHA in a <strong>file embedding cache</strong>.</li>
-<li>Embed only cache misses (new/changed blobs).</li>
+<li>Try to reuse a persisted <strong>repo-state aggregate</strong> for the commit (fast path).</li>
+<li>If missing, derive it from:</li>
+<li>a parent aggregate plus a parent..child diff (incremental path), or</li>
+<li>a full enumeration of eligible files (fallback path).</li>
+<li>Look up each blob SHA in the <strong>file embedding cache</strong> and embed only cache misses.</li>
 <li>Aggregate per-file embeddings into one commit vector via <strong>uniform mean</strong>.</li>
 <li>Feed the commit vector into PCA → MAP-Elites as the behaviour descriptor.</li>
 </ol>
@@ -1864,7 +1894,7 @@ subset of changed files.</p>
 </ul>
 <p>Eligibility is determined by a combination of:</p>
 <ul>
-<li>Root <code>.gitignore</code> (best-effort glob matching).</li>
+<li>Root <code>.gitignore</code> + <code>.loreleyignore</code> (best-effort glob matching).</li>
 <li><code>MAPELITES_PREPROCESS_ALLOWED_EXTENSIONS</code> / <code>MAPELITES_PREPROCESS_ALLOWED_FILENAMES</code>.</li>
 <li><code>MAPELITES_PREPROCESS_EXCLUDED_GLOBS</code>.</li>
 <li><code>MAPELITES_PREPROCESS_MAX_FILE_SIZE_KB</code> (oversized blobs are skipped).</li>
@@ -1872,7 +1902,7 @@ subset of changed files.</p>
 </ul>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
-<p><code>.gitignore</code> filtering is currently <strong>best-effort</strong> and only uses the repository root <code>.gitignore</code> at the requested <code>treeish</code>. Nested <code>.gitignore</code> files and global excludes are not applied.</p>
+<p>Ignore filtering is currently <strong>best-effort</strong> and only uses the repository root <code>.gitignore</code> and <code>.loreleyignore</code> at the requested <code>commit_hash</code>. <code>.loreleyignore</code> rules are applied after <code>.gitignore</code> (so <code>!pattern</code> can re-include). Nested <code>.gitignore</code> files and global excludes are not applied.</p>
 </div>
 <p>For each eligible file we keep:</p>
 <ul>
@@ -1901,6 +1931,25 @@ the pipeline changes).</p>
 <ul>
 <li><code>MAPELITES_FILE_EMBEDDING_CACHE_BACKEND=db|memory</code> (default: <code>db</code>)</li>
 </ul>
+<h2 id="repo-state-aggregate-cache-commit-level">Repo-state aggregate cache (commit-level)<a class="headerlink" href="#repo-state-aggregate-cache-commit-level" title="Permanent link">&para;</a></h2>
+<p>When <code>MapElitesManager</code> is constructed with an <code>experiment_id</code> (the scheduler does this),
+repo-state embeddings persist a commit-level aggregate so future ingests can avoid
+re-enumerating the full tree.</p>
+<p>Stored in:</p>
+<ul>
+<li>ORM table: <code>loreley.db.models.MapElitesRepoStateAggregate</code></li>
+</ul>
+<p>The aggregate stores:</p>
+<ul>
+<li><code>sum_vector</code>: sum of all per-file vectors included in the commit representation</li>
+<li><code>file_count</code>: number of file paths contributing to <code>sum_vector</code></li>
+</ul>
+<p>The commit vector is derived as <code>sum_vector / file_count</code>.</p>
+<h3 id="incremental-updates">Incremental updates<a class="headerlink" href="#incremental-updates" title="Permanent link">&para;</a></h3>
+<p>When a parent aggregate exists and root ignore files (<code>.gitignore</code> and <code>.loreleyignore</code>) are unchanged, the child aggregate is derived
+from the parent by applying the parent..child diff (add/modify/delete/rename) and embedding
+only the new/changed blobs. If <code>MAPELITES_REPO_STATE_MAX_FILES</code> might affect selection, the
+pipeline falls back to a full recompute for correctness.</p>
 <h2 id="commit-aggregation">Commit aggregation<a class="headerlink" href="#commit-aggregation" title="Permanent link">&para;</a></h2>
 <p>Implemented by:</p>
 <ul>

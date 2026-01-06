@@ -954,34 +954,6 @@
 
               
             
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../summarization_embedding/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Summary embeddings
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
           </ul>
         </nav>
       
@@ -1808,7 +1780,7 @@
 <h2 id="embedder">Embedder<a class="headerlink" href="#embedder" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong><code>CodeEmbedder</code></strong>: orchestrates calls to the OpenAI embeddings API and aggregation logic.</li>
-<li>Configured via <code>Settings</code> map-elites code embedding options (<code>MAPELITES_CODE_EMBEDDING_*</code>) controlling model name, optional output dimensions, batch size, maximum chunks per commit, retry count, and retry backoff.</li>
+<li>Configured via <code>Settings</code> map-elites code embedding options (<code>MAPELITES_CODE_EMBEDDING_*</code>) controlling model name, output dimensions, batch size, maximum chunks per commit, retry count, and retry backoff.</li>
 <li><code>run(chunked_files)</code> filters out empty inputs, flattens chunks into a payload, embeds them in batches with a <code>rich</code> progress spinner, and turns raw vectors into <code>ChunkEmbedding</code>, <code>FileEmbedding</code>, and <code>CommitCodeEmbedding</code> objects using weighted averaging.</li>
 <li>Logs detailed progress and warnings with <code>loguru</code>, including mismatched response sizes, missing owners for chunks, and empty aggregation results.</li>
 </ul>

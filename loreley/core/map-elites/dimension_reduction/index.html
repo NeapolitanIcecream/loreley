@@ -954,34 +954,6 @@
 
               
             
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../summarization_embedding/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Summary embeddings
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
           </ul>
         </nav>
       
@@ -1801,20 +1773,20 @@
 <p>PCA-based dimensionality reduction of commit embeddings before they are fed into the MAP-Elites archive. In repo-state mode, the commit embedding is the repo-state code vector.</p>
 <h2 id="data-structures">Data structures<a class="headerlink" href="#data-structures" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>PenultimateEmbedding</code></strong>: commit-level embedding before PCA, tracking model metadata and dimension counts. The vector is built from the code embedding and (optionally) a summary embedding; in repo-state mode MAP-Elites uses the code embedding only.</li>
+<li><strong><code>PcaHistoryEntry</code></strong>: commit-level embedding recorded in PCA history. It stores the raw commit vector plus the embedding model name used to produce it.</li>
 <li><strong><code>PCAProjection</code></strong>: serialisable wrapper around a fitted <code>sklearn.decomposition.PCA</code> model, capturing the mean vector, components, explained variance, explained variance ratio, whiten flag, and sample metadata, plus a <code>transform()</code> helper that projects (and when whitening is enabled, scales) new vectors.</li>
-<li><strong><code>FinalEmbedding</code></strong>: low-dimensional vector that sits on the MAP-Elites grid for a commit, along with the originating <code>PenultimateEmbedding</code> and optional <code>PCAProjection</code> used.</li>
+<li><strong><code>FinalEmbedding</code></strong>: low-dimensional vector that sits on the MAP-Elites grid for a commit, along with the originating <code>PcaHistoryEntry</code> and optional <code>PCAProjection</code> used.</li>
 </ul>
 <h2 id="reducer">Reducer<a class="headerlink" href="#reducer" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>DimensionReducer</code></strong>: maintains rolling history of penultimate embeddings and an optional PCA projection to keep the behaviour space stable.</li>
-<li>Configured via <code>Settings</code> map-elites dimensionality options (<code>MAPELITES_DIMENSION_REDUCTION_*</code>) plus <code>MAPELITES_FEATURE_NORMALIZATION_WARMUP_SAMPLES</code>: target dimensions, minimum sample count (takes the max of the dimensionality minimum and the warmup), history size, refit interval, and whether to normalise penultimate vectors.</li>
-<li><code>build_penultimate(...)</code> concatenates the code embedding and an optional summary embedding, normalises when enabled, and returns a <code>PenultimateEmbedding</code> or <code>None</code> when no embeddings are available.</li>
-<li><code>reduce(penultimate, refit=None)</code> records the embedding in history, (re)fits PCA with <code>whiten=True</code> when needed, and projects into the target space, returning a <code>FinalEmbedding</code> and logging issues via <code>loguru</code> when projection cannot be computed.</li>
+<li><strong><code>DimensionReducer</code></strong>: maintains a rolling history of PCA inputs and an optional PCA projection to keep the behaviour space stable.</li>
+<li>Configured via <code>Settings</code> map-elites dimensionality options (<code>MAPELITES_DIMENSION_REDUCTION_*</code>) plus <code>MAPELITES_FEATURE_NORMALIZATION_WARMUP_SAMPLES</code>: target dimensions, minimum sample count (takes the max of the dimensionality minimum and the warmup), history size, refit interval, and whether to normalise input vectors.</li>
+<li><code>build_history_entry(...)</code> prepares the commit embedding from the code embedding, normalises when enabled, and returns a <code>PcaHistoryEntry</code> or <code>None</code> when no embeddings are available.</li>
+<li><code>reduce(entry, refit=None)</code> records the embedding in history, (re)fits PCA with <code>whiten=True</code> when needed, and projects into the target space, returning a <code>FinalEmbedding</code> and logging issues via <code>loguru</code> when projection cannot be computed.</li>
 </ul>
 <h2 id="convenience-api">Convenience API<a class="headerlink" href="#convenience-api" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>reduce_commit_embeddings(...)</code></strong>: one-shot helper that constructs a <code>DimensionReducer</code>, builds the penultimate embedding from a commit's code embedding (and optional summary embedding), and returns the <code>FinalEmbedding</code> together with the updated history and projection so callers can persist state.</li>
+<li><strong><code>reduce_commit_embeddings(...)</code></strong>: one-shot helper that constructs a <code>DimensionReducer</code>, builds a PCA history entry from a commit's code embedding, and returns the <code>FinalEmbedding</code> together with the updated history and projection so callers can persist state.</li>
 </ul>
 
 

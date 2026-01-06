@@ -872,34 +872,6 @@
 
               
             
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../core/map-elites/summarization_embedding/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Summary embeddings
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
           </ul>
         </nav>
       
@@ -1927,10 +1899,14 @@ It calls the <a href="../api/">UI API</a> and renders tables, charts, and commit
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>sync<span class="w"> </span>--extra<span class="w"> </span>ui
 </code></pre></div>
 <h2 id="run">Run<a class="headerlink" href="#run" title="Permanent link">&para;</a></h2>
-<p>Start the API first:</p>
+<p>When the UI API is not running and <code>LORELEY_UI_API_BASE_URL</code> (or <code>--api-base-url</code>)
+points to a local HTTP URL (<code>http://127.0.0.1:&lt;port&gt;</code>, <code>http://localhost:&lt;port&gt;</code>,
+or <code>http://[::1]:&lt;port&gt;</code>), starting the UI will automatically start the UI API in
+a subprocess.</p>
+<p>You can still start the API manually:</p>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_api.py
 </code></pre></div>
-<p>Then start Streamlit:</p>
+<p>Start Streamlit:</p>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_ui.py<span class="w"> </span>--api-base-url<span class="w"> </span>http://127.0.0.1:8000
 </code></pre></div>
 <p>See also:</p>

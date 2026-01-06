@@ -943,34 +943,6 @@
 
               
             
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../core/map-elites/summarization_embedding/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Summary embeddings
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
           </ul>
         </nav>
       
@@ -1817,11 +1789,15 @@
 <li>Enables cheap per-cell upserts when a commit improves a specific cell.</li>
 <li><strong><code>MapElitesPcaHistory</code></strong> (<code>map_elites_pca_history</code> table): incremental PCA history entries used to restore dimensionality reduction state.</li>
 <li>Primary key: <code>(experiment_id, island_id, commit_hash)</code>.</li>
-<li>Stores the commit's penultimate embedding <code>vector</code> plus embedding provenance (dimensions/models) and a <code>last_seen_at</code> marker used
+<li>Stores the commit embedding <code>vector</code> plus the <code>embedding_model</code> name and a <code>last_seen_at</code> marker used
     to restore ordered, bounded history windows across restarts.</li>
 <li><strong><code>MapElitesFileEmbeddingCache</code></strong> (<code>map_elites_file_embedding_cache</code> table): persistent file-level embedding cache keyed by git blob SHA.</li>
 <li>Uses a composite primary key <code>(blob_sha, embedding_model, dimensions, pipeline_signature)</code>.</li>
 <li>Stores a float array <code>vector</code> containing the file embedding, allowing repo-state embeddings to reuse unchanged file vectors across commits.</li>
+<li><strong><code>MapElitesRepoStateAggregate</code></strong> (<code>map_elites_repo_state_aggregates</code> table): persistent commit-level aggregates for repo-state embeddings.</li>
+<li>Uses a composite primary key <code>(experiment_id, commit_hash, embedding_model, dimensions, pipeline_signature, filter_signature)</code>.</li>
+<li>Stores <code>sum_vector</code> and <code>file_count</code> so the commit embedding can be derived as <code>sum_vector / file_count</code>.</li>
+<li>Tracks a <code>capped</code> flag to disable incremental diffs when a repo-state max-files cap may have affected selection.</li>
 </ul>
 
 

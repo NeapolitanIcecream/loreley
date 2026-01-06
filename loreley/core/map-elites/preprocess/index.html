@@ -954,34 +954,6 @@
 
               
             
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../summarization_embedding/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Summary embeddings
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
           </ul>
         </nav>
       
@@ -1801,21 +1773,22 @@
 <p>Preprocessing utilities for turning raw repository code files into cleaned code snippets suitable for embedding and feature extraction.</p>
 <h2 id="data-structures">Data structures<a class="headerlink" href="#data-structures" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>ChangedFile</code></strong>: lightweight description of a file touched by a commit (path, approximate <code>change_count</code>, optional inline <code>content</code> override).</li>
-<li><strong><code>PreprocessedFile</code></strong>: output record capturing the repository-relative <code>path</code>, accumulated <code>change_count</code>, and cleaned textual <code>content</code> after preprocessing.</li>
+<li><strong><code>PreprocessedFile</code></strong>: lightweight record capturing the repository-relative <code>path</code>, a scalar <code>change_count</code> used for downstream weighting, and cleaned textual <code>content</code> after preprocessing.</li>
 </ul>
 <h2 id="preprocessor">Preprocessor<a class="headerlink" href="#preprocessor" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong><code>CodePreprocessor</code></strong>: filters and normalises files before embedding.</li>
 <li>Uses <code>Settings</code> map-elites preprocessing options to enforce maximum file count/size, allowed extensions/filenames, and excluded glob patterns.</li>
-<li>Loads file contents either from the working tree or a specific <code>treeish</code> via GitPython, applies comment stripping, tab-to-spaces conversion, blank-line collapse, and basic normalisation.</li>
-<li>Exposes <code>run(changed_files)</code> which returns a list of <code>PreprocessedFile</code> objects ordered by <code>change_count</code>.</li>
-<li>Reports progress via a <code>rich</code> <code>Progress</code> spinner and logs structured messages through <code>loguru</code>.</li>
+<li>Loads file contents either from the working tree or a specific <code>commit_hash</code> via GitPython, applies comment stripping, tab-to-spaces conversion, blank-line collapse, and basic normalisation.</li>
+<li>Exposes small helpers used by the repo-state embedding pipeline:<ul>
+<li><code>is_code_file(path)</code>, <code>is_excluded(path)</code> for selection,</li>
+<li><code>load_text(path)</code> for loading content from git or disk,</li>
+<li><code>cleanup_text(content)</code> for normalisation and comment stripping.</li>
+</ul>
+</li>
 </ul>
 <h2 id="convenience-api">Convenience API<a class="headerlink" href="#convenience-api" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong><code>preprocess_changed_files(changed_files, repo_root=None, settings=None, treeish=None, repo=None)</code></strong>: functional helper that instantiates a <code>CodePreprocessor</code> and runs it over the provided list of changed files.</li>
-</ul>
+<p>This module does not expose a changed-files preprocessing pipeline. Repo-state embeddings enumerate eligible files directly from the git tree and use <code>CodePreprocessor</code> for filtering and cleanup.</p>
 
 
 

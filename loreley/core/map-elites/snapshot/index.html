@@ -14,7 +14,7 @@
         <link rel="prev" href="../sampler/">
       
       
-        <link rel="next" href="../summarization_embedding/">
+        <link rel="next" href="../../worker/repository/">
       
       
         
@@ -954,34 +954,6 @@
 
               
             
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../summarization_embedding/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Summary embeddings
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
           </ul>
         </nav>
       
@@ -1802,7 +1774,7 @@
 <h2 id="responsibilities">Responsibilities<a class="headerlink" href="#responsibilities" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Serialisation helpers</strong>:</li>
-<li>Convert per-island PCA history (<code>PenultimateEmbedding</code>), <code>PCAProjection</code>, and <code>GridArchive</code> contents into JSON-compatible snapshot payloads.</li>
+<li>Convert per-island PCA history (<code>PcaHistoryEntry</code>), <code>PCAProjection</code>, and <code>GridArchive</code> contents into JSON-compatible snapshot payloads.</li>
 <li><code>PCAProjection</code> payloads include components, mean, explained variance, explained variance ratio, whiten flag, sample count, and fitted timestamp.</li>
 <li>Restore bounds, history, projection, archive entries, and commit-to-cell mappings from previously stored snapshots.</li>
 <li><strong>Backends</strong>:</li>
