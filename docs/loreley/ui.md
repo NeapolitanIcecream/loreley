@@ -23,13 +23,18 @@ uv sync --extra ui
 
 ## Run
 
-Start the API first:
+When the UI API is not running and `LORELEY_UI_API_BASE_URL` (or `--api-base-url`)
+points to a local HTTP URL (`http://127.0.0.1:<port>`, `http://localhost:<port>`,
+or `http://[::1]:<port>`), starting the UI will automatically start the UI API in
+a subprocess.
+
+You can still start the API manually:
 
 ```bash
 uv run python script/run_api.py
 ```
 
-Then start Streamlit:
+Start Streamlit:
 
 ```bash
 uv run python script/run_ui.py --api-base-url http://127.0.0.1:8000
