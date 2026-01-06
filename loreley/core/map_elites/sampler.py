@@ -200,7 +200,13 @@ class MapElitesSampler:
                 records = [record for _, record in items]
                 max_index = prod(self._grid_shape) - 1
                 if max_index >= 0:
-                    valid_mask = (cell_indices >= 0) & (cell_indices <= max_index)
+                    valid_mask = cell_indices >= 0
+                    try:
+                        valid_mask &= cell_indices <= max_index
+                    except OverflowError:
+                        # If max_index exceeds int64 range, any int64 cell index is
+                        # necessarily <= max_index. Keep only non-negative values.
+                        pass
                     if not np.all(valid_mask):
                         mask_list = valid_mask.tolist()
                         cell_indices = cell_indices[valid_mask]

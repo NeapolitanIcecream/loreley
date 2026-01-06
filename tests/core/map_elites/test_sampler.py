@@ -120,8 +120,9 @@ def test_select_inspirations_does_not_call_neighbor_indices(monkeypatch, setting
     monkeypatch.setattr(MapElitesSampler, "_neighbor_indices", explode)
 
     inspirations, stats = sampler._select_inspirations(records_by_cell[base_index], records_by_cell)  # type: ignore[attr-defined]
-    assert len(inspirations) <= settings.mapelites_sampler_inspiration_count
-    assert "base" not in {rec.commit_hash for rec in inspirations}
+    assert len(inspirations) == 2
+    assert {rec.commit_hash for rec in inspirations} == {"n1", "n2"}
+    assert stats["radius_used"] == settings.mapelites_sampler_neighbor_radius
     assert stats["radius_used"] <= settings.mapelites_sampler_neighbor_max_radius
 
 
