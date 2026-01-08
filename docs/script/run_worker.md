@@ -27,7 +27,7 @@ On startup the script:
 4. Resolves a log directory under `<BASE>/logs/worker` where `<BASE>` is:
    - `LOGS_BASE_DIR` (expanded as a path) when set.
    - the current working directory when `LOGS_BASE_DIR` is unset.
-5. Adds a rotating file sink at `worker-YYYYMMDD.log` inside that directory
+5. Adds a rotating file sink at `worker-YYYYMMDD-HHMMSS.log` inside that directory
    with `rotation="10 MB"` and `retention="14 days"`, so worker output is
    always persisted for later debugging.
 6. Imports `loreley.tasks.broker` (which constructs and registers the Redis

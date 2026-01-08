@@ -28,6 +28,6 @@ uv run python script/run_api.py
 
 Logs are written to:
 
-- `logs/ui_api/ui-api-<timestamp>.log`
+- `logs/ui_api/ui_api-YYYYMMDD-HHMMSS.log`
 
 

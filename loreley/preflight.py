@@ -351,6 +351,14 @@ def preflight_scheduler(settings: Settings, *, timeout_seconds: float = 2.0) -> 
 
     candidate = settings.scheduler_repo_root or settings.worker_repo_worktree or str(Path.cwd())
     results.append(check_git_repo(Path(candidate).expanduser().resolve(), label="scheduler_repo_root"))
+    results.append(
+        check_non_empty(
+            settings.mapelites_experiment_root_commit,
+            label="mapelites_experiment_root_commit",
+            env_name="MAPELITES_EXPERIMENT_ROOT_COMMIT",
+            help_text="required for repo-state startup approval and incremental-only ingestion",
+        )
+    )
 
     goal = (settings.worker_evolution_global_goal or "").strip()
     if goal:

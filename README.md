@@ -29,11 +29,13 @@ docker compose up -d postgres redis
 cp env.example .env
 # Minimal required vars:
 # - OPENAI_API_KEY
+# - MAPELITES_EXPERIMENT_ROOT_COMMIT=<git commit hash>
 # - SCHEDULER_REPO_ROOT=/abs/path/to/your/target-git-checkout
 # - WORKER_REPO_REMOTE_URL=<git remote URL with push access>
 # - WORKER_EVOLUTION_GLOBAL_GOAL="..."
 # - WORKER_EVALUATOR_PLUGIN=module:callable
 # - (optional) WORKER_EVALUATOR_PYTHON_PATHS=["/abs/path/to/plugin_dir"]
+# - (optional) SCHEDULER_STARTUP_APPROVE=true  # skip interactive startup approval
 
 uv run loreley doctor --role all
 uv run loreley scheduler

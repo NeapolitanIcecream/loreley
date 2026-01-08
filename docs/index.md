@@ -102,7 +102,10 @@ cp env.example .env
 - `APP_NAME`, `APP_ENV`, `LOG_LEVEL`
 - `DATABASE_URL`
 - `TASKS_REDIS_URL`, `TASKS_QUEUE_NAME`
+- `OPENAI_API_KEY`
+- `MAPELITES_EXPERIMENT_ROOT_COMMIT`
 - `SCHEDULER_REPO_ROOT`, `WORKER_REPO_REMOTE_URL`
+- `WORKER_EVOLUTION_GLOBAL_GOAL`, `WORKER_EVALUATOR_PLUGIN`
 
 See: [Configuration](loreley/config.md)
 
@@ -113,6 +116,8 @@ Preflight checks:
 ```bash
 uv run loreley doctor --role all
 ```
+
+Note: on first start the scheduler performs a repo-state root scan at `MAPELITES_EXPERIMENT_ROOT_COMMIT` and requires operator approval. In non-interactive environments, pass `--yes` or set `SCHEDULER_STARTUP_APPROVE=true`.
 
 ```bash
 uv run loreley scheduler

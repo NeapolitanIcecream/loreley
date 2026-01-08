@@ -14,9 +14,12 @@ uv sync --extra ui
 
 ## Run
 
-Start the API via the CLI wrapper:
+Start the API:
 
 ```bash
+uv run loreley api
+
+# legacy wrapper (still supported)
 uv run python script/run_api.py
 ```
 

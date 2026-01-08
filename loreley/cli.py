@@ -79,6 +79,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Execute a single scheduling tick and exit.",
     )
     scheduler.add_argument(
+        "--yes",
+        action="store_true",
+        help="Auto-approve startup approval and start without prompting (useful for CI/containers).",
+    )
+    scheduler.add_argument(
         "--no-preflight",
         action="store_true",
         help="Skip preflight validation.",
@@ -204,7 +209,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
 
     if args.command == "scheduler":
-        forwarded: list[str] = ["--once"] if bool(args.once) else []
+        forwarded: list[str] = []
+        if bool(args.once):
+            forwarded.append("--once")
+        if bool(getattr(args, "yes", False)):
+            forwarded.append("--yes")
         return run_scheduler(
             settings=settings,
             console=console,

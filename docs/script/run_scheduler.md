@@ -27,7 +27,7 @@ interaction are all implemented in `loreley.scheduler.main.EvolutionScheduler`.
 - Resolves a log directory under `<BASE>/logs/scheduler` where `<BASE>` is:
   - `LOGS_BASE_DIR` (expanded as a path) when set.
   - the current working directory when `LOGS_BASE_DIR` is unset.
-- Adds a rotating file sink at `scheduler-YYYYMMDD.log` inside that directory
+- Adds a rotating file sink at `scheduler-YYYYMMDD-HHMMSS.log` inside that directory
   with `rotation="10 MB"` and `retention="14 days"`, so scheduler output is
   always persisted for later debugging.
 - Imports `loreley.scheduler.main.main` lazily after logging is configured; any
