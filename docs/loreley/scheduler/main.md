@@ -33,13 +33,14 @@ The scheduler consumes the following `Settings` fields (all exposed as environme
 - `SCHEDULER_INGEST_BATCH_SIZE`: number of newly succeeded jobs ingested into MAP-Elites per tick.
 - `MAPELITES_EXPERIMENT_ROOT_COMMIT`: required git commit hash used as the logical root for the current experiment. The scheduler ensures a `CommitCard` row exists for that commit, bootstraps the repo-state aggregate, and runs a one-off baseline evaluation to populate `Metric` rows, treating it as an experiment-wide baseline rather than inserting it into any MAP-Elites archive. During cold-start, when the archive is empty and no jobs exist yet, the scheduler first generates up to `MAPELITES_SEED_POPULATION_SIZE` seed evolution jobs from this root commit to form the initial population before switching to regular MAP-Elites sampling.
 
-Startup approval: before entering the main loop, the scheduler prints the observed eligible repo-state file count (and filter knobs) at `MAPELITES_EXPERIMENT_ROOT_COMMIT` and asks the operator to confirm with a y/n question. When stdin is not a TTY, the scheduler refuses to start (fail fast).
+Startup approval: before entering the main loop, the scheduler prints the observed eligible repo-state file count (and filter knobs) at `MAPELITES_EXPERIMENT_ROOT_COMMIT` and asks the operator to confirm with a y/n question. In non-interactive environments, pass `--yes` or set `SCHEDULER_STARTUP_APPROVE=true`; otherwise the scheduler refuses to start (fail fast).
 
 ## CLI usage
 
 ```bash
-uv run python -m loreley.scheduler.main        # continuous loop
-uv run python -m loreley.scheduler.main --once # single tick (cron / smoke tests)
+uv run python -m loreley.scheduler.main              # continuous loop
+uv run python -m loreley.scheduler.main --once       # single tick (cron / smoke tests)
+uv run python -m loreley.scheduler.main --yes --once # non-interactive smoke test
 ```
 
 For details about the dedicated CLI wrapper script (including logging setup and

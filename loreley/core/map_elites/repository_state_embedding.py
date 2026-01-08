@@ -301,6 +301,21 @@ class RepositoryStateEmbedder:
         )
         return embedding, stats
 
+    def load_aggregate(
+        self,
+        *,
+        commit_hash: str,
+        repo_root: Path,
+    ) -> MapElitesRepoStateAggregate | None:
+        """Load a persisted repo-state aggregate when available.
+
+        This is a thin wrapper around the internal aggregate lookup, exposed so
+        other modules (e.g. scheduler bootstrap) can verify persistence without
+        reaching into private methods.
+        """
+
+        return self._load_aggregate(commit_hash=commit_hash, repo_root=repo_root)
+
     def _load_aggregate(
         self,
         *,

@@ -33,7 +33,7 @@ Eligibility is determined by a combination of:
 - `MAPELITES_PREPROCESS_ALLOWED_EXTENSIONS` / `MAPELITES_PREPROCESS_ALLOWED_FILENAMES`.
 - `MAPELITES_PREPROCESS_EXCLUDED_GLOBS`.
 - `MAPELITES_PREPROCESS_MAX_FILE_SIZE_KB` (oversized blobs are skipped).
-- Scheduler startup approval gate: the root eligible file count is scanned at startup and must be explicitly approved by the operator via an interactive y/n prompt.
+- Scheduler startup approval gate: the root eligible file count is scanned at startup and must be explicitly approved by the operator (interactive y/n prompt by default, or `--yes` / `SCHEDULER_STARTUP_APPROVE=true` for non-interactive runs).
 
 !!! note
     Ignore filtering is currently **best-effort** and only uses the repository root `.gitignore` and `.loreleyignore` at the requested `commit_hash`. `.loreleyignore` rules are applied after `.gitignore` (so `!pattern` can re-include). Nested `.gitignore` files and global excludes are not applied.

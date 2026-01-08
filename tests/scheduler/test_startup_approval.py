@@ -38,3 +38,15 @@ def test_repo_state_root_approval_rejects_no(monkeypatch: pytest.MonkeyPatch) ->
         )
 
 
+def test_repo_state_root_approval_auto_approve_does_not_require_tty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(startup_approval.Confirm, "ask", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError()))
+    startup_approval.require_interactive_repo_state_root_approval(
+        root_commit="deadbeef",
+        eligible_files=3,
+        repo_root=Path("."),
+        stdin_is_tty=False,
+        auto_approve=True,
+    )
+

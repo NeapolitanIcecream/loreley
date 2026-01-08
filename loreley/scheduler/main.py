@@ -19,7 +19,6 @@ from sqlalchemy import select, func
 from loreley.config import Settings, get_settings
 from loreley.core.experiments import ExperimentError, get_or_create_experiment
 from loreley.core.map_elites.map_elites import MapElitesManager
-from loreley.core.map_elites.repository_files import list_repository_files
 from loreley.core.map_elites.sampler import MapElitesSampler
 from loreley.db.base import engine, ensure_database_schema, session_scope
 from loreley.db.locks import (
@@ -31,7 +30,10 @@ from loreley.db.locks import (
 from loreley.db.models import CommitCard, Metric
 from loreley.scheduler.ingestion import MapElitesIngestion
 from loreley.scheduler.job_scheduler import JobScheduler
-from loreley.scheduler.startup_approval import require_interactive_repo_state_root_approval
+from loreley.scheduler.startup_approval import (
+    require_interactive_repo_state_root_approval,
+    scan_repo_state_root,
+)
 
 console = Console()
 log = logger.bind(module="scheduler.main")
@@ -281,6 +283,7 @@ class EvolutionScheduler:
                 "MAPELITES_EXPERIMENT_ROOT_COMMIT is required for repo-state startup approval "
                 "and incremental-only ingestion."
             )
+        auto_approve = bool(getattr(self.settings, "scheduler_startup_approve", False))
 
         self._ensure_commit_available(root_commit)
         try:
@@ -300,21 +303,13 @@ class EvolutionScheduler:
             "root_ignore_files": [".gitignore", ".loreleyignore"],
         }
 
-        files = list_repository_files(
-            repo_root=self.repo_root,
-            commit_hash=canonical,
+        scan = scan_repo_state_root(
             settings=self.settings,
+            repo_root=self.repo_root,
             repo=self._repo,
+            root_commit=canonical,
         )
-        eligible = len(files)
-
-        self.console.log(
-            "[cyan]Repo-state root scan[/] root_commit={} eligible_files={} repo_root={}".format(
-                canonical,
-                eligible,
-                self.repo_root,
-            )
-        )
+        eligible = int(scan.eligible_files)
         log.info(
             "Repo-state root scan commit={} eligible_files={} filters={}",
             canonical,
@@ -328,12 +323,14 @@ class EvolutionScheduler:
                 eligible_files=eligible,
                 repo_root=self.repo_root,
                 details={
-                    "cache_backend": str(self.settings.mapelites_file_embedding_cache_backend or "db"),
+                    "cache_backend": str(self.settings.mapelites_file_embedding_cache_backend or "db").strip().lower()
+                    or "db",
                     "embedding_model": str(self.settings.mapelites_code_embedding_model),
                     "embedding_dimensions": getattr(self.settings, "mapelites_code_embedding_dimensions", None),
                     **filters,
                 },
                 console=self.console,
+                auto_approve=auto_approve,
             )
         except ValueError as exc:
             raise SchedulerError(str(exc)) from exc
@@ -679,10 +676,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Execute a single scheduling tick and exit.",
     )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Auto-approve startup approval and start without prompting (useful for CI/containers).",
+    )
     args = parser.parse_args(argv)
 
+    settings = get_settings()
+    if bool(args.yes):
+        settings = settings.model_copy(update={"scheduler_startup_approve": True})
+
     try:
-        scheduler = EvolutionScheduler()
+        scheduler = EvolutionScheduler(settings=settings)
     except SchedulerLockError as exc:
         console.log(f"[bold red]Scheduler refused to start[/] reason={exc}")
         log.error("Scheduler refused to start: {}", exc)

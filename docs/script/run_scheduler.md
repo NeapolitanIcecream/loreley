@@ -46,6 +46,7 @@ Recommended usage with `uv`:
 uv run python script/run_scheduler.py        # continuous loop
 uv run python script/run_scheduler.py --once # single tick (cron / smoke tests)
 uv run python script/run_scheduler.py --log-level DEBUG
+uv run python script/run_scheduler.py --yes --once # non-interactive smoke test
 ```
 
 The wrapper is equivalent to invoking the module directly:
@@ -53,6 +54,7 @@ The wrapper is equivalent to invoking the module directly:
 ```bash
 uv run python -m loreley.scheduler.main        # continuous loop
 uv run python -m loreley.scheduler.main --once # single tick
+uv run python -m loreley.scheduler.main --yes --once # non-interactive single tick
 ```
 
 ## Configuration

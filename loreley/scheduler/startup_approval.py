@@ -48,22 +48,17 @@ def require_interactive_repo_state_root_approval(
     details: Mapping[str, object] | None = None,
     console: Console | None = None,
     stdin_is_tty: bool | None = None,
+    auto_approve: bool = False,
 ) -> None:
-    """Require interactive operator confirmation before proceeding.
+    """Require operator confirmation before proceeding.
 
     The scheduler prints a concise summary of the repo-state scale and filtering
     knobs, then prompts the operator to confirm with a y/n question.
+
+    When `auto_approve=True`, no prompt is shown and stdin does not need to be a TTY.
     """
 
     c = console or Console()
-    if stdin_is_tty is None:
-        stdin_is_tty = bool(getattr(sys.stdin, "isatty", lambda: False)())
-    if not stdin_is_tty:
-        raise ValueError(
-            "Interactive confirmation required, but stdin is not a TTY. "
-            f"(root_commit={root_commit} eligible_files={eligible_files})"
-        )
-
     table = Table(title="Repo-state startup approval", show_lines=False)
     table.add_column("Key", style="cyan", no_wrap=True)
     table.add_column("Value", style="white")
@@ -71,7 +66,9 @@ def require_interactive_repo_state_root_approval(
     table.add_row("repo_root", str(Path(repo_root).resolve()))
     table.add_row("eligible_files", str(int(eligible_files)))
 
-    for key, value in (details or {}).items():
+    rendered_details = dict(details or {})
+    for key in sorted(rendered_details.keys()):
+        value = rendered_details[key]
         if value is None:
             continue
         rendered = str(value)
@@ -80,6 +77,16 @@ def require_interactive_repo_state_root_approval(
         table.add_row(str(key), rendered)
 
     c.print(table)
+    if bool(auto_approve):
+        c.print("[green]Startup approval auto-approved[/]")
+        return
+    if stdin_is_tty is None:
+        stdin_is_tty = bool(getattr(sys.stdin, "isatty", lambda: False)())
+    if not stdin_is_tty:
+        raise ValueError(
+            "Interactive confirmation required, but stdin is not a TTY. "
+            f"(root_commit={root_commit} eligible_files={eligible_files})"
+        )
     approved = Confirm.ask("Start scheduler main loop now?", default=False, console=c)
     if not approved:
         raise ValueError("Startup approval rejected by operator.")

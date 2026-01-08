@@ -111,6 +111,10 @@ class Settings(BaseSettings):
         default=2,
         alias="SCHEDULER_INGEST_BATCH_SIZE",
     )
+    scheduler_startup_approve: bool = Field(
+        default=False,
+        alias="SCHEDULER_STARTUP_APPROVE",
+    )
 
     worker_repo_remote_url: str | None = Field(
         default=None,

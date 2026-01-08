@@ -447,7 +447,7 @@ class MapElitesIngestion:
     def _ensure_root_commit_repo_state_bootstrap(self, commit_hash: str) -> None:
         """Bootstrap the repo-state aggregate for the experiment baseline commit."""
 
-        backend = (self.settings.mapelites_file_embedding_cache_backend or "db").strip() or "db"
+        backend = str(self.settings.mapelites_file_embedding_cache_backend or "db").strip().lower() or "db"
         if backend != "db":
             raise IngestionError(
                 "Repo-state bootstrap requires MAPELITES_FILE_EMBEDDING_CACHE_BACKEND=db "
@@ -481,7 +481,7 @@ class MapElitesIngestion:
             experiment_id=getattr(self.experiment, "id", None),
         )
         canonical = str(getattr(self.repo.commit(commit_hash), "hexsha", "") or "").strip()
-        persisted = embedder._load_aggregate(commit_hash=canonical, repo_root=self.repo_root)
+        persisted = embedder.load_aggregate(commit_hash=canonical, repo_root=self.repo_root)
         if persisted is None:
             raise IngestionError(
                 "Repo-state bootstrap did not persist an aggregate; "

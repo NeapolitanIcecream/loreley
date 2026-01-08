@@ -202,7 +202,9 @@ class MapElitesManager:
         update: SnapshotUpdate | None = None
 
         try:
-            effective_cache_backend = self.settings.mapelites_file_embedding_cache_backend or "db"
+            effective_cache_backend = (
+                str(self.settings.mapelites_file_embedding_cache_backend or "db").strip().lower() or "db"
+            )
             repo_state_mode = (
                 "incremental_only"
                 if (self._experiment_id is not None and effective_cache_backend == "db")
