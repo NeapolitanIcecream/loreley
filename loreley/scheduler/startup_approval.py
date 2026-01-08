@@ -4,9 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+import sys
+from typing import Mapping
 
 from git import Repo
+from rich.console import Console
+from rich.prompt import Confirm
+from rich.table import Table
 
 from loreley.config import Settings
 from loreley.core.map_elites.repository_files import list_repository_files
@@ -36,31 +40,48 @@ def scan_repo_state_root(
     return RepoStateRootScan(root_commit=str(root_commit).strip(), eligible_files=len(files))
 
 
-def validate_repo_state_eligible_files_approval(
+def require_interactive_repo_state_root_approval(
     *,
-    observed_eligible_files: int,
-    approved_count: Any,
     root_commit: str,
+    eligible_files: int,
+    repo_root: Path,
+    details: Mapping[str, object] | None = None,
+    console: Console | None = None,
+    stdin_is_tty: bool | None = None,
 ) -> None:
-    """Validate the operator-provided approval count against the observed count."""
+    """Require interactive operator confirmation before proceeding.
 
-    if approved_count is None:
+    The scheduler prints a concise summary of the repo-state scale and filtering
+    knobs, then prompts the operator to confirm with a y/n question.
+    """
+
+    c = console or Console()
+    if stdin_is_tty is None:
+        stdin_is_tty = bool(getattr(sys.stdin, "isatty", lambda: False)())
+    if not stdin_is_tty:
         raise ValueError(
-            "Scheduler startup requires explicit approval of the root eligible file count. "
-            f"Observed eligible_files={observed_eligible_files} at root_commit={root_commit}. "
-            "Set SCHEDULER_REPO_STATE_ELIGIBLE_FILES_APPROVED_COUNT to proceed."
+            "Interactive confirmation required, but stdin is not a TTY. "
+            f"(root_commit={root_commit} eligible_files={eligible_files})"
         )
-    try:
-        approved_value = int(approved_count)
-    except (TypeError, ValueError):
-        raise ValueError(
-            "Invalid SCHEDULER_REPO_STATE_ELIGIBLE_FILES_APPROVED_COUNT; must be an integer."
-        ) from None
-    if approved_value != int(observed_eligible_files):
-        raise ValueError(
-            "Repo-state eligible file approval mismatch. "
-            f"Observed eligible_files={observed_eligible_files} at root_commit={root_commit}, "
-            f"but approved_count={approved_value}."
-        )
+
+    table = Table(title="Repo-state startup approval", show_lines=False)
+    table.add_column("Key", style="cyan", no_wrap=True)
+    table.add_column("Value", style="white")
+    table.add_row("root_commit", str(root_commit))
+    table.add_row("repo_root", str(Path(repo_root).resolve()))
+    table.add_row("eligible_files", str(int(eligible_files)))
+
+    for key, value in (details or {}).items():
+        if value is None:
+            continue
+        rendered = str(value)
+        if isinstance(value, (list, tuple)):
+            rendered = ", ".join(str(v) for v in value) if value else "[]"
+        table.add_row(str(key), rendered)
+
+    c.print(table)
+    approved = Confirm.ask("Start scheduler main loop now?", default=False, console=c)
+    if not approved:
+        raise ValueError("Startup approval rejected by operator.")
 
 

@@ -1,33 +1,40 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
-from loreley.scheduler.startup_approval import validate_repo_state_eligible_files_approval
+import loreley.scheduler.startup_approval as startup_approval
 
 
-def test_validate_repo_state_eligible_files_approval_requires_count() -> None:
-    with pytest.raises(ValueError, match="requires explicit approval"):
-        validate_repo_state_eligible_files_approval(
-            observed_eligible_files=3,
-            approved_count=None,
+def test_repo_state_root_approval_requires_tty() -> None:
+    with pytest.raises(ValueError, match="stdin is not a TTY"):
+        startup_approval.require_interactive_repo_state_root_approval(
             root_commit="deadbeef",
+            eligible_files=3,
+            repo_root=Path("."),
+            stdin_is_tty=False,
         )
 
 
-def test_validate_repo_state_eligible_files_approval_rejects_mismatch() -> None:
-    with pytest.raises(ValueError, match="approval mismatch"):
-        validate_repo_state_eligible_files_approval(
-            observed_eligible_files=3,
-            approved_count=2,
-            root_commit="deadbeef",
-        )
-
-
-def test_validate_repo_state_eligible_files_approval_accepts_match() -> None:
-    validate_repo_state_eligible_files_approval(
-        observed_eligible_files=3,
-        approved_count=3,
+def test_repo_state_root_approval_accepts_yes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(startup_approval.Confirm, "ask", lambda *args, **kwargs: True)
+    startup_approval.require_interactive_repo_state_root_approval(
         root_commit="deadbeef",
+        eligible_files=3,
+        repo_root=Path("."),
+        stdin_is_tty=True,
     )
+
+
+def test_repo_state_root_approval_rejects_no(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(startup_approval.Confirm, "ask", lambda *args, **kwargs: False)
+    with pytest.raises(ValueError, match="rejected"):
+        startup_approval.require_interactive_repo_state_root_approval(
+            root_commit="deadbeef",
+            eligible_files=3,
+            repo_root=Path("."),
+            stdin_is_tty=True,
+        )
 
 

@@ -111,10 +111,6 @@ class Settings(BaseSettings):
         default=2,
         alias="SCHEDULER_INGEST_BATCH_SIZE",
     )
-    scheduler_repo_state_eligible_files_approved_count: int | None = Field(
-        default=None,
-        alias="SCHEDULER_REPO_STATE_ELIGIBLE_FILES_APPROVED_COUNT",
-    )
 
     worker_repo_remote_url: str | None = Field(
         default=None,

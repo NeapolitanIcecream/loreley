@@ -31,6 +31,7 @@ from loreley.db.locks import (
 from loreley.db.models import CommitCard, Metric
 from loreley.scheduler.ingestion import MapElitesIngestion
 from loreley.scheduler.job_scheduler import JobScheduler
+from loreley.scheduler.startup_approval import require_interactive_repo_state_root_approval
 
 console = Console()
 log = logger.bind(module="scheduler.main")
@@ -306,44 +307,43 @@ class EvolutionScheduler:
             repo=self._repo,
         )
         eligible = len(files)
-        approved = getattr(self.settings, "scheduler_repo_state_eligible_files_approved_count", None)
 
         self.console.log(
-            "[cyan]Repo-state root scan[/] root_commit={} eligible_files={} approved_count={} repo_root={}".format(
+            "[cyan]Repo-state root scan[/] root_commit={} eligible_files={} repo_root={}".format(
                 canonical,
                 eligible,
-                approved if approved is not None else "n/a",
                 self.repo_root,
             )
         )
         log.info(
-            "Repo-state root scan commit={} eligible_files={} approved_count={} filters={}",
+            "Repo-state root scan commit={} eligible_files={} filters={}",
             canonical,
             eligible,
-            approved,
             filters,
         )
 
-        if approved is None:
-            raise SchedulerError(
-                "Scheduler startup requires explicit approval of the root eligible file count. "
-                f"Observed eligible_files={eligible} at root_commit={canonical}. "
-                "Set SCHEDULER_REPO_STATE_ELIGIBLE_FILES_APPROVED_COUNT to proceed."
-            )
-
         try:
-            approved_value = int(approved)
-        except (TypeError, ValueError):
-            raise SchedulerError(
-                "Invalid SCHEDULER_REPO_STATE_ELIGIBLE_FILES_APPROVED_COUNT; must be an integer."
-            ) from None
-
-        if approved_value != eligible:
-            raise SchedulerError(
-                "Repo-state eligible file approval mismatch. "
-                f"Observed eligible_files={eligible} at root_commit={canonical}, "
-                f"but approved_count={approved_value}."
+            require_interactive_repo_state_root_approval(
+                root_commit=canonical,
+                eligible_files=eligible,
+                repo_root=self.repo_root,
+                details={
+                    "cache_backend": str(self.settings.mapelites_file_embedding_cache_backend or "db"),
+                    "embedding_model": str(self.settings.mapelites_code_embedding_model),
+                    "embedding_dimensions": getattr(self.settings, "mapelites_code_embedding_dimensions", None),
+                    **filters,
+                },
+                console=self.console,
             )
+        except ValueError as exc:
+            raise SchedulerError(str(exc)) from exc
+
+        self.console.log(
+            "[green]Repo-state startup approved[/] root_commit={} eligible_files={}".format(
+                canonical,
+                eligible,
+            )
+        )
 
     # Git helpers -----------------------------------------------------------
 
