@@ -230,7 +230,6 @@ class MapElitesManager:
                     artifacts=artifacts,
                     message=message,
                 )
-            summary_embedding = None
             final_embedding, history, projection = reduce_commit_embeddings(
                 commit_hash=commit_hash,
                 code_embedding=code_embedding,
