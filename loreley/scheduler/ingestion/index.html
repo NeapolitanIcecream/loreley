@@ -1867,14 +1867,17 @@ re-running the full evaluation.</p>
 <li>the current <code>experiment_id</code>,</li>
 <li>a default island id (from <code>MAPELITES_DEFAULT_ISLAND_ID</code> or <code>"main"</code>),</li>
 <li>bounded commit-card fields (<code>subject</code>, <code>change_summary</code>, <code>highlights</code>).</li>
+<li><code>_ensure_root_commit_repo_state_bootstrap(...)</code> bootstraps the baseline
+   repo-state aggregate for incremental-only ingestion by computing and
+   persisting the root commit aggregate (full enumeration allowed at bootstrap).</li>
 <li><code>_ensure_root_commit_evaluated(...)</code> runs a one-off evaluation for the root
    commit when no <code>Metric</code> rows already exist, writing baseline metrics into
    the <code>metrics</code> table. These metrics act as an experiment-wide baseline but do
    not insert the root commit into any MAP-Elites archive.</li>
 </ol>
-<p>Failures during root-commit initialisation are logged but do <strong>not</strong> prevent
-the scheduler from running; they simply mean the experiment may effectively
-start from the first successfully ingested commit instead.</p>
+<p>Repo-state bootstrap failures are fatal because the scheduler runs repo-state
+ingestion in incremental-only mode at runtime. Root evaluation failures are
+best-effort and are logged without preventing the scheduler loop from running.</p>
 <h2 id="interaction-with-evolutionscheduler">Interaction with EvolutionScheduler<a class="headerlink" href="#interaction-with-evolutionscheduler" title="Permanent link">&para;</a></h2>
 <p><code>EvolutionScheduler.tick()</code> uses <code>MapElitesIngestion</code> as the first stage in the
 pipeline:</p>

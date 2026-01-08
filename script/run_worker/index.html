@@ -1837,7 +1837,7 @@ process.</p>
 <li>Resolves a log directory under <code>&lt;BASE&gt;/logs/worker</code> where <code>&lt;BASE&gt;</code> is:</li>
 <li><code>LOGS_BASE_DIR</code> (expanded as a path) when set.</li>
 <li>the current working directory when <code>LOGS_BASE_DIR</code> is unset.</li>
-<li>Adds a rotating file sink at <code>worker-YYYYMMDD.log</code> inside that directory
+<li>Adds a rotating file sink at <code>worker-YYYYMMDD-HHMMSS.log</code> inside that directory
    with <code>rotation="10 MB"</code> and <code>retention="14 days"</code>, so worker output is
    always persisted for later debugging.</li>
 <li>Imports <code>loreley.tasks.broker</code> (which constructs and registers the Redis

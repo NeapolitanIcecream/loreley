@@ -2209,13 +2209,17 @@ uv<span class="w"> </span>sync
 <li><code>APP_NAME</code>, <code>APP_ENV</code>, <code>LOG_LEVEL</code></li>
 <li><code>DATABASE_URL</code></li>
 <li><code>TASKS_REDIS_URL</code>, <code>TASKS_QUEUE_NAME</code></li>
+<li><code>OPENAI_API_KEY</code></li>
+<li><code>MAPELITES_EXPERIMENT_ROOT_COMMIT</code></li>
 <li><code>SCHEDULER_REPO_ROOT</code>, <code>WORKER_REPO_REMOTE_URL</code></li>
+<li><code>WORKER_EVOLUTION_GLOBAL_GOAL</code>, <code>WORKER_EVALUATOR_PLUGIN</code></li>
 </ul>
 <p>See: <a href="loreley/config/">Configuration</a></p>
 <h3 id="run">Run<a class="headerlink" href="#run" title="Permanent link">&para;</a></h3>
 <p>Preflight checks:</p>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>doctor<span class="w"> </span>--role<span class="w"> </span>all
 </code></pre></div>
+<p>Note: on first start the scheduler performs a repo-state root scan at <code>MAPELITES_EXPERIMENT_ROOT_COMMIT</code> and requires operator approval. In non-interactive environments, pass <code>--yes</code> or set <code>SCHEDULER_STARTUP_APPROVE=true</code>.</p>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>scheduler
 uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>worker
 

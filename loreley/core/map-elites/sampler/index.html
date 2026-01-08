@@ -1787,8 +1787,8 @@
 </ul>
 <h2 id="neighbourhood-selection">Neighbourhood selection<a class="headerlink" href="#neighbourhood-selection" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>_select_inspirations(...)</code></strong>: internal helper that walks outward from the base cell over the discretised behaviour grid, gathering nearby elites up to the requested inspiration count and recording selection statistics.</li>
-<li><strong><code>_neighbor_indices(center_index, radius)</code></strong>: converts a flat cell index and radius into neighbouring cell indices using numpy's <code>unravel_index</code>/<code>ravel_multi_index</code>, respecting grid bounds.</li>
+<li><strong><code>_select_inspirations(...)</code></strong>: internal helper that computes Chebyshev (L∞) distances from the base cell to occupied archive cells in a vectorized pass, then samples inspiration records by increasing radius (with optional fallback sampling) and records selection statistics.</li>
+<li><strong><code>_neighbor_indices(center_index, radius)</code></strong>: helper that enumerates neighbouring cell indices for small grids (used by tests), respecting grid bounds.</li>
 </ul>
 
 

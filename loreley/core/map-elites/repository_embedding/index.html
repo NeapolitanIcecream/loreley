@@ -1881,8 +1881,8 @@ subset of changed files.</p>
 <ol>
 <li>Try to reuse a persisted <strong>repo-state aggregate</strong> for the commit (fast path).</li>
 <li>If missing, derive it from:</li>
-<li>a parent aggregate plus a parent..child diff (incremental path), or</li>
-<li>a full enumeration of eligible files (fallback path).</li>
+<li><strong>Bootstrap</strong>: compute the root commit aggregate by fully enumerating eligible files.</li>
+<li><strong>Runtime (incremental-only)</strong>: derive the aggregate from the single parent commit using a parent..child diff; if this is not possible, fail fast.</li>
 <li>Look up each blob SHA in the <strong>file embedding cache</strong> and embed only cache misses.</li>
 <li>Aggregate per-file embeddings into one commit vector via <strong>uniform mean</strong>.</li>
 <li>Feed the commit vector into PCA → MAP-Elites as the behaviour descriptor.</li>
@@ -1898,7 +1898,7 @@ subset of changed files.</p>
 <li><code>MAPELITES_PREPROCESS_ALLOWED_EXTENSIONS</code> / <code>MAPELITES_PREPROCESS_ALLOWED_FILENAMES</code>.</li>
 <li><code>MAPELITES_PREPROCESS_EXCLUDED_GLOBS</code>.</li>
 <li><code>MAPELITES_PREPROCESS_MAX_FILE_SIZE_KB</code> (oversized blobs are skipped).</li>
-<li><code>MAPELITES_REPO_STATE_MAX_FILES</code> (optional cap; when set, the eligible list is deterministically sub-sampled).</li>
+<li>Scheduler startup approval gate: the root eligible file count is scanned at startup and must be explicitly approved by the operator (interactive y/n prompt by default, or <code>--yes</code> / <code>SCHEDULER_STARTUP_APPROVE=true</code> for non-interactive runs).</li>
 </ul>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
@@ -1927,6 +1927,8 @@ subset of changed files.</p>
 <p><code>pipeline_signature</code> is a SHA-256 hash over the preprocessing/chunking/embedding
 knobs that affect the produced vectors (so cache entries are invalidated when
 the pipeline changes).</p>
+<p>The database-backed cache is <strong>insert-only</strong>: when multiple processes attempt to
+write the same key, the first insert wins and later writes are ignored (no overwrite).</p>
 <p>Backend selection:</p>
 <ul>
 <li><code>MAPELITES_FILE_EMBEDDING_CACHE_BACKEND=db|memory</code> (default: <code>db</code>)</li>
@@ -1946,10 +1948,11 @@ re-enumerating the full tree.</p>
 </ul>
 <p>The commit vector is derived as <code>sum_vector / file_count</code>.</p>
 <h3 id="incremental-updates">Incremental updates<a class="headerlink" href="#incremental-updates" title="Permanent link">&para;</a></h3>
-<p>When a parent aggregate exists and root ignore files (<code>.gitignore</code> and <code>.loreleyignore</code>) are unchanged, the child aggregate is derived
-from the parent by applying the parent..child diff (add/modify/delete/rename) and embedding
-only the new/changed blobs. If <code>MAPELITES_REPO_STATE_MAX_FILES</code> might affect selection, the
-pipeline falls back to a full recompute for correctness.</p>
+<p>When a parent aggregate exists, the commit has exactly one parent, and root ignore files
+(<code>.gitignore</code> and <code>.loreleyignore</code>) are unchanged, the child aggregate is derived from the
+parent by applying the parent..child diff (add/modify/delete/rename) and embedding only the
+new/changed blobs. If these conditions are not met (merge commits, missing parent aggregate,
+diff failures, or root ignore changes), runtime ingestion fails fast.</p>
 <h2 id="commit-aggregation">Commit aggregation<a class="headerlink" href="#commit-aggregation" title="Permanent link">&para;</a></h2>
 <p>Implemented by:</p>
 <ul>
