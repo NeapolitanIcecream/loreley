@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -46,7 +45,6 @@ def test_repo_state_incremental_aggregate_add_and_modify(
     settings.mapelites_preprocess_allowed_filenames = []
     settings.mapelites_preprocess_excluded_globs = []
     settings.mapelites_preprocess_max_file_size_kb = 64
-    settings.mapelites_repo_state_max_files = None
 
     (tmp_path / "a.py").write_text("print('a1')\n", encoding="utf-8")
     (tmp_path / "b.py").write_text("print('b1')\n", encoding="utf-8")
@@ -61,7 +59,6 @@ def test_repo_state_incremental_aggregate_add_and_modify(
     sha_a2 = _blob_sha(repo, c2, "a.py")
     sha_c2 = _blob_sha(repo, c2, "c.py")
 
-    parent_time = datetime.now(timezone.utc)
     parent_sum = _vec_for_sha(sha_a1)
     parent_sum = (parent_sum[0] + _vec_for_sha(sha_b1)[0], parent_sum[1] + _vec_for_sha(sha_b1)[1])
 
@@ -73,8 +70,6 @@ def test_repo_state_incremental_aggregate_add_and_modify(
         embedding_model="stub",
         pipeline_signature="sig",
         filter_signature="fsig",
-        created_at=parent_time,
-        updated_at=parent_time,
     )
 
     persisted: dict[str, object] = {}
@@ -94,7 +89,6 @@ def test_repo_state_incremental_aggregate_add_and_modify(
         dimensions: int,
         capped: bool,
     ) -> None:
-        now = datetime.now(timezone.utc)
         persisted[commit_hash] = SimpleNamespace(
             file_count=int(file_count),
             sum_vector=list(sum_vector),
@@ -103,19 +97,16 @@ def test_repo_state_incremental_aggregate_add_and_modify(
             embedding_model="stub",
             pipeline_signature="sig",
             filter_signature="fsig",
-            created_at=now,
-            updated_at=now,
         )
 
     # Fake DB file-cache metadata
     def _fake_load_file_cache_metadata(*, blob_shas, dimensions: int):  # type: ignore[no-untyped-def]
         dims = int(dimensions)
         assert dims == 2
-        earlier = parent_time - timedelta(seconds=10)
         meta = {}
-        # Parent blobs existed at parent time.
-        meta[sha_a1] = RepositoryStateEmbedder._VectorMeta(vector=_vec_for_sha(sha_a1), created_at=earlier)
-        meta[sha_b1] = RepositoryStateEmbedder._VectorMeta(vector=_vec_for_sha(sha_b1), created_at=earlier)
+        # Parent blobs exist; new blobs are treated as cache misses so embed_cache_misses is exercised.
+        meta[sha_a1] = RepositoryStateEmbedder._VectorMeta(vector=_vec_for_sha(sha_a1))
+        meta[sha_b1] = RepositoryStateEmbedder._VectorMeta(vector=_vec_for_sha(sha_b1))
         # Treat new blobs as cache misses so embed_cache_misses is exercised.
         return meta
 

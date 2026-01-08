@@ -15,8 +15,8 @@ At a given `commit_hash`, we:
 
 1. Try to reuse a persisted **repo-state aggregate** for the commit (fast path).
 2. If missing, derive it from:
-   - a parent aggregate plus a parent..child diff (incremental path), or
-   - a full enumeration of eligible files (fallback path).
+   - **Bootstrap**: compute the root commit aggregate by fully enumerating eligible files.
+   - **Runtime (incremental-only)**: derive the aggregate from the single parent commit using a parent..child diff; if this is not possible, fail fast.
 3. Look up each blob SHA in the **file embedding cache** and embed only cache misses.
 4. Aggregate per-file embeddings into one commit vector via **uniform mean**.
 5. Feed the commit vector into PCA → MAP-Elites as the behaviour descriptor.
@@ -33,7 +33,7 @@ Eligibility is determined by a combination of:
 - `MAPELITES_PREPROCESS_ALLOWED_EXTENSIONS` / `MAPELITES_PREPROCESS_ALLOWED_FILENAMES`.
 - `MAPELITES_PREPROCESS_EXCLUDED_GLOBS`.
 - `MAPELITES_PREPROCESS_MAX_FILE_SIZE_KB` (oversized blobs are skipped).
-- `MAPELITES_REPO_STATE_MAX_FILES` (optional cap; when set, the eligible list is deterministically sub-sampled).
+- Scheduler startup approval gate: the root eligible file count is scanned at startup and must be explicitly approved via `SCHEDULER_REPO_STATE_ELIGIBLE_FILES_APPROVED_COUNT`.
 
 !!! note
     Ignore filtering is currently **best-effort** and only uses the repository root `.gitignore` and `.loreleyignore` at the requested `commit_hash`. `.loreleyignore` rules are applied after `.gitignore` (so `!pattern` can re-include). Nested `.gitignore` files and global excludes are not applied.
@@ -63,6 +63,9 @@ Cache key:
 knobs that affect the produced vectors (so cache entries are invalidated when
 the pipeline changes).
 
+The database-backed cache is **insert-only**: when multiple processes attempt to
+write the same key, the first insert wins and later writes are ignored (no overwrite).
+
 Backend selection:
 
 - `MAPELITES_FILE_EMBEDDING_CACHE_BACKEND=db|memory` (default: `db`)
@@ -86,10 +89,11 @@ The commit vector is derived as `sum_vector / file_count`.
 
 ### Incremental updates
 
-When a parent aggregate exists and root ignore files (`.gitignore` and `.loreleyignore`) are unchanged, the child aggregate is derived
-from the parent by applying the parent..child diff (add/modify/delete/rename) and embedding
-only the new/changed blobs. If `MAPELITES_REPO_STATE_MAX_FILES` might affect selection, the
-pipeline falls back to a full recompute for correctness.
+When a parent aggregate exists, the commit has exactly one parent, and root ignore files
+(`.gitignore` and `.loreleyignore`) are unchanged, the child aggregate is derived from the
+parent by applying the parent..child diff (add/modify/delete/rename) and embedding only the
+new/changed blobs. If these conditions are not met (merge commits, missing parent aggregate,
+diff failures, or root ignore changes), runtime ingestion fails fast.
 
 ## Commit aggregation
 

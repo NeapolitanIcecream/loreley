@@ -76,7 +76,7 @@ class MapElitesIngestion:
         """Ensure the configured root commit is present in DB and evaluated.
 
         This helper is idempotent and safe to call on every scheduler startup.
-        Failures are logged but do not prevent the scheduler from running.
+        Repo-state bootstrap failures are fatal because runtime ingestion is incremental-only.
         """
 
         try:
@@ -86,16 +86,22 @@ class MapElitesIngestion:
                 f"[bold red]Failed to initialise root commit[/] commit={commit_hash} reason={exc}",
             )
             log.error("Failed to initialise root commit {}: {}", commit_hash, exc)
-            return
+            raise
 
+        # Commit metadata is required for downstream observability / UI.
+        self._ensure_root_commit_metadata(commit_hash)
+
+        # Bootstrap repo-state aggregates so runtime ingestion can stay incremental-only.
+        self._ensure_root_commit_repo_state_bootstrap(commit_hash)
+
+        # Root commit evaluation is best-effort: failures do not prevent the scheduler loop.
         try:
-            self._ensure_root_commit_metadata(commit_hash)
             self._ensure_root_commit_evaluated(commit_hash)
         except Exception as exc:  # pragma: no cover - defensive
             self.console.log(
-                f"[bold red]Root commit initialisation failed[/] commit={commit_hash} reason={exc}",
+                f"[bold red]Root commit evaluation failed[/] commit={commit_hash} reason={exc}",
             )
-            log.exception("Root commit initialisation failed for {}: {}", commit_hash, exc)
+            log.exception("Root commit evaluation failed for {}: {}", commit_hash, exc)
 
     # Job result ingestion --------------------------------------------------
 
@@ -436,6 +442,67 @@ class MapElitesIngestion:
             "Root commit evaluation completed for {} with {} metrics",
             commit_hash,
             len(metrics_payload),
+        )
+
+    def _ensure_root_commit_repo_state_bootstrap(self, commit_hash: str) -> None:
+        """Bootstrap the repo-state aggregate for the experiment baseline commit."""
+
+        backend = (self.settings.mapelites_file_embedding_cache_backend or "db").strip() or "db"
+        if backend != "db":
+            raise IngestionError(
+                "Repo-state bootstrap requires MAPELITES_FILE_EMBEDDING_CACHE_BACKEND=db "
+                f"(got {backend!r})."
+            )
+
+        from loreley.core.map_elites.repository_state_embedding import RepositoryStateEmbedder, embed_repository_state
+
+        embedding, stats = embed_repository_state(
+            commit_hash=commit_hash,
+            repo_root=self.repo_root,
+            settings=self.settings,
+            cache_backend=backend,
+            repo=self.repo,
+            experiment_id=getattr(self.experiment, "id", None),
+            mode="auto",
+        )
+
+        if not embedding or not embedding.vector or stats.files_aggregated <= 0:
+            raise IngestionError(
+                "Repo-state bootstrap produced no embedding; "
+                f"eligible_files={stats.eligible_files} files_aggregated={stats.files_aggregated} "
+                f"skipped_failed_embedding={stats.skipped_failed_embedding} commit={commit_hash}."
+            )
+
+        # Verify the aggregate was persisted; runtime ingestion is incremental-only.
+        embedder = RepositoryStateEmbedder(
+            settings=self.settings,
+            cache_backend=backend,
+            repo=self.repo,
+            experiment_id=getattr(self.experiment, "id", None),
+        )
+        canonical = str(getattr(self.repo.commit(commit_hash), "hexsha", "") or "").strip()
+        persisted = embedder._load_aggregate(commit_hash=canonical, repo_root=self.repo_root)
+        if persisted is None:
+            raise IngestionError(
+                "Repo-state bootstrap did not persist an aggregate; "
+                "check DB connectivity or reset the database (dev). "
+                f"(commit={canonical})"
+            )
+
+        self.console.log(
+            "[green]Bootstrapped repo-state baseline aggregate[/] commit={} eligible_files={} files_aggregated={} dims={}".format(
+                canonical,
+                stats.eligible_files,
+                stats.files_aggregated,
+                embedding.dimensions,
+            )
+        )
+        log.info(
+            "Bootstrapped repo-state baseline aggregate commit={} eligible_files={} files_aggregated={} dims={}",
+            canonical,
+            stats.eligible_files,
+            stats.files_aggregated,
+            embedding.dimensions,
         )
 
     def _ensure_root_commit_metadata(self, commit_hash: str) -> None:

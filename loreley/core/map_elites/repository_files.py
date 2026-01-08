@@ -14,7 +14,6 @@ pairs to drive a file-level embedding cache.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
 from pathlib import Path, PurePosixPath
 from typing import Iterable, Sequence
 
@@ -279,22 +278,6 @@ class RepositoryFileCatalog:
             )
 
         results.sort(key=lambda entry: entry.path.as_posix())
-        limit = int(getattr(self.settings, "mapelites_repo_state_max_files", 0) or 0)
-        if limit > 0 and len(results) > limit:
-            original = len(results)
-            # Deterministic sub-sampling to reduce path-prefix bias while still
-            # keeping results stable across runs.
-            sampled = sorted(
-                results,
-                key=lambda entry: hashlib.sha1(entry.path.as_posix().encode("utf-8")).hexdigest(),
-            )
-            results = sampled[:limit]
-            results.sort(key=lambda entry: entry.path.as_posix())
-            log.warning(
-                "Truncated eligible repository files from {} to {} due to MAPELITES_REPO_STATE_MAX_FILES (stable-hash sampling).",
-                original,
-                limit,
-            )
         log.info(
             "Enumerated {} eligible repository files at commit {} (repo_root={})",
             len(results),

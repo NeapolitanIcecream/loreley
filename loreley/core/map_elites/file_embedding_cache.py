@@ -255,16 +255,13 @@ class DatabaseFileEmbeddingCache:
             with session_scope() as session:
                 for batch in _batched(values, 500):
                     stmt = pg_insert(MapElitesFileEmbeddingCache).values(batch)
-                    stmt = stmt.on_conflict_do_update(
+                    stmt = stmt.on_conflict_do_nothing(
                         index_elements=[
                             "blob_sha",
                             "embedding_model",
                             "dimensions",
                             "pipeline_signature",
                         ],
-                        set_={
-                            "vector": stmt.excluded.vector,
-                        },
                     )
                     session.execute(stmt)
         except SQLAlchemyError as exc:

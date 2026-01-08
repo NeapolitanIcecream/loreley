@@ -48,13 +48,16 @@ def test_root_initialisation_evaluates_without_ingesting_into_archive(
         repository=repository,
     )
 
-    calls: dict[str, int] = {"available": 0, "metadata": 0, "evaluated": 0}
+    calls: dict[str, int] = {"available": 0, "metadata": 0, "repo_state_bootstrap": 0, "evaluated": 0}
 
     def _fake_ensure_available(self: MapElitesIngestion, commit_hash: str) -> None:
         calls["available"] += 1
 
     def _fake_ensure_metadata(self: MapElitesIngestion, commit_hash: str) -> None:
         calls["metadata"] += 1
+
+    def _fake_repo_state_bootstrap(self: MapElitesIngestion, commit_hash: str) -> None:
+        calls["repo_state_bootstrap"] += 1
 
     def _fake_ensure_evaluated(self: MapElitesIngestion, commit_hash: str) -> None:
         calls["evaluated"] += 1
@@ -71,6 +74,11 @@ def test_root_initialisation_evaluates_without_ingesting_into_archive(
     )
     monkeypatch.setattr(
         ingestion_mod.MapElitesIngestion,
+        "_ensure_root_commit_repo_state_bootstrap",
+        _fake_repo_state_bootstrap,
+    )
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
         "_ensure_root_commit_evaluated",
         _fake_ensure_evaluated,
     )
@@ -80,6 +88,7 @@ def test_root_initialisation_evaluates_without_ingesting_into_archive(
 
     assert calls["available"] == 1
     assert calls["metadata"] == 1
+    assert calls["repo_state_bootstrap"] == 1
     assert calls["evaluated"] == 1
     # Root initialisation should not attempt to ingest the root commit into any
     # MAP-Elites archive.

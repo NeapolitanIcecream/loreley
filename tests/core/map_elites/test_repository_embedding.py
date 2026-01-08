@@ -230,42 +230,6 @@ def test_repository_file_catalog_does_not_fallback_to_worktree_loreleyignore_whe
     paths = [f.path.as_posix() for f in files]
     assert paths == ["a.py", "ignored.py"]
 
-
-def test_repository_file_catalog_respects_repo_state_max_files_cap(
-    tmp_path: Path,
-    settings: Settings,
-) -> None:
-    repo = _init_repo(tmp_path)
-    (tmp_path / "a.py").write_text("print('a')\n", encoding="utf-8")
-    (tmp_path / "b.py").write_text("print('b')\n", encoding="utf-8")
-    (tmp_path / "c.py").write_text("print('c')\n", encoding="utf-8")
-    commit = _commit_all(repo, "init")
-
-    settings.mapelites_preprocess_allowed_extensions = [".py"]
-    settings.mapelites_preprocess_allowed_filenames = []
-    settings.mapelites_preprocess_excluded_globs = []
-    settings.mapelites_preprocess_max_file_size_kb = 64
-    settings.mapelites_repo_state_max_files = 2
-
-    files = list_repository_files(
-        repo_root=tmp_path,
-        commit_hash=commit,
-        settings=settings,
-        repo=repo,
-    )
-    paths = [f.path.as_posix() for f in files]
-    assert len(paths) == 2
-    assert set(paths).issubset({"a.py", "b.py", "c.py"})
-    # Deterministic across calls.
-    files_again = list_repository_files(
-        repo_root=tmp_path,
-        commit_hash=commit,
-        settings=settings,
-        repo=repo,
-    )
-    assert [f.path.as_posix() for f in files_again] == paths
-
-
 def test_repository_state_embedder_uses_cache_hits_and_misses(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

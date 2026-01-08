@@ -69,14 +69,17 @@ When `MAPELITES_EXPERIMENT_ROOT_COMMIT` is set, `EvolutionScheduler` asks
    - the current `experiment_id`,
    - a default island id (from `MAPELITES_DEFAULT_ISLAND_ID` or `"main"`),
    - bounded commit-card fields (`subject`, `change_summary`, `highlights`).
-3. `_ensure_root_commit_evaluated(...)` runs a one-off evaluation for the root
+3. `_ensure_root_commit_repo_state_bootstrap(...)` bootstraps the baseline
+   repo-state aggregate for incremental-only ingestion by computing and
+   persisting the root commit aggregate (full enumeration allowed at bootstrap).
+4. `_ensure_root_commit_evaluated(...)` runs a one-off evaluation for the root
    commit when no `Metric` rows already exist, writing baseline metrics into
    the `metrics` table. These metrics act as an experiment-wide baseline but do
    not insert the root commit into any MAP-Elites archive.
 
-Failures during root-commit initialisation are logged but do **not** prevent
-the scheduler from running; they simply mean the experiment may effectively
-start from the first successfully ingested commit instead.
+Repo-state bootstrap failures are fatal because the scheduler runs repo-state
+ingestion in incremental-only mode at runtime. Root evaluation failures are
+best-effort and are logged without preventing the scheduler loop from running.
 
 ## Interaction with EvolutionScheduler
 

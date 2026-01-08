@@ -19,8 +19,15 @@ from sqlalchemy import select, func
 from loreley.config import Settings, get_settings
 from loreley.core.experiments import ExperimentError, get_or_create_experiment
 from loreley.core.map_elites.map_elites import MapElitesManager
+from loreley.core.map_elites.repository_files import list_repository_files
 from loreley.core.map_elites.sampler import MapElitesSampler
-from loreley.db.base import ensure_database_schema, session_scope
+from loreley.db.base import engine, ensure_database_schema, session_scope
+from loreley.db.locks import (
+    AdvisoryLock,
+    release_pg_advisory_lock,
+    try_acquire_pg_advisory_lock,
+    uuid_to_pg_bigint_lock_key,
+)
 from loreley.db.models import CommitCard, Metric
 from loreley.scheduler.ingestion import MapElitesIngestion
 from loreley.scheduler.job_scheduler import JobScheduler
@@ -35,12 +42,17 @@ class SchedulerError(RuntimeError):
     """Raised when the scheduler cannot continue."""
 
 
+class SchedulerLockError(SchedulerError):
+    """Raised when a per-experiment scheduler lock cannot be obtained."""
+
+
 class EvolutionScheduler:
     """Orchestrate job sampling, dispatching, and MAP-Elites maintenance."""
 
     def __init__(self, *, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
         self.console = console
+        self._advisory_lock: AdvisoryLock | None = None
         # Ensure DB schema (including MAP-Elites incremental tables) exists before use.
         ensure_database_schema()
         self.repo_root = self._resolve_repo_root()
@@ -53,6 +65,17 @@ class EvolutionScheduler:
             )
         except ExperimentError as exc:
             raise SchedulerError(str(exc)) from exc
+
+        # Enforce single-scheduler-per-experiment using a session-level Postgres advisory lock.
+        self._advisory_lock = self._acquire_experiment_lock()
+
+        # Fail fast unless the operator explicitly approves the root eligible file count.
+        try:
+            self._startup_scan_and_validate_repo_state_approval()
+        except Exception:
+            self.close()
+            raise
+
         self.manager = MapElitesManager(
             settings=self.settings,
             repo_root=self.repo_root,
@@ -81,7 +104,11 @@ class EvolutionScheduler:
         # archive and database both contain a stable starting point before any
         # evolution jobs run.
         if self._root_commit_hash:
-            self.ingestion.initialise_root_commit(self._root_commit_hash)
+            try:
+                self.ingestion.initialise_root_commit(self._root_commit_hash)
+            except Exception as exc:
+                self.close()
+                raise SchedulerError(str(exc)) from exc
 
     # Public API ------------------------------------------------------------
 
@@ -89,30 +116,33 @@ class EvolutionScheduler:
         """Start the scheduler loop until interrupted."""
 
         interval = max(1.0, float(self.settings.scheduler_poll_interval_seconds))
-        self.console.log(
-            "[bold green]Scheduler online[/] repo={} experiment={} interval={}s max_unfinished={}".format(
-                self.repo_root,
-                getattr(self.experiment, "id", None),
-                interval,
-                self.settings.scheduler_max_unfinished_jobs,
-            ),
-        )
-        self._install_signal_handlers()
-        while not self._stop_requested:
-            start = time.perf_counter()
-            try:
-                self.tick()
-            except Exception as exc:  # pragma: no cover - defensive
-                self.console.log(
-                    f"[bold red]Scheduler tick crashed[/] reason={exc}",
-                )
-                log.exception("Scheduler tick crashed: {}", exc)
-            elapsed = time.perf_counter() - start
-            sleep_for = max(0.0, interval - elapsed)
-            # Sleep in small increments so SIGINT/SIGTERM can cut the wait short
-            # instead of blocking until the next full tick boundary.
-            self._sleep_with_stop(sleep_for)
-        self.console.log("[bold yellow]Scheduler stopped[/]")
+        try:
+            self.console.log(
+                "[bold green]Scheduler online[/] repo={} experiment={} interval={}s max_unfinished={}".format(
+                    self.repo_root,
+                    getattr(self.experiment, "id", None),
+                    interval,
+                    self.settings.scheduler_max_unfinished_jobs,
+                ),
+            )
+            self._install_signal_handlers()
+            while not self._stop_requested:
+                start = time.perf_counter()
+                try:
+                    self.tick()
+                except Exception as exc:  # pragma: no cover - defensive
+                    self.console.log(
+                        f"[bold red]Scheduler tick crashed[/] reason={exc}",
+                    )
+                    log.exception("Scheduler tick crashed: {}", exc)
+                elapsed = time.perf_counter() - start
+                sleep_for = max(0.0, interval - elapsed)
+                # Sleep in small increments so SIGINT/SIGTERM can cut the wait short
+                # instead of blocking until the next full tick boundary.
+                self._sleep_with_stop(sleep_for)
+            self.console.log("[bold yellow]Scheduler stopped[/]")
+        finally:
+            self.close()
 
     def tick(self) -> dict[str, int]:
         """Execute a full scheduler cycle."""
@@ -172,6 +202,19 @@ class EvolutionScheduler:
             return
         self._stop_requested = True
 
+    def close(self) -> None:
+        """Release any long-lived resources held by the scheduler process."""
+
+        if self._advisory_lock is None:
+            return
+        try:
+            release_pg_advisory_lock(self._advisory_lock)
+        except Exception as exc:  # pragma: no cover - best-effort cleanup
+            self.console.log(f"[yellow]Failed to release scheduler advisory lock[/] reason={exc}")
+            log.warning("Failed to release scheduler advisory lock: {}", exc)
+        finally:
+            self._advisory_lock = None
+
     # Internal helpers ------------------------------------------------------
 
     def _install_signal_handlers(self) -> None:
@@ -206,6 +249,101 @@ class EvolutionScheduler:
             if remaining <= 0:
                 break
             time.sleep(min(quantum, remaining))
+
+    # DB coordination helpers ----------------------------------------------
+
+    def _acquire_experiment_lock(self) -> AdvisoryLock:
+        experiment_id = getattr(self.experiment, "id", None)
+        if experiment_id is None:
+            raise SchedulerLockError("Cannot acquire scheduler lock: experiment_id is missing.")
+
+        key = uuid_to_pg_bigint_lock_key(experiment_id)
+        lock = try_acquire_pg_advisory_lock(engine=engine, key=key)
+        if lock is None:
+            raise SchedulerLockError(
+                "Another scheduler instance is already running for this experiment. "
+                f"(experiment_id={experiment_id})"
+            )
+        self.console.log(
+            "[green]Acquired scheduler advisory lock[/] experiment={} key={}".format(
+                experiment_id,
+                key,
+            )
+        )
+        log.info("Acquired scheduler advisory lock for experiment {} (key={})", experiment_id, key)
+        return lock
+
+    def _startup_scan_and_validate_repo_state_approval(self) -> None:
+        root_commit = (self._root_commit_hash or "").strip()
+        if not root_commit:
+            raise SchedulerError(
+                "MAPELITES_EXPERIMENT_ROOT_COMMIT is required for repo-state startup approval "
+                "and incremental-only ingestion."
+            )
+
+        self._ensure_commit_available(root_commit)
+        try:
+            canonical = str(getattr(self._repo.commit(root_commit), "hexsha", "") or "").strip()
+        except Exception as exc:
+            raise SchedulerError(
+                f"Cannot resolve root commit {root_commit!r} for repo-state scan."
+            ) from exc
+        if not canonical:
+            raise SchedulerError(f"Cannot resolve root commit {root_commit!r} for repo-state scan.")
+
+        filters = {
+            "allowed_extensions": list(self.settings.mapelites_preprocess_allowed_extensions or []),
+            "allowed_filenames": list(self.settings.mapelites_preprocess_allowed_filenames or []),
+            "excluded_globs": list(self.settings.mapelites_preprocess_excluded_globs or []),
+            "max_file_size_kb": int(self.settings.mapelites_preprocess_max_file_size_kb),
+            "root_ignore_files": [".gitignore", ".loreleyignore"],
+        }
+
+        files = list_repository_files(
+            repo_root=self.repo_root,
+            commit_hash=canonical,
+            settings=self.settings,
+            repo=self._repo,
+        )
+        eligible = len(files)
+        approved = getattr(self.settings, "scheduler_repo_state_eligible_files_approved_count", None)
+
+        self.console.log(
+            "[cyan]Repo-state root scan[/] root_commit={} eligible_files={} approved_count={} repo_root={}".format(
+                canonical,
+                eligible,
+                approved if approved is not None else "n/a",
+                self.repo_root,
+            )
+        )
+        log.info(
+            "Repo-state root scan commit={} eligible_files={} approved_count={} filters={}",
+            canonical,
+            eligible,
+            approved,
+            filters,
+        )
+
+        if approved is None:
+            raise SchedulerError(
+                "Scheduler startup requires explicit approval of the root eligible file count. "
+                f"Observed eligible_files={eligible} at root_commit={canonical}. "
+                "Set SCHEDULER_REPO_STATE_ELIGIBLE_FILES_APPROVED_COUNT to proceed."
+            )
+
+        try:
+            approved_value = int(approved)
+        except (TypeError, ValueError):
+            raise SchedulerError(
+                "Invalid SCHEDULER_REPO_STATE_ELIGIBLE_FILES_APPROVED_COUNT; must be an integer."
+            ) from None
+
+        if approved_value != eligible:
+            raise SchedulerError(
+                "Repo-state eligible file approval mismatch. "
+                f"Observed eligible_files={eligible} at root_commit={canonical}, "
+                f"but approved_count={approved_value}."
+            )
 
     # Git helpers -----------------------------------------------------------
 
@@ -543,10 +681,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    scheduler = EvolutionScheduler()
+    try:
+        scheduler = EvolutionScheduler()
+    except SchedulerLockError as exc:
+        console.log(f"[bold red]Scheduler refused to start[/] reason={exc}")
+        log.error("Scheduler refused to start: {}", exc)
+        return 2
+    except SchedulerError as exc:
+        console.log(f"[bold red]Scheduler startup failed[/] reason={exc}")
+        log.error("Scheduler startup failed: {}", exc)
+        return 1
+
     if args.once:
-        scheduler.tick()
+        try:
+            scheduler.tick()
+        finally:
+            scheduler.close()
         return 0
+
     scheduler.run_forever()
     return 0
 

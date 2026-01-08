@@ -12,12 +12,11 @@ This module implements the repo-state embedding design:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
-from typing import Iterable, Sequence, cast
+from typing import Iterable, Literal, Sequence, cast
 from uuid import UUID
 
 from git import Repo
@@ -42,8 +41,14 @@ from .repository_files import (
 log = logger.bind(module="map_elites.repository_state_embedding")
 
 Vector = tuple[float, ...]
+RepoStateEmbeddingMode = Literal["auto", "incremental_only"]
+
+
+class RepoStateEmbeddingError(RuntimeError):
+    """Raised when repo-state embedding cannot proceed under the requested mode."""
 
 __all__ = [
+    "RepoStateEmbeddingError",
     "RepoStateEmbeddingStats",
     "RepositoryStateEmbedder",
     "embed_repository_state",
@@ -88,6 +93,7 @@ class RepositoryStateEmbedder:
         *,
         commit_hash: str,
         repo_root: Path | None = None,
+        mode: RepoStateEmbeddingMode = "auto",
     ) -> tuple[CommitCodeEmbedding | None, RepoStateEmbeddingStats]:
         """Return a commit-level embedding representing the repo state."""
 
@@ -197,6 +203,12 @@ class RepositoryStateEmbedder:
             )
             return embedding, stats
 
+        if mode == "incremental_only":
+            raise RepoStateEmbeddingError(
+                "Repo-state embedding is running in incremental-only mode; "
+                f"no aggregate cache hit and no valid incremental derivation for commit {canonical}."
+            )
+
         repo_files = list_repository_files(
             repo_root=root,
             commit_hash=canonical,
@@ -285,20 +297,9 @@ class RepositoryStateEmbedder:
             sum_vector=sum_vector,
             file_count=aggregated_count,
             dimensions=embedding.dimensions,
-            capped=self._cap_maybe_triggered(len(repo_files)),
+            capped=False,
         )
         return embedding, stats
-
-    def _cap_maybe_triggered(self, eligible_files: int) -> bool:
-        limit = getattr(self.settings, "mapelites_repo_state_max_files", None)
-        if limit is None:
-            return False
-        cap = int(limit or 0)
-        if cap <= 0:
-            return False
-        # We do not know the pre-truncation eligible file count here; treat hitting
-        # the cap as "maybe capped" so incremental updates remain correct.
-        return int(eligible_files) >= cap
 
     def _load_aggregate(
         self,
@@ -398,7 +399,6 @@ class RepositoryStateEmbedder:
     @dataclass(frozen=True, slots=True)
     class _VectorMeta:
         vector: Vector
-        created_at: datetime
 
     def _load_file_cache_metadata(
         self,
@@ -428,7 +428,6 @@ class RepositoryStateEmbedder:
                         select(
                             MapElitesFileEmbeddingCache.blob_sha,
                             MapElitesFileEmbeddingCache.vector,
-                            MapElitesFileEmbeddingCache.created_at,
                         )
                         .where(
                             MapElitesFileEmbeddingCache.blob_sha.in_(batch),
@@ -437,14 +436,23 @@ class RepositoryStateEmbedder:
                             MapElitesFileEmbeddingCache.dimensions == dims,
                         )
                     )
-                    for sha, vec, created_at in session.execute(stmt).all():
+                    for sha, vec in session.execute(stmt).all():
                         vector = tuple(float(v) for v in (vec or ()))
-                        if not vector or len(vector) != dims:
-                            continue
-                        ts = created_at
-                        if ts is None:
-                            ts = datetime.now(timezone.utc)
-                        found[str(sha)] = RepositoryStateEmbedder._VectorMeta(vector=vector, created_at=ts)
+                        if not vector:
+                            raise RepoStateEmbeddingError(
+                                "File embedding cache contains an empty vector; "
+                                "reset the DB (dev) or bump pipeline_signature. "
+                                f"(blob_sha={sha} dims={dims})"
+                            )
+                        if len(vector) != dims:
+                            raise RepoStateEmbeddingError(
+                                "File embedding cache vector has unexpected dimensions; "
+                                "reset the DB (dev) or bump pipeline_signature. "
+                                f"(blob_sha={sha} expected_dims={dims} got_dims={len(vector)})"
+                            )
+                        found[str(sha)] = RepositoryStateEmbedder._VectorMeta(vector=vector)
+        except RepoStateEmbeddingError:
+            raise
         except Exception as exc:  # pragma: no cover - DB failure handling
             log.warning("Repo-state file cache metadata read failed: {}", exc)
             return {}
@@ -485,15 +493,7 @@ class RepositoryStateEmbedder:
         parent_agg = self._load_aggregate(commit_hash=parent_hash, repo_root=repo_root)
         if parent_agg is None:
             return None
-        if bool(getattr(parent_agg, "capped", False)):
-            return None
         if int(parent_agg.file_count or 0) <= 0:
-            return None
-
-        # Do not attempt incremental updates when the repo-state cap might be involved.
-        cap = getattr(self.settings, "mapelites_repo_state_max_files", None)
-        cap_value = int(cap) if cap is not None else 0
-        if cap_value > 0 and int(parent_agg.file_count) > cap_value:
             return None
 
         # Conservative correctness guard: root ignore file changes can affect eligibility of many files.
@@ -502,10 +502,6 @@ class RepositoryStateEmbedder:
                 repo, commit_hash, filename
             ):
                 return None
-
-        parent_time = getattr(parent_agg, "updated_at", None) or getattr(parent_agg, "created_at", None)
-        if parent_time is None:
-            return None
 
         dims = int(parent_agg.dimensions or 0)
         if dims <= 0 or not parent_agg.sum_vector or len(parent_agg.sum_vector) != dims:
@@ -605,10 +601,7 @@ class RepositoryStateEmbedder:
                 self.cache.put_many(vectors_for_misses)
                 for sha, vec in vectors_for_misses.items():
                     if vec and len(vec) == dims:
-                        metadata[sha] = RepositoryStateEmbedder._VectorMeta(
-                            vector=vec,
-                            created_at=datetime.now(timezone.utc),
-                        )
+                        metadata[sha] = RepositoryStateEmbedder._VectorMeta(vector=vec)
 
         # Second pass: apply delta updates using "included" semantics.
         for entry in diffs:
@@ -622,7 +615,7 @@ class RepositoryStateEmbedder:
             if new_ok and new_sha:
                 new_meta = metadata.get(new_sha)
 
-            old_included = bool(old_meta is not None and old_meta.created_at <= parent_time)
+            old_included = bool(old_meta is not None and old_meta.vector)
             new_included = bool(new_meta is not None and new_meta.vector)
 
             if old_included and not new_included:
@@ -643,10 +636,6 @@ class RepositoryStateEmbedder:
                 sum_vec = _vector_add(sum_vec, _vector_sub(new_meta.vector, old_meta.vector))
 
         if file_count <= 0 or not sum_vec:
-            return None
-
-        if cap_value > 0 and file_count > cap_value:
-            # Cap may affect the global selection; fall back to full recompute.
             return None
 
         vector = _divide_vector(sum_vec, file_count)
@@ -746,6 +735,7 @@ def embed_repository_state(
     cache_backend: str | None = None,
     repo: Repo | None = None,
     experiment_id: UUID | str | None = None,
+    mode: RepoStateEmbeddingMode = "auto",
 ) -> tuple[CommitCodeEmbedding | None, RepoStateEmbeddingStats]:
     """Functional wrapper around `RepositoryStateEmbedder`."""
 
@@ -759,6 +749,7 @@ def embed_repository_state(
     return embedder.run(
         commit_hash=commit_hash,
         repo_root=repo_root,
+        mode=mode,
     )
 
 
@@ -806,7 +797,7 @@ def _coerce_uuid(value: UUID | str | None) -> UUID | None:
 def _build_filter_signature(*, settings: Settings, repo_prefix: str | None) -> str:
     """Hash all knobs that affect repo-state file selection (not embedding output)."""
     payload = {
-        "version": 2,
+        "version": 3,
         "gitignore": "root_only_best_effort_v2_gitignore_plus_loreleyignore",
         "repo_prefix": repo_prefix or None,
         "filters": {
@@ -814,11 +805,6 @@ def _build_filter_signature(*, settings: Settings, repo_prefix: str | None) -> s
             "allowed_filenames": list(settings.mapelites_preprocess_allowed_filenames or []),
             "excluded_globs": list(settings.mapelites_preprocess_excluded_globs or []),
             "max_file_size_kb": int(settings.mapelites_preprocess_max_file_size_kb),
-            "repo_state_max_files": (
-                int(settings.mapelites_repo_state_max_files)
-                if settings.mapelites_repo_state_max_files is not None
-                else None
-            ),
         },
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
