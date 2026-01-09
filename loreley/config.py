@@ -78,6 +78,20 @@ class Settings(BaseSettings):
         default=None,
         alias="MAPELITES_EXPERIMENT_ROOT_COMMIT",
     )
+    # Experiment-scoped, pinned ignore rules used by repo-state embeddings.
+    #
+    # These values are persisted in the experiment config snapshot and loaded from
+    # the database by long-running services. They are intentionally optional at
+    # process startup so that local tools and tests can construct Settings without
+    # an experiment context.
+    mapelites_repo_state_ignore_text: str | None = Field(
+        default=None,
+        alias="MAPELITES_REPO_STATE_IGNORE_TEXT",
+    )
+    mapelites_repo_state_ignore_sha256: str | None = Field(
+        default=None,
+        alias="MAPELITES_REPO_STATE_IGNORE_SHA256",
+    )
     mapelites_file_embedding_cache_backend: Literal["db", "memory"] | None = Field(
         default="db",
         alias="MAPELITES_FILE_EMBEDDING_CACHE_BACKEND",

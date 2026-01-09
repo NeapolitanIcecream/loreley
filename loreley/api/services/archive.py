@@ -9,7 +9,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 
 from loreley.config import Settings, get_settings
-from loreley.core.experiment_config import ExperimentConfigError, resolve_experiment_settings
+from loreley.core.experiment_config import resolve_experiment_settings
 from loreley.core.map_elites.map_elites import MapElitesManager
 from loreley.db.base import session_scope
 from loreley.db.models import MapElitesArchiveCell, MapElitesPcaHistory, MapElitesState
@@ -36,13 +36,10 @@ def list_islands(*, experiment_id: UUID) -> list[str]:
         return values
 
     base_settings = get_settings()
-    try:
-        effective_settings = resolve_experiment_settings(
-            experiment_id=experiment_id,
-            base_settings=base_settings,
-        )
-    except ExperimentConfigError:
-        effective_settings = base_settings
+    effective_settings = resolve_experiment_settings(
+        experiment_id=experiment_id,
+        base_settings=base_settings,
+    )
     default_island = (effective_settings.mapelites_default_island_id or "main").strip() or "main"
     return [default_island]
 

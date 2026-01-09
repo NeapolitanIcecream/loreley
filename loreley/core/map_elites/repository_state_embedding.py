@@ -32,10 +32,10 @@ from .code_embedding import CommitCodeEmbedding, embed_chunked_files
 from .file_embedding_cache import DatabaseFileEmbeddingCache, FileEmbeddingCache, build_file_embedding_cache
 from .preprocess import CodePreprocessor, PreprocessedFile
 from .repository_files import (
+    GitignoreMatcher,
     ROOT_IGNORE_FILES,
     RepositoryFile,
     list_repository_files,
-    load_root_ignore_matcher_from_commit,
 )
 
 log = logger.bind(module="map_elites.repository_state_embedding")
@@ -511,12 +511,20 @@ class RepositoryStateEmbedder:
         if int(parent_agg.file_count or 0) <= 0:
             return None
 
-        # Conservative correctness guard: root ignore file changes can affect eligibility of many files.
+        pinned_ignore = str(getattr(self.settings, "mapelites_repo_state_ignore_text", "") or "").strip()
+        # Ignore rules are pinned for the experiment lifecycle, so root ignore file changes in the
+        # evolved history do not affect eligibility. We log a warning for observability.
+        ignore_changed = False
         for filename in ROOT_IGNORE_FILES:
-            if _root_file_blob_sha(repo, parent_hash, filename) != _root_file_blob_sha(
-                repo, commit_hash, filename
-            ):
-                return None
+            if _root_file_blob_sha(repo, parent_hash, filename) != _root_file_blob_sha(repo, commit_hash, filename):
+                ignore_changed = True
+        if ignore_changed and pinned_ignore:
+            log.warning(
+                "Root ignore files changed for commit {} (parent={}) but ignore rules are pinned; "
+                "the changes will not affect repo-state eligibility.",
+                commit_hash[:12],
+                parent_hash[:12],
+            )
 
         dims = int(parent_agg.dimensions or 0)
         if dims <= 0 or not parent_agg.sum_vector or len(parent_agg.sum_vector) != dims:
@@ -525,7 +533,7 @@ class RepositoryStateEmbedder:
         file_count = int(parent_agg.file_count)
 
         repo_prefix = _resolve_git_prefix(repo, repo_root)
-        ignore_matcher = load_root_ignore_matcher_from_commit(repo, commit_hash)
+        ignore_matcher = GitignoreMatcher.from_gitignore_text(pinned_ignore) if pinned_ignore else None
         preprocess_filter = CodePreprocessor(
             repo_root=repo_root,
             settings=self.settings,

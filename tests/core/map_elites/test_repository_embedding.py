@@ -89,7 +89,6 @@ def test_repository_file_catalog_respects_gitignore_and_extension_filter(
     settings: Settings,
 ) -> None:
     repo = _init_repo(tmp_path)
-    (tmp_path / ".gitignore").write_text("ignored.py\n", encoding="utf-8")
     (tmp_path / "a.py").write_text("print('a')\n", encoding="utf-8")
     (tmp_path / "ignored.py").write_text("print('ignored')\n", encoding="utf-8")
     (tmp_path / "notes.txt").write_text("not code\n", encoding="utf-8")
@@ -100,6 +99,8 @@ def test_repository_file_catalog_respects_gitignore_and_extension_filter(
     settings.mapelites_preprocess_allowed_filenames = []
     settings.mapelites_preprocess_excluded_globs = []
     settings.mapelites_preprocess_max_file_size_kb = 64
+    # Ignore rules are pinned via Settings (experiment snapshot), not loaded from the commit.
+    settings.mapelites_repo_state_ignore_text = "ignored.py\n"
 
     files = list_repository_files(
         repo_root=tmp_path,
@@ -113,25 +114,25 @@ def test_repository_file_catalog_respects_gitignore_and_extension_filter(
     assert files[0].size_bytes > 0
 
 
-def test_repository_file_catalog_does_not_fallback_to_worktree_gitignore_when_commit_hash_specified(
+def test_repository_file_catalog_does_not_load_ignore_files_from_repo(
     tmp_path: Path,
     settings: Settings,
 ) -> None:
     repo = _init_repo(tmp_path)
 
-    # Create a commit WITHOUT `.gitignore`.
+    # Create a commit with a `.gitignore`, but do NOT provide pinned ignore rules.
     (tmp_path / "a.py").write_text("print('a')\n", encoding="utf-8")
     (tmp_path / "ignored.py").write_text("print('ignored')\n", encoding="utf-8")
-    commit = _commit_all(repo, "init")
-
-    # Create a worktree-only `.gitignore` AFTER the commit. When selecting by commit hash,
-    # `.gitignore` should be read strictly from that commit (or treated as absent).
     (tmp_path / ".gitignore").write_text("ignored.py\n", encoding="utf-8")
+    # Ensure the ignored file is tracked so the file catalog can observe it.
+    repo.git.add("-f", "ignored.py")
+    commit = _commit_all(repo, "init")
 
     settings.mapelites_preprocess_allowed_extensions = [".py"]
     settings.mapelites_preprocess_allowed_filenames = []
     settings.mapelites_preprocess_excluded_globs = []
     settings.mapelites_preprocess_max_file_size_kb = 64
+    settings.mapelites_repo_state_ignore_text = ""
 
     files = list_repository_files(
         repo_root=tmp_path,
@@ -148,7 +149,6 @@ def test_repository_file_catalog_respects_loreleyignore_and_extension_filter(
     settings: Settings,
 ) -> None:
     repo = _init_repo(tmp_path)
-    (tmp_path / ".loreleyignore").write_text("ignored.py\n", encoding="utf-8")
     (tmp_path / "a.py").write_text("print('a')\n", encoding="utf-8")
     (tmp_path / "ignored.py").write_text("print('ignored')\n", encoding="utf-8")
     (tmp_path / "notes.txt").write_text("not code\n", encoding="utf-8")
@@ -159,6 +159,7 @@ def test_repository_file_catalog_respects_loreleyignore_and_extension_filter(
     settings.mapelites_preprocess_allowed_filenames = []
     settings.mapelites_preprocess_excluded_globs = []
     settings.mapelites_preprocess_max_file_size_kb = 64
+    settings.mapelites_repo_state_ignore_text = "ignored.py\n"
 
     files = list_repository_files(
         repo_root=tmp_path,
@@ -175,21 +176,16 @@ def test_repository_file_catalog_loreleyignore_can_override_gitignore(
     settings: Settings,
 ) -> None:
     repo = _init_repo(tmp_path)
-    (tmp_path / ".gitignore").write_text("ignored.py\n", encoding="utf-8")
-    # `.loreleyignore` is applied after `.gitignore`, so it can re-include via `!`.
-    (tmp_path / ".loreleyignore").write_text("!ignored.py\n", encoding="utf-8")
     (tmp_path / "a.py").write_text("print('a')\n", encoding="utf-8")
     (tmp_path / "ignored.py").write_text("print('ignored')\n", encoding="utf-8")
-
-    # `.gitignore` would prevent `ignored.py` from being staged; force-add it so we can
-    # validate the ignore matcher behavior for a tracked file.
-    repo.git.add("-f", "ignored.py")
     commit = _commit_all(repo, "init")
 
     settings.mapelites_preprocess_allowed_extensions = [".py"]
     settings.mapelites_preprocess_allowed_filenames = []
     settings.mapelites_preprocess_excluded_globs = []
     settings.mapelites_preprocess_max_file_size_kb = 64
+    # `.loreleyignore` rules are applied after `.gitignore`, so they can re-include via `!`.
+    settings.mapelites_repo_state_ignore_text = "ignored.py\n!ignored.py\n"
 
     files = list_repository_files(
         repo_root=tmp_path,
@@ -201,25 +197,26 @@ def test_repository_file_catalog_loreleyignore_can_override_gitignore(
     assert paths == ["a.py", "ignored.py"]
 
 
-def test_repository_file_catalog_does_not_fallback_to_worktree_loreleyignore_when_commit_hash_specified(
+def test_repository_file_catalog_uses_pinned_ignore_even_when_repo_contains_ignore_files(
     tmp_path: Path,
     settings: Settings,
 ) -> None:
     repo = _init_repo(tmp_path)
 
-    # Create a commit WITHOUT `.loreleyignore`.
+    # Ignore files exist in the repo, but pinned ignore rules override the runtime behavior.
     (tmp_path / "a.py").write_text("print('a')\n", encoding="utf-8")
     (tmp_path / "ignored.py").write_text("print('ignored')\n", encoding="utf-8")
-    commit = _commit_all(repo, "init")
-
-    # Create a worktree-only `.loreleyignore` AFTER the commit. When selecting by commit hash,
-    # `.loreleyignore` should be read strictly from that commit (or treated as absent).
+    (tmp_path / ".gitignore").write_text("ignored.py\n", encoding="utf-8")
     (tmp_path / ".loreleyignore").write_text("ignored.py\n", encoding="utf-8")
+    # Ensure the ignored file is tracked so the file catalog can observe it.
+    repo.git.add("-f", "ignored.py")
+    commit = _commit_all(repo, "init")
 
     settings.mapelites_preprocess_allowed_extensions = [".py"]
     settings.mapelites_preprocess_allowed_filenames = []
     settings.mapelites_preprocess_excluded_globs = []
     settings.mapelites_preprocess_max_file_size_kb = 64
+    settings.mapelites_repo_state_ignore_text = ""
 
     files = list_repository_files(
         repo_root=tmp_path,

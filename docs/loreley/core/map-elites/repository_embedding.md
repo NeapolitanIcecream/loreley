@@ -36,7 +36,7 @@ Eligibility is determined by a combination of:
 - Scheduler startup approval gate: the root eligible file count is scanned at startup and must be explicitly approved by the operator (interactive y/n prompt by default, or `--yes` / `SCHEDULER_STARTUP_APPROVE=true` for non-interactive runs).
 
 !!! note
-    Ignore filtering is currently **best-effort** and only uses the repository root `.gitignore` and `.loreleyignore` at the requested `commit_hash`. `.loreleyignore` rules are applied after `.gitignore` (so `!pattern` can re-include). Nested `.gitignore` files and global excludes are not applied.
+    Ignore filtering is **best-effort** and uses a repository-root `.gitignore` + `.loreleyignore` matcher. In experiment runs, the effective ignore rules are **pinned at experiment creation time** and persisted in `Experiment.config_snapshot` as `mapelites_repo_state_ignore_text` (derived from the experiment root commit). `.loreleyignore` rules are applied after `.gitignore` (so `!pattern` can re-include). Nested `.gitignore` files and global excludes are not applied.
 
 For each eligible file we keep:
 
@@ -89,11 +89,12 @@ The commit vector is derived as `sum_vector / file_count`.
 
 ### Incremental updates
 
-When a parent aggregate exists, the commit has exactly one parent, and root ignore files
-(`.gitignore` and `.loreleyignore`) are unchanged, the child aggregate is derived from the
-parent by applying the parent..child diff (add/modify/delete/rename) and embedding only the
-new/changed blobs. If these conditions are not met (merge commits, missing parent aggregate,
-diff failures, or root ignore changes), runtime ingestion fails fast.
+When a parent aggregate exists and the commit has exactly one parent, the child aggregate is
+derived from the parent by applying the parent..child diff (add/modify/delete/rename) and
+embedding only the new/changed blobs. Ignore rules are pinned for the experiment lifecycle,
+so ignore file changes in the evolved history do not affect eligibility. If the commit shape
+is unsupported (merge commits, missing parent aggregate, or diff failures), runtime ingestion
+fails fast.
 
 ## Commit aggregation
 

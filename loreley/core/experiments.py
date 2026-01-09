@@ -16,13 +16,15 @@ from typing import Any, Mapping
 from urllib.parse import urlparse, urlunparse
 
 from git import Repo
-from git.exc import InvalidGitRepositoryError, NoSuchPathError
+from git.exc import BadName, GitCommandError, InvalidGitRepositoryError, NoSuchPathError
 from loguru import logger
 from rich.console import Console
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from loreley.config import Settings, get_settings
+from loreley.core.experiment_config import BEHAVIOR_SNAPSHOT_PREFIXES, EXPERIMENT_SNAPSHOT_SCHEMA_VERSION
+from loreley.core.map_elites.repository_files import ROOT_IGNORE_FILES
 from loreley.db.base import session_scope
 from loreley.db.models import Experiment, Repository
 
@@ -243,8 +245,47 @@ def canonicalise_repository(
         log.error("Failed to resolve repository {}: {}", slug, exc)
         raise ExperimentError(f"Failed to resolve repository {slug}: {exc}") from exc
 
+def _ensure_commit_available(*, repo: Repo, commit_hash: str) -> str:
+    """Return canonical hash for commit, fetching from remotes when needed."""
 
-def build_experiment_config_snapshot(settings: Settings) -> dict[str, Any]:
+    commit = (commit_hash or "").strip()
+    if not commit:
+        raise ExperimentError("MAPELITES_EXPERIMENT_ROOT_COMMIT is required.")
+    try:
+        return str(getattr(repo.commit(commit), "hexsha", "") or "").strip()
+    except BadName:
+        pass
+
+    console.log(f"[yellow]Fetching missing commit[/] {commit}")
+    try:
+        repo.git.fetch("--all", "--tags")
+        return str(getattr(repo.commit(commit), "hexsha", "") or "").strip()
+    except GitCommandError as exc:
+        raise ExperimentError(f"Cannot fetch commit {commit}: {exc}") from exc
+    except BadName as exc:
+        raise ExperimentError(f"Commit {commit} not found after fetch.") from exc
+
+
+def _load_root_ignore_text_from_commit(*, repo: Repo, commit_hash: str) -> str:
+    """Return pinned root ignore rules by reading ignore files from a commit."""
+
+    commit = (commit_hash or "").strip()
+    if not commit:
+        return ""
+    chunks: list[str] = []
+    for filename in ROOT_IGNORE_FILES:
+        try:
+            chunks.append(repo.git.show(f"{commit}:{filename}"))
+        except (GitCommandError, BadName):
+            chunks.append("")
+    return "\n".join(chunks).strip()
+
+
+def build_experiment_config_snapshot(
+    settings: Settings,
+    *,
+    repo: Repo,
+) -> dict[str, Any]:
     """Extract the subset of Settings that defines the experiment configuration.
 
     This intentionally focuses on MAP-Elites and evaluation-related knobs so that
@@ -258,12 +299,32 @@ def build_experiment_config_snapshot(settings: Settings) -> dict[str, Any]:
             "Configure it for the scheduler so it can persist a stable experiment-scoped behaviour snapshot.",
         )
 
+    root_ref = (settings.mapelites_experiment_root_commit or "").strip()
+    if not root_ref:
+        raise ExperimentError(
+            "MAPELITES_EXPERIMENT_ROOT_COMMIT is required to derive an experiment config snapshot.",
+        )
+
+    canonical_root = _ensure_commit_available(repo=repo, commit_hash=root_ref)
+    if not canonical_root:
+        raise ExperimentError(f"Cannot resolve root commit {root_ref!r}.")
+
+    ignore_text = _load_root_ignore_text_from_commit(repo=repo, commit_hash=canonical_root)
+    ignore_sha = hashlib.sha256(ignore_text.encode("utf-8")).hexdigest()
+
     payload = settings.model_dump()
-    prefixes = ("mapelites_", "worker_evaluator_")
     snapshot: dict[str, Any] = {}
+    snapshot["experiment_snapshot_schema_version"] = int(EXPERIMENT_SNAPSHOT_SCHEMA_VERSION)
     for key, value in payload.items():
-        if key.startswith(prefixes):
-            snapshot[key] = _coerce_json_compatible(value)
+        if not key.startswith(BEHAVIOR_SNAPSHOT_PREFIXES):
+            continue
+        if key == "mapelites_experiment_root_commit":
+            snapshot[key] = canonical_root
+            continue
+        snapshot[key] = _coerce_json_compatible(value)
+    # Pin root ignore rules for the full experiment lifecycle.
+    snapshot["mapelites_repo_state_ignore_text"] = ignore_text
+    snapshot["mapelites_repo_state_ignore_sha256"] = ignore_sha
     return snapshot
 
 
@@ -280,10 +341,10 @@ def hash_experiment_config(snapshot: Mapping[str, Any]) -> str:
     return hashlib.sha256(normalised.encode("utf-8")).hexdigest()
 
 
-def derive_experiment(settings: Settings, repository: Repository) -> Experiment:
+def derive_experiment(settings: Settings, repository: Repository, *, repo: Repo) -> Experiment:
     """Return or create an Experiment row for the given repository/settings."""
 
-    snapshot = build_experiment_config_snapshot(settings)
+    snapshot = build_experiment_config_snapshot(settings, repo=repo)
     config_hash = hash_experiment_config(snapshot)
 
     try:
@@ -335,7 +396,7 @@ def get_or_create_experiment(
     *,
     settings: Settings | None = None,
     repo_root: Path | str | None = None,
-) -> tuple[Repository, Experiment]:
+) -> tuple[Repository, Experiment, Settings]:
     """Resolve the Repository and Experiment for the current process.
 
     This helper is intended to be called once during scheduler startup so that
@@ -355,7 +416,15 @@ def get_or_create_experiment(
         raise ExperimentError(message) from exc
 
     repository = canonicalise_repository(settings=settings, repo_root=root, repo=repo_obj)
-    experiment = derive_experiment(settings, repository)
+    experiment = derive_experiment(settings, repository, repo=repo_obj)
+    # Reload effective settings from the persisted snapshot so the database is the
+    # single source of truth for experiment-scoped behaviour configuration.
+    from loreley.core.experiment_config import ExperimentConfigError, resolve_experiment_settings
+
+    try:
+        effective_settings = resolve_experiment_settings(experiment_id=experiment.id, base_settings=settings)
+    except ExperimentConfigError as exc:
+        raise ExperimentError(str(exc)) from exc
 
     console.log(
         "[bold cyan]Using experiment[/] id={} repo={} hash={}".format(
@@ -370,6 +439,6 @@ def get_or_create_experiment(
         repository.slug,
         experiment.config_hash,
     )
-    return repository, experiment
+    return repository, experiment, effective_settings
 
 

@@ -3,7 +3,8 @@
 This module provides a lightweight way to enumerate *eligible* files for a given
 git commit hash while applying basic filtering:
 
-- Respect the repository root `.gitignore` and `.loreleyignore` (best-effort, glob-based matching).
+- Respect pinned repository-root ignore rules provided by the experiment snapshot
+  (`Settings.mapelites_repo_state_ignore_text`) using best-effort glob matching.
 - Respect MAP-Elites preprocessing filters (allowed extensions/filenames, excluded globs).
 - Exclude obviously unsuitable files (oversized blobs).
 
@@ -18,7 +19,7 @@ from pathlib import Path, PurePosixPath
 from typing import Iterable, Sequence
 
 from git import Repo
-from git.exc import BadName, GitCommandError, InvalidGitRepositoryError
+from git.exc import BadName, InvalidGitRepositoryError
 from loguru import logger
 
 from loreley.config import Settings, get_settings
@@ -30,40 +31,11 @@ __all__ = [
     "RepositoryFile",
     "GitignoreMatcher",
     "ROOT_IGNORE_FILES",
-    "load_root_ignore_matcher_from_commit",
     "RepositoryFileCatalog",
     "list_repository_files",
 ]
 
 ROOT_IGNORE_FILES: tuple[str, ...] = (".gitignore", ".loreleyignore")
-
-
-def load_root_ignore_matcher_from_commit(repo: Repo, commit_hash: str) -> GitignoreMatcher | None:
-    """Load repository-root ignore rules from a specific commit.
-
-    Files:
-    - `.gitignore`
-    - `.loreleyignore`
-
-    Notes:
-    - Files are read strictly from the specified commit; missing files are treated as absent.
-    - Rules are applied in order: `.gitignore` first, then `.loreleyignore`.
-    """
-    commit = str(commit_hash or "").strip()
-    if not commit:
-        return None
-
-    chunks: list[str] = []
-    for filename in ROOT_IGNORE_FILES:
-        try:
-            chunks.append(repo.git.show(f"{commit}:{filename}"))
-        except (GitCommandError, BadName):
-            chunks.append("")
-
-    combined = "\n".join(chunks).strip()
-    if not combined:
-        return None
-    return GitignoreMatcher.from_gitignore_text(combined)
 
 
 @dataclass(frozen=True, slots=True)
@@ -323,43 +295,14 @@ class RepositoryFileCatalog:
         return git_rel_path
 
     def _load_root_ignore_matcher(self) -> GitignoreMatcher | None:
-        """Load ignore rules from git root at the requested commit hash.
-
-        Files:
-        - `.gitignore`
-        - `.loreleyignore`
-
-        Rules are applied in order: `.gitignore` first, then `.loreleyignore`.
-        """
+        """Load pinned ignore rules from Settings (experiment snapshot)."""
         if not self._repo:
             return None
 
-        if self.commit_hash:
-            # When a commit hash is requested, do not fall back to the working tree.
-            # If ignore files do not exist at that commit, treat them as absent.
-            return load_root_ignore_matcher_from_commit(self._repo, self.commit_hash)
-        else:
-            # Fall back to working tree ignore files when commit hash is not specified.
-            git_root = self._git_root or self.repo_root
-            gitignore_path = (git_root / ".gitignore").resolve()
-            loreleyignore_path = (git_root / ".loreleyignore").resolve()
-            gitignore: str | None = None
-            loreleyignore: str | None = None
-            try:
-                if gitignore_path.exists():
-                    gitignore = gitignore_path.read_text(encoding="utf-8", errors="ignore")
-            except OSError:  # pragma: no cover - filesystem edge cases
-                gitignore = None
-            try:
-                if loreleyignore_path.exists():
-                    loreleyignore = loreleyignore_path.read_text(encoding="utf-8", errors="ignore")
-            except OSError:  # pragma: no cover - filesystem edge cases
-                loreleyignore = None
-
-        combined = "\n".join([gitignore or "", loreleyignore or ""]).strip()
-        if not combined:
+        pinned = str(getattr(self.settings, "mapelites_repo_state_ignore_text", "") or "").strip()
+        if not pinned:
             return None
-        return GitignoreMatcher.from_gitignore_text(combined)
+        return GitignoreMatcher.from_gitignore_text(pinned)
 
 
 def list_repository_files(

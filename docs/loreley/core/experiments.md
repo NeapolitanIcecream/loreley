@@ -22,9 +22,12 @@ Helpers for deriving canonical repository and experiment context from the curren
 
 ## Experiment configuration snapshots
 
-- **`build_experiment_config_snapshot(settings)`**: extracts just the configuration fields that define an experiment.  
+- **`build_experiment_config_snapshot(settings, *, repo)`**: extracts just the configuration fields that define an experiment.  
   - Starts from `settings.model_dump()`.  
-  - Keeps only keys with prefixes `mapelites_` and `worker_evaluator_`, so that experiments stay stable across unrelated configuration changes (logging, Redis URLs, etc.).  
+  - Keeps only keys with prefixes `mapelites_`, `worker_evaluator_`, `worker_evolution_`, and `worker_planning_trajectory_`, so that experiments stay stable across unrelated configuration changes (logging, Redis URLs, etc.).  
+  - Resolves `mapelites_experiment_root_commit` to a canonical full hash and persists it in the snapshot.  
+  - Pins repository-root ignore rules at experiment creation time by persisting `mapelites_repo_state_ignore_text` and `mapelites_repo_state_ignore_sha256` (derived from the root commit).  
+  - Adds `experiment_snapshot_schema_version` and requires it when loading experiment settings; Loreley does not support forward-compatible snapshot schemas in development (reset DB to upgrade).  
   - Recursively applies `_coerce_json_compatible()` so that non‑finite floats (NaN/±inf) are encoded as a reversible JSON sentinel, keeping snapshots safe for PostgreSQL JSONB and avoiding experiment-hash collisions:
     - `-inf` → `{"__float__":"-inf"}`
     - `inf` → `{"__float__":"inf"}`
@@ -36,7 +39,7 @@ Helpers for deriving canonical repository and experiment context from the curren
 
 ## Experiment derivation
 
-- **`derive_experiment(settings, repository)`**: returns or creates an `Experiment` row for a given repository and settings.  
+- **`derive_experiment(settings, repository, *, repo)`**: returns or creates an `Experiment` row for a given repository and settings.  
   - Builds a snapshot via `build_experiment_config_snapshot()`, hashes it with `hash_experiment_config()`, and looks for an existing `Experiment` with the same `(repository_id, config_hash)`.  
   - When found, returns the existing row unchanged.  
   - Otherwise creates a new `Experiment` with:
@@ -45,18 +48,19 @@ Helpers for deriving canonical repository and experiment context from the curren
     - `status="active"`.  
   - Logs both to the console and to the structured logger when creating a new experiment.
 
-- **`get_or_create_experiment(*, settings=None, repo_root=None)`**: convenience helper that resolves both `Repository` and `Experiment` for the current process.  
+- **`get_or_create_experiment(*, settings=None, repo_root=None)`**: convenience helper that resolves the `Repository` / `Experiment` pair and returns effective experiment-scoped settings.  
   - Resolves settings via `get_settings()` when not provided explicitly.  
   - Chooses the repository root in this order: explicit `repo_root`, `Settings.scheduler_repo_root`, then `Settings.worker_repo_worktree`.  
   - Validates that the chosen root is a git repository, logging and raising `ExperimentError` when it is not.  
   - Reuses the discovered `git.Repo` instance when calling `canonicalise_repository()` to avoid redundant discovery work.  
   - Calls `derive_experiment()` to obtain the current experiment and logs the selected `(repository.slug, experiment.id, experiment.config_hash)` pair.  
-  - Returns a `(Repository, Experiment)` tuple that callers (such as `loreley.scheduler.main.EvolutionScheduler`) pass downstream to the MAP‑Elites manager and sampler so that all jobs and archive state share the same experiment identifier.
+  - Loads the persisted experiment snapshot from the database and returns an **effective `Settings`** instance that applies experiment-scoped overrides, making the DB snapshot the single source of truth for experiment behaviour.  
+  - Returns `(Repository, Experiment, Settings)` so callers can pass the effective settings downstream consistently.
 
 ## Logging and error handling
 
 - All operations are logged through a `loguru` logger bound with `module="core.experiments"` plus a `rich` console for user‑facing status messages.  
 - Git and database failures are wrapped into `ExperimentError` with concise, user‑oriented messages while preserving the original exception as the cause.  
-- Configuration snapshots intentionally focus on MAP‑Elites and evaluator knobs so that operational tweaks (logging verbosity, queue names, etc.) do not fragment experiments in the database.
+- Configuration snapshots intentionally focus on experiment behaviour knobs so that operational tweaks (logging verbosity, queue names, etc.) do not fragment experiments in the database.
 
 

@@ -42,3 +42,16 @@ def test_apply_experiment_config_snapshot_restores_non_finite_float_markers(sett
     assert effective.mapelites_archive_threshold_min == float("-inf")
 
 
+def test_apply_experiment_config_snapshot_overrides_worker_evolution_and_trajectory(settings: Settings) -> None:
+    settings.worker_evolution_global_goal = "Goal A"
+    settings.worker_planning_trajectory_block_size = 8
+
+    snapshot = {
+        "worker_evolution_global_goal": "Goal B",
+        "worker_planning_trajectory_block_size": 16,
+    }
+
+    effective = apply_experiment_config_snapshot(base_settings=settings, snapshot=snapshot)
+    assert effective.worker_evolution_global_goal == "Goal B"
+    assert effective.worker_planning_trajectory_block_size == 16
+

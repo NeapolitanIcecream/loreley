@@ -53,21 +53,23 @@ class EvolutionScheduler:
     """Orchestrate job sampling, dispatching, and MAP-Elites maintenance."""
 
     def __init__(self, *, settings: Settings | None = None) -> None:
-        self.settings = settings or get_settings()
+        base_settings = settings or get_settings()
+        self.settings = base_settings
         self.console = console
         self._advisory_lock: AdvisoryLock | None = None
         # Ensure DB schema (including MAP-Elites incremental tables) exists before use.
         ensure_database_schema()
         self.repo_root = self._resolve_repo_root()
         self._repo = self._init_repo()
-        self._root_commit_hash = (self.settings.mapelites_experiment_root_commit or "").strip() or None
         try:
-            self.repository, self.experiment = get_or_create_experiment(
-                settings=self.settings,
+            self.repository, self.experiment, effective_settings = get_or_create_experiment(
+                settings=base_settings,
                 repo_root=self.repo_root,
             )
         except ExperimentError as exc:
             raise SchedulerError(str(exc)) from exc
+        self.settings = effective_settings
+        self._root_commit_hash = (self.settings.mapelites_experiment_root_commit or "").strip() or None
 
         # Enforce single-scheduler-per-experiment using a session-level Postgres advisory lock.
         self._advisory_lock = self._acquire_experiment_lock()
@@ -301,6 +303,7 @@ class EvolutionScheduler:
             "excluded_globs": list(self.settings.mapelites_preprocess_excluded_globs or []),
             "max_file_size_kb": int(self.settings.mapelites_preprocess_max_file_size_kb),
             "root_ignore_files": [".gitignore", ".loreleyignore"],
+            "root_ignore_pinned_sha256": (self.settings.mapelites_repo_state_ignore_sha256 or "").strip() or None,
         }
 
         scan = scan_repo_state_root(
