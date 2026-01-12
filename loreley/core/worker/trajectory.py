@@ -310,7 +310,6 @@ def get_or_build_chunk_summary(
         return ""
 
     model = (settings.worker_planning_trajectory_summary_model or "").strip() or settings.worker_evolution_commit_model
-    prompt_signature = (settings.worker_planning_trajectory_summary_prompt_signature or "v1").strip() or "v1"
 
     existing = session.execute(
         select(CommitChunkSummary).where(
@@ -318,11 +317,17 @@ def get_or_build_chunk_summary(
             CommitChunkSummary.start_commit_hash == start_commit_hash,
             CommitChunkSummary.end_commit_hash == end_commit_hash,
             CommitChunkSummary.block_size == block_size,
-            CommitChunkSummary.model == model,
-            CommitChunkSummary.prompt_signature == prompt_signature,
         )
     ).scalar_one_or_none()
     if existing is not None:
+        cached_model = (getattr(existing, "model", "") or "").strip()
+        if cached_model and cached_model != model:
+            raise TrajectoryError(
+                "Chunk summary cache model mismatch "
+                f"(expected {model!r} got {cached_model!r}). "
+                "Loreley does not support forward-compatible summary caches; "
+                "reset the database schema to upgrade.",
+            )
         return (existing.summary or "").strip()
 
     step_cards = _collect_chunk_cards(
@@ -358,7 +363,6 @@ def get_or_build_chunk_summary(
         end_commit_hash=end_commit_hash,
         block_size=block_size,
         model=model,
-        prompt_signature=prompt_signature,
         step_count=block_size,
         summary=cleaned,
     )
@@ -374,10 +378,17 @@ def get_or_build_chunk_summary(
                 CommitChunkSummary.start_commit_hash == start_commit_hash,
                 CommitChunkSummary.end_commit_hash == end_commit_hash,
                 CommitChunkSummary.block_size == block_size,
-                CommitChunkSummary.model == model,
-                CommitChunkSummary.prompt_signature == prompt_signature,
             )
         ).scalar_one_or_none()
+        if existing is not None:
+            cached_model = (getattr(existing, "model", "") or "").strip()
+            if cached_model and cached_model != model:
+                raise TrajectoryError(
+                    "Chunk summary cache model mismatch "
+                    f"(expected {model!r} got {cached_model!r}). "
+                    "Loreley does not support forward-compatible summary caches; "
+                    "reset the database schema to upgrade.",
+                )
         return (existing.summary or "").strip() if existing else cleaned
     return cleaned
 

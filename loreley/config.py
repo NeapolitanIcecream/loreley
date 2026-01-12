@@ -361,10 +361,6 @@ class Settings(BaseSettings):
         default=800,
         alias="WORKER_PLANNING_TRAJECTORY_SUMMARY_MAX_CHARS",
     )
-    worker_planning_trajectory_summary_prompt_signature: str = Field(
-        default="v1",
-        alias="WORKER_PLANNING_TRAJECTORY_SUMMARY_PROMPT_SIGNATURE",
-    )
 
     mapelites_preprocess_max_files: int = Field(
         default=6,

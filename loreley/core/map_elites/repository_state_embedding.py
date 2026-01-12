@@ -2,8 +2,8 @@
 
 This module implements the repo-state embedding design:
 
-- Enumerate eligible files for a given commit hash respecting `.gitignore` and
-  `.loreleyignore` and basic MAP-Elites preprocessing filters.
+- Enumerate eligible files for a given commit hash using pinned ignore rules
+  from the experiment snapshot plus basic MAP-Elites preprocessing filters.
 - Reuse a file-level embedding cache keyed by git blob SHA.
 - Only embed cache misses (new/modified files).
 - Aggregate all file embeddings into a single commit vector via **uniform mean**
@@ -13,8 +13,6 @@ This module implements the repo-state embedding design:
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
-import json
 from pathlib import Path
 from typing import Iterable, Literal, Sequence, cast
 from uuid import UUID
@@ -159,14 +157,14 @@ class RepositoryStateEmbedder:
             embedding = CommitCodeEmbedding(
                 files=(),
                 vector=vector,
-                model=str(aggregate.embedding_model),
+                model=self.cache.embedding_model,
                 dimensions=len(vector),
             )
             log.info(
                 "Repo-state aggregate cache hit for commit {} (files={} dims={} capped={})",
                 canonical,
                 aggregate.file_count,
-                aggregate.dimensions,
+                len(vector),
                 aggregate.capped,
             )
             return embedding, stats
@@ -191,14 +189,14 @@ class RepositoryStateEmbedder:
             embedding = CommitCodeEmbedding(
                 files=(),
                 vector=vector,
-                model=str(agg_row.embedding_model),
+                model=self.cache.embedding_model,
                 dimensions=len(vector),
             )
             log.info(
                 "Repo-state aggregate incrementally updated for commit {} (files={} dims={} capped={})",
                 canonical,
                 agg_row.file_count,
-                agg_row.dimensions,
+                len(vector),
                 agg_row.capped,
             )
             return embedding, stats
@@ -296,7 +294,6 @@ class RepositoryStateEmbedder:
             repo_root=root,
             sum_vector=sum_vector,
             file_count=aggregated_count,
-            dimensions=embedding.dimensions,
             capped=False,
         )
         return embedding, stats
@@ -327,16 +324,6 @@ class RepositoryStateEmbedder:
         if not isinstance(self.cache, DatabaseFileEmbeddingCache):
             return None
 
-        repo = self._repo
-        if repo is None:
-            try:
-                repo = Repo(repo_root, search_parent_directories=True)
-            except Exception:
-                return None
-
-        repo_prefix = _resolve_git_prefix(repo, repo_root)
-        filter_sig = _build_filter_signature(settings=self.settings, repo_prefix=repo_prefix)
-
         requested_dims = int(getattr(self.cache, "requested_dimensions", 0))
         if requested_dims <= 0:
             return None
@@ -345,10 +332,6 @@ class RepositoryStateEmbedder:
                 stmt = select(MapElitesRepoStateAggregate).where(
                     MapElitesRepoStateAggregate.experiment_id == self._experiment_id,
                     MapElitesRepoStateAggregate.commit_hash == str(commit_hash),
-                    MapElitesRepoStateAggregate.embedding_model == str(self.cache.embedding_model),
-                    MapElitesRepoStateAggregate.pipeline_signature == str(self.cache.pipeline_signature),
-                    MapElitesRepoStateAggregate.filter_signature == str(filter_sig),
-                    MapElitesRepoStateAggregate.dimensions == requested_dims,
                 )
                 row = session.execute(stmt).scalar_one_or_none()
         except Exception as exc:  # pragma: no cover - DB failure handling
@@ -361,7 +344,7 @@ class RepositoryStateEmbedder:
             return None
         if not row.sum_vector:
             return None
-        if int(row.dimensions or 0) != len(row.sum_vector):
+        if len(row.sum_vector) != requested_dims:
             return None
         return row
 
@@ -372,7 +355,6 @@ class RepositoryStateEmbedder:
         repo_root: Path,
         sum_vector: Vector,
         file_count: int,
-        dimensions: int,
         capped: bool,
     ) -> None:
         if self._experiment_id is None:
@@ -381,25 +363,11 @@ class RepositoryStateEmbedder:
             return
         if file_count <= 0 or not sum_vector:
             return
-        if len(sum_vector) != int(dimensions or 0):
+        if len(sum_vector) != int(getattr(self.cache, "requested_dimensions", 0) or 0):
             return
-
-        repo = self._repo
-        if repo is None:
-            try:
-                repo = Repo(repo_root, search_parent_directories=True)
-            except Exception:
-                return
-
-        repo_prefix = _resolve_git_prefix(repo, repo_root)
-        filter_sig = _build_filter_signature(settings=self.settings, repo_prefix=repo_prefix)
         row = MapElitesRepoStateAggregate(
             experiment_id=self._experiment_id,
             commit_hash=str(commit_hash),
-            embedding_model=str(self.cache.embedding_model),
-            dimensions=int(dimensions),
-            pipeline_signature=str(self.cache.pipeline_signature),
-            filter_signature=str(filter_sig),
             file_count=int(file_count),
             sum_vector=[float(v) for v in sum_vector],
             capped=bool(capped),
@@ -526,10 +494,13 @@ class RepositoryStateEmbedder:
                 parent_hash[:12],
             )
 
-        dims = int(parent_agg.dimensions or 0)
-        if dims <= 0 or not parent_agg.sum_vector or len(parent_agg.sum_vector) != dims:
+        raw_sum = tuple(float(v) for v in (parent_agg.sum_vector or ()))
+        dims = len(raw_sum)
+        if dims <= 0:
             return None
-        sum_vec: Vector = tuple(float(v) for v in parent_agg.sum_vector)
+        if dims != int(getattr(self.cache, "requested_dimensions", 0) or 0):
+            return None
+        sum_vec: Vector = raw_sum
         file_count = int(parent_agg.file_count)
 
         repo_prefix = _resolve_git_prefix(repo, repo_root)
@@ -563,7 +534,6 @@ class RepositoryStateEmbedder:
                 repo_root=repo_root,
                 sum_vector=sum_vec,
                 file_count=file_count,
-                dimensions=dims,
                 capped=False,
             )
             persisted = self._load_aggregate(commit_hash=commit_hash, repo_root=repo_root)
@@ -670,7 +640,6 @@ class RepositoryStateEmbedder:
             repo_root=repo_root,
             sum_vector=sum_vec,
             file_count=file_count,
-            dimensions=dims,
             capped=False,
         )
         persisted = self._load_aggregate(commit_hash=commit_hash, repo_root=repo_root)
@@ -815,25 +784,6 @@ def _coerce_uuid(value: UUID | str | None) -> UUID | None:
         return UUID(text)
     except Exception:
         return None
-
-
-def _build_filter_signature(*, settings: Settings, repo_prefix: str | None) -> str:
-    """Hash all knobs that affect repo-state file selection (not embedding output)."""
-    payload = {
-        "version": 3,
-        "gitignore": "root_only_best_effort_v2_gitignore_plus_loreleyignore",
-        "repo_prefix": repo_prefix or None,
-        "filters": {
-            "allowed_extensions": list(settings.mapelites_preprocess_allowed_extensions or []),
-            "allowed_filenames": list(settings.mapelites_preprocess_allowed_filenames or []),
-            "excluded_globs": list(settings.mapelites_preprocess_excluded_globs or []),
-            "max_file_size_kb": int(settings.mapelites_preprocess_max_file_size_kb),
-        },
-    }
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
-        "utf-8"
-    )
-    return hashlib.sha256(encoded).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)

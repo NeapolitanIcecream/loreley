@@ -229,8 +229,7 @@ class CommitChunkSummary(TimestampMixin, Base):
     start_commit_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
     end_commit_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
     block_size: Mapped[int] = mapped_column(Integer, primary_key=True)
-    model: Mapped[str] = mapped_column(String(255), primary_key=True)
-    prompt_signature: Mapped[str] = mapped_column(String(64), primary_key=True)
+    model: Mapped[str] = mapped_column(String(255), default="", nullable=False)
 
     step_count: Mapped[int] = mapped_column(Integer, nullable=False)
     summary: Mapped[str] = mapped_column(Text, nullable=False)
@@ -239,7 +238,7 @@ class CommitChunkSummary(TimestampMixin, Base):
         return (
             "<CommitChunkSummary "
             f"start={self.start_commit_hash[:12]!r} end={self.end_commit_hash[:12]!r} "
-            f"block={self.block_size!r} model={self.model!r} sig={self.prompt_signature!r}>"
+            f"block={self.block_size!r} model={self.model!r}>"
         )
 
 
@@ -567,11 +566,6 @@ class MapElitesRepoStateAggregate(TimestampMixin, Base):
             "experiment_id",
             "commit_hash",
         ),
-        Index(
-            "ix_map_elites_repo_state_aggregates_signature",
-            "pipeline_signature",
-            "filter_signature",
-        ),
     )
 
     experiment_id: Mapped[uuid.UUID] = mapped_column(
@@ -580,11 +574,6 @@ class MapElitesRepoStateAggregate(TimestampMixin, Base):
         primary_key=True,
     )
     commit_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
-
-    embedding_model: Mapped[str] = mapped_column(String(255), primary_key=True)
-    dimensions: Mapped[int] = mapped_column(Integer, primary_key=True)
-    pipeline_signature: Mapped[str] = mapped_column(String(128), primary_key=True)
-    filter_signature: Mapped[str] = mapped_column(String(128), primary_key=True)
 
     file_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     sum_vector: Mapped[list[float]] = mapped_column(
@@ -601,6 +590,5 @@ class MapElitesRepoStateAggregate(TimestampMixin, Base):
         return (
             "<MapElitesRepoStateAggregate "
             f"experiment_id={self.experiment_id!r} commit={self.commit_hash[:12]!r} "
-            f"model={self.embedding_model!r} dims={self.dimensions!r} "
             f"files={self.file_count!r} capped={self.capped!r}>"
         )
