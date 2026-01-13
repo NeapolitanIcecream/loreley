@@ -9,7 +9,7 @@ Thin CLI wrapper for running the Loreley evolution scheduler.
 - Configure global Loguru logging based on `loreley.config.Settings.log_level`
   with optional per-invocation overrides.
 - Delegate scheduler-specific CLI parsing and control flow to
-  `loreley.scheduler.main.main`.
+  `loreley.entrypoints.run_scheduler`, which calls `loreley.scheduler.main.main(...)`.
 - Provide a convenient entrypoint for process managers and local development
   without having to remember the module path.
 
@@ -32,11 +32,11 @@ interaction are all implemented in `loreley.scheduler.main.EvolutionScheduler`.
   always persisted for later debugging.
 - Imports `loreley.scheduler.main.main` lazily after logging is configured; any
   import failure is reported via console/log and exits with code `1`.
-- Forwards any remaining CLI arguments to `loreley.scheduler.main.main(argv)`,
-  which supports the `--once` flag to run a single scheduler tick.
+- Runs the scheduler loop via `loreley.entrypoints.run_scheduler(...)`, which supports
+  `--once` (single tick) and `--yes` (auto-approve startup approval).
 
-Exit codes are determined by `loreley.scheduler.main.main`: on success it returns
-`0`, while unexpected exceptions bubble up and cause a non-zero exit.
+Exit codes are determined by `loreley.scheduler.main.main(...)`: on success it returns
+`0`, while startup failures (e.g. lock contention) return non-zero exit codes.
 
 ## CLI usage
 
@@ -49,12 +49,12 @@ uv run python script/run_scheduler.py --log-level DEBUG
 uv run python script/run_scheduler.py --yes --once # non-interactive smoke test
 ```
 
-The wrapper is equivalent to invoking the module directly:
+The wrapper is equivalent to invoking the unified CLI directly:
 
 ```bash
-uv run python -m loreley.scheduler.main        # continuous loop
-uv run python -m loreley.scheduler.main --once # single tick
-uv run python -m loreley.scheduler.main --yes --once # non-interactive single tick
+uv run loreley scheduler
+uv run loreley scheduler --once
+uv run loreley scheduler --yes --once
 ```
 
 ## Configuration

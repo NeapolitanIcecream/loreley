@@ -153,7 +153,8 @@ def run_scheduler(
     *,
     settings: Settings,
     console: Console,
-    argv: list[str] | None,
+    once: bool = False,
+    auto_approve: bool = False,
     preflight: bool = True,
     preflight_timeout_seconds: float = 2.0,
 ) -> int:
@@ -175,7 +176,13 @@ def run_scheduler(
 
     from loreley.scheduler.main import main as scheduler_main
 
-    return int(scheduler_main(argv))
+    return int(
+        scheduler_main(
+            settings=settings,
+            once=bool(once),
+            auto_approve=bool(auto_approve),
+        )
+    )
 
 
 def run_worker(

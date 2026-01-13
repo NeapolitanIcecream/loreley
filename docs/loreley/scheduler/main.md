@@ -37,10 +37,18 @@ Startup approval: before entering the main loop, the scheduler prints the observ
 
 ## CLI usage
 
+Recommended (unified CLI):
+
 ```bash
-uv run python -m loreley.scheduler.main              # continuous loop
-uv run python -m loreley.scheduler.main --once       # single tick (cron / smoke tests)
-uv run python -m loreley.scheduler.main --yes --once # non-interactive smoke test
+uv run loreley scheduler              # continuous loop
+uv run loreley scheduler --once       # single tick (cron / smoke tests)
+uv run loreley scheduler --yes --once # non-interactive smoke test
+```
+
+The module invocation is kept as an alias to the unified CLI:
+
+```bash
+uv run python -m loreley.scheduler.main --once
 ```
 
 For details about the dedicated CLI wrapper script (including logging setup and

@@ -8,19 +8,19 @@ This CLI is designed to:
 - keep legacy `script/run_*.py` wrappers usable for local development
 """
 
-import argparse
 import os
 import sys
-import uuid
+from enum import Enum
 from typing import Sequence
 
+import click
+import typer
 from rich.console import Console
 
-from loreley.config import get_settings
+from loreley.config import Settings, get_settings
 from loreley.entrypoints import configure_process_logging, run_api, run_scheduler, run_ui, run_worker
 from loreley.preflight import (
     CheckResult,
-    has_failures,
     preflight_all,
     preflight_api,
     preflight_scheduler,
@@ -32,123 +32,49 @@ from loreley.preflight import (
 )
 
 console = Console()
+app = typer.Typer(add_completion=False, help="Loreley unified CLI.")
 
 
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="loreley",
-        description="Loreley unified CLI.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument(
-        "--log-level",
-        dest="log_level",
-        help="Override LOG_LEVEL for this invocation (TRACE/DEBUG/INFO/WARNING/ERROR).",
-    )
-
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    doctor = subparsers.add_parser("doctor", help="Run environment preflight checks.")
-    doctor.add_argument(
-        "--role",
-        default="all",
-        choices=("all", "scheduler", "worker", "api", "ui"),
-        help="Which component you want to validate.",
-    )
-    doctor.add_argument(
-        "--timeout-seconds",
-        type=float,
-        default=2.0,
-        help="Network timeout used for DB/Redis connectivity checks.",
-    )
-    doctor.add_argument(
-        "--strict",
-        action="store_true",
-        help="Treat warnings as failures (non-zero exit code).",
-    )
-    doctor.add_argument(
-        "--json",
-        dest="json_output",
-        action="store_true",
-        help="Print results as JSON (useful for CI).",
-    )
-
-    scheduler = subparsers.add_parser("scheduler", help="Run the evolution scheduler.")
-    scheduler.add_argument(
-        "--once",
-        action="store_true",
-        help="Execute a single scheduling tick and exit.",
-    )
-    scheduler.add_argument(
-        "--yes",
-        action="store_true",
-        help="Auto-approve startup approval and start without prompting (useful for CI/containers).",
-    )
-    scheduler.add_argument(
-        "--no-preflight",
-        action="store_true",
-        help="Skip preflight validation.",
-    )
-    scheduler.add_argument(
-        "--preflight-timeout-seconds",
-        type=float,
-        default=2.0,
-        help="Network timeout used for DB/Redis connectivity checks.",
-    )
-
-    worker = subparsers.add_parser("worker", help="Run the evolution worker (Dramatiq consumer).")
-    worker.add_argument(
-        "--experiment-id",
-        dest="experiment_id",
-        default=None,
-        help="Attach this worker process to a single experiment UUID (overrides WORKER_EXPERIMENT_ID).",
-    )
-    worker.add_argument(
-        "--no-preflight",
-        action="store_true",
-        help="Skip preflight validation.",
-    )
-    worker.add_argument(
-        "--preflight-timeout-seconds",
-        type=float,
-        default=2.0,
-        help="Network timeout used for DB/Redis connectivity checks.",
-    )
-
-    api = subparsers.add_parser("api", help="Run the read-only UI API (FastAPI via uvicorn).")
-    api.add_argument("--host", default="127.0.0.1", help="Bind host.")
-    api.add_argument("--port", type=int, default=8000, help="Bind port.")
-    api.add_argument("--reload", action="store_true", help="Enable auto-reload (dev only).")
-    api.add_argument("--no-preflight", action="store_true", help="Skip preflight validation.")
-    api.add_argument(
-        "--preflight-timeout-seconds",
-        type=float,
-        default=2.0,
-        help="Network timeout used for DB connectivity checks.",
-    )
-
-    ui = subparsers.add_parser("ui", help="Run the Streamlit UI.")
-    ui.add_argument(
-        "--api-base-url",
-        default=os.getenv("LORELEY_UI_API_BASE_URL", "http://127.0.0.1:8000"),
-        help="Base URL of the Loreley UI API.",
-    )
-    ui.add_argument("--host", default="127.0.0.1", help="Streamlit bind host.")
-    ui.add_argument("--port", type=int, default=8501, help="Streamlit bind port.")
-    ui.add_argument("--headless", action="store_true", help="Run without opening a browser.")
-    ui.add_argument("--no-preflight", action="store_true", help="Skip preflight validation.")
-    ui.add_argument(
-        "--preflight-timeout-seconds",
-        type=float,
-        default=2.0,
-        help="Network timeout used for preflight checks.",
-    )
-
-    return parser
+class DoctorRole(str, Enum):
+    all = "all"
+    scheduler = "scheduler"
+    worker = "worker"
+    api = "api"
+    ui = "ui"
 
 
-def _run_doctor(*, role: str, timeout_seconds: float, strict: bool, json_output: bool) -> int:
-    settings = get_settings()
+def _load_settings_or_exit() -> Settings:
+    try:
+        return get_settings()
+    except Exception as exc:  # pragma: no cover - defensive
+        console.print(
+            "[bold red]Invalid Loreley configuration[/] "
+            f"reason={exc}. Copy `env.example` to `.env` and set required values.",
+        )
+        raise typer.Exit(code=1) from exc
+
+
+def _configure_logging_or_exit(*, settings: Settings, role: str, override_level: str | None) -> None:
+    try:
+        configure_process_logging(
+            settings=settings,
+            console=console,
+            role=role,
+            override_level=override_level,
+        )
+    except ValueError as exc:
+        console.print(f"[bold red]Invalid log level[/] reason={exc}")
+        raise typer.Exit(code=1) from exc
+
+
+def _run_doctor(
+    *,
+    settings: Settings,
+    role: str,
+    timeout_seconds: float,
+    strict: bool,
+    json_output: bool,
+) -> int:
     timeout = float(max(0.2, timeout_seconds))
 
     results: list[CheckResult]
@@ -179,99 +105,209 @@ def _run_doctor(*, role: str, timeout_seconds: float, strict: bool, json_output:
     return 0
 
 
+@app.callback()
+def _callback(
+    ctx: typer.Context,
+    log_level: str | None = typer.Option(
+        None,
+        "--log-level",
+        help="Override LOG_LEVEL for this invocation (TRACE/DEBUG/INFO/WARNING/ERROR).",
+    ),
+) -> None:
+    ctx.ensure_object(dict)
+    ctx.obj["log_level"] = log_level
+
+
+def _get_log_level(ctx: typer.Context) -> str | None:
+    obj = getattr(ctx, "obj", None) or {}
+    level = obj.get("log_level")
+    return str(level) if level else None
+
+
+@app.command()
+def doctor(
+    ctx: typer.Context,
+    role: DoctorRole = typer.Option(
+        DoctorRole.all,
+        "--role",
+        help="Which component you want to validate.",
+        show_default=True,
+    ),
+    timeout_seconds: float = typer.Option(
+        2.0,
+        "--timeout-seconds",
+        help="Network timeout used for DB/Redis connectivity checks.",
+        show_default=True,
+    ),
+    strict: bool = typer.Option(
+        False,
+        "--strict",
+        help="Treat warnings as failures (non-zero exit code).",
+        show_default=True,
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Print results as JSON (useful for CI).",
+        show_default=True,
+    ),
+) -> None:
+    """Run environment preflight checks."""
+    settings = _load_settings_or_exit()
+    _configure_logging_or_exit(settings=settings, role="doctor", override_level=_get_log_level(ctx))
+    code = _run_doctor(
+        settings=settings,
+        role=str(role.value),
+        timeout_seconds=float(timeout_seconds),
+        strict=bool(strict),
+        json_output=bool(json_output),
+    )
+    raise typer.Exit(code=int(code))
+
+
+@app.command()
+def scheduler(
+    ctx: typer.Context,
+    once: bool = typer.Option(False, "--once", help="Execute a single scheduling tick and exit."),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        help="Auto-approve startup approval and start without prompting (useful for CI/containers).",
+    ),
+    no_preflight: bool = typer.Option(False, "--no-preflight", help="Skip preflight validation."),
+    preflight_timeout_seconds: float = typer.Option(
+        2.0,
+        "--preflight-timeout-seconds",
+        help="Network timeout used for DB/Redis connectivity checks.",
+        show_default=True,
+    ),
+) -> None:
+    """Run the evolution scheduler."""
+    settings = _load_settings_or_exit()
+    _configure_logging_or_exit(settings=settings, role="scheduler", override_level=_get_log_level(ctx))
+    code = run_scheduler(
+        settings=settings,
+        console=console,
+        once=bool(once),
+        auto_approve=bool(yes),
+        preflight=not bool(no_preflight),
+        preflight_timeout_seconds=float(preflight_timeout_seconds),
+    )
+    raise typer.Exit(code=int(code))
+
+
+@app.command()
+def worker(
+    ctx: typer.Context,
+    experiment_id: str | None = typer.Option(
+        None,
+        "--experiment-id",
+        help="Attach this worker process to a single experiment UUID (overrides WORKER_EXPERIMENT_ID).",
+    ),
+    no_preflight: bool = typer.Option(False, "--no-preflight", help="Skip preflight validation."),
+    preflight_timeout_seconds: float = typer.Option(
+        2.0,
+        "--preflight-timeout-seconds",
+        help="Network timeout used for DB/Redis connectivity checks.",
+        show_default=True,
+    ),
+) -> None:
+    """Run the evolution worker (Dramatiq consumer)."""
+    settings = _load_settings_or_exit()
+    _configure_logging_or_exit(settings=settings, role="worker", override_level=_get_log_level(ctx))
+    code = run_worker(
+        settings=settings,
+        console=console,
+        preflight=not bool(no_preflight),
+        preflight_timeout_seconds=float(preflight_timeout_seconds),
+        experiment_id=experiment_id,
+    )
+    raise typer.Exit(code=int(code))
+
+
+@app.command()
+def api(
+    ctx: typer.Context,
+    host: str = typer.Option("127.0.0.1", "--host", help="Bind host.", show_default=True),
+    port: int = typer.Option(8000, "--port", help="Bind port.", show_default=True),
+    reload: bool = typer.Option(False, "--reload", help="Enable auto-reload (dev only)."),
+    no_preflight: bool = typer.Option(False, "--no-preflight", help="Skip preflight validation."),
+    preflight_timeout_seconds: float = typer.Option(
+        2.0,
+        "--preflight-timeout-seconds",
+        help="Network timeout used for DB connectivity checks.",
+        show_default=True,
+    ),
+) -> None:
+    """Run the read-only UI API (FastAPI via uvicorn)."""
+    settings = _load_settings_or_exit()
+    log_level = _get_log_level(ctx)
+    _configure_logging_or_exit(settings=settings, role="ui_api", override_level=log_level)
+    code = run_api(
+        settings=settings,
+        console=console,
+        host=str(host),
+        port=int(port),
+        reload=bool(reload),
+        preflight=not bool(no_preflight),
+        preflight_timeout_seconds=float(preflight_timeout_seconds),
+        uvicorn_log_level=log_level,
+    )
+    raise typer.Exit(code=int(code))
+
+
+@app.command()
+def ui(
+    ctx: typer.Context,
+    api_base_url: str | None = typer.Option(
+        None,
+        "--api-base-url",
+        help="Base URL of the Loreley UI API.",
+        show_default=False,
+    ),
+    host: str = typer.Option("127.0.0.1", "--host", help="Streamlit bind host.", show_default=True),
+    port: int = typer.Option(8501, "--port", help="Streamlit bind port.", show_default=True),
+    headless: bool = typer.Option(False, "--headless", help="Run without opening a browser."),
+    no_preflight: bool = typer.Option(False, "--no-preflight", help="Skip preflight validation."),
+    preflight_timeout_seconds: float = typer.Option(
+        2.0,
+        "--preflight-timeout-seconds",
+        help="Network timeout used for preflight checks.",
+        show_default=True,
+    ),
+) -> None:
+    """Run the Streamlit UI."""
+    settings = _load_settings_or_exit()
+    _configure_logging_or_exit(settings=settings, role="ui", override_level=_get_log_level(ctx))
+
+    api_base_url = (api_base_url or "").strip() or os.getenv("LORELEY_UI_API_BASE_URL", "http://127.0.0.1:8000")
+    code = run_ui(
+        settings=settings,
+        console=console,
+        api_base_url=str(api_base_url),
+        host=str(host),
+        port=int(port),
+        headless=bool(headless),
+        preflight=not bool(no_preflight),
+        preflight_timeout_seconds=float(preflight_timeout_seconds),
+    )
+    raise typer.Exit(code=int(code))
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Console script entrypoint."""
-    parser = _build_parser()
-    args = parser.parse_args(list(argv) if argv is not None else None)
-
-    # Load settings after parsing so that `--help` works without a configured environment.
+    args = list(argv) if argv is not None else None
     try:
-        settings = get_settings()
-    except Exception as exc:  # pragma: no cover - defensive
-        console.print(
-            "[bold red]Invalid Loreley configuration[/] "
-            f"reason={exc}. Copy `env.example` to `.env` and set required values.",
-        )
+        app(prog_name="loreley", args=args, standalone_mode=False)
+        return 0
+    except click.ClickException as exc:
+        exc.show()
+        return int(getattr(exc, "exit_code", 1) or 1)
+    except click.Abort:
+        console.print("[yellow]Aborted[/]")
         return 1
-
-    role = str(args.command)
-    log_role = {"api": "ui_api"}.get(role, role)
-    try:
-        configure_process_logging(
-            settings=settings,
-            console=console,
-            role=log_role,
-            override_level=getattr(args, "log_level", None),
-        )
-    except ValueError as exc:
-        console.print(f"[bold red]Invalid log level[/] reason={exc}")
-        return 1
-
-    if args.command == "doctor":
-        return _run_doctor(
-            role=str(args.role),
-            timeout_seconds=float(args.timeout_seconds),
-            strict=bool(args.strict),
-            json_output=bool(args.json_output),
-        )
-
-    if args.command == "scheduler":
-        forwarded: list[str] = []
-        if bool(args.once):
-            forwarded.append("--once")
-        if bool(getattr(args, "yes", False)):
-            forwarded.append("--yes")
-        return run_scheduler(
-            settings=settings,
-            console=console,
-            argv=forwarded,
-            preflight=not bool(args.no_preflight),
-            preflight_timeout_seconds=float(args.preflight_timeout_seconds),
-        )
-
-    if args.command == "worker":
-        attached = getattr(args, "experiment_id", None)
-        if attached:
-            try:
-                attached_uuid = uuid.UUID(str(attached))
-                settings = settings.model_copy(update={"worker_experiment_id": attached_uuid})
-            except Exception:
-                # Let run_worker surface a helpful error message.
-                pass
-        return run_worker(
-            settings=settings,
-            console=console,
-            preflight=not bool(args.no_preflight),
-            preflight_timeout_seconds=float(args.preflight_timeout_seconds),
-            experiment_id=getattr(args, "experiment_id", None),
-        )
-
-    if args.command == "api":
-        return run_api(
-            settings=settings,
-            console=console,
-            host=str(args.host),
-            port=int(args.port),
-            reload=bool(args.reload),
-            preflight=not bool(args.no_preflight),
-            preflight_timeout_seconds=float(args.preflight_timeout_seconds),
-            uvicorn_log_level=getattr(args, "log_level", None),
-        )
-
-    if args.command == "ui":
-        return run_ui(
-            settings=settings,
-            console=console,
-            api_base_url=str(args.api_base_url),
-            host=str(args.host),
-            port=int(args.port),
-            headless=bool(args.headless),
-            preflight=not bool(args.no_preflight),
-            preflight_timeout_seconds=float(args.preflight_timeout_seconds),
-        )
-
-    parser.print_help()
-    return 1
+    except typer.Exit as exc:
+        return int(getattr(exc, "exit_code", 0) or 0)
 
 
 if __name__ == "__main__":  # pragma: no cover

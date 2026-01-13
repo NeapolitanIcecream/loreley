@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import signal
 import sys
 import time
@@ -670,24 +669,20 @@ class EvolutionScheduler:
 
         return branch_name
 
-def main(argv: Sequence[str] | None = None) -> int:
-    """CLI entrypoint."""
+def main(
+    *,
+    settings: Settings | None = None,
+    once: bool = False,
+    auto_approve: bool = False,
+) -> int:
+    """Run the Loreley evolution scheduler (once or forever).
 
-    parser = argparse.ArgumentParser(description="Run the Loreley evolution scheduler.")
-    parser.add_argument(
-        "--once",
-        action="store_true",
-        help="Execute a single scheduling tick and exit.",
-    )
-    parser.add_argument(
-        "--yes",
-        action="store_true",
-        help="Auto-approve startup approval and start without prompting (useful for CI/containers).",
-    )
-    args = parser.parse_args(argv)
+    This function is intentionally free of CLI parsing so it can be reused by the
+    unified Typer CLI (`loreley scheduler ...`) and by wrapper scripts.
+    """
 
-    settings = get_settings()
-    if bool(args.yes):
+    settings = settings or get_settings()
+    if bool(auto_approve):
         settings = settings.model_copy(update={"scheduler_startup_approve": True})
 
     try:
@@ -701,7 +696,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         log.error("Scheduler startup failed: {}", exc)
         return 1
 
-    if args.once:
+    if bool(once):
         try:
             scheduler.tick()
         finally:
@@ -713,5 +708,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(main())
+    from loreley.cli import main as loreley_main
+
+    raise SystemExit(loreley_main(["scheduler", *sys.argv[1:]]))
 

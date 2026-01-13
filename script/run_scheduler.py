@@ -2,13 +2,13 @@ from __future__ import annotations
 
 """Entry script for running the Loreley evolution scheduler.
 
-This is a thin wrapper around ``loreley.scheduler.main`` that:
+This is a thin wrapper around the package entrypoints that:
 
 - Exposes a small CLI so ``--help`` works without a configured environment.
 - Initialises application settings.
 - Configures Loguru logging level based on ``Settings.log_level`` and routes
   standard-library logging (used by Dramatiq) through Loguru.
-- Delegates CLI parsing and control flow to ``loreley.scheduler.main.main``.
+- Delegates control flow to ``loreley.entrypoints.run_scheduler``.
 
 Usage (with uv):
 
@@ -29,7 +29,7 @@ console = Console()
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
-    """Return a minimal CLI parser and pass through unknown args to the scheduler."""
+    """Return a minimal CLI parser that works without a configured environment."""
 
     parser = argparse.ArgumentParser(
         description="Run the Loreley evolution scheduler.",
@@ -39,6 +39,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--log-level",
         dest="log_level",
         help="Override Settings.log_level for this invocation (e.g. DEBUG, INFO).",
+    )
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Execute a single scheduling tick and exit.",
+    )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Auto-approve startup approval and start without prompting (useful for CI/containers).",
     )
     parser.add_argument(
         "--no-preflight",
@@ -58,7 +68,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """CLI entrypoint for the scheduler wrapper."""
 
     parser = _build_arg_parser()
-    args, forwarded = parser.parse_known_args(list(argv) if argv is not None else None)
+    args = parser.parse_args(list(argv) if argv is not None else None)
 
     try:
         settings = get_settings()
@@ -84,7 +94,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         run_scheduler(
             settings=settings,
             console=console,
-            argv=list(forwarded),
+            once=bool(args.once),
+            auto_approve=bool(args.yes),
             preflight=not bool(args.no_preflight),
             preflight_timeout_seconds=float(args.preflight_timeout_seconds),
         )
