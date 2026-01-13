@@ -44,9 +44,10 @@ ORM models and enums for tracking evolutionary jobs, commits, and associated met
   - Primary key: `(experiment_id, island_id, commit_hash)`.
   - Stores the commit embedding `vector` plus the `embedding_model` name and a `last_seen_at` marker used
     to restore ordered, bounded history windows across restarts.
-- **`MapElitesFileEmbeddingCache`** (`map_elites_file_embedding_cache` table): persistent file-level embedding cache keyed by git blob SHA.
-  - Uses a composite primary key `(blob_sha, embedding_model, dimensions, pipeline_signature)`.
+- **`MapElitesFileEmbeddingCache`** (`map_elites_file_embedding_cache` table): persistent file-level embedding cache scoped to an experiment.
+  - Uses a composite primary key `(experiment_id, blob_sha)`.
   - Stores a float array `vector` containing the file embedding, allowing repo-state embeddings to reuse unchanged file vectors across commits.
+  - Stores `embedding_model` and `dimensions` alongside vectors for validation and debugging.
 - **`MapElitesRepoStateAggregate`** (`map_elites_repo_state_aggregates` table): persistent commit-level aggregates for repo-state embeddings.
   - Uses a composite primary key `(experiment_id, commit_hash)`.
   - Stores `sum_vector` and `file_count` so the commit embedding can be derived as `sum_vector / file_count`.

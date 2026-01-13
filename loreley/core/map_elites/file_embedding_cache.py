@@ -5,19 +5,19 @@ aggregates them into a commit-level vector. This module provides a cache so that
 unchanged files can reuse prior embeddings across commits.
 
 Cache key:
+- `experiment_id`: experiment scope for stable, locked behaviour settings.
 - `blob_sha`: git blob SHA (preferred content fingerprint).
-- `embedding_model`: OpenAI embedding model name.
-- `dimensions`: actual output vector length (guard).
-- `pipeline_signature`: hash of preprocessing+chunking+embedding knobs that
-  affect the produced vectors.
+
+The embedding model name and output dimensionality are experiment-scoped
+invariants persisted in `Experiment.config_snapshot`. The database cache stores
+them alongside vectors for validation and debugging.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
-import json
 from typing import Iterable, Mapping, Protocol, Sequence, TypeVar
+from uuid import UUID
 
 from loguru import logger
 from sqlalchemy import select
@@ -38,7 +38,6 @@ __all__ = [
     "FileEmbeddingCache",
     "InMemoryFileEmbeddingCache",
     "DatabaseFileEmbeddingCache",
-    "build_pipeline_signature",
     "build_file_embedding_cache",
 ]
 
@@ -48,7 +47,6 @@ class FileEmbeddingCache(Protocol):
 
     embedding_model: str
     requested_dimensions: int
-    pipeline_signature: str
 
     def get_many(self, blob_shas: Sequence[str]) -> dict[str, Vector]:
         """Return vectors for any known blob SHAs (missing keys omitted)."""
@@ -81,49 +79,12 @@ def _resolve_requested_dimensions(settings: Settings) -> int:
     return dims
 
 
-def build_pipeline_signature(*, settings: Settings | None = None) -> str:
-    """Hash all knobs that affect file-level embeddings.
-
-    This signature is intentionally conservative: any change that could alter
-    preprocessing/chunking/embedding output should produce a new signature so
-    that cached vectors are not reused incorrectly.
-    """
-
-    s = settings or get_settings()
-    dims = _resolve_requested_dimensions(s)
-    payload = {
-        "version": 1,
-        "preprocess": {
-            "strip_comments": bool(s.mapelites_preprocess_strip_comments),
-            "strip_block_comments": bool(s.mapelites_preprocess_strip_block_comments),
-            "max_blank_lines": int(s.mapelites_preprocess_max_blank_lines),
-            "tab_width": int(s.mapelites_preprocess_tab_width),
-        },
-        "chunk": {
-            "target_lines": int(s.mapelites_chunk_target_lines),
-            "min_lines": int(s.mapelites_chunk_min_lines),
-            "overlap_lines": int(s.mapelites_chunk_overlap_lines),
-            "max_chunks_per_file": int(s.mapelites_chunk_max_chunks_per_file),
-            "boundary_keywords": list(s.mapelites_chunk_boundary_keywords or []),
-        },
-        "embedding": {
-            "model": str(s.mapelites_code_embedding_model),
-            "requested_dimensions": int(dims),
-        },
-    }
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
-        "utf-8"
-    )
-    return hashlib.sha256(encoded).hexdigest()
-
-
 @dataclass(slots=True)
 class InMemoryFileEmbeddingCache:
     """Simple in-memory cache used for tests/local runs."""
 
     embedding_model: str
     requested_dimensions: int
-    pipeline_signature: str
 
     _store: dict[str, Vector]
 
@@ -132,11 +93,9 @@ class InMemoryFileEmbeddingCache:
         *,
         embedding_model: str,
         requested_dimensions: int,
-        pipeline_signature: str,
     ) -> None:
         self.embedding_model = embedding_model
         self.requested_dimensions = requested_dimensions
-        self.pipeline_signature = pipeline_signature
         self._store = {}
 
     def get_many(self, blob_shas: Sequence[str]) -> dict[str, Vector]:
@@ -172,9 +131,14 @@ class InMemoryFileEmbeddingCache:
 class DatabaseFileEmbeddingCache:
     """Postgres-backed cache using `MapElitesFileEmbeddingCache` table."""
 
+    experiment_id: UUID
     embedding_model: str
     requested_dimensions: int
-    pipeline_signature: str
+
+    def __post_init__(self) -> None:
+        if isinstance(self.experiment_id, UUID):
+            return
+        self.experiment_id = UUID(str(self.experiment_id))
 
     def get_many(self, blob_shas: Sequence[str]) -> dict[str, Vector]:
         cleaned = _unique_clean_blob_shas(blob_shas)
@@ -190,10 +154,8 @@ class DatabaseFileEmbeddingCache:
             with session_scope() as session:
                 for batch in _batched(cleaned, 500):
                     base_conditions = [
+                        MapElitesFileEmbeddingCache.experiment_id == self.experiment_id,
                         MapElitesFileEmbeddingCache.blob_sha.in_(batch),
-                        MapElitesFileEmbeddingCache.embedding_model == self.embedding_model,
-                        MapElitesFileEmbeddingCache.pipeline_signature == self.pipeline_signature,
-                        MapElitesFileEmbeddingCache.dimensions == dims,
                     ]
 
                     stmt = select(MapElitesFileEmbeddingCache).where(*base_conditions)
@@ -201,15 +163,35 @@ class DatabaseFileEmbeddingCache:
                     if not rows:
                         continue
 
-                    # Fixed dimensions: accept rows directly (already filtered).
+                    # Validate cached rows against experiment-scoped invariants.
                     for row in rows:
+                        if str(getattr(row, "embedding_model", "") or "") != str(self.embedding_model):
+                            raise ValueError(
+                                "File embedding cache entry has an unexpected embedding model; "
+                                "reset the DB (dev). "
+                                f"(experiment_id={self.experiment_id} blob_sha={row.blob_sha} "
+                                f"expected_model={self.embedding_model!r} got_model={row.embedding_model!r})"
+                            )
+                        if int(getattr(row, "dimensions", 0) or 0) != dims:
+                            raise ValueError(
+                                "File embedding cache entry has unexpected dimensions; "
+                                "reset the DB (dev). "
+                                f"(experiment_id={self.experiment_id} blob_sha={row.blob_sha} "
+                                f"expected_dims={dims} got_dims={row.dimensions!r})"
+                            )
                         vector = tuple(float(v) for v in (row.vector or []))
                         if not vector:
-                            continue
-                        if row.dimensions and len(vector) != int(row.dimensions):
-                            continue
+                            raise ValueError(
+                                "File embedding cache contains an empty vector; reset the DB (dev). "
+                                f"(experiment_id={self.experiment_id} blob_sha={row.blob_sha} dims={dims})"
+                            )
                         if len(vector) != dims:
-                            continue
+                            raise ValueError(
+                                "File embedding cache vector has unexpected dimensions; "
+                                "reset the DB (dev). "
+                                f"(experiment_id={self.experiment_id} blob_sha={row.blob_sha} "
+                                f"expected_dims={dims} got_dims={len(vector)})"
+                            )
                         found[str(row.blob_sha)] = vector
         except SQLAlchemyError as exc:
             log.error("Failed to read file embedding cache: {}", exc)
@@ -240,10 +222,10 @@ class DatabaseFileEmbeddingCache:
                 )
             values.append(
                 {
+                    "experiment_id": self.experiment_id,
                     "blob_sha": key,
                     "embedding_model": self.embedding_model,
                     "dimensions": len(vec),
-                    "pipeline_signature": self.pipeline_signature,
                     "vector": list(vec),
                 }
             )
@@ -257,10 +239,8 @@ class DatabaseFileEmbeddingCache:
                     stmt = pg_insert(MapElitesFileEmbeddingCache).values(batch)
                     stmt = stmt.on_conflict_do_nothing(
                         index_elements=[
+                            "experiment_id",
                             "blob_sha",
-                            "embedding_model",
-                            "dimensions",
-                            "pipeline_signature",
                         ],
                     )
                     session.execute(stmt)
@@ -272,6 +252,7 @@ def build_file_embedding_cache(
     *,
     settings: Settings | None = None,
     backend: str | None = None,
+    experiment_id: UUID | str | None = None,
 ) -> FileEmbeddingCache:
     """Factory for selecting an embedding cache backend.
 
@@ -285,7 +266,6 @@ def build_file_embedding_cache(
     if not chosen:
         chosen = "db"
 
-    pipeline_signature = build_pipeline_signature(settings=s)
     embedding_model = str(s.mapelites_code_embedding_model)
     requested_dimensions = _resolve_requested_dimensions(s)
 
@@ -293,13 +273,18 @@ def build_file_embedding_cache(
         return InMemoryFileEmbeddingCache(
             embedding_model=embedding_model,
             requested_dimensions=requested_dimensions,
-            pipeline_signature=pipeline_signature,
         )
     if chosen == "db":
+        if experiment_id is None:
+            raise ValueError(
+                "Experiment id is required for MAPELITES_FILE_EMBEDDING_CACHE_BACKEND=db. "
+                "Pass experiment_id to embed_repository_state / RepositoryStateEmbedder, "
+                "or use MAPELITES_FILE_EMBEDDING_CACHE_BACKEND=memory for local runs.",
+            )
         return DatabaseFileEmbeddingCache(
+            experiment_id=UUID(str(experiment_id)),
             embedding_model=embedding_model,
             requested_dimensions=requested_dimensions,
-            pipeline_signature=pipeline_signature,
         )
 
     raise ValueError(f"Unknown file embedding cache backend: {chosen!r}")

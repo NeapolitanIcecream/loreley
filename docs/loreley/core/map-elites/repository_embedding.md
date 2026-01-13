@@ -54,14 +54,12 @@ Implemented by:
 
 Cache key:
 
+- `experiment_id`
 - `blob_sha`
-- `embedding_model`
-- `dimensions` (actual output vector length guard)
-- `pipeline_signature`
 
-`pipeline_signature` is a SHA-256 hash over the preprocessing/chunking/embedding
-knobs that affect the produced vectors (so cache entries are invalidated when
-the pipeline changes).
+The embedding model name and output dimensionality are experiment-scoped
+invariants pinned in `Experiment.config_snapshot`. The database cache stores
+`embedding_model` and `dimensions` alongside vectors for validation and debugging.
 
 The database-backed cache is **insert-only**: when multiple processes attempt to
 write the same key, the first insert wins and later writes are ignored (no overwrite).
@@ -69,6 +67,8 @@ write the same key, the first insert wins and later writes are ignored (no overw
 Backend selection:
 
 - `MAPELITES_FILE_EMBEDDING_CACHE_BACKEND=db|memory` (default: `db`)
+
+Note: The database-backed cache is experiment-scoped and requires an `experiment_id`. Use the `memory` backend for local runs without an experiment context.
 
 ## Repo-state aggregate cache (commit-level)
 

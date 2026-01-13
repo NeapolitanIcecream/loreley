@@ -112,9 +112,9 @@ def test_repo_state_incremental_aggregate_add_and_modify(
         return vectors, len(vectors), 0
 
     cache = DatabaseFileEmbeddingCache(
+        experiment_id="00000000-0000-0000-0000-000000000000",
         embedding_model="stub",
         requested_dimensions=2,
-        pipeline_signature="sig",
     )
     monkeypatch.setattr(DatabaseFileEmbeddingCache, "put_many", lambda *_args, **_kwargs: None)
 

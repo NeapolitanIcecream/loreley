@@ -79,12 +79,13 @@ class RepositoryStateEmbedder:
         experiment_id: UUID | str | None = None,
     ) -> None:
         self.settings = settings or get_settings()
+        self._repo = repo
+        self._experiment_id: UUID | None = _coerce_uuid(experiment_id)
         self.cache = cache or build_file_embedding_cache(
             settings=self.settings,
             backend=cache_backend,
+            experiment_id=self._experiment_id,
         )
-        self._repo = repo
-        self._experiment_id: UUID | None = _coerce_uuid(experiment_id)
 
     def run(
         self,
@@ -170,7 +171,17 @@ class RepositoryStateEmbedder:
             return embedding, stats
 
         # Attempt diff-based incremental aggregation when possible.
-        incremental = self._try_incremental_aggregate(commit_hash=canonical, repo_root=root)
+        try:
+            incremental = self._try_incremental_aggregate(commit_hash=canonical, repo_root=root)
+        except RepoStateEmbeddingError as exc:
+            if mode == "incremental_only":
+                raise
+            log.warning(
+                "Repo-state incremental aggregation failed for commit {} (falling back to full recompute): {}",
+                canonical[:12],
+                exc,
+            )
+            incremental = None
         if incremental is not None:
             agg_row, vector = incremental
             stats = RepoStateEmbeddingStats(
@@ -411,34 +422,45 @@ class RepositoryStateEmbedder:
                         select(
                             MapElitesFileEmbeddingCache.blob_sha,
                             MapElitesFileEmbeddingCache.vector,
+                            MapElitesFileEmbeddingCache.embedding_model,
+                            MapElitesFileEmbeddingCache.dimensions,
                         )
                         .where(
+                            MapElitesFileEmbeddingCache.experiment_id == self._experiment_id,
                             MapElitesFileEmbeddingCache.blob_sha.in_(batch),
-                            MapElitesFileEmbeddingCache.embedding_model == str(self.cache.embedding_model),
-                            MapElitesFileEmbeddingCache.pipeline_signature == str(self.cache.pipeline_signature),
-                            MapElitesFileEmbeddingCache.dimensions == dims,
                         )
                     )
-                    for sha, vec in session.execute(stmt).all():
+                    for sha, vec, model, stored_dims in session.execute(stmt).all():
+                        if str(model or "") != str(self.cache.embedding_model):
+                            raise RepoStateEmbeddingError(
+                                "File embedding cache entry has an unexpected embedding model; "
+                                "reset the DB (dev). "
+                                f"(experiment_id={self._experiment_id} blob_sha={sha} "
+                                f"expected_model={self.cache.embedding_model!r} got_model={model!r})"
+                            )
+                        if int(stored_dims or 0) != dims:
+                            raise RepoStateEmbeddingError(
+                                "File embedding cache entry has unexpected dimensions; reset the DB (dev). "
+                                f"(experiment_id={self._experiment_id} blob_sha={sha} "
+                                f"expected_dims={dims} got_dims={stored_dims!r})"
+                            )
                         vector = tuple(float(v) for v in (vec or ()))
                         if not vector:
                             raise RepoStateEmbeddingError(
-                                "File embedding cache contains an empty vector; "
-                                "reset the DB (dev) or bump pipeline_signature. "
-                                f"(blob_sha={sha} dims={dims})"
+                                "File embedding cache contains an empty vector; reset the DB (dev). "
+                                f"(experiment_id={self._experiment_id} blob_sha={sha} dims={dims})"
                             )
                         if len(vector) != dims:
                             raise RepoStateEmbeddingError(
-                                "File embedding cache vector has unexpected dimensions; "
-                                "reset the DB (dev) or bump pipeline_signature. "
-                                f"(blob_sha={sha} expected_dims={dims} got_dims={len(vector)})"
+                                "File embedding cache vector has unexpected dimensions; reset the DB (dev). "
+                                f"(experiment_id={self._experiment_id} blob_sha={sha} "
+                                f"expected_dims={dims} got_dims={len(vector)})"
                             )
                         found[str(sha)] = RepositoryStateEmbedder._VectorMeta(vector=vector)
         except RepoStateEmbeddingError:
             raise
         except Exception as exc:  # pragma: no cover - DB failure handling
-            log.warning("Repo-state file cache metadata read failed: {}", exc)
-            return {}
+            raise RepoStateEmbeddingError(f"Repo-state file cache metadata read failed: {exc}") from exc
 
         return found
 

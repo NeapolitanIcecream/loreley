@@ -8,7 +8,5 @@ Decision: Remove `filter_signature` from repo-state commit aggregates and key `M
 
 Decision: Remove `prompt_signature` from trajectory chunk summaries and key `CommitChunkSummary` only by `(experiment_id, start_commit_hash, end_commit_hash, block_size)`.
 
-Decision: Keep `pipeline_signature` for the global file embedding cache, because it prevents incorrect reuse of file embeddings across different preprocessing/chunking pipelines.
-
 Consequences: Aggregate and summary caches become simpler and aligned with the locked experiment settings model. Upgrading requires resetting the development database schema (Loreley does not ship migrations).
 
