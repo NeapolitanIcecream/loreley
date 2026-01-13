@@ -63,7 +63,7 @@ def test_experiment_config_snapshot_includes_mapelites_and_excludes_unrelated(
     snapshot = build_experiment_config_snapshot(settings, repo=repo)
 
     # Map-Elites and evaluator knobs should be present.
-    assert "mapelites_preprocess_max_files" in snapshot
+    assert "mapelites_preprocess_max_file_size_kb" in snapshot
     assert "worker_evaluator_timeout_seconds" in snapshot
     assert "worker_evolution_global_goal" in snapshot
 

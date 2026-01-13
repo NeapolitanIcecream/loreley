@@ -51,4 +51,3 @@ ORM models and enums for tracking evolutionary jobs, commits, and associated met
 - **`MapElitesRepoStateAggregate`** (`map_elites_repo_state_aggregates` table): persistent commit-level aggregates for repo-state embeddings.
   - Uses a composite primary key `(experiment_id, commit_hash)`.
   - Stores `sum_vector` and `file_count` so the commit embedding can be derived as `sum_vector / file_count`.
-  - Tracks a `capped` flag to disable incremental diffs when a repo-state max-files cap may have affected selection.

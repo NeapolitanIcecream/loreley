@@ -65,7 +65,6 @@ def test_repo_state_incremental_aggregate_add_and_modify(
     parent_agg = SimpleNamespace(
         file_count=2,
         sum_vector=[parent_sum[0], parent_sum[1]],
-        capped=False,
     )
 
     persisted: dict[str, object] = {}
@@ -82,12 +81,10 @@ def test_repo_state_incremental_aggregate_add_and_modify(
         repo_root: Path,
         sum_vector,
         file_count: int,
-        capped: bool,
     ) -> None:
         persisted[commit_hash] = SimpleNamespace(
             file_count=int(file_count),
             sum_vector=list(sum_vector),
-            capped=bool(capped),
         )
 
     # Fake DB file-cache metadata

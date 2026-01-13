@@ -9,7 +9,7 @@ Preprocessing utilities for turning raw repository code files into cleaned code 
 ## Preprocessor
 
 - **`CodePreprocessor`**: filters and normalises files before embedding.
-  - Uses `Settings` map-elites preprocessing options to enforce maximum file count/size, allowed extensions/filenames, and excluded glob patterns.
+  - Uses `Settings` map-elites preprocessing options to enforce maximum file size, allowed extensions/filenames, and excluded glob patterns.
   - Loads file contents either from the working tree or a specific `commit_hash` via GitPython, applies comment stripping, tab-to-spaces conversion, blank-line collapse, and basic normalisation.
   - Exposes small helpers used by the repo-state embedding pipeline:
     - `is_code_file(path)`, `is_excluded(path)` for selection,

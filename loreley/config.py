@@ -366,10 +366,6 @@ class Settings(BaseSettings):
         alias="WORKER_PLANNING_TRAJECTORY_SUMMARY_MAX_CHARS",
     )
 
-    mapelites_preprocess_max_files: int = Field(
-        default=6,
-        alias="MAPELITES_PREPROCESS_MAX_FILES",
-    )
     mapelites_preprocess_max_file_size_kb: int = Field(
         default=512,
         alias="MAPELITES_PREPROCESS_MAX_FILE_SIZE_KB",

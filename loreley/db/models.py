@@ -579,13 +579,9 @@ class MapElitesRepoStateAggregate(TimestampMixin, Base):
         nullable=False,
     )
 
-    # When True, the aggregate was computed under a repo-state max-files cap and
-    # should not be used as an incremental base.
-    capped: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return (
             "<MapElitesRepoStateAggregate "
             f"experiment_id={self.experiment_id!r} commit={self.commit_hash[:12]!r} "
-            f"files={self.file_count!r} capped={self.capped!r}>"
+            f"files={self.file_count!r}>"
         )

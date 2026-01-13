@@ -162,11 +162,10 @@ class RepositoryStateEmbedder:
                 dimensions=len(vector),
             )
             log.info(
-                "Repo-state aggregate cache hit for commit {} (files={} dims={} capped={})",
+                "Repo-state aggregate cache hit for commit {} (files={} dims={})",
                 canonical,
                 aggregate.file_count,
                 len(vector),
-                aggregate.capped,
             )
             return embedding, stats
 
@@ -204,11 +203,10 @@ class RepositoryStateEmbedder:
                 dimensions=len(vector),
             )
             log.info(
-                "Repo-state aggregate incrementally updated for commit {} (files={} dims={} capped={})",
+                "Repo-state aggregate incrementally updated for commit {} (files={} dims={})",
                 canonical,
                 agg_row.file_count,
                 len(vector),
-                agg_row.capped,
             )
             return embedding, stats
 
@@ -305,7 +303,6 @@ class RepositoryStateEmbedder:
             repo_root=root,
             sum_vector=sum_vector,
             file_count=aggregated_count,
-            capped=False,
         )
         return embedding, stats
 
@@ -366,7 +363,6 @@ class RepositoryStateEmbedder:
         repo_root: Path,
         sum_vector: Vector,
         file_count: int,
-        capped: bool,
     ) -> None:
         if self._experiment_id is None:
             return
@@ -381,7 +377,6 @@ class RepositoryStateEmbedder:
             commit_hash=str(commit_hash),
             file_count=int(file_count),
             sum_vector=[float(v) for v in sum_vector],
-            capped=bool(capped),
         )
 
         try:
@@ -556,7 +551,6 @@ class RepositoryStateEmbedder:
                 repo_root=repo_root,
                 sum_vector=sum_vec,
                 file_count=file_count,
-                capped=False,
             )
             persisted = self._load_aggregate(commit_hash=commit_hash, repo_root=repo_root)
             if persisted is None:
@@ -662,7 +656,6 @@ class RepositoryStateEmbedder:
             repo_root=repo_root,
             sum_vector=sum_vec,
             file_count=file_count,
-            capped=False,
         )
         persisted = self._load_aggregate(commit_hash=commit_hash, repo_root=repo_root)
         if persisted is None:
