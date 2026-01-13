@@ -1820,7 +1820,7 @@
 <li>Configure global Loguru logging based on <code>loreley.config.Settings.log_level</code>
   with optional per-invocation overrides.</li>
 <li>Delegate scheduler-specific CLI parsing and control flow to
-  <code>loreley.scheduler.main.main</code>.</li>
+  <code>loreley.entrypoints.run_scheduler</code>, which calls <code>loreley.scheduler.main.main(...)</code>.</li>
 <li>Provide a convenient entrypoint for process managers and local development
   without having to remember the module path.</li>
 </ul>
@@ -1842,11 +1842,11 @@ interaction are all implemented in <code>loreley.scheduler.main.EvolutionSchedul
   always persisted for later debugging.</li>
 <li>Imports <code>loreley.scheduler.main.main</code> lazily after logging is configured; any
   import failure is reported via console/log and exits with code <code>1</code>.</li>
-<li>Forwards any remaining CLI arguments to <code>loreley.scheduler.main.main(argv)</code>,
-  which supports the <code>--once</code> flag to run a single scheduler tick.</li>
+<li>Runs the scheduler loop via <code>loreley.entrypoints.run_scheduler(...)</code>, which supports
+  <code>--once</code> (single tick) and <code>--yes</code> (auto-approve startup approval).</li>
 </ul>
-<p>Exit codes are determined by <code>loreley.scheduler.main.main</code>: on success it returns
-<code>0</code>, while unexpected exceptions bubble up and cause a non-zero exit.</p>
+<p>Exit codes are determined by <code>loreley.scheduler.main.main(...)</code>: on success it returns
+<code>0</code>, while startup failures (e.g. lock contention) return non-zero exit codes.</p>
 <h2 id="cli-usage">CLI usage<a class="headerlink" href="#cli-usage" title="Permanent link">&para;</a></h2>
 <p>Recommended usage with <code>uv</code>:</p>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_scheduler.py<span class="w">        </span><span class="c1"># continuous loop</span>
@@ -1854,10 +1854,10 @@ uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </sp
 uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_scheduler.py<span class="w"> </span>--log-level<span class="w"> </span>DEBUG
 uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_scheduler.py<span class="w"> </span>--yes<span class="w"> </span>--once<span class="w"> </span><span class="c1"># non-interactive smoke test</span>
 </code></pre></div>
-<p>The wrapper is equivalent to invoking the module directly:</p>
-<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>loreley.scheduler.main<span class="w">        </span><span class="c1"># continuous loop</span>
-uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>loreley.scheduler.main<span class="w"> </span>--once<span class="w"> </span><span class="c1"># single tick</span>
-uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>loreley.scheduler.main<span class="w"> </span>--yes<span class="w"> </span>--once<span class="w"> </span><span class="c1"># non-interactive single tick</span>
+<p>The wrapper is equivalent to invoking the unified CLI directly:</p>
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>scheduler
+uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>scheduler<span class="w"> </span>--once
+uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>scheduler<span class="w"> </span>--yes<span class="w"> </span>--once
 </code></pre></div>
 <h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
 <p>The script relies on <code>loreley.config.Settings</code>:</p>
