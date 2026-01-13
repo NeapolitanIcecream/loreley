@@ -1778,7 +1778,7 @@
 <h2 id="preprocessor">Preprocessor<a class="headerlink" href="#preprocessor" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong><code>CodePreprocessor</code></strong>: filters and normalises files before embedding.</li>
-<li>Uses <code>Settings</code> map-elites preprocessing options to enforce maximum file count/size, allowed extensions/filenames, and excluded glob patterns.</li>
+<li>Uses <code>Settings</code> map-elites preprocessing options to enforce maximum file size, allowed extensions/filenames, and excluded glob patterns.</li>
 <li>Loads file contents either from the working tree or a specific <code>commit_hash</code> via GitPython, applies comment stripping, tab-to-spaces conversion, blank-line collapse, and basic normalisation.</li>
 <li>Exposes small helpers used by the repo-state embedding pipeline:<ul>
 <li><code>is_code_file(path)</code>, <code>is_excluded(path)</code> for selection,</li>

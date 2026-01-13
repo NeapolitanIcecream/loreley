@@ -1798,7 +1798,6 @@
 <li><strong><code>MapElitesRepoStateAggregate</code></strong> (<code>map_elites_repo_state_aggregates</code> table): persistent commit-level aggregates for repo-state embeddings.</li>
 <li>Uses a composite primary key <code>(experiment_id, commit_hash)</code>.</li>
 <li>Stores <code>sum_vector</code> and <code>file_count</code> so the commit embedding can be derived as <code>sum_vector / file_count</code>.</li>
-<li>Tracks a <code>capped</code> flag to disable incremental diffs when a repo-state max-files cap may have affected selection.</li>
 </ul>
 
 
