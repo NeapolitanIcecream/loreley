@@ -2208,7 +2208,7 @@ uv<span class="w"> </span>sync
 <ul>
 <li><code>APP_NAME</code>, <code>APP_ENV</code>, <code>LOG_LEVEL</code></li>
 <li><code>DATABASE_URL</code></li>
-<li><code>TASKS_REDIS_URL</code>, <code>TASKS_QUEUE_NAME</code></li>
+<li><code>TASKS_REDIS_URL</code>, <code>TASKS_QUEUE_NAME</code> (queue prefix), <code>WORKER_EXPERIMENT_ID</code></li>
 <li><code>OPENAI_API_KEY</code></li>
 <li><code>MAPELITES_EXPERIMENT_ROOT_COMMIT</code></li>
 <li><code>SCHEDULER_REPO_ROOT</code>, <code>WORKER_REPO_REMOTE_URL</code></li>
@@ -2221,11 +2221,11 @@ uv<span class="w"> </span>sync
 </code></pre></div>
 <p>Note: on first start the scheduler performs a repo-state root scan at <code>MAPELITES_EXPERIMENT_ROOT_COMMIT</code> and requires operator approval. In non-interactive environments, pass <code>--yes</code> or set <code>SCHEDULER_STARTUP_APPROVE=true</code>.</p>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>scheduler
-uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>worker
+uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>worker<span class="w"> </span>--experiment-id<span class="w"> </span>&lt;EXPERIMENT_UUID&gt;
 
 <span class="c1"># legacy wrappers (still supported)</span>
 uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_scheduler.py
-uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_worker.py
+uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_worker.py<span class="w"> </span>--experiment-id<span class="w"> </span>&lt;EXPERIMENT_UUID&gt;
 </code></pre></div>
 <p>See: <a href="script/run_scheduler/">Running the scheduler</a>, <a href="script/run_worker/">Running the worker</a></p>
 <hr />

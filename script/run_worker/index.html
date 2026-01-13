@@ -1816,20 +1816,22 @@
 process.</p>
 <h2 id="purpose">Purpose<a class="headerlink" href="#purpose" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Expose a minimal CLI (<code>--help</code>, <code>--log-level</code>) that works even when required
-  environment variables are unset.</li>
+<li>Expose a minimal CLI (<code>--help</code>, <code>--log-level</code>, <code>--experiment-id</code>) that works
+  even when required environment variables are unset.</li>
 <li>Configure global Loguru logging based on <code>loreley.config.Settings.log_level</code>
   with optional per-invocation overrides.</li>
-<li>Lazily initialise the Dramatiq Redis broker (<code>loreley.tasks.broker.broker</code>)
-  and import <code>loreley.tasks.workers</code> so that the <code>run_evolution_job</code> actor is
-  registered.</li>
-<li>Start a single-threaded Dramatiq <code>Worker</code> bound to the configured queue.</li>
+<li>Lazily initialise the Dramatiq Redis broker (<code>loreley.tasks.broker.broker</code>).</li>
+<li>Attach the process to a single experiment (<code>WORKER_EXPERIMENT_ID</code> /
+  <code>--experiment-id</code>), load the persisted experiment config snapshot once, and
+  register an experiment-scoped actor via
+  <code>loreley.tasks.workers.build_evolution_job_worker_actor(...)</code>.</li>
+<li>Start a single-threaded Dramatiq <code>Worker</code> bound to the derived per-experiment queue.</li>
 </ul>
 <h2 id="behaviour">Behaviour<a class="headerlink" href="#behaviour" title="Permanent link">&para;</a></h2>
 <p>On startup the script:</p>
 <ol>
-<li>Parses CLI args (primarily <code>--help</code> and <code>--log-level</code>) before loading
-   configuration, so help output works without a valid environment.</li>
+<li>Parses CLI args (primarily <code>--help</code>, <code>--log-level</code>, and <code>--experiment-id</code>)
+   before loading configuration, so help output works without a valid environment.</li>
 <li>Calls <code>get_settings()</code> to load <code>Settings</code>; any validation error is printed to
    the console and the process exits with code <code>1</code> instead of crashing.</li>
 <li>Configures Loguru to log to stderr using <code>LOG_LEVEL</code> (or <code>--log-level</code>) as
@@ -1841,12 +1843,11 @@ process.</p>
    with <code>rotation="10 MB"</code> and <code>retention="14 days"</code>, so worker output is
    always persisted for later debugging.</li>
 <li>Imports <code>loreley.tasks.broker</code> (which constructs and registers the Redis
-   broker) and <code>loreley.tasks.workers</code> (which defines the <code>run_evolution_job</code>
-   actor and its queue settings) after logging is configured; any import/startup
-   failure is reported with a concise console message and exit code <code>1</code>.</li>
-<li>Logs a short “worker online” message including <code>TASKS_QUEUE_NAME</code> and
-   <code>WORKER_REPO_WORKTREE</code> (the base clone; per-job worktrees are created under
-   <code>&lt;WORKER_REPO_WORKTREE&gt;-worktrees/</code>).</li>
+   broker), ensures the DB schema exists, loads the experiment config snapshot,
+   and registers an experiment-attached actor bound to the derived queue.</li>
+<li>Logs a short “worker online” message including the attached experiment id and
+   the derived queue name, plus <code>WORKER_REPO_WORKTREE</code> (the base clone; per-job
+   worktrees are created under <code>&lt;WORKER_REPO_WORKTREE&gt;-worktrees/</code>).</li>
 <li>Creates a <code>dramatiq.Worker</code> with:</li>
 <li><code>broker</code> set to the global Redis broker instance.</li>
 <li><code>worker_threads=1</code> to ensure a single-threaded execution model.</li>
@@ -1859,13 +1860,13 @@ process.</p>
 message.</p>
 <h2 id="cli-usage">CLI usage<a class="headerlink" href="#cli-usage" title="Permanent link">&para;</a></h2>
 <p>Typical usage with <code>uv</code>:</p>
-<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_worker.py
-uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_worker.py<span class="w"> </span>--log-level<span class="w"> </span>DEBUG
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_worker.py<span class="w"> </span>--experiment-id<span class="w"> </span>&lt;EXPERIMENT_UUID&gt;
+uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_worker.py<span class="w"> </span>--experiment-id<span class="w"> </span>&lt;EXPERIMENT_UUID&gt;<span class="w"> </span>--log-level<span class="w"> </span>DEBUG
 </code></pre></div>
-<p>The worker will begin consuming messages for the queue specified by
-<code>TASKS_QUEUE_NAME</code> (default: <code>loreley.evolution</code>) in a single process with a
-single worker thread. Jobs are expected to be created and dispatched by the
-scheduler (<code>loreley.scheduler.main</code>).</p>
+<p>The worker consumes messages from a per-experiment queue derived from the
+configured queue prefix (<code>TASKS_QUEUE_NAME</code>) and the attached experiment UUID hex:
+<code>"{TASKS_QUEUE_NAME}.{experiment_id.hex}"</code>. Jobs are expected to be created and
+dispatched by the scheduler (<code>loreley.scheduler.main</code>).</p>
 <p><code>--help</code> works without configured environment variables; other configuration is
 still read from <code>loreley.config.Settings</code>.</p>
 <h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
@@ -1879,9 +1880,12 @@ still read from <code>loreley.config.Settings</code>.</p>
 <li><strong>Task queue / broker</strong></li>
 <li><code>TASKS_REDIS_URL</code> or (<code>TASKS_REDIS_HOST</code>, <code>TASKS_REDIS_PORT</code>,
     <code>TASKS_REDIS_DB</code>, <code>TASKS_REDIS_PASSWORD</code>, <code>TASKS_REDIS_NAMESPACE</code>).</li>
-<li><code>TASKS_QUEUE_NAME</code>: queue name for the <code>run_evolution_job</code> actor.</li>
+<li><code>TASKS_QUEUE_NAME</code>: queue name prefix for experiment-scoped queues.</li>
 <li><code>TASKS_WORKER_MAX_RETRIES</code>, <code>TASKS_WORKER_TIME_LIMIT_SECONDS</code>: consumed
     by <code>loreley.tasks.workers</code> when configuring the actor.</li>
+<li><strong>Experiment attachment</strong></li>
+<li><code>WORKER_EXPERIMENT_ID</code> (or <code>--experiment-id</code>): attach this worker process to
+    a single experiment so experiment-scoped settings can be loaded once at startup.</li>
 <li><strong>Worker repository</strong></li>
 <li><code>WORKER_REPO_REMOTE_URL</code>, <code>WORKER_REPO_BRANCH</code>, <code>WORKER_REPO_WORKTREE</code>,
     <code>WORKER_REPO_WORKTREE_RANDOMIZE</code>, <code>WORKER_REPO_WORKTREE_RANDOM_SUFFIX_LEN</code>,
