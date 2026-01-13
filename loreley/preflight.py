@@ -391,6 +391,14 @@ def preflight_worker(settings: Settings, *, timeout_seconds: float = 2.0) -> lis
             timeout_seconds=timeout_seconds,
         )
     )
+    results.append(
+        check_non_empty(
+            str(settings.worker_experiment_id) if settings.worker_experiment_id else None,
+            label="worker_experiment_id",
+            env_name="WORKER_EXPERIMENT_ID",
+            help_text="required to attach this worker process to a single experiment",
+        )
+    )
 
     results.append(
         check_non_empty(

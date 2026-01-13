@@ -15,6 +15,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -183,8 +184,15 @@ def run_worker(
     console: Console,
     preflight: bool = True,
     preflight_timeout_seconds: float = 2.0,
+    experiment_id: uuid.UUID | str | None = None,
 ) -> int:
     """Run the Loreley evolution worker as a single Dramatiq consumer process."""
+    # Resolve the experiment attachment before preflight so checks can validate it.
+    attached_experiment = experiment_id or getattr(settings, "worker_experiment_id", None)
+    if attached_experiment is not None and not isinstance(attached_experiment, uuid.UUID):
+        attached_experiment = uuid.UUID(str(attached_experiment))
+        settings = settings.model_copy(update={"worker_experiment_id": attached_experiment})
+
     if preflight:
         results = preflight_worker(settings, timeout_seconds=preflight_timeout_seconds)
         if has_failures(results):
@@ -200,18 +208,51 @@ def run_worker(
             console.log("Hint: copy `env.example` to `.env`, fill required values, then retry.")
             return 1
 
+    if attached_experiment is None:
+        console.log(
+            "[bold red]Worker refused to start[/] "
+            "reason=missing experiment attachment. "
+            "Set WORKER_EXPERIMENT_ID or pass --experiment-id.",
+        )
+        return 1
+
+    from loreley.core.experiment_config import ExperimentConfigError, resolve_experiment_settings
+    from loreley.tasks.queues import experiment_queue_name
+
+    queue = experiment_queue_name(
+        base_queue=settings.tasks_queue_name,
+        experiment_id=attached_experiment,
+    )
+
+    try:
+        effective_settings = resolve_experiment_settings(
+            experiment_id=attached_experiment,
+            base_settings=settings,
+        )
+    except ExperimentConfigError as exc:
+        console.log(
+            "[bold red]Worker refused to start[/] "
+            f"reason={exc}",
+        )
+        return 1
+
     console.log(
         "[bold green]Loreley worker online[/] "
-        f"queue={settings.tasks_queue_name!r} worktree={settings.worker_repo_worktree!r}",
+        f"experiment={attached_experiment} queue={queue!r} queue_prefix={settings.tasks_queue_name!r} "
+        f"worktree={effective_settings.worker_repo_worktree!r}",
     )
 
     try:
         # Lazily import the broker and worker actors after logging is configured so
         # that any configuration errors are surfaced cleanly to the user.
         from loreley.tasks import broker as broker_module
-        import loreley.tasks.workers as _workers  # noqa: F401  - register actors
+        from loreley.db.base import ensure_database_schema
+        from loreley.tasks.workers import build_evolution_job_worker_actor
 
         dramatiq_broker = broker_module.broker
+        ensure_database_schema()
+        # Register the experiment-attached actor bound to the derived queue.
+        build_evolution_job_worker_actor(settings=effective_settings, experiment_id=attached_experiment)
     except Exception as exc:  # pragma: no cover - defensive
         console.log(
             "[bold red]Failed to initialise worker dependencies[/] "

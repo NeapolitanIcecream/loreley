@@ -5,21 +5,23 @@ process.
 
 ## Purpose
 
-- Expose a minimal CLI (`--help`, `--log-level`) that works even when required
-  environment variables are unset.
+- Expose a minimal CLI (`--help`, `--log-level`, `--experiment-id`) that works
+  even when required environment variables are unset.
 - Configure global Loguru logging based on `loreley.config.Settings.log_level`
   with optional per-invocation overrides.
-- Lazily initialise the Dramatiq Redis broker (`loreley.tasks.broker.broker`)
-  and import `loreley.tasks.workers` so that the `run_evolution_job` actor is
-  registered.
-- Start a single-threaded Dramatiq `Worker` bound to the configured queue.
+- Lazily initialise the Dramatiq Redis broker (`loreley.tasks.broker.broker`).
+- Attach the process to a single experiment (`WORKER_EXPERIMENT_ID` /
+  `--experiment-id`), load the persisted experiment config snapshot once, and
+  register an experiment-scoped actor via
+  `loreley.tasks.workers.build_evolution_job_worker_actor(...)`.
+- Start a single-threaded Dramatiq `Worker` bound to the derived per-experiment queue.
 
 ## Behaviour
 
 On startup the script:
 
-1. Parses CLI args (primarily `--help` and `--log-level`) before loading
-   configuration, so help output works without a valid environment.
+1. Parses CLI args (primarily `--help`, `--log-level`, and `--experiment-id`)
+   before loading configuration, so help output works without a valid environment.
 2. Calls `get_settings()` to load `Settings`; any validation error is printed to
    the console and the process exits with code `1` instead of crashing.
 3. Configures Loguru to log to stderr using `LOG_LEVEL` (or `--log-level`) as
@@ -31,12 +33,11 @@ On startup the script:
    with `rotation="10 MB"` and `retention="14 days"`, so worker output is
    always persisted for later debugging.
 6. Imports `loreley.tasks.broker` (which constructs and registers the Redis
-   broker) and `loreley.tasks.workers` (which defines the `run_evolution_job`
-   actor and its queue settings) after logging is configured; any import/startup
-   failure is reported with a concise console message and exit code `1`.
-7. Logs a short “worker online” message including `TASKS_QUEUE_NAME` and
-   `WORKER_REPO_WORKTREE` (the base clone; per-job worktrees are created under
-   `<WORKER_REPO_WORKTREE>-worktrees/`).
+   broker), ensures the DB schema exists, loads the experiment config snapshot,
+   and registers an experiment-attached actor bound to the derived queue.
+7. Logs a short “worker online” message including the attached experiment id and
+   the derived queue name, plus `WORKER_REPO_WORKTREE` (the base clone; per-job
+   worktrees are created under `<WORKER_REPO_WORKTREE>-worktrees/`).
 8. Creates a `dramatiq.Worker` with:
    - `broker` set to the global Redis broker instance.
    - `worker_threads=1` to ensure a single-threaded execution model.
@@ -53,14 +54,14 @@ message.
 Typical usage with `uv`:
 
 ```bash
-uv run python script/run_worker.py
-uv run python script/run_worker.py --log-level DEBUG
+uv run python script/run_worker.py --experiment-id <EXPERIMENT_UUID>
+uv run python script/run_worker.py --experiment-id <EXPERIMENT_UUID> --log-level DEBUG
 ```
 
-The worker will begin consuming messages for the queue specified by
-`TASKS_QUEUE_NAME` (default: `loreley.evolution`) in a single process with a
-single worker thread. Jobs are expected to be created and dispatched by the
-scheduler (`loreley.scheduler.main`).
+The worker consumes messages from a per-experiment queue derived from the
+configured queue prefix (`TASKS_QUEUE_NAME`) and the attached experiment UUID hex:
+`"{TASKS_QUEUE_NAME}.{experiment_id.hex}"`. Jobs are expected to be created and
+dispatched by the scheduler (`loreley.scheduler.main`).
 
 `--help` works without configured environment variables; other configuration is
 still read from `loreley.config.Settings`.
@@ -77,9 +78,12 @@ The script uses `loreley.config.Settings` for:
 - **Task queue / broker**
   - `TASKS_REDIS_URL` or (`TASKS_REDIS_HOST`, `TASKS_REDIS_PORT`,
     `TASKS_REDIS_DB`, `TASKS_REDIS_PASSWORD`, `TASKS_REDIS_NAMESPACE`).
-  - `TASKS_QUEUE_NAME`: queue name for the `run_evolution_job` actor.
+  - `TASKS_QUEUE_NAME`: queue name prefix for experiment-scoped queues.
   - `TASKS_WORKER_MAX_RETRIES`, `TASKS_WORKER_TIME_LIMIT_SECONDS`: consumed
     by `loreley.tasks.workers` when configuring the actor.
+- **Experiment attachment**
+  - `WORKER_EXPERIMENT_ID` (or `--experiment-id`): attach this worker process to
+    a single experiment so experiment-scoped settings can be loaded once at startup.
 - **Worker repository**
   - `WORKER_REPO_REMOTE_URL`, `WORKER_REPO_BRANCH`, `WORKER_REPO_WORKTREE`,
     `WORKER_REPO_WORKTREE_RANDOMIZE`, `WORKER_REPO_WORKTREE_RANDOM_SUFFIX_LEN`,

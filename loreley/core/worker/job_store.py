@@ -74,8 +74,21 @@ class EvolutionJobStore:
     def __init__(self, *, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
 
-    def start_job(self, job_id: UUID) -> LockedJob:
+    def start_job(
+        self,
+        job_id: UUID,
+        *,
+        expected_experiment_id: UUID | str | None = None,
+    ) -> LockedJob:
         """Lock the job row, validate status, and mark it as running."""
+
+        expected: UUID | None = None
+        if expected_experiment_id is not None:
+            expected = (
+                expected_experiment_id
+                if isinstance(expected_experiment_id, UUID)
+                else UUID(str(expected_experiment_id))
+            )
 
         try:
             with session_scope() as session:
@@ -89,6 +102,19 @@ class EvolutionJobStore:
                     raise JobPreconditionError(f"Evolution job {job_id} does not exist.")
                 if not job.base_commit_hash:
                     raise EvolutionWorkerError("Evolution job is missing base_commit_hash.")
+
+                if expected is not None:
+                    job_experiment = getattr(job, "experiment_id", None)
+                    if job_experiment is None:
+                        raise JobPreconditionError(
+                            "Evolution job is missing experiment_id; "
+                            "this worker process is attached to a specific experiment.",
+                        )
+                    if UUID(str(job_experiment)) != expected:
+                        raise JobPreconditionError(
+                            "Evolution job belongs to a different experiment; "
+                            f"expected={expected} got={job_experiment}.",
+                        )
 
                 allowed_statuses = {JobStatus.PENDING, JobStatus.QUEUED}
                 if job.status not in allowed_statuses:

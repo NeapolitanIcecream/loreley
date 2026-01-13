@@ -11,6 +11,7 @@ This CLI is designed to:
 import argparse
 import os
 import sys
+import uuid
 from typing import Sequence
 
 from rich.console import Console
@@ -96,6 +97,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     worker = subparsers.add_parser("worker", help="Run the evolution worker (Dramatiq consumer).")
+    worker.add_argument(
+        "--experiment-id",
+        dest="experiment_id",
+        default=None,
+        help="Attach this worker process to a single experiment UUID (overrides WORKER_EXPERIMENT_ID).",
+    )
     worker.add_argument(
         "--no-preflight",
         action="store_true",
@@ -223,11 +230,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
 
     if args.command == "worker":
+        attached = getattr(args, "experiment_id", None)
+        if attached:
+            try:
+                attached_uuid = uuid.UUID(str(attached))
+                settings = settings.model_copy(update={"worker_experiment_id": attached_uuid})
+            except Exception:
+                # Let run_worker surface a helpful error message.
+                pass
         return run_worker(
             settings=settings,
             console=console,
             preflight=not bool(args.no_preflight),
             preflight_timeout_seconds=float(args.preflight_timeout_seconds),
+            experiment_id=getattr(args, "experiment_id", None),
         )
 
     if args.command == "api":

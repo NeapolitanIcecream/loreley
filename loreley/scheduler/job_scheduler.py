@@ -7,7 +7,7 @@ core orchestration code in ``loreley.scheduler.main`` can stay focused on
 high-level control flow.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Sequence
 from uuid import UUID
@@ -20,7 +20,7 @@ from loreley.config import Settings
 from loreley.core.map_elites.sampler import MapElitesSampler, ScheduledSamplerJob
 from loreley.db.base import session_scope
 from loreley.db.models import EvolutionJob, JobStatus
-from loreley.tasks.workers import run_evolution_job
+from loreley.tasks.workers import build_evolution_job_sender_actor
 
 log = logger.bind(module="scheduler.job_scheduler")
 
@@ -39,6 +39,14 @@ class JobScheduler:
     console: Console
     sampler: MapElitesSampler
     experiment_id: UUID
+    _sender_actor: object = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        # Build a sender-only actor that targets the experiment-scoped queue.
+        self._sender_actor = build_evolution_job_sender_actor(
+            settings=self.settings,
+            experiment_id=self.experiment_id,
+        )
 
     # Measuring -------------------------------------------------------------
 
@@ -216,7 +224,8 @@ class JobScheduler:
         dispatched = 0
         for job_id in ready:
             try:
-                run_evolution_job.send(str(job_id))
+                # Use a sender actor so the message targets the experiment queue.
+                self._sender_actor.send(str(job_id))  # type: ignore[attr-defined]
                 dispatched += 1
             except Exception as exc:  # pragma: no cover - defensive
                 self.console.log(
@@ -269,7 +278,7 @@ class JobScheduler:
         queued = self._mark_jobs_queued(job_ids)
         for job_id in queued:
             try:
-                run_evolution_job.send(str(job_id))
+                self._sender_actor.send(str(job_id))  # type: ignore[attr-defined]
                 self.console.log(
                     f"[bold green]Queued job[/] id={job_id}",
                 )

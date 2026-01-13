@@ -20,6 +20,7 @@ Typical usage (with uv):
 
 import argparse
 import sys
+import uuid
 from typing import Sequence
 
 from loguru import logger
@@ -38,6 +39,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run the Loreley evolution worker (single-threaded Dramatiq consumer).",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--experiment-id",
+        dest="experiment_id",
+        default=None,
+        help="Attach this worker process to a single experiment UUID (overrides WORKER_EXPERIMENT_ID).",
     )
     parser.add_argument(
         "--log-level",
@@ -83,12 +90,21 @@ def main(_argv: Sequence[str] | None = None) -> int:
     except ValueError as exc:
         console.log("[bold red]Invalid log level[/] reason={}".format(exc))
         return 1
+    experiment_id = getattr(args, "experiment_id", None)
+    if experiment_id:
+        try:
+            settings = settings.model_copy(update={"worker_experiment_id": uuid.UUID(str(experiment_id))})
+        except Exception:
+            # Let run_worker surface a helpful error message.
+            pass
+
     return int(
         run_worker(
             settings=settings,
             console=console,
             preflight=not bool(args.no_preflight),
             preflight_timeout_seconds=float(args.preflight_timeout_seconds),
+            experiment_id=experiment_id,
         )
     )
 

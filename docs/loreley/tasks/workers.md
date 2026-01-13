@@ -1,13 +1,17 @@
 # loreley.tasks.workers
 
-Dramatiq task actors that drive the Loreley evolution worker.
+Dramatiq task actor builders that drive the Loreley evolution worker.
 
 ## Evolution worker
 
-- **`run_evolution_job(job_id: str) -> None`**  
-  A Dramatiq actor that runs a single evolution job via `loreley.core.worker.evolution.EvolutionWorker`. The queue name, retry policy, and time limit are derived from the task-related settings in `loreley.config.Settings` (`TASKS_QUEUE_NAME`, `TASKS_WORKER_MAX_RETRIES`, and `TASKS_WORKER_TIME_LIMIT_SECONDS`). The time limit is configured in milliseconds at the actor level: positive `TASKS_WORKER_TIME_LIMIT_SECONDS` values set a hard wall-clock limit, while values `<= 0` disable the time limit (no hard cap).
+- **`build_evolution_job_worker_actor(settings: Settings, experiment_id: UUID | str) -> dramatiq.Actor`**  
+  Builds an **experiment-attached** Dramatiq actor that runs a single evolution job via
+  `loreley.core.worker.evolution.EvolutionWorker`. The returned actor is bound to the
+  per-experiment queue derived from `TASKS_QUEUE_NAME` (prefix) and the experiment UUID hex:
+  `"{TASKS_QUEUE_NAME}.{experiment_id.hex}"`.
 
-  On execution, the actor:
+  The actor reuses a single `EvolutionWorker` instance for the lifetime of the worker process
+  (no per-job config reloads / no dynamic rebuilding). On execution, it:
 
   - Validates and normalises the `job_id` argument.
   - Logs a “job started” event to both the rich console and `loguru`.
@@ -19,7 +23,14 @@ Dramatiq task actors that drive the Loreley evolution worker.
     - Any other unexpected exception: logs with a full stack trace and re-raises as a defensive fallback.
   - Logs a “job complete” event including the resulting candidate commit hash on success.
 
-Importing `loreley.tasks.workers` also imports `loreley.tasks.broker`, which configures the global Dramatiq broker using the Redis settings in `loreley.config.Settings`.
+- **`build_evolution_job_sender_actor(settings: Settings, experiment_id: UUID | str) -> dramatiq.Actor`**  
+  Builds a scheduler-side sender stub used only for enqueueing messages via `.send(...)`. The
+  callable body is not expected to run in the scheduler process.
+
+## Broker side effect
+
+Importing `loreley.tasks.workers` imports `loreley.tasks.broker`, which configures the global
+Dramatiq broker using the Redis settings in `loreley.config.Settings`.
 
 For details about the dedicated worker CLI wrapper script (including how it
 starts a single-process, single-threaded Dramatiq worker), see

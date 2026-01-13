@@ -101,6 +101,7 @@ class EvolutionWorker:
         self,
         *,
         settings: Settings | None = None,
+        attached_experiment_id: UUID | str | None = None,
         repository: WorkerRepository | None = None,
         planning_agent: PlanningAgent | None = None,
         coding_agent: CodingAgent | None = None,
@@ -109,6 +110,11 @@ class EvolutionWorker:
         job_store: EvolutionJobStore | None = None,
     ) -> None:
         self.settings = settings or get_settings()
+        self.attached_experiment_id: UUID | None = (
+            attached_experiment_id
+            if isinstance(attached_experiment_id, UUID)
+            else (UUID(str(attached_experiment_id)) if attached_experiment_id else None)
+        )
         self.repository = repository or WorkerRepository(self.settings)
         self.planning_agent = planning_agent or PlanningAgent(self.settings)
         self.coding_agent = coding_agent or CodingAgent(self.settings)
@@ -201,17 +207,22 @@ class EvolutionWorker:
     # Internal orchestration helpers -------------------------------------
 
     def _start_job(self, job_id: UUID) -> JobContext:
-        locked_job = self.job_store.start_job(job_id)
+        locked_job = self.job_store.start_job(
+            job_id,
+            expected_experiment_id=self.attached_experiment_id,
+        )
 
-        if locked_job.experiment_id is not None:
-            self.settings = resolve_experiment_settings(
-                experiment_id=locked_job.experiment_id,
-                base_settings=self.settings,
-            )
-            # Evaluator behaviour is experiment-scoped; rebuild to pick up the
-            # effective snapshot settings (plugin ref, timeout, etc.).
-            if isinstance(self.evaluator, Evaluator):
-                self.evaluator = Evaluator(self.settings)
+        if self.attached_experiment_id is None:
+            # Legacy mode: resolve experiment-scoped settings per job when an experiment id is present.
+            if locked_job.experiment_id is not None:
+                self.settings = resolve_experiment_settings(
+                    experiment_id=locked_job.experiment_id,
+                    base_settings=self.settings,
+                )
+                # Evaluator behaviour is experiment-scoped; rebuild to pick up the
+                # effective snapshot settings (plugin ref, timeout, etc.).
+                if isinstance(self.evaluator, Evaluator):
+                    self.evaluator = Evaluator(self.settings)
 
         goal = (locked_job.goal or "").strip()
         if not goal:
@@ -250,7 +261,11 @@ class EvolutionWorker:
             job_id=locked_job.job_id,
             base_commit_hash=locked_job.base_commit_hash,
             island_id=locked_job.island_id,
-            experiment_id=locked_job.experiment_id,
+            experiment_id=(
+                self.attached_experiment_id
+                if self.attached_experiment_id is not None
+                else locked_job.experiment_id
+            ),
             repository_id=locked_job.repository_id,
             inspiration_commit_hashes=tuple(locked_job.inspiration_commit_hashes or ()),
             goal=goal,

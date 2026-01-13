@@ -101,7 +101,7 @@ cp env.example .env
 
 - `APP_NAME`, `APP_ENV`, `LOG_LEVEL`
 - `DATABASE_URL`
-- `TASKS_REDIS_URL`, `TASKS_QUEUE_NAME`
+- `TASKS_REDIS_URL`, `TASKS_QUEUE_NAME` (queue prefix), `WORKER_EXPERIMENT_ID`
 - `OPENAI_API_KEY`
 - `MAPELITES_EXPERIMENT_ROOT_COMMIT`
 - `SCHEDULER_REPO_ROOT`, `WORKER_REPO_REMOTE_URL`
@@ -121,11 +121,11 @@ Note: on first start the scheduler performs a repo-state root scan at `MAPELITES
 
 ```bash
 uv run loreley scheduler
-uv run loreley worker
+uv run loreley worker --experiment-id <EXPERIMENT_UUID>
 
 # legacy wrappers (still supported)
 uv run python script/run_scheduler.py
-uv run python script/run_worker.py
+uv run python script/run_worker.py --experiment-id <EXPERIMENT_UUID>
 ```
 
 See: [Running the scheduler](script/run_scheduler.md), [Running the worker](script/run_worker.md)

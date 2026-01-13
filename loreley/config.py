@@ -74,6 +74,10 @@ class Settings(BaseSettings):
     )
 
     # Experiment / evolution configuration
+    worker_experiment_id: uuid.UUID | None = Field(
+        default=None,
+        alias="WORKER_EXPERIMENT_ID",
+    )
     mapelites_experiment_root_commit: str | None = Field(
         default=None,
         alias="MAPELITES_EXPERIMENT_ROOT_COMMIT",
@@ -643,6 +647,7 @@ class Settings(BaseSettings):
             "tasks_redis_host": self.tasks_redis_host,
             "tasks_redis_port": self.tasks_redis_port,
             "tasks_queue_name": self.tasks_queue_name,
+            "worker_experiment_id": str(self.worker_experiment_id) if self.worker_experiment_id else None,
             "worker_repo_worktree": self.worker_repo_worktree,
             "worker_repo_branch": self.worker_repo_branch,
             "worker_repo_fetch_depth": self.worker_repo_fetch_depth,
