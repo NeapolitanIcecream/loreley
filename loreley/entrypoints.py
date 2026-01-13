@@ -189,9 +189,22 @@ def run_worker(
     """Run the Loreley evolution worker as a single Dramatiq consumer process."""
     # Resolve the experiment attachment before preflight so checks can validate it.
     attached_experiment = experiment_id or getattr(settings, "worker_experiment_id", None)
-    if attached_experiment is not None and not isinstance(attached_experiment, uuid.UUID):
-        attached_experiment = uuid.UUID(str(attached_experiment))
-        settings = settings.model_copy(update={"worker_experiment_id": attached_experiment})
+    if attached_experiment is not None:
+        try:
+            attached_uuid = (
+                attached_experiment
+                if isinstance(attached_experiment, uuid.UUID)
+                else uuid.UUID(str(attached_experiment))
+            )
+        except Exception as exc:
+            console.log(
+                "[bold red]Invalid experiment id[/] "
+                f"value={attached_experiment!r} reason={exc}. "
+                "Pass --experiment-id <EXPERIMENT_UUID> or set WORKER_EXPERIMENT_ID.",
+            )
+            return 1
+        attached_experiment = attached_uuid
+        settings = settings.model_copy(update={"worker_experiment_id": attached_uuid})
 
     if preflight:
         results = preflight_worker(settings, timeout_seconds=preflight_timeout_seconds)
