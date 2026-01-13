@@ -1902,7 +1902,7 @@ subset of changed files.</p>
 </ul>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
-<p>Ignore filtering is currently <strong>best-effort</strong> and only uses the repository root <code>.gitignore</code> and <code>.loreleyignore</code> at the requested <code>commit_hash</code>. <code>.loreleyignore</code> rules are applied after <code>.gitignore</code> (so <code>!pattern</code> can re-include). Nested <code>.gitignore</code> files and global excludes are not applied.</p>
+<p>Ignore filtering is <strong>best-effort</strong> and uses a repository-root <code>.gitignore</code> + <code>.loreleyignore</code> matcher. In experiment runs, the effective ignore rules are <strong>pinned at experiment creation time</strong> and persisted in <code>Experiment.config_snapshot</code> as <code>mapelites_repo_state_ignore_text</code> (derived from the experiment root commit). <code>.loreleyignore</code> rules are applied after <code>.gitignore</code> (so <code>!pattern</code> can re-include). Nested <code>.gitignore</code> files and global excludes are not applied.</p>
 </div>
 <p>For each eligible file we keep:</p>
 <ul>
@@ -1919,20 +1919,19 @@ subset of changed files.</p>
 </ul>
 <p>Cache key:</p>
 <ul>
+<li><code>experiment_id</code></li>
 <li><code>blob_sha</code></li>
-<li><code>embedding_model</code></li>
-<li><code>dimensions</code> (actual output vector length guard)</li>
-<li><code>pipeline_signature</code></li>
 </ul>
-<p><code>pipeline_signature</code> is a SHA-256 hash over the preprocessing/chunking/embedding
-knobs that affect the produced vectors (so cache entries are invalidated when
-the pipeline changes).</p>
+<p>The embedding model name and output dimensionality are experiment-scoped
+invariants pinned in <code>Experiment.config_snapshot</code>. The database cache stores
+<code>embedding_model</code> and <code>dimensions</code> alongside vectors for validation and debugging.</p>
 <p>The database-backed cache is <strong>insert-only</strong>: when multiple processes attempt to
 write the same key, the first insert wins and later writes are ignored (no overwrite).</p>
 <p>Backend selection:</p>
 <ul>
 <li><code>MAPELITES_FILE_EMBEDDING_CACHE_BACKEND=db|memory</code> (default: <code>db</code>)</li>
 </ul>
+<p>Note: The database-backed cache is experiment-scoped and requires an <code>experiment_id</code>. Use the <code>memory</code> backend for local runs without an experiment context.</p>
 <h2 id="repo-state-aggregate-cache-commit-level">Repo-state aggregate cache (commit-level)<a class="headerlink" href="#repo-state-aggregate-cache-commit-level" title="Permanent link">&para;</a></h2>
 <p>When <code>MapElitesManager</code> is constructed with an <code>experiment_id</code> (the scheduler does this),
 repo-state embeddings persist a commit-level aggregate so future ingests can avoid
@@ -1948,11 +1947,12 @@ re-enumerating the full tree.</p>
 </ul>
 <p>The commit vector is derived as <code>sum_vector / file_count</code>.</p>
 <h3 id="incremental-updates">Incremental updates<a class="headerlink" href="#incremental-updates" title="Permanent link">&para;</a></h3>
-<p>When a parent aggregate exists, the commit has exactly one parent, and root ignore files
-(<code>.gitignore</code> and <code>.loreleyignore</code>) are unchanged, the child aggregate is derived from the
-parent by applying the parent..child diff (add/modify/delete/rename) and embedding only the
-new/changed blobs. If these conditions are not met (merge commits, missing parent aggregate,
-diff failures, or root ignore changes), runtime ingestion fails fast.</p>
+<p>When a parent aggregate exists and the commit has exactly one parent, the child aggregate is
+derived from the parent by applying the parent..child diff (add/modify/delete/rename) and
+embedding only the new/changed blobs. Ignore rules are pinned for the experiment lifecycle,
+so ignore file changes in the evolved history do not affect eligibility. If the commit shape
+is unsupported (merge commits, missing parent aggregate, or diff failures), runtime ingestion
+fails fast.</p>
 <h2 id="commit-aggregation">Commit aggregation<a class="headerlink" href="#commit-aggregation" title="Permanent link">&para;</a></h2>
 <p>Implemented by:</p>
 <ul>

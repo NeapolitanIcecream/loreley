@@ -11,25 +11,21 @@
       
       
       
-        <link rel="prev" href="../base/">
-      
-      
-        <link rel="next" href="../../core/map-elites/map-elites/">
       
       
         
       
       
-      <link rel="icon" href="../../../assets/images/favicon.png">
+      <link rel="icon" href="../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.0">
     
     
       
-        <title>Models - Loreley</title>
+        <title>ADR 0012: Pin repo-state ignore rules in the experiment snapshot - Loreley</title>
       
     
     
-      <link rel="stylesheet" href="../../../assets/stylesheets/main.618322db.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.618322db.min.css">
       
       
 
@@ -48,7 +44,7 @@
       
     
     
-    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -66,7 +62,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#loreleydbmodels" class="md-skip">
+        <a href="#adr-0012-pin-repo-state-ignore-rules-in-the-experiment-snapshot" class="md-skip">
           Skip to content
         </a>
       
@@ -82,7 +78,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../../.." title="Loreley" class="md-header__button md-logo" aria-label="Loreley" data-md-component="logo">
+    <a href="../.." title="Loreley" class="md-header__button md-logo" aria-label="Loreley" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -102,7 +98,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Models
+              ADR 0012: Pin repo-state ignore rules in the experiment snapshot
             
           </span>
         </div>
@@ -180,7 +176,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../../.." title="Loreley" class="md-nav__button md-logo" aria-label="Loreley" data-md-component="logo">
+    <a href="../.." title="Loreley" class="md-nav__button md-logo" aria-label="Loreley" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -198,7 +194,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../.." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   
@@ -222,20 +218,18 @@
       
   
   
-    
   
   
-  
     
     
     
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
         
           
           <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
@@ -256,7 +250,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -274,7 +268,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../config/" class="md-nav__link">
+      <a href="../../loreley/config/" class="md-nav__link">
         
   
   
@@ -302,7 +296,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/experiments/" class="md-nav__link">
+      <a href="../../loreley/core/experiments/" class="md-nav__link">
         
   
   
@@ -330,7 +324,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/contracts/" class="md-nav__link">
+      <a href="../../loreley/core/contracts/" class="md-nav__link">
         
   
   
@@ -405,7 +399,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../scheduler/main/" class="md-nav__link">
+      <a href="../../loreley/scheduler/main/" class="md-nav__link">
         
   
   
@@ -433,7 +427,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../scheduler/job_scheduler/" class="md-nav__link">
+      <a href="../../loreley/scheduler/job_scheduler/" class="md-nav__link">
         
   
   
@@ -461,7 +455,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../scheduler/ingestion/" class="md-nav__link">
+      <a href="../../loreley/scheduler/ingestion/" class="md-nav__link">
         
   
   
@@ -494,20 +488,18 @@
                 
   
   
-    
   
   
-  
     
     
     
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_5" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_5" >
         
           
           <label class="md-nav__link" for="__nav_2_5" id="__nav_2_5_label" tabindex="0">
@@ -528,7 +520,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_5_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_5_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2_5">
             <span class="md-nav__icon md-icon"></span>
             
@@ -546,7 +538,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../base/" class="md-nav__link">
+      <a href="../../loreley/db/base/" class="md-nav__link">
         
   
   
@@ -571,37 +563,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Models
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../loreley/db/models/" class="md-nav__link">
         
   
   
@@ -617,48 +582,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#shared-mixins-and-enums" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Shared mixins and enums
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#core-models" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Core models
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -726,7 +649,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/map-elites/map-elites/" class="md-nav__link">
+      <a href="../../loreley/core/map-elites/map-elites/" class="md-nav__link">
         
   
   
@@ -754,7 +677,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/map-elites/repository_embedding/" class="md-nav__link">
+      <a href="../../loreley/core/map-elites/repository_embedding/" class="md-nav__link">
         
   
   
@@ -782,7 +705,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/map-elites/preprocess/" class="md-nav__link">
+      <a href="../../loreley/core/map-elites/preprocess/" class="md-nav__link">
         
   
   
@@ -810,7 +733,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/map-elites/chunk/" class="md-nav__link">
+      <a href="../../loreley/core/map-elites/chunk/" class="md-nav__link">
         
   
   
@@ -838,7 +761,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/map-elites/code_embedding/" class="md-nav__link">
+      <a href="../../loreley/core/map-elites/code_embedding/" class="md-nav__link">
         
   
   
@@ -866,7 +789,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/map-elites/dimension_reduction/" class="md-nav__link">
+      <a href="../../loreley/core/map-elites/dimension_reduction/" class="md-nav__link">
         
   
   
@@ -894,7 +817,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/map-elites/sampler/" class="md-nav__link">
+      <a href="../../loreley/core/map-elites/sampler/" class="md-nav__link">
         
   
   
@@ -922,7 +845,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/map-elites/snapshot/" class="md-nav__link">
+      <a href="../../loreley/core/map-elites/snapshot/" class="md-nav__link">
         
   
   
@@ -1005,7 +928,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/worker/repository/" class="md-nav__link">
+      <a href="../../loreley/core/worker/repository/" class="md-nav__link">
         
   
   
@@ -1033,7 +956,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/worker/planning/" class="md-nav__link">
+      <a href="../../loreley/core/worker/planning/" class="md-nav__link">
         
   
   
@@ -1061,7 +984,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/worker/agent_backend/" class="md-nav__link">
+      <a href="../../loreley/core/worker/agent_backend/" class="md-nav__link">
         
   
   
@@ -1089,7 +1012,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/worker/coding/" class="md-nav__link">
+      <a href="../../loreley/core/worker/coding/" class="md-nav__link">
         
   
   
@@ -1117,7 +1040,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/worker/evaluator/" class="md-nav__link">
+      <a href="../../loreley/core/worker/evaluator/" class="md-nav__link">
         
   
   
@@ -1145,7 +1068,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/worker/evolution/" class="md-nav__link">
+      <a href="../../loreley/core/worker/evolution/" class="md-nav__link">
         
   
   
@@ -1173,7 +1096,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/worker/commit_card/" class="md-nav__link">
+      <a href="../../loreley/core/worker/commit_card/" class="md-nav__link">
         
   
   
@@ -1201,7 +1124,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/worker/commit_summary/" class="md-nav__link">
+      <a href="../../loreley/core/worker/commit_summary/" class="md-nav__link">
         
   
   
@@ -1229,7 +1152,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/worker/artifacts/" class="md-nav__link">
+      <a href="../../loreley/core/worker/artifacts/" class="md-nav__link">
         
   
   
@@ -1257,7 +1180,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/worker/job_store/" class="md-nav__link">
+      <a href="../../loreley/core/worker/job_store/" class="md-nav__link">
         
   
   
@@ -1340,7 +1263,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tasks/broker/" class="md-nav__link">
+      <a href="../../loreley/tasks/broker/" class="md-nav__link">
         
   
   
@@ -1368,7 +1291,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tasks/workers/" class="md-nav__link">
+      <a href="../../loreley/tasks/workers/" class="md-nav__link">
         
   
   
@@ -1404,7 +1327,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../api/" class="md-nav__link">
+      <a href="../../loreley/api/" class="md-nav__link">
         
   
   
@@ -1432,7 +1355,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../ui/" class="md-nav__link">
+      <a href="../../loreley/ui/" class="md-nav__link">
         
   
   
@@ -1514,7 +1437,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../script/doctor/" class="md-nav__link">
+      <a href="../../script/doctor/" class="md-nav__link">
         
   
   
@@ -1542,7 +1465,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../script/run_scheduler/" class="md-nav__link">
+      <a href="../../script/run_scheduler/" class="md-nav__link">
         
   
   
@@ -1570,7 +1493,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../script/run_worker/" class="md-nav__link">
+      <a href="../../script/run_worker/" class="md-nav__link">
         
   
   
@@ -1598,7 +1521,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../script/run_api/" class="md-nav__link">
+      <a href="../../script/run_api/" class="md-nav__link">
         
   
   
@@ -1626,7 +1549,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../script/run_ui/" class="md-nav__link">
+      <a href="../../script/run_ui/" class="md-nav__link">
         
   
   
@@ -1654,7 +1577,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../script/reset_db/" class="md-nav__link">
+      <a href="../../script/reset_db/" class="md-nav__link">
         
   
   
@@ -1702,36 +1625,6 @@
     
   
   
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#shared-mixins-and-enums" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Shared mixins and enums
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#core-models" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Core models
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
 </nav>
                   </div>
                 </div>
@@ -1747,59 +1640,12 @@
 
 
 
-<h1 id="loreleydbmodels">loreley.db.models<a class="headerlink" href="#loreleydbmodels" title="Permanent link">&para;</a></h1>
-<p>ORM models and enums for tracking evolutionary jobs, commits, and associated metrics.</p>
-<h2 id="shared-mixins-and-enums">Shared mixins and enums<a class="headerlink" href="#shared-mixins-and-enums" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong><code>TimestampMixin</code></strong>: adds <code>created_at</code> and <code>updated_at</code> columns that default to <code>now()</code> and automatically update on modification.</li>
-<li><strong><code>JobStatus</code></strong>: string-based <code>Enum</code> capturing the lifecycle of an evolution job (<code>PENDING</code>, <code>QUEUED</code>, <code>RUNNING</code>, <code>SUCCEEDED</code>, <code>FAILED</code>, <code>CANCELLED</code>).</li>
-</ul>
-<h2 id="core-models">Core models<a class="headerlink" href="#core-models" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong><code>Repository</code></strong> (<code>repositories</code> table): normalised view of a source code repository.</li>
-<li>Stores a stable <code>slug</code> derived from either the canonical remote URL or local worktree path, the current <code>remote_url</code>, optional <code>root_path</code>, and an <code>extra</code> JSONB payload with additional metadata (canonical origin, remotes, etc.).</li>
-<li>Owns a collection of <code>Experiment</code> rows and is treated as the top-level key when reasoning about experiments in a multi-repository deployment.</li>
-<li><strong><code>Experiment</code></strong> (<code>experiments</code> table): captures a single experiment configuration within a repository.</li>
-<li>References a <code>repository_id</code>, a stable <code>config_hash</code> computed from a subset of <code>Settings</code>, an optional human-readable <code>name</code>, a JSONB <code>config_snapshot</code> of the relevant settings, and a free-form <code>status</code>.</li>
-<li>Relates to <code>EvolutionJob</code>, <code>CommitCard</code>, and <code>MapElitesState</code> so that jobs, commits, and archive state can all be grouped by experiment.</li>
-<li><strong><code>CommitCard</code></strong> (<code>commit_cards</code> table): stores a lightweight, size-bounded commit representation used for inspiration and UI.</li>
-<li>Primary key: <code>id</code> (UUID).</li>
-<li>Scoped by <code>experiment_id</code> (required); the <code>(experiment_id, commit_hash)</code> pair is unique so the same git commit hash can appear in multiple experiments with independent metadata.</li>
-<li>Tracks commit hash, parent hash, optional island identifier, optional <code>job_id</code>, author, subject, change summary, evaluation summary, tags, key files, and highlights.</li>
-<li>Defines relationships to associated <code>Metric</code> records (via <code>Metric.commit_card_id</code>) and back to the owning <code>Experiment</code>.</li>
-<li><strong><code>Metric</code></strong> (<code>metrics</code> table): records individual evaluation metrics for a commit.</li>
-<li>Stores metric <code>name</code>, numeric <code>value</code>, optional <code>unit</code>, whether higher values are better, and a JSONB <code>details</code> payload.</li>
-<li>Links back to <code>CommitCard</code> via <code>commit_card_id</code> and maintains uniqueness per <code>(commit_card_id, name)</code>.</li>
-<li><strong><code>EvolutionJob</code></strong> (<code>evolution_jobs</code> table): represents a single evolution iteration scheduled by the system.</li>
-<li>Tracks current <code>status</code>, base commit, island ID, optional <code>experiment_id</code>, inspiration commit hashes, size-bounded job spec fields (<code>goal</code>, <code>constraints</code>, <code>acceptance_criteria</code>, <code>notes</code>, <code>tags</code>, sampling hints), human-readable <code>plan_summary</code>, priority, scheduling/processing timestamps, and last error if any.</li>
-<li>Stores result/ingestion indexing fields (<code>result_commit_hash</code>, ingestion status/attempts/delta/cell index) without embedding large JSON payloads.</li>
-<li>Relates back to <code>Experiment</code> via <code>experiment_id</code>, enabling efficient per-experiment queries. <code>base_commit_hash</code> is a git commit hash string (not a foreign key).</li>
-<li><strong><code>JobArtifacts</code></strong> (<code>job_artifacts</code> table): filesystem references for cold-path artifacts produced by the worker.</li>
-<li>Stores paths to planning/coding/evaluation prompts, raw outputs, and logs.</li>
-<li><strong><code>MapElitesState</code></strong> (<code>map_elites_states</code> table): persists per-experiment, per-island snapshots of the MAP-Elites archive.</li>
-<li>Uses a composite primary key <code>(experiment_id, island_id)</code> so that multiple experiments can maintain independent archives even when they share island identifiers.</li>
-<li>Stores a JSONB <code>snapshot</code> payload containing <strong>lightweight metadata</strong> (feature bounds, PCA projection payload, schema version, and other knobs).</li>
-<li>For <code>schema_version &gt;= 2</code>, the large <code>archive</code>/<code>history</code> payloads are stored incrementally in separate tables and
-    reconstructed on load by <code>loreley.core.map_elites.snapshot.DatabaseSnapshotBackend</code>.</li>
-<li>For legacy rows (<code>schema_version &lt; 2</code>) that still embed <code>archive</code>/<code>history</code> lists, the loader performs <strong>lazy migration</strong>
-    into the incremental tables on first read and strips the large fields from <code>snapshot</code>.</li>
-<li><strong><code>MapElitesArchiveCell</code></strong> (<code>map_elites_archive_cells</code> table): one row per occupied MAP-Elites archive cell.</li>
-<li>Primary key: <code>(experiment_id, island_id, cell_index)</code>.</li>
-<li>Stores the cell's <code>commit_hash</code>, <code>objective</code>, behaviour <code>measures</code>, stored <code>solution</code> vector, and <code>timestamp</code>.</li>
-<li>Enables cheap per-cell upserts when a commit improves a specific cell.</li>
-<li><strong><code>MapElitesPcaHistory</code></strong> (<code>map_elites_pca_history</code> table): incremental PCA history entries used to restore dimensionality reduction state.</li>
-<li>Primary key: <code>(experiment_id, island_id, commit_hash)</code>.</li>
-<li>Stores the commit embedding <code>vector</code> plus the <code>embedding_model</code> name and a <code>last_seen_at</code> marker used
-    to restore ordered, bounded history windows across restarts.</li>
-<li><strong><code>MapElitesFileEmbeddingCache</code></strong> (<code>map_elites_file_embedding_cache</code> table): persistent file-level embedding cache scoped to an experiment.</li>
-<li>Uses a composite primary key <code>(experiment_id, blob_sha)</code>.</li>
-<li>Stores a float array <code>vector</code> containing the file embedding, allowing repo-state embeddings to reuse unchanged file vectors across commits.</li>
-<li>Stores <code>embedding_model</code> and <code>dimensions</code> alongside vectors for validation and debugging.</li>
-<li><strong><code>MapElitesRepoStateAggregate</code></strong> (<code>map_elites_repo_state_aggregates</code> table): persistent commit-level aggregates for repo-state embeddings.</li>
-<li>Uses a composite primary key <code>(experiment_id, commit_hash)</code>.</li>
-<li>Stores <code>sum_vector</code> and <code>file_count</code> so the commit embedding can be derived as <code>sum_vector / file_count</code>.</li>
-<li>Tracks a <code>capped</code> flag to disable incremental diffs when a repo-state max-files cap may have affected selection.</li>
-</ul>
+<h1 id="adr-0012-pin-repo-state-ignore-rules-in-the-experiment-snapshot">ADR 0012: Pin repo-state ignore rules in the experiment snapshot<a class="headerlink" href="#adr-0012-pin-repo-state-ignore-rules-in-the-experiment-snapshot" title="Permanent link">&para;</a></h1>
+<p>Date: 2026-01-09</p>
+<p>Context: Repo-state embeddings run in incremental-only mode after bootstrap. Commit-scoped <code>.gitignore</code> / <code>.loreleyignore</code> changes introduce extra guards and fail-fast edge cases because eligibility can change non-locally.</p>
+<p>Decision: Persist a <strong>pinned root ignore rule set</strong> (<code>mapelites_repo_state_ignore_text</code> + <code>mapelites_repo_state_ignore_sha256</code>) inside <code>Experiment.config_snapshot</code> at experiment creation time, derived from the experiment root commit. All repo-state file selection and incremental diffs use this pinned matcher for the full experiment lifecycle.</p>
+<p>Decision: Introduce <code>experiment_snapshot_schema_version</code> and require it (and the pinned ignore keys) when loading experiment settings. Loreley does not support forward-compatible snapshot schemas; upgrades require resetting the dev database schema.</p>
+<p>Consequences: The embedding pipeline no longer needs “ignore changed =&gt; disable incremental” logic, and experiments avoid dynamic-ignore edge cases that previously caused incremental-only ingestion failures.</p>
 
 
 
@@ -1849,10 +1695,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": [], "search": "../../../assets/javascripts/workers/search.7a47a382.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.7a47a382.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../../assets/javascripts/bundle.e71a0d61.min.js"></script>
+      <script src="../../assets/javascripts/bundle.e71a0d61.min.js"></script>
       
     
   </body>

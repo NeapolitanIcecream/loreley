@@ -1835,9 +1835,12 @@
 </ul>
 <h2 id="experiment-configuration-snapshots">Experiment configuration snapshots<a class="headerlink" href="#experiment-configuration-snapshots" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>build_experiment_config_snapshot(settings)</code></strong>: extracts just the configuration fields that define an experiment.  </li>
+<li><strong><code>build_experiment_config_snapshot(settings, *, repo)</code></strong>: extracts just the configuration fields that define an experiment.  </li>
 <li>Starts from <code>settings.model_dump()</code>.  </li>
-<li>Keeps only keys with prefixes <code>mapelites_</code> and <code>worker_evaluator_</code>, so that experiments stay stable across unrelated configuration changes (logging, Redis URLs, etc.).  </li>
+<li>Keeps only keys with prefixes <code>mapelites_</code>, <code>worker_evaluator_</code>, <code>worker_evolution_</code>, and <code>worker_planning_trajectory_</code>, so that experiments stay stable across unrelated configuration changes (logging, Redis URLs, etc.).  </li>
+<li>Resolves <code>mapelites_experiment_root_commit</code> to a canonical full hash and persists it in the snapshot.  </li>
+<li>Pins repository-root ignore rules at experiment creation time by persisting <code>mapelites_repo_state_ignore_text</code> and <code>mapelites_repo_state_ignore_sha256</code> (derived from the root commit).  </li>
+<li>Adds <code>experiment_snapshot_schema_version</code> and requires it when loading experiment settings; Loreley does not support forward-compatible snapshot schemas in development (reset DB to upgrade).  </li>
 <li>
 <p>Recursively applies <code>_coerce_json_compatible()</code> so that non‑finite floats (NaN/±inf) are encoded as a reversible JSON sentinel, keeping snapshots safe for PostgreSQL JSONB and avoiding experiment-hash collisions:</p>
 <ul>
@@ -1854,7 +1857,7 @@
 </ul>
 <h2 id="experiment-derivation">Experiment derivation<a class="headerlink" href="#experiment-derivation" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>derive_experiment(settings, repository)</code></strong>: returns or creates an <code>Experiment</code> row for a given repository and settings.  </li>
+<li><strong><code>derive_experiment(settings, repository, *, repo)</code></strong>: returns or creates an <code>Experiment</code> row for a given repository and settings.  </li>
 <li>Builds a snapshot via <code>build_experiment_config_snapshot()</code>, hashes it with <code>hash_experiment_config()</code>, and looks for an existing <code>Experiment</code> with the same <code>(repository_id, config_hash)</code>.  </li>
 <li>When found, returns the existing row unchanged.  </li>
 <li>Otherwise creates a new <code>Experiment</code> with:<ul>
@@ -1867,20 +1870,21 @@
 <p>Logs both to the console and to the structured logger when creating a new experiment.</p>
 </li>
 <li>
-<p><strong><code>get_or_create_experiment(*, settings=None, repo_root=None)</code></strong>: convenience helper that resolves both <code>Repository</code> and <code>Experiment</code> for the current process.  </p>
+<p><strong><code>get_or_create_experiment(*, settings=None, repo_root=None)</code></strong>: convenience helper that resolves the <code>Repository</code> / <code>Experiment</code> pair and returns effective experiment-scoped settings.  </p>
 </li>
 <li>Resolves settings via <code>get_settings()</code> when not provided explicitly.  </li>
 <li>Chooses the repository root in this order: explicit <code>repo_root</code>, <code>Settings.scheduler_repo_root</code>, then <code>Settings.worker_repo_worktree</code>.  </li>
 <li>Validates that the chosen root is a git repository, logging and raising <code>ExperimentError</code> when it is not.  </li>
 <li>Reuses the discovered <code>git.Repo</code> instance when calling <code>canonicalise_repository()</code> to avoid redundant discovery work.  </li>
 <li>Calls <code>derive_experiment()</code> to obtain the current experiment and logs the selected <code>(repository.slug, experiment.id, experiment.config_hash)</code> pair.  </li>
-<li>Returns a <code>(Repository, Experiment)</code> tuple that callers (such as <code>loreley.scheduler.main.EvolutionScheduler</code>) pass downstream to the MAP‑Elites manager and sampler so that all jobs and archive state share the same experiment identifier.</li>
+<li>Loads the persisted experiment snapshot from the database and returns an <strong>effective <code>Settings</code></strong> instance that applies experiment-scoped overrides, making the DB snapshot the single source of truth for experiment behaviour.  </li>
+<li>Returns <code>(Repository, Experiment, Settings)</code> so callers can pass the effective settings downstream consistently.</li>
 </ul>
 <h2 id="logging-and-error-handling">Logging and error handling<a class="headerlink" href="#logging-and-error-handling" title="Permanent link">&para;</a></h2>
 <ul>
 <li>All operations are logged through a <code>loguru</code> logger bound with <code>module="core.experiments"</code> plus a <code>rich</code> console for user‑facing status messages.  </li>
 <li>Git and database failures are wrapped into <code>ExperimentError</code> with concise, user‑oriented messages while preserving the original exception as the cause.  </li>
-<li>Configuration snapshots intentionally focus on MAP‑Elites and evaluator knobs so that operational tweaks (logging verbosity, queue names, etc.) do not fragment experiments in the database.</li>
+<li>Configuration snapshots intentionally focus on experiment behaviour knobs so that operational tweaks (logging verbosity, queue names, etc.) do not fragment experiments in the database.</li>
 </ul>
 
 
