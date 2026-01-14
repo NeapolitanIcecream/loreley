@@ -2222,10 +2222,6 @@ uv<span class="w"> </span>sync
 <p>Note: on first start the scheduler performs a repo-state root scan at <code>MAPELITES_EXPERIMENT_ROOT_COMMIT</code> and requires operator approval. In non-interactive environments, pass <code>--yes</code> or set <code>SCHEDULER_STARTUP_APPROVE=true</code>.</p>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>scheduler
 uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>worker<span class="w"> </span>--experiment-id<span class="w"> </span>&lt;EXPERIMENT_UUID&gt;
-
-<span class="c1"># legacy wrappers (still supported)</span>
-uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_scheduler.py
-uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_worker.py<span class="w"> </span>--experiment-id<span class="w"> </span>&lt;EXPERIMENT_UUID&gt;
 </code></pre></div>
 <p>See: <a href="script/run_scheduler/">Running the scheduler</a>, <a href="script/run_worker/">Running the worker</a></p>
 <hr />
@@ -2334,12 +2330,12 @@ jobs_per_day ≈ workers * 24 / E[t_job]
 <li><strong>UI (optional)</strong></li>
 <li><a href="loreley/api/">UI API (<code>loreley.api</code>)</a></li>
 <li><a href="loreley/ui/">Streamlit UI (<code>loreley.ui</code>)</a></li>
-<li><strong>Operational scripts</strong></li>
-<li><a href="script/run_scheduler/">Run scheduler script</a></li>
-<li><a href="script/run_worker/">Run worker script</a></li>
-<li><a href="script/run_api/">Run UI API script</a></li>
-<li><a href="script/run_ui/">Run UI script</a></li>
-<li><a href="script/reset_db/">Reset database schema</a></li>
+<li><strong>Operations</strong></li>
+<li><a href="script/run_scheduler/">Running the scheduler</a></li>
+<li><a href="script/run_worker/">Running the worker</a></li>
+<li><a href="script/run_api/">Running the UI API</a></li>
+<li><a href="script/run_ui/">Running the UI</a></li>
+<li><a href="script/reset_db/">Resetting the database</a></li>
 </ul>
 <hr />
 <h2 id="next-steps">Next steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>

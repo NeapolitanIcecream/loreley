@@ -66,7 +66,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#scriptrun_schedulerpy" class="md-skip">
+        <a href="#running-the-scheduler" class="md-skip">
           Skip to content
         </a>
       
@@ -1531,10 +1531,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#purpose" class="md-nav__link">
+  <a href="#start" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Purpose
+        Start
       
     </span>
   </a>
@@ -1542,10 +1542,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#behaviour" class="md-nav__link">
+  <a href="#options" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Behaviour
+        Options
       
     </span>
   </a>
@@ -1553,10 +1553,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#cli-usage" class="md-nav__link">
+  <a href="#logs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        CLI usage
+        Logs
       
     </span>
   </a>
@@ -1564,21 +1564,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#configuration" class="md-nav__link">
+  <a href="#exit-codes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Configuration
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#failure-handling" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Failure handling
+        Exit codes
       
     </span>
   </a>
@@ -1740,10 +1729,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#purpose" class="md-nav__link">
+  <a href="#start" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Purpose
+        Start
       
     </span>
   </a>
@@ -1751,10 +1740,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#behaviour" class="md-nav__link">
+  <a href="#options" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Behaviour
+        Options
       
     </span>
   </a>
@@ -1762,10 +1751,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#cli-usage" class="md-nav__link">
+  <a href="#logs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        CLI usage
+        Logs
       
     </span>
   </a>
@@ -1773,21 +1762,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#configuration" class="md-nav__link">
+  <a href="#exit-codes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Configuration
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#failure-handling" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Failure handling
+        Exit codes
       
     </span>
   </a>
@@ -1811,75 +1789,37 @@
 
 
 
-<h1 id="scriptrun_schedulerpy">script/run_scheduler.py<a class="headerlink" href="#scriptrun_schedulerpy" title="Permanent link">&para;</a></h1>
-<p>Thin CLI wrapper for running the Loreley evolution scheduler.</p>
-<h2 id="purpose">Purpose<a class="headerlink" href="#purpose" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Expose a minimal CLI (<code>--help</code>, <code>--log-level</code>) that works even when required
-  environment variables are unset.</li>
-<li>Configure global Loguru logging based on <code>loreley.config.Settings.log_level</code>
-  with optional per-invocation overrides.</li>
-<li>Delegate scheduler-specific CLI parsing and control flow to
-  <code>loreley.entrypoints.run_scheduler</code>, which calls <code>loreley.scheduler.main.main(...)</code>.</li>
-<li>Provide a convenient entrypoint for process managers and local development
-  without having to remember the module path.</li>
-</ul>
-<p>The underlying scheduling logic, MAP-Elites integration, and database
-interaction are all implemented in <code>loreley.scheduler.main.EvolutionScheduler</code>.</p>
-<h2 id="behaviour">Behaviour<a class="headerlink" href="#behaviour" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Parses wrapper CLI arguments (notably <code>--help</code> and <code>--log-level</code>) before
-  loading configuration, so help output works without a valid environment.</li>
-<li>Calls <code>get_settings()</code> to load <code>Settings</code>; validation errors are printed to
-  the console and the process exits with code <code>1</code>.</li>
-<li>Resets Loguru sinks and installs a stderr sink at the configured level,
-  disabling backtraces and diagnosis in production-style runs.</li>
-<li>Resolves a log directory under <code>&lt;BASE&gt;/logs/scheduler</code> where <code>&lt;BASE&gt;</code> is:</li>
-<li><code>LOGS_BASE_DIR</code> (expanded as a path) when set.</li>
-<li>the current working directory when <code>LOGS_BASE_DIR</code> is unset.</li>
-<li>Adds a rotating file sink at <code>scheduler-YYYYMMDD-HHMMSS.log</code> inside that directory
-  with <code>rotation="10 MB"</code> and <code>retention="14 days"</code>, so scheduler output is
-  always persisted for later debugging.</li>
-<li>Imports <code>loreley.scheduler.main.main</code> lazily after logging is configured; any
-  import failure is reported via console/log and exits with code <code>1</code>.</li>
-<li>Runs the scheduler loop via <code>loreley.entrypoints.run_scheduler(...)</code>, which supports
-  <code>--once</code> (single tick) and <code>--yes</code> (auto-approve startup approval).</li>
-</ul>
-<p>Exit codes are determined by <code>loreley.scheduler.main.main(...)</code>: on success it returns
-<code>0</code>, while startup failures (e.g. lock contention) return non-zero exit codes.</p>
-<h2 id="cli-usage">CLI usage<a class="headerlink" href="#cli-usage" title="Permanent link">&para;</a></h2>
+<h1 id="running-the-scheduler">Running the scheduler<a class="headerlink" href="#running-the-scheduler" title="Permanent link">&para;</a></h1>
+<p>The scheduler is the long-running process that keeps the evolution pipeline moving:
+it ingests completed jobs, samples new work from the MAP-Elites archive, and dispatches
+jobs to the Dramatiq worker queue.</p>
+<h2 id="start">Start<a class="headerlink" href="#start" title="Permanent link">&para;</a></h2>
 <p>Recommended usage with <code>uv</code>:</p>
-<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_scheduler.py<span class="w">        </span><span class="c1"># continuous loop</span>
-uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_scheduler.py<span class="w"> </span>--once<span class="w"> </span><span class="c1"># single tick (cron / smoke tests)</span>
-uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_scheduler.py<span class="w"> </span>--log-level<span class="w"> </span>DEBUG
-uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_scheduler.py<span class="w"> </span>--yes<span class="w"> </span>--once<span class="w"> </span><span class="c1"># non-interactive smoke test</span>
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>scheduler<span class="w">              </span><span class="c1"># continuous loop</span>
+uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>scheduler<span class="w"> </span>--once<span class="w">       </span><span class="c1"># single tick (cron / smoke tests)</span>
+uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>scheduler<span class="w"> </span>--yes<span class="w"> </span>--once<span class="w"> </span><span class="c1"># non-interactive run</span>
 </code></pre></div>
-<p>The wrapper is equivalent to invoking the unified CLI directly:</p>
-<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>scheduler
-uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>scheduler<span class="w"> </span>--once
-uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>scheduler<span class="w"> </span>--yes<span class="w"> </span>--once
-</code></pre></div>
-<h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
-<p>The script relies on <code>loreley.config.Settings</code>:</p>
+<p>On first start the scheduler performs a repo-state root scan at <code>MAPELITES_EXPERIMENT_ROOT_COMMIT</code>
+and requires operator approval. In non-interactive environments, pass <code>--yes</code> or set
+<code>SCHEDULER_STARTUP_APPROVE=true</code>.</p>
+<h2 id="options">Options<a class="headerlink" href="#options" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>LOG_LEVEL</code> controls the global Loguru log level for the scheduler process.</li>
-<li><code>LOGS_BASE_DIR</code> (optional) overrides the base directory used for scheduler
-  log files; when unset, logs are written under <code>./logs/scheduler</code> relative to
-  the current working directory.</li>
-<li>All scheduler-related fields (<code>SCHEDULER_*</code>) and database/Redis settings are
-  consumed by <code>loreley.scheduler.main</code> and <code>loreley.tasks.broker</code>. See
-  <code>docs/loreley/config.md</code> and <code>docs/loreley/scheduler/main.md</code> for details.</li>
+<li><code>--once</code>: execute a single scheduling tick and exit.</li>
+<li><code>--yes</code>: auto-approve startup approval and start without prompting.</li>
+<li><code>--no-preflight</code>: skip preflight validation.</li>
+<li><code>--preflight-timeout-seconds</code>: network timeout used for DB/Redis connectivity checks.</li>
+<li><code>--log-level</code>: global option (pass before the subcommand) that overrides <code>LOG_LEVEL</code> for this invocation.</li>
 </ul>
-<p>The <code>examples/evol_circle_packing.py</code> helper simply delegates to this script
-when running the scheduler, so its runs use the same logging configuration and
-log file locations.</p>
-<h2 id="failure-handling">Failure handling<a class="headerlink" href="#failure-handling" title="Permanent link">&para;</a></h2>
+<h2 id="logs">Logs<a class="headerlink" href="#logs" title="Permanent link">&para;</a></h2>
+<p>Logs are written to:</p>
 <ul>
-<li>Invalid or missing environment variables produce a short console message and
-  exit code <code>1</code> instead of an unhandled exception.</li>
-<li>Errors while importing or launching the scheduler are logged and surfaced
-  before the process exits, so misconfigured dependencies do not produce long
-  stack traces.</li>
+<li><code>logs/scheduler/scheduler-YYYYMMDD-HHMMSS.log</code></li>
+</ul>
+<h2 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>0</code>: success</li>
+<li><code>1</code>: startup or preflight failure</li>
+<li><code>2</code>: refused to start (e.g. lock contention)</li>
 </ul>
 
 

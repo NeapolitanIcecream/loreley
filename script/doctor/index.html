@@ -1768,7 +1768,7 @@
 
 
 <h1 id="doctor-environment-checks">Doctor (environment checks)<a class="headerlink" href="#doctor-environment-checks" title="Permanent link">&para;</a></h1>
-<p>This script performs quick preflight checks to reduce onboarding friction before you start the scheduler/worker processes.</p>
+<p>This command performs quick preflight checks to reduce onboarding friction before you start the scheduler/worker processes.</p>
 <h2 id="what-it-checks">What it checks<a class="headerlink" href="#what-it-checks" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Database connectivity (PostgreSQL) using <code>DATABASE_URL</code> / <code>DB_*</code>.</li>
@@ -1784,9 +1784,6 @@
 </ul>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>doctor<span class="w"> </span>--role<span class="w"> </span>all
-
-<span class="c1"># legacy wrapper (still supported)</span>
-uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/doctor.py<span class="w"> </span>--role<span class="w"> </span>all
 </code></pre></div>
 <p>Validate only one component:</p>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>doctor<span class="w"> </span>--role<span class="w"> </span>scheduler
@@ -1794,10 +1791,10 @@ uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </s
 uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>doctor<span class="w"> </span>--role<span class="w"> </span>ui
 </code></pre></div>
 <p>Adjust network timeouts:</p>
-<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/doctor.py<span class="w"> </span>--role<span class="w"> </span>all<span class="w"> </span>--timeout-seconds<span class="w"> </span><span class="m">5</span>
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>doctor<span class="w"> </span>--role<span class="w"> </span>all<span class="w"> </span>--timeout-seconds<span class="w"> </span><span class="m">5</span>
 </code></pre></div>
 <p>Machine-readable output (CI):</p>
-<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/doctor.py<span class="w"> </span>--role<span class="w"> </span>all<span class="w"> </span>--json
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>doctor<span class="w"> </span>--role<span class="w"> </span>all<span class="w"> </span>--json
 </code></pre></div>
 <h2 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <ul>

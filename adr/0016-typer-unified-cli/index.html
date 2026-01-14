@@ -1645,7 +1645,7 @@
 <p>Context: Loreley had multiple argparse-based CLIs (<code>loreley/cli.py</code> and an embedded parser in <code>loreley.scheduler.main</code>), which duplicated flags, help text, and exit-code behavior and increased maintenance cost.</p>
 <p>Decision: Use Typer as the single CLI framework for <code>loreley</code> and implement all commands (<code>doctor</code>, <code>scheduler</code>, <code>worker</code>, <code>api</code>, <code>ui</code>) as Typer subcommands with a shared global <code>--log-level</code> option.</p>
 <p>Decision: Remove CLI parsing from <code>loreley.scheduler.main</code>; keep <code>main(settings=..., once=..., auto_approve=...)</code> as a reusable run function and route module execution through the unified CLI.</p>
-<p>Consequences: CLI code is shorter and help output is more consistent; wrapper scripts remain available but delegate to the same runtime entrypoints; minor CLI behavior changes are handled in docs/tests instead of maintaining parallel parsers.</p>
+<p>Consequences: CLI help output is consistent across commands, global options are shared, and the scheduler runtime is reusable without embedded CLI parsing.</p>
 
 
 

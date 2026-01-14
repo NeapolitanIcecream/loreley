@@ -1905,15 +1905,9 @@ or <code>http://[::1]:&lt;port&gt;</code>), starting the UI will automatically s
 a subprocess.</p>
 <p>You can still start the API manually:</p>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>api
-
-<span class="c1"># legacy wrapper (still supported)</span>
-uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_api.py
 </code></pre></div>
 <p>Start Streamlit:</p>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>ui<span class="w"> </span>--api-base-url<span class="w"> </span>http://127.0.0.1:8000
-
-<span class="c1"># legacy wrapper (still supported)</span>
-uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>script/run_ui.py<span class="w"> </span>--api-base-url<span class="w"> </span>http://127.0.0.1:8000
 </code></pre></div>
 <p>See also:</p>
 <ul>

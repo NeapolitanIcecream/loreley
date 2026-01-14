@@ -1646,7 +1646,7 @@
 Decision: Keep a single repo-state embedding pipeline and remove summary embeddings, changed-files preprocessing, and <code>MAPELITES_EMBEDDING_MODE</code>.
 Details: PCA history stores only <code>(commit_hash, vector, embedding_model)</code> via <code>PcaHistoryEntry</code> and <code>map_elites_pca_history.embedding_model</code>.
 Details: Snapshot persistence writes incremental state with <code>storage_backend="cells_history_v2"</code> and upserts history rows idempotently per commit hash.
-Constraints: Loreley does not ship migrations; schema changes are applied via <code>uv run python script/reset_db.py --yes</code>.
+Constraints: Loreley does not ship migrations; schema changes are applied via <code>uv run loreley reset-db --yes</code>.
 Consequences: <code>MAPELITES_SUMMARY_*</code> settings and changed-files preprocessing APIs are removed; deployments must reset DB to upgrade.</p>
 
 
