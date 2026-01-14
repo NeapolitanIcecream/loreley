@@ -375,7 +375,7 @@ def _apply_base_env(*, include_worker_repo: bool = False) -> None:
 def _ensure_repo_on_sys_path() -> None:
     """Ensure the Loreley project root and example repo are importable."""
 
-    # Project root (contains the ``loreley`` package and ``script`` entrypoints).
+    # Project root (contains the ``loreley`` package and example helpers).
     project_root = Path(__file__).resolve().parents[1]
     project_root_str = str(project_root)
     if project_root_str not in sys.path:
@@ -497,16 +497,16 @@ def _run_scheduler(once: bool, init_db: bool) -> int:
     # Import after environment is configured so that Settings and DB are
     # initialised correctly. The core worker/scheduler pipeline is responsible
     # for ensuring the database schema exists.
-    from script.run_scheduler import main as scheduler_main
+    from loreley.cli import main as loreley_main
 
-    argv: list[str] = []
+    argv: list[str] = ["scheduler"]
     if once:
         argv.append("--once")
 
     console.log(
         "[bold green]Starting scheduler[/] once={} …".format("yes" if once else "no"),
     )
-    return int(scheduler_main(argv))
+    return int(loreley_main(argv))
 
 
 def _run_worker() -> int:
@@ -518,10 +518,10 @@ def _run_worker() -> int:
     # Import after environment is configured so that Settings, Redis broker, and
     # DB are initialised with the values defined above. The core worker module
     # takes care of schema initialisation.
-    from script.run_worker import main as worker_main
+    from loreley.cli import main as loreley_main
 
     console.log("[bold green]Starting worker[/] …")
-    return int(worker_main([]))
+    return int(loreley_main(["worker"]))
 
 
 def _run_api(*, host: str, port: int, log_level: str | None, reload: bool) -> int:
@@ -533,11 +533,12 @@ def _run_api(*, host: str, port: int, log_level: str | None, reload: bool) -> in
 
     # Import after environment is configured so that Settings is initialised with
     # the values defined above.
-    from script.run_api import main as api_main
+    from loreley.cli import main as loreley_main
 
-    argv: list[str] = ["--host", str(host), "--port", str(int(port))]
+    argv: list[str] = []
     if log_level:
         argv += ["--log-level", str(log_level)]
+    argv += ["api", "--host", str(host), "--port", str(int(port))]
     if reload:
         argv.append("--reload")
 
@@ -548,7 +549,7 @@ def _run_api(*, host: str, port: int, log_level: str | None, reload: bool) -> in
             "yes" if reload else "no",
         )
     )
-    return int(api_main(argv))
+    return int(loreley_main(argv))
 
 
 def _run_ui(*, host: str, port: int, api_base_url: str, headless: bool) -> int:
@@ -558,36 +559,29 @@ def _run_ui(*, host: str, port: int, api_base_url: str, headless: bool) -> int:
     _ensure_repo_on_sys_path()
     _print_environment_summary()
 
-    # Streamlit is invoked as a subprocess by script.run_ui and expects the
-    # "loreley/ui/app.py" path to be resolved from the project root.
-    project_root = Path(__file__).resolve().parents[1]
-    previous_cwd = Path.cwd()
-    os.chdir(project_root)
-    try:
-        from script.run_ui import main as ui_main
+    from loreley.cli import main as loreley_main
 
-        argv: list[str] = [
-            "--api-base-url",
-            str(api_base_url),
-            "--host",
-            str(host),
-            "--port",
-            str(int(port)),
-        ]
-        if headless:
-            argv.append("--headless")
+    argv: list[str] = [
+        "ui",
+        "--api-base-url",
+        str(api_base_url),
+        "--host",
+        str(host),
+        "--port",
+        str(int(port)),
+    ]
+    if headless:
+        argv.append("--headless")
 
-        console.log(
-            "[bold green]Starting UI[/] host={} port={} headless={} api_base_url={} …".format(
-                host,
-                port,
-                "yes" if headless else "no",
-                api_base_url,
-            )
+    console.log(
+        "[bold green]Starting UI[/] host={} port={} headless={} api_base_url={} …".format(
+            host,
+            port,
+            "yes" if headless else "no",
+            api_base_url,
         )
-        return int(ui_main(argv))
-    finally:
-        os.chdir(previous_cwd)
+    )
+    return int(loreley_main(argv))
 
 
 def main(argv: list[str] | None = None) -> int:
