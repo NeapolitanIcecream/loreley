@@ -459,14 +459,15 @@ def _api_health_url(api_base_url: str) -> str:
 
 def _is_ui_api_reachable(api_base_url: str, *, timeout_seconds: float) -> bool:
     """Return True when the UI API responds to GET /api/v1/health."""
-    url = _api_health_url(api_base_url)
     try:
-        from urllib.request import Request, urlopen
+        from loreley.net.http import HttpClient
 
-        req = Request(url, headers={"User-Agent": "loreley-ui"})
-        with urlopen(req, timeout=float(max(0.1, timeout_seconds))) as resp:  # noqa: S310 - controlled local URL
-            code = getattr(resp, "status", None) or resp.getcode()
-            return 200 <= int(code) < 300
+        client = HttpClient(
+            base_url=api_base_url,
+            timeout_seconds=float(timeout_seconds),
+            user_agent="loreley-ui",
+        )
+        return client.is_reachable("/api/v1/health", timeout_seconds=float(timeout_seconds))
     except Exception:
         return False
 

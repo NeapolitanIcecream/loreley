@@ -688,6 +688,7 @@ source = { editable = "." }
 dependencies = [
     { name = "dramatiq", extra = ["redis"] },
     { name = "gitpython" },
+    { name = "httpx" },
     { name = "loguru" },
     { name = "openai" },
     { name = "pathspec" },
@@ -725,6 +726,7 @@ requires-dist = [
     { name = "dramatiq", extras = ["redis"], specifier = ">=2.0.0" },
     { name = "fastapi", marker = "extra == 'ui'", specifier = ">=0.124.4" },
     { name = "gitpython", specifier = ">=3.1.45" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "mkdocs-material", marker = "extra == 'dev'", specifier = ">=9.7.0" },
     { name = "networkx", marker = "extra == 'ui'", specifier = ">=3.6.1" },
