@@ -10,7 +10,7 @@ from openai import OpenAI, OpenAIError
 from tenacity import RetryError
 
 from loreley.config import Settings, get_settings
-from loreley.core.openai_retry import openai_retrying
+from loreley.core.openai_retry import openai_retrying, retry_error_details
 from loreley.core.worker.coding import CodingPlanExecution
 from loreley.core.worker.planning import PlanningPlan
 
@@ -112,8 +112,7 @@ class CommitSummarizer:
                     return cleaned
             raise CommitSummaryError("Commit summarizer exhausted retries without success.")
         except RetryError as exc:
-            attempts = getattr(getattr(exc, "last_attempt", None), "attempt_number", None) or self._max_retries
-            last_exc = getattr(getattr(exc, "last_attempt", None), "exception", lambda: None)()
+            attempts, last_exc = retry_error_details(exc, default_attempts=self._max_retries)
             raise CommitSummaryError(
                 f"Commit summarizer failed after {attempts} attempt(s): {last_exc}",
             ) from last_exc

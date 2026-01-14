@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 from tenacity import RetryError
 
 from loreley.config import Settings, get_settings
-from loreley.core.openai_retry import openai_retrying
+from loreley.core.openai_retry import openai_retrying, retry_error_details
 from loreley.db.models import CommitCard, CommitChunkSummary
 
 log = logger.bind(module="worker.trajectory")
@@ -811,9 +811,9 @@ class _ChunkSummarizer:
                     if not text:
                         raise ChunkSummaryError("Chunk summarizer returned empty output.")
                     return _clamp_text(" ".join(text.split()), self._max_chars)
+            raise ChunkSummaryError("Chunk summarizer exhausted retries without success.")
         except RetryError as exc:
-            attempts = getattr(getattr(exc, "last_attempt", None), "attempt_number", None) or self._max_retries
-            last_exc = getattr(getattr(exc, "last_attempt", None), "exception", lambda: None)()
+            attempts, last_exc = retry_error_details(exc, default_attempts=self._max_retries)
             raise ChunkSummaryError(
                 f"Chunk summarizer failed after {attempts} attempt(s): {last_exc}",
             ) from last_exc

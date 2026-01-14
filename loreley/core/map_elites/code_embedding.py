@@ -12,7 +12,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from tenacity import RetryError
 
 from loreley.config import Settings, get_settings
-from loreley.core.openai_retry import openai_retrying
+from loreley.core.openai_retry import openai_retrying, retry_error_details
 from .chunk import ChunkedFile, FileChunk
 
 
@@ -247,8 +247,7 @@ class CodeEmbedder:
 
                     return [vector for vector in vectors if vector is not None]
         except RetryError as exc:
-            attempts = getattr(getattr(exc, "last_attempt", None), "attempt_number", None) or self._max_retries
-            last_exc = getattr(getattr(exc, "last_attempt", None), "exception", lambda: None)()
+            attempts, last_exc = retry_error_details(exc, default_attempts=self._max_retries)
             log.error("Embedding batch failed after {} attempts: {}", attempts, last_exc)
             if last_exc is not None:
                 raise last_exc

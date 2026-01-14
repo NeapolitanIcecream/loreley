@@ -9,9 +9,32 @@ from __future__ import annotations
 
 from typing import Any
 
-from tenacity import Retrying, retry_if_exception_type, stop_after_attempt, wait_incrementing
+from tenacity import RetryError, Retrying, retry_if_exception_type, stop_after_attempt, wait_incrementing
 
-__all__ = ["openai_retrying"]
+__all__ = ["openai_retrying", "retry_error_details"]
+
+
+def retry_error_details(
+    exc: RetryError,
+    *,
+    default_attempts: int | None = None,
+) -> tuple[int, BaseException | None]:
+    """Extract attempt count and the last exception from a Tenacity RetryError."""
+
+    last_attempt = getattr(exc, "last_attempt", None)
+    attempts = getattr(last_attempt, "attempt_number", None) or default_attempts
+    try:
+        attempts_int = int(attempts or 0)
+    except Exception:  # pragma: no cover - defensive
+        attempts_int = int(default_attempts or 0)
+
+    last_exc: BaseException | None = None
+    try:
+        last_exc = getattr(last_attempt, "exception", lambda: None)()
+    except Exception:  # pragma: no cover - defensive
+        last_exc = None
+
+    return attempts_int, last_exc
 
 
 def openai_retrying(
