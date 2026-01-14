@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from loreley.config import Settings
-from loreley.core.worker.agent_backend import AgentInvocation
+from loreley.core.worker.agent import AgentInvocation
 from loreley.core.worker.coding import (
     CodingAgent,
     CodingAgentRequest,

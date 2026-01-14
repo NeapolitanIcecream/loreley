@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from loreley.config import Settings
-from loreley.core.worker.agent_backend import AgentInvocation
+from loreley.core.worker.agent import AgentInvocation
 from loreley.core.worker.planning import (
     CommitPlanningContext,
     PlanningAgent,

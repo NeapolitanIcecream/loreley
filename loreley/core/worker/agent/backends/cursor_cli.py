@@ -9,14 +9,10 @@ from typing import Any
 
 from loguru import logger
 
-from loreley.core.worker.agent_backend import (
-    AgentInvocation,
-    StructuredAgentTask,
-    _validate_workdir,
-)
+from loreley.core.worker.agent.contracts import AgentInvocation, StructuredAgentTask
+from loreley.core.worker.agent.utils import validate_workdir
 
-log = logger.bind(module="worker.agent_backends.cursor_cli")
-
+log = logger.bind(module="worker.agent.backends.cursor_cli")
 
 DEFAULT_CURSOR_MODEL = "gpt-5.2-high"
 
@@ -45,7 +41,7 @@ class CursorCliBackend:
         *,
         working_dir: Path,
     ) -> AgentInvocation:
-        worktree = _validate_workdir(
+        worktree = validate_workdir(
             working_dir,
             error_cls=self.error_cls,
             agent_name=task.name or "Agent",
@@ -140,4 +136,7 @@ def cursor_backend_from_settings(
         force=force,
         error_cls=error_cls,
     )
+
+
+__all__ = ["CursorCliBackend", "DEFAULT_CURSOR_MODEL", "cursor_backend_from_settings"]
 

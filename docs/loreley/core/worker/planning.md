@@ -34,7 +34,7 @@ unique path `LCA(base,inspiration) -> inspiration` and rendering a bounded summa
 
 - **`PLANNING_OUTPUT_SCHEMA`**: JSON schema describing the expected shape of the planning output (top-level fields like `plan_summary`, `rationale`, `focus_metrics`, `guardrails`, `risks`, `validation`, `steps`, `handoff_notes`, and `fallback_plan`, plus constraints on each step's fields), used when invoking the external Codex CLI.
 - **`_PlanStepModel`** / **`_PlanModel`**: internal `pydantic` models that validate the Codex JSON payload against the schema and provide a typed bridge from raw JSON into the `PlanStep` / `PlanningPlan` domain objects.
-- **Agent backend**: planning relies on `loreley.core.worker.agent_backend` for shared backend abstractions (`AgentBackend`, `StructuredAgentTask`, `AgentInvocation`) and shared orchestration utilities; built-in CLI backends live under `loreley.core.worker.agent_backends`. See `loreley.core.worker.agent_backend` for contracts and helpers, and `loreley.core.worker.agent_backends` for built-in backend implementations.
+- **Agent backend**: planning relies on `loreley.core.worker.agent` for shared backend abstractions (`AgentBackend`, `StructuredAgentTask`, `AgentInvocation`) and shared orchestration utilities; built-in CLI backends live under `loreley.core.worker.agent.backends`. See `loreley.core.worker.agent` for contracts and helpers, and `loreley.core.worker.agent.backends` for built-in backend implementations.
 
 ## Planning agent
 

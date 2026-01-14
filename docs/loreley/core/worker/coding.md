@@ -15,7 +15,7 @@ Execution engine for Loreley's autonomous worker, responsible for driving the Co
 
 - **`CODING_OUTPUT_SCHEMA`**: JSON schema describing the expected coding agent output (top-level `implementation_summary`, optional `commit_message`, array of `step_results`, plus optional `tests_executed`, `tests_recommended`, `follow_up_items`, and `notes`), used to validate the backend response.
 - **`_StepResultModel`** / **`_CodingOutputModel`**: internal frozen `pydantic` models that validate the JSON payload against `CODING_OUTPUT_SCHEMA` and provide a typed bridge into the domain dataclasses.
-- **Agent backend**: coding relies on `loreley.core.worker.agent_backend` for shared backend abstractions (`AgentBackend`, `StructuredAgentTask`, `AgentInvocation`) and shared orchestration utilities; built-in CLI backends live under `loreley.core.worker.agent_backends`. See `loreley.core.worker.agent_backend` for contracts and helpers, and `loreley.core.worker.agent_backends` for built-in backend implementations.
+- **Agent backend**: coding relies on `loreley.core.worker.agent` for shared backend abstractions (`AgentBackend`, `StructuredAgentTask`, `AgentInvocation`) and shared orchestration utilities; built-in CLI backends live under `loreley.core.worker.agent.backends`. See `loreley.core.worker.agent` for contracts and helpers, and `loreley.core.worker.agent.backends` for built-in backend implementations.
 
 ## Coding agent
 

@@ -10,21 +10,23 @@ from typing import Any
 import pytest
 
 from loreley.config import Settings
-from loreley.core.worker import agent_backend
-from loreley.core.worker.agent_backends import (
-    CodexCliBackend,
-    CursorCliBackend,
-    codex_cli,
-    cursor_backend_from_settings,
-    cursor_cli,
-)
-from loreley.core.worker.agent_backend import (
+from loreley.core.worker.agent import (
     AgentInvocation,
     StructuredAgentTask,
     coerce_structured_output,
     load_agent_backend,
-    run_structured_agent_task,
+    materialise_schema_to_temp,
     resolve_schema_mode,
+    run_structured_agent_task,
+    validate_workdir,
+)
+from loreley.core.worker.agent.backends import (
+    CodexCliBackend,
+    CursorCliBackend,
+    DEFAULT_CURSOR_MODEL,
+    codex_cli,
+    cursor_backend_from_settings,
+    cursor_cli,
 )
 
 
@@ -38,7 +40,7 @@ def test_validate_workdir_requires_git_repo(tmp_path: Path) -> None:
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir()
     with pytest.raises(RuntimeError):
-        agent_backend._validate_workdir(  # type: ignore[attr-defined]
+        validate_workdir(
             repo_dir,
             error_cls=RuntimeError,
             agent_name="test",
@@ -46,7 +48,7 @@ def test_validate_workdir_requires_git_repo(tmp_path: Path) -> None:
 
     git_dir = repo_dir / ".git"
     git_dir.mkdir()
-    resolved = agent_backend._validate_workdir(  # type: ignore[attr-defined]
+    resolved = validate_workdir(
         repo_dir,
         error_cls=RuntimeError,
         agent_name="test",
@@ -56,7 +58,7 @@ def test_validate_workdir_requires_git_repo(tmp_path: Path) -> None:
 
 def test_materialise_schema_writes_json(tmp_path: Path) -> None:
     schema = {"type": "object", "properties": {"a": {"type": "string"}}}
-    path = agent_backend._materialise_schema_to_temp(  # type: ignore[attr-defined]
+    path = materialise_schema_to_temp(
         schema,
         error_cls=RuntimeError,
     )
@@ -103,7 +105,7 @@ def test_codex_cli_backend_runs_and_cleans_schema(tmp_path: Path, monkeypatch) -
         schema_path.write_text(json.dumps(schema), encoding="utf-8")
         return schema_path
 
-    monkeypatch.setattr(codex_cli, "_materialise_schema_to_temp", fake_materialise)
+    monkeypatch.setattr(codex_cli, "materialise_schema_to_temp", fake_materialise)
 
     captured: dict[str, Any] = {}
 
@@ -159,7 +161,7 @@ def test_codex_cli_backend_raises_on_failure(tmp_path: Path, monkeypatch) -> Non
         schema_path.write_text(json.dumps(schema), encoding="utf-8")
         return schema_path
 
-    monkeypatch.setattr(codex_cli, "_materialise_schema_to_temp", fake_materialise)
+    monkeypatch.setattr(codex_cli, "materialise_schema_to_temp", fake_materialise)
 
     def fake_run(*args, **kwargs):  # noqa: ANN001, ANN002
         return types.SimpleNamespace(stdout="", stderr="boom", returncode=1)
@@ -243,27 +245,22 @@ def test_cursor_backend_from_settings_uses_defaults(settings: Settings) -> None:
 def test_import_order_is_safe_for_agent_backends_without_reexports() -> None:
     code = "\n".join(
         [
-            "import loreley.core.worker.agent_backends.codex_cli",
-            "import loreley.core.worker.agent_backends.cursor_cli",
-            "import loreley.core.worker.agent_backends as backends",
-            "from loreley.core.worker.agent_backends import (",
+            "import loreley.core.worker.agent.backends.codex_cli",
+            "import loreley.core.worker.agent.backends.cursor_cli",
+            "import loreley.core.worker.agent.backends as backends",
+            "from loreley.core.worker.agent.backends import (",
             "    CodexCliBackend,",
             "    CursorCliBackend,",
             "    DEFAULT_CURSOR_MODEL,",
             "    cursor_backend_from_settings,",
             ")",
-            "import loreley.core.worker.agent_backend as agent_backend",
+            "import loreley.core.worker.agent as agent",
             "assert CodexCliBackend is backends.CodexCliBackend",
             "assert CursorCliBackend is backends.CursorCliBackend",
             "assert isinstance(DEFAULT_CURSOR_MODEL, str) and DEFAULT_CURSOR_MODEL",
             "assert callable(cursor_backend_from_settings)",
-            "try:",
-            "    from loreley.core.worker.agent_backend import CodexCliBackend as _reexport",  # noqa: E501
-            "except ImportError:",
-            "    pass",
-            "else:",
-            "    raise AssertionError('agent_backend should not re-export CodexCliBackend')",  # noqa: E501
-            "assert hasattr(agent_backend, 'load_agent_backend')",
+            "assert hasattr(agent, 'load_agent_backend')",
+            "assert not hasattr(agent, 'CodexCliBackend')",
         ]
     )
 

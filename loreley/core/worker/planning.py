@@ -12,8 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from rich.console import Console
 
 from loreley.config import Settings, get_settings
-from loreley.core.worker.agent_backends import CodexCliBackend
-from loreley.core.worker.agent_backend import (
+from loreley.core.worker.agent import (
     AgentBackend,
     AgentInvocation,
     SchemaMode,
@@ -22,10 +21,11 @@ from loreley.core.worker.agent_backend import (
     build_structured_agent_task,
     coerce_structured_output,
     load_agent_backend,
+    resolve_schema_mode,
     resolve_worker_debug_dir,
     run_structured_agent_task,
-    resolve_schema_mode,
 )
+from loreley.core.worker.agent.backends import CodexCliBackend
 from loreley.core.worker.output_sanitizer import sanitize_json_payload
 
 console = Console()

@@ -8,14 +8,10 @@ from time import monotonic
 
 from loguru import logger
 
-from loreley.core.worker.agent_backend import (
-    AgentInvocation,
-    StructuredAgentTask,
-    _materialise_schema_to_temp,
-    _validate_workdir,
-)
+from loreley.core.worker.agent.contracts import AgentInvocation, StructuredAgentTask
+from loreley.core.worker.agent.utils import materialise_schema_to_temp, validate_workdir
 
-log = logger.bind(module="worker.agent_backends.codex_cli")
+log = logger.bind(module="worker.agent.backends.codex_cli")
 
 
 @dataclass(slots=True)
@@ -36,7 +32,7 @@ class CodexCliBackend:
         *,
         working_dir: Path,
     ) -> AgentInvocation:
-        worktree = _validate_workdir(
+        worktree = validate_workdir(
             working_dir,
             error_cls=self.error_cls,
             agent_name=task.name or "Agent",
@@ -62,7 +58,7 @@ class CodexCliBackend:
                     raise self.error_cls(
                         "Schema mode 'native' requires an output schema definition.",
                     )
-                schema_path = _materialise_schema_to_temp(
+                schema_path = materialise_schema_to_temp(
                     task.schema,
                     error_cls=self.error_cls,
                 )
@@ -132,4 +128,7 @@ class CodexCliBackend:
             stderr=stderr,
             duration_seconds=duration,
         )
+
+
+__all__ = ["CodexCliBackend"]
 
