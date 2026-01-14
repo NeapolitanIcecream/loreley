@@ -4,14 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-import time
 from typing import Callable, Iterable, Sequence
 
 from loguru import logger
 from openai import OpenAI, OpenAIError
 from rich.progress import Progress, SpinnerColumn, TextColumn
+from tenacity import RetryError
 
 from loreley.config import Settings, get_settings
+from loreley.core.openai_retry import openai_retrying
 from .chunk import ChunkedFile, FileChunk
 
 
@@ -206,49 +207,52 @@ class CodeEmbedder:
             return []
 
         payload = list(inputs)
-        attempt = 0
-        while True:
-            attempt += 1
-            try:
-                client = self._get_client()
-                response = client.embeddings.create(
-                    model=self._model,
-                    input=payload,
-                    dimensions=self._dimensions,
-                )
-                vectors: list[Vector | None] = [None] * len(payload)
-                for item in response.data:
-                    index = getattr(item, "index", None)
-                    if index is None:
-                        raise RuntimeError("Embedding response item is missing 'index'.")
-                    if not isinstance(index, int):
-                        raise RuntimeError(f"Embedding response 'index' must be int, got {type(index)!r}.")
-                    if index < 0 or index >= len(payload):
-                        raise RuntimeError(
-                            "Embedding response 'index' out of range: "
-                            f"{index} for payload size {len(payload)}."
-                        )
-                    if vectors[index] is not None:
-                        raise RuntimeError(f"Duplicate embedding index returned: {index}.")
-                    vectors[index] = tuple(item.embedding)
+        retryer = openai_retrying(
+            max_attempts=self._max_retries,
+            backoff_seconds=self._retry_backoff,
+            retry_on=(OpenAIError,),
+            log=log,
+            operation="Embedding batch",
+        )
+        try:
+            for attempt in retryer:
+                with attempt:
+                    client = self._get_client()
+                    response = client.embeddings.create(
+                        model=self._model,
+                        input=payload,
+                        dimensions=self._dimensions,
+                    )
+                    vectors: list[Vector | None] = [None] * len(payload)
+                    for item in response.data:
+                        index = getattr(item, "index", None)
+                        if index is None:
+                            raise RuntimeError("Embedding response item is missing 'index'.")
+                        if not isinstance(index, int):
+                            raise RuntimeError(
+                                f"Embedding response 'index' must be int, got {type(index)!r}."
+                            )
+                        if index < 0 or index >= len(payload):
+                            raise RuntimeError(
+                                "Embedding response 'index' out of range: "
+                                f"{index} for payload size {len(payload)}."
+                            )
+                        if vectors[index] is not None:
+                            raise RuntimeError(f"Duplicate embedding index returned: {index}.")
+                        vectors[index] = tuple(item.embedding)
 
-                missing = [idx for idx, vector in enumerate(vectors) if vector is None]
-                if missing:
-                    raise RuntimeError(f"Embedding response missing indices: {missing}.")
+                    missing = [idx for idx, vector in enumerate(vectors) if vector is None]
+                    if missing:
+                        raise RuntimeError(f"Embedding response missing indices: {missing}.")
 
-                return [vector for vector in vectors if vector is not None]
-            except OpenAIError as exc:
-                if attempt >= self._max_retries:
-                    log.error("Embedding batch failed after {} attempts: {}", attempt, exc)
-                    raise
-                delay = self._retry_backoff * attempt
-                log.warning(
-                    "Embedding batch failed on attempt {}: {}. Retrying in {:.1f}s",
-                    attempt,
-                    exc,
-                    delay,
-                )
-                time.sleep(delay)
+                    return [vector for vector in vectors if vector is not None]
+        except RetryError as exc:
+            attempts = getattr(getattr(exc, "last_attempt", None), "attempt_number", None) or self._max_retries
+            last_exc = getattr(getattr(exc, "last_attempt", None), "exception", lambda: None)()
+            log.error("Embedding batch failed after {} attempts: {}", attempts, last_exc)
+            if last_exc is not None:
+                raise last_exc
+            raise
 
     def _aggregate_file_embeddings(
         self,

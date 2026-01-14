@@ -14,7 +14,6 @@ This module builds baseline-aligned trajectory rollups by:
 from __future__ import annotations
 
 import textwrap
-import time
 from dataclasses import dataclass
 from typing import Any, Sequence
 from uuid import UUID
@@ -24,8 +23,10 @@ from openai import OpenAI, OpenAIError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from tenacity import RetryError
 
 from loreley.config import Settings, get_settings
+from loreley.core.openai_retry import openai_retrying
 from loreley.db.models import CommitCard, CommitChunkSummary
 
 log = logger.bind(module="worker.trajectory")
@@ -770,54 +771,52 @@ class _ChunkSummarizer:
             raise ChunkSummaryError("Empty chunk input.")
 
         prompt = self._build_prompt(step_lines)
-        attempt = 0
-        while attempt < self._max_retries:
-            attempt += 1
-            try:
-                instructions = (
-                    "Summarize the evolution trajectory described by the provided step summaries.\n"
-                    f"- Stay under {self._max_chars} characters.\n"
-                    "- Be concrete and faithful to the provided text; do not infer missing details.\n"
-                    "- Output plain text only (no markdown fences)."
-                )
-                if self._api_spec == "responses":
-                    response = self._client.responses.create(
-                        model=self._model,
-                        input=prompt,
-                        temperature=self._temperature,
-                        max_output_tokens=self._max_tokens,
-                        instructions=instructions,
+        retryer = openai_retrying(
+            max_attempts=self._max_retries,
+            backoff_seconds=self._retry_backoff,
+            retry_on=(OpenAIError, ChunkSummaryError),
+            log=log,
+            operation="Chunk summarizer",
+        )
+        try:
+            for attempt in retryer:
+                with attempt:
+                    instructions = (
+                        "Summarize the evolution trajectory described by the provided step summaries.\n"
+                        f"- Stay under {self._max_chars} characters.\n"
+                        "- Be concrete and faithful to the provided text; do not infer missing details.\n"
+                        "- Output plain text only (no markdown fences)."
                     )
-                    text = (response.output_text or "").strip()
-                else:
-                    response = self._client.chat.completions.create(
-                        model=self._model,
-                        messages=[
-                            {"role": "system", "content": instructions},
-                            {"role": "user", "content": prompt},
-                        ],
-                        temperature=self._temperature,
-                        max_tokens=self._max_tokens,
-                    )
-                    text = _extract_chat_completion_text(response).strip()
+                    if self._api_spec == "responses":
+                        response = self._client.responses.create(
+                            model=self._model,
+                            input=prompt,
+                            temperature=self._temperature,
+                            max_output_tokens=self._max_tokens,
+                            instructions=instructions,
+                        )
+                        text = (response.output_text or "").strip()
+                    else:
+                        response = self._client.chat.completions.create(
+                            model=self._model,
+                            messages=[
+                                {"role": "system", "content": instructions},
+                                {"role": "user", "content": prompt},
+                            ],
+                            temperature=self._temperature,
+                            max_tokens=self._max_tokens,
+                        )
+                        text = _extract_chat_completion_text(response).strip()
 
-                if not text:
-                    raise ChunkSummaryError("Chunk summarizer returned empty output.")
-                return _clamp_text(" ".join(text.split()), self._max_chars)
-            except (OpenAIError, ChunkSummaryError) as exc:
-                if attempt >= self._max_retries:
-                    raise ChunkSummaryError(
-                        f"Chunk summarizer failed after {attempt} attempt(s): {exc}",
-                    ) from exc
-                delay = self._retry_backoff * attempt
-                log.warning(
-                    "Chunk summarizer attempt {} failed: {}. Retrying in {:.1f}s",
-                    attempt,
-                    exc,
-                    delay,
-                )
-                time.sleep(delay)
-        raise ChunkSummaryError("Chunk summarizer exhausted retries without success.")
+                    if not text:
+                        raise ChunkSummaryError("Chunk summarizer returned empty output.")
+                    return _clamp_text(" ".join(text.split()), self._max_chars)
+        except RetryError as exc:
+            attempts = getattr(getattr(exc, "last_attempt", None), "attempt_number", None) or self._max_retries
+            last_exc = getattr(getattr(exc, "last_attempt", None), "exception", lambda: None)()
+            raise ChunkSummaryError(
+                f"Chunk summarizer failed after {attempts} attempt(s): {last_exc}",
+            ) from last_exc
 
     @staticmethod
     def _build_prompt(step_lines: Sequence[str]) -> str:

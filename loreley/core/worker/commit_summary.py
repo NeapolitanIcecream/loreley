@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import textwrap
-import time
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 from openai import OpenAI, OpenAIError
+from tenacity import RetryError
 
 from loreley.config import Settings, get_settings
+from loreley.core.openai_retry import openai_retrying
 from loreley.core.worker.coding import CodingPlanExecution
 from loreley.core.worker.planning import PlanningPlan
 
@@ -69,53 +70,53 @@ class CommitSummarizer:
     ) -> str:
         """Return a commit subject line grounded in plan and coding context."""
         prompt = self._build_prompt(job=job, plan=plan, coding=coding)
-        attempt = 0
-        while attempt < self._max_retries:
-            attempt += 1
-            try:
-                instructions = (
-                    "Respond with a single concise git commit subject line "
-                    f"in imperative mood (<= {self._subject_limit} characters)."
-                )
-                if self._api_spec == "responses":
-                    response = self._client.responses.create(
-                        model=self._model,
-                        input=prompt,
-                        temperature=self._temperature,
-                        max_output_tokens=self._max_tokens,
-                        instructions=instructions,
+        retryer = openai_retrying(
+            max_attempts=self._max_retries,
+            backoff_seconds=self._retry_backoff,
+            retry_on=(OpenAIError, CommitSummaryError),
+            log=log,
+            operation="Commit summarizer",
+        )
+        try:
+            for attempt in retryer:
+                with attempt:
+                    attempt_number = int(getattr(attempt.retry_state, "attempt_number", 0) or 0)
+                    instructions = (
+                        "Respond with a single concise git commit subject line "
+                        f"in imperative mood (<= {self._subject_limit} characters)."
                     )
-                    subject = (response.output_text or "").strip()
-                else:
-                    response = self._client.chat.completions.create(
-                        model=self._model,
-                        messages=[
-                            {"role": "system", "content": instructions},
-                            {"role": "user", "content": prompt},
-                        ],
-                        temperature=self._temperature,
-                        max_tokens=self._max_tokens,
-                    )
-                    subject = self._extract_chat_completion_text(response).strip()
-                if not subject:
-                    raise CommitSummaryError("Commit summarizer returned empty output.")
-                cleaned = self._normalise_subject(subject)
-                log.info("Commit summarizer produced subject after attempt {}", attempt)
-                return cleaned
-            except (OpenAIError, CommitSummaryError) as exc:
-                if attempt >= self._max_retries:
-                    raise CommitSummaryError(
-                        f"Commit summarizer failed after {attempt} attempt(s): {exc}",
-                    ) from exc
-                delay = self._retry_backoff * attempt
-                log.warning(
-                    "Commit summarizer attempt {} failed: {}. Retrying in {:.1f}s",
-                    attempt,
-                    exc,
-                    delay,
-                )
-                time.sleep(delay)
-        raise CommitSummaryError("Commit summarizer exhausted retries without success.")
+                    if self._api_spec == "responses":
+                        response = self._client.responses.create(
+                            model=self._model,
+                            input=prompt,
+                            temperature=self._temperature,
+                            max_output_tokens=self._max_tokens,
+                            instructions=instructions,
+                        )
+                        subject = (response.output_text or "").strip()
+                    else:
+                        response = self._client.chat.completions.create(
+                            model=self._model,
+                            messages=[
+                                {"role": "system", "content": instructions},
+                                {"role": "user", "content": prompt},
+                            ],
+                            temperature=self._temperature,
+                            max_tokens=self._max_tokens,
+                        )
+                        subject = self._extract_chat_completion_text(response).strip()
+                    if not subject:
+                        raise CommitSummaryError("Commit summarizer returned empty output.")
+                    cleaned = self._normalise_subject(subject)
+                    log.info("Commit summarizer produced subject after attempt {}", attempt_number)
+                    return cleaned
+            raise CommitSummaryError("Commit summarizer exhausted retries without success.")
+        except RetryError as exc:
+            attempts = getattr(getattr(exc, "last_attempt", None), "attempt_number", None) or self._max_retries
+            last_exc = getattr(getattr(exc, "last_attempt", None), "exception", lambda: None)()
+            raise CommitSummaryError(
+                f"Commit summarizer failed after {attempts} attempt(s): {last_exc}",
+            ) from last_exc
 
     def _build_prompt(
         self,
