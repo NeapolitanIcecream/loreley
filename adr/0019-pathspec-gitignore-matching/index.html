@@ -21,7 +21,7 @@
     
     
       
-        <title>ADR 0004: .loreleyignore for embedding scope - Loreley</title>
+        <title>ADR 0019: Use pathspec for pinned gitignore matching - Loreley</title>
       
     
     
@@ -62,7 +62,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#adr-0004-loreleyignore-for-embedding-scope" class="md-skip">
+        <a href="#adr-0019-use-pathspec-for-pinned-gitignore-matching" class="md-skip">
           Skip to content
         </a>
       
@@ -98,7 +98,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ADR 0004: .loreleyignore for embedding scope
+              ADR 0019: Use pathspec for pinned gitignore matching
             
           </span>
         </div>
@@ -1640,14 +1640,12 @@
 
 
 
-<h1 id="adr-0004-loreleyignore-for-embedding-scope">ADR 0004: <code>.loreleyignore</code> for embedding scope<a class="headerlink" href="#adr-0004-loreleyignore-for-embedding-scope" title="Permanent link">&para;</a></h1>
-<p>Date: 2026-01-06</p>
-<p>Context: Users need a way to control which repository files participate in embeddings without changing Git tracking rules.
-Decision: Support a repository-root <code>.loreleyignore</code> file and parse it with gitignore semantics via <code>pathspec.gitignore.GitIgnoreSpec</code>.
-Details: In experiment runs, ignore rules are pinned at experiment creation time from the experiment root commit and persisted in <code>Experiment.config_snapshot</code> as <code>mapelites_repo_state_ignore_text</code> (with <code>mapelites_repo_state_ignore_sha256</code> as a guard). Runtime repo-state embeddings use the pinned matcher and do not consult per-commit or working-tree ignore files.
-Details: Apply <code>.gitignore</code> rules first, then <code>.loreleyignore</code> rules, so <code>.loreleyignore</code> may override via negation (<code>!pattern</code>).
-Constraints: Matching remains root-only (no nested <code>.gitignore</code> files and no global excludes).
-Consequences: Repo-state eligibility is stable for an experiment, removing dynamic-ignore edge cases from incremental-only ingestion.</p>
+<h1 id="adr-0019-use-pathspec-for-pinned-gitignore-matching">ADR 0019: Use pathspec for pinned gitignore matching<a class="headerlink" href="#adr-0019-use-pathspec-for-pinned-gitignore-matching" title="Permanent link">&para;</a></h1>
+<p>Date: 2026-01-14</p>
+<p>Context: Repo-state embeddings rely on pinned repository-root ignore rules (<code>mapelites_repo_state_ignore_text</code>) and must support gitignore features such as negation and directory rules with correct semantics.
+Decision: Compile the pinned ignore text with <code>pathspec.gitignore.GitIgnoreSpec</code> and use <code>match_file()</code> to filter git-root-relative paths.
+Constraints: Ignore matching remains root-only (no nested <code>.gitignore</code> files and no global excludes).
+Consequences: Ignore behavior matches gitignore semantics more closely; a small number of edge cases may change eligibility and should be validated by tests when upgrading.</p>
 
 
 

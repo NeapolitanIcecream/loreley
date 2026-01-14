@@ -1894,7 +1894,7 @@ subset of changed files.</p>
 </ul>
 <p>Eligibility is determined by a combination of:</p>
 <ul>
-<li>Root <code>.gitignore</code> + <code>.loreleyignore</code> (best-effort glob matching).</li>
+<li>Root <code>.gitignore</code> + <code>.loreleyignore</code> (gitignore semantics via <code>pathspec</code>).</li>
 <li><code>MAPELITES_PREPROCESS_ALLOWED_EXTENSIONS</code> / <code>MAPELITES_PREPROCESS_ALLOWED_FILENAMES</code>.</li>
 <li><code>MAPELITES_PREPROCESS_EXCLUDED_GLOBS</code>.</li>
 <li><code>MAPELITES_PREPROCESS_MAX_FILE_SIZE_KB</code> (oversized blobs are skipped).</li>
@@ -1902,7 +1902,7 @@ subset of changed files.</p>
 </ul>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
-<p>Ignore filtering is <strong>best-effort</strong> and uses a repository-root <code>.gitignore</code> + <code>.loreleyignore</code> matcher. In experiment runs, the effective ignore rules are <strong>pinned at experiment creation time</strong> and persisted in <code>Experiment.config_snapshot</code> as <code>mapelites_repo_state_ignore_text</code> (derived from the experiment root commit). <code>.loreleyignore</code> rules are applied after <code>.gitignore</code> (so <code>!pattern</code> can re-include). Nested <code>.gitignore</code> files and global excludes are not applied.</p>
+<p>Ignore filtering uses <code>pathspec.gitignore.GitIgnoreSpec</code> to apply repository-root <code>.gitignore</code> + <code>.loreleyignore</code> rules with gitignore semantics. In experiment runs, the effective ignore rules are <strong>pinned at experiment creation time</strong> and persisted in <code>Experiment.config_snapshot</code> as <code>mapelites_repo_state_ignore_text</code> (derived from the experiment root commit). <code>.loreleyignore</code> rules are applied after <code>.gitignore</code> (so <code>!pattern</code> can re-include). Nested <code>.gitignore</code> files and global excludes are not applied.</p>
 </div>
 <p>For each eligible file we keep:</p>
 <ul>
