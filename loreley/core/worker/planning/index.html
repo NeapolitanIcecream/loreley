@@ -14,7 +14,7 @@
         <link rel="prev" href="../repository/">
       
       
-        <link rel="next" href="../agent_backend/">
+        <link rel="next" href="../agent/">
       
       
         
@@ -1094,14 +1094,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../agent_backend/" class="md-nav__link">
+      <a href="../agent/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Agent backend
+    Agent
   
 
     
@@ -1846,13 +1846,13 @@ unique path <code>LCA(base,inspiration) -&gt; inspiration</code> and rendering a
 <ul>
 <li><strong><code>PLANNING_OUTPUT_SCHEMA</code></strong>: JSON schema describing the expected shape of the planning output (top-level fields like <code>plan_summary</code>, <code>rationale</code>, <code>focus_metrics</code>, <code>guardrails</code>, <code>risks</code>, <code>validation</code>, <code>steps</code>, <code>handoff_notes</code>, and <code>fallback_plan</code>, plus constraints on each step's fields), used when invoking the external Codex CLI.</li>
 <li><strong><code>_PlanStepModel</code></strong> / <strong><code>_PlanModel</code></strong>: internal <code>pydantic</code> models that validate the Codex JSON payload against the schema and provide a typed bridge from raw JSON into the <code>PlanStep</code> / <code>PlanningPlan</code> domain objects.</li>
-<li><strong>Agent backend</strong>: planning relies on <code>loreley.core.worker.agent_backend</code> for shared backend abstractions (<code>AgentBackend</code>, <code>StructuredAgentTask</code>, <code>AgentInvocation</code>) and the default <code>CodexCliBackend</code> implementation that talks to the <code>codex</code> CLI; see that module's documentation for backend configuration details.</li>
+<li><strong>Agent backend</strong>: planning relies on <code>loreley.core.worker.agent</code> for shared backend abstractions (<code>AgentBackend</code>, <code>StructuredAgentTask</code>, <code>AgentInvocation</code>) and shared orchestration utilities; built-in CLI backends live under <code>loreley.core.worker.agent.backends</code>. See <code>loreley.core.worker.agent</code> for contracts and helpers, and <code>loreley.core.worker.agent.backends</code> for built-in backend implementations.</li>
 </ul>
 <h2 id="planning-agent">Planning agent<a class="headerlink" href="#planning-agent" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong><code>PlanningAgent</code></strong>: high-level orchestration layer that prepares a structured planning request and delegates execution to a configurable backend.</li>
 <li>Instantiated with a <code>Settings</code> object and an optional <code>AgentBackend</code> implementation. When no backend is provided, it uses <code>CodexCliBackend</code> configured via <code>WORKER_PLANNING_CODEX_BIN</code>, <code>WORKER_PLANNING_CODEX_PROFILE</code>, <code>WORKER_PLANNING_MAX_ATTEMPTS</code>, <code>WORKER_PLANNING_TIMEOUT_SECONDS</code>, <code>WORKER_PLANNING_EXTRA_ENV</code>, <code>WORKER_PLANNING_SCHEMA_PATH</code>, and <code>WORKER_PLANNING_VALIDATION_MODE</code>. You can override the default by setting <code>WORKER_PLANNING_BACKEND</code> to a dotted Python path (<code>module:attr</code> or <code>module.attr</code>) that resolves to either an <code>AgentBackend</code> instance, a class implementing the <code>AgentBackend</code> protocol (constructed with no arguments), or a factory callable that returns such an instance.</li>
-<li><strong><code>plan(request, *, working_dir)</code></strong>: resolves the git worktree path, renders a rich natural-language prompt from the request (including base commit, inspiration commits, constraints, and acceptance criteria), builds a <code>StructuredAgentTask</code> whose schema usage depends on <code>WORKER_PLANNING_VALIDATION_MODE</code>, and asks the backend to execute it:<ul>
+<li><strong><code>plan(request, *, working_dir)</code></strong>: resolves the git worktree path, renders a rich natural-language prompt from the request (including base commit, inspiration commits, constraints, and acceptance criteria), builds a <code>StructuredAgentTask</code> whose schema usage depends on <code>WORKER_PLANNING_VALIDATION_MODE</code> (via <code>build_structured_agent_task()</code>), and asks the backend to execute it using the shared retry loop (<code>run_structured_agent_task()</code>):<ul>
 <li>In <code>"strict"</code> mode, the planning JSON schema is passed to the backend (using Codex's native schema support when available), and the response must parse cleanly as <code>_PlanModel</code> or the agent will retry and eventually fail.</li>
 <li>In <code>"lenient"</code> mode, the same schema is still provided to the backend, but JSON decoding / validation failures are treated as non-fatal: the agent first attempts to parse the response into <code>_PlanModel</code>, and on failure synthesises a minimal <code>PlanningPlan</code> from the free-form output while keeping as much structure as possible.</li>
 <li>In <code>"none"</code> mode, no schema is enforced at the backend level and the agent skips JSON parsing entirely, always building a minimal <code>PlanningPlan</code> directly from the raw free-form output and job context.</li>

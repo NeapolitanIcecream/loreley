@@ -11,25 +11,21 @@
       
       
       
-        <link rel="prev" href="../planning/">
-      
-      
-        <link rel="next" href="../coding/">
       
       
         
       
       
-      <link rel="icon" href="../../../../assets/images/favicon.png">
+      <link rel="icon" href="../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.0">
     
     
       
-        <title>Agent backend - Loreley</title>
+        <title>ADR 0020: Split built-in agent backends and extract a shared structured-agent runner - Loreley</title>
       
     
     
-      <link rel="stylesheet" href="../../../../assets/stylesheets/main.618322db.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.618322db.min.css">
       
       
 
@@ -48,7 +44,7 @@
       
     
     
-    <script>__md_scope=new URL("../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -66,7 +62,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#loreleycoreworkeragent_backend" class="md-skip">
+        <a href="#adr-0020-split-built-in-agent-backends-and-extract-a-shared-structured-agent-runner" class="md-skip">
           Skip to content
         </a>
       
@@ -82,7 +78,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../../../.." title="Loreley" class="md-header__button md-logo" aria-label="Loreley" data-md-component="logo">
+    <a href="../.." title="Loreley" class="md-header__button md-logo" aria-label="Loreley" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -102,7 +98,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Agent backend
+              ADR 0020: Split built-in agent backends and extract a shared structured-agent runner
             
           </span>
         </div>
@@ -180,7 +176,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../../../.." title="Loreley" class="md-nav__button md-logo" aria-label="Loreley" data-md-component="logo">
+    <a href="../.." title="Loreley" class="md-nav__button md-logo" aria-label="Loreley" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -198,7 +194,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../.." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   
@@ -222,20 +218,18 @@
       
   
   
-    
   
   
-  
     
     
     
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
         
           
           <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
@@ -256,7 +250,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -274,7 +268,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../config/" class="md-nav__link">
+      <a href="../../loreley/config/" class="md-nav__link">
         
   
   
@@ -302,7 +296,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../experiments/" class="md-nav__link">
+      <a href="../../loreley/core/experiments/" class="md-nav__link">
         
   
   
@@ -330,7 +324,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contracts/" class="md-nav__link">
+      <a href="../../loreley/core/contracts/" class="md-nav__link">
         
   
   
@@ -405,7 +399,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../scheduler/main/" class="md-nav__link">
+      <a href="../../loreley/scheduler/main/" class="md-nav__link">
         
   
   
@@ -433,7 +427,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../scheduler/job_scheduler/" class="md-nav__link">
+      <a href="../../loreley/scheduler/job_scheduler/" class="md-nav__link">
         
   
   
@@ -461,7 +455,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../scheduler/ingestion/" class="md-nav__link">
+      <a href="../../loreley/scheduler/ingestion/" class="md-nav__link">
         
   
   
@@ -544,7 +538,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../db/base/" class="md-nav__link">
+      <a href="../../loreley/db/base/" class="md-nav__link">
         
   
   
@@ -572,7 +566,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../db/models/" class="md-nav__link">
+      <a href="../../loreley/db/models/" class="md-nav__link">
         
   
   
@@ -655,7 +649,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../map-elites/map-elites/" class="md-nav__link">
+      <a href="../../loreley/core/map-elites/map-elites/" class="md-nav__link">
         
   
   
@@ -683,7 +677,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../map-elites/repository_embedding/" class="md-nav__link">
+      <a href="../../loreley/core/map-elites/repository_embedding/" class="md-nav__link">
         
   
   
@@ -711,7 +705,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../map-elites/preprocess/" class="md-nav__link">
+      <a href="../../loreley/core/map-elites/preprocess/" class="md-nav__link">
         
   
   
@@ -739,7 +733,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../map-elites/chunk/" class="md-nav__link">
+      <a href="../../loreley/core/map-elites/chunk/" class="md-nav__link">
         
   
   
@@ -767,7 +761,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../map-elites/code_embedding/" class="md-nav__link">
+      <a href="../../loreley/core/map-elites/code_embedding/" class="md-nav__link">
         
   
   
@@ -795,7 +789,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../map-elites/dimension_reduction/" class="md-nav__link">
+      <a href="../../loreley/core/map-elites/dimension_reduction/" class="md-nav__link">
         
   
   
@@ -823,7 +817,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../map-elites/sampler/" class="md-nav__link">
+      <a href="../../loreley/core/map-elites/sampler/" class="md-nav__link">
         
   
   
@@ -851,7 +845,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../map-elites/snapshot/" class="md-nav__link">
+      <a href="../../loreley/core/map-elites/snapshot/" class="md-nav__link">
         
   
   
@@ -884,20 +878,18 @@
                 
   
   
-    
   
   
-  
     
     
     
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_7" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_7" >
         
           
           <label class="md-nav__link" for="__nav_2_7" id="__nav_2_7_label" tabindex="0">
@@ -918,7 +910,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_7_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_7_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2_7">
             <span class="md-nav__icon md-icon"></span>
             
@@ -936,7 +928,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../repository/" class="md-nav__link">
+      <a href="../../loreley/core/worker/repository/" class="md-nav__link">
         
   
   
@@ -964,7 +956,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../planning/" class="md-nav__link">
+      <a href="../../loreley/core/worker/planning/" class="md-nav__link">
         
   
   
@@ -989,44 +981,17 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Agent backend
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../loreley/core/worker/agent/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Agent backend
+    Agent
   
 
     
@@ -1035,70 +1000,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#core-types" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Core types
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#backend-resolution-helpers" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Backend resolution helpers
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#cli-backends" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        CLI backends
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#internal-utilities" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Internal utilities
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1111,7 +1012,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../coding/" class="md-nav__link">
+      <a href="../../loreley/core/worker/coding/" class="md-nav__link">
         
   
   
@@ -1139,7 +1040,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../evaluator/" class="md-nav__link">
+      <a href="../../loreley/core/worker/evaluator/" class="md-nav__link">
         
   
   
@@ -1167,7 +1068,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../evolution/" class="md-nav__link">
+      <a href="../../loreley/core/worker/evolution/" class="md-nav__link">
         
   
   
@@ -1195,7 +1096,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../commit_card/" class="md-nav__link">
+      <a href="../../loreley/core/worker/commit_card/" class="md-nav__link">
         
   
   
@@ -1223,7 +1124,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../commit_summary/" class="md-nav__link">
+      <a href="../../loreley/core/worker/commit_summary/" class="md-nav__link">
         
   
   
@@ -1251,7 +1152,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../artifacts/" class="md-nav__link">
+      <a href="../../loreley/core/worker/artifacts/" class="md-nav__link">
         
   
   
@@ -1279,7 +1180,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../job_store/" class="md-nav__link">
+      <a href="../../loreley/core/worker/job_store/" class="md-nav__link">
         
   
   
@@ -1362,7 +1263,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../tasks/broker/" class="md-nav__link">
+      <a href="../../loreley/tasks/broker/" class="md-nav__link">
         
   
   
@@ -1390,7 +1291,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../tasks/workers/" class="md-nav__link">
+      <a href="../../loreley/tasks/workers/" class="md-nav__link">
         
   
   
@@ -1426,7 +1327,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../api/" class="md-nav__link">
+      <a href="../../loreley/api/" class="md-nav__link">
         
   
   
@@ -1454,7 +1355,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../ui/" class="md-nav__link">
+      <a href="../../loreley/ui/" class="md-nav__link">
         
   
   
@@ -1536,7 +1437,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../script/doctor/" class="md-nav__link">
+      <a href="../../script/doctor/" class="md-nav__link">
         
   
   
@@ -1564,7 +1465,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../script/run_scheduler/" class="md-nav__link">
+      <a href="../../script/run_scheduler/" class="md-nav__link">
         
   
   
@@ -1592,7 +1493,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../script/run_worker/" class="md-nav__link">
+      <a href="../../script/run_worker/" class="md-nav__link">
         
   
   
@@ -1620,7 +1521,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../script/run_api/" class="md-nav__link">
+      <a href="../../script/run_api/" class="md-nav__link">
         
   
   
@@ -1648,7 +1549,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../script/run_ui/" class="md-nav__link">
+      <a href="../../script/run_ui/" class="md-nav__link">
         
   
   
@@ -1676,7 +1577,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../script/reset_db/" class="md-nav__link">
+      <a href="../../script/reset_db/" class="md-nav__link">
         
   
   
@@ -1724,58 +1625,6 @@
     
   
   
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#core-types" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Core types
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#backend-resolution-helpers" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Backend resolution helpers
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#cli-backends" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        CLI backends
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#internal-utilities" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Internal utilities
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
 </nav>
                   </div>
                 </div>
@@ -1791,126 +1640,12 @@
 
 
 
-<h1 id="loreleycoreworkeragent_backend">loreley.core.worker.agent_backend<a class="headerlink" href="#loreleycoreworkeragent_backend" title="Permanent link">&para;</a></h1>
-<p>Shared abstractions and helpers for structured planning/coding agents plus the default Codex CLI backend.</p>
-<h2 id="core-types">Core types<a class="headerlink" href="#core-types" title="Permanent link">&para;</a></h2>
-<ul>
-<li>
-<p><strong><code>SchemaMode</code></strong>: type alias restricting schema handling modes to <code>"native"</code>, <code>"prompt"</code>, or <code>"none"</code>.<br />
-  Used by structured agents to decide whether JSON schema is enforced by the backend API itself (<code>"native"</code>), injected into the prompt (<code>"prompt"</code>), or completely disabled (<code>"none"</code>).</p>
-</li>
-<li>
-<p><strong><code>AgentInvocation</code></strong>: immutable result of a single backend invocation.  </p>
-</li>
-<li>Captures the executed <code>command</code> (argv tuple), captured <code>stdout</code> and <code>stderr</code>, and total <code>duration_seconds</code>.  </li>
-<li>
-<p>Serves as the low‑level record returned by all <code>AgentBackend</code> implementations.</p>
-</li>
-<li>
-<p><strong><code>StructuredAgentTask</code></strong>: backend‑agnostic description of a structured agent call.  </p>
-</li>
-<li>Fields:<ul>
-<li><code>name</code>: human‑readable label used in logs and error messages.  </li>
-<li><code>prompt</code>: full natural‑language prompt passed to the backend.  </li>
-<li><code>schema</code>: optional JSON schema dict describing the expected output structure.  </li>
-<li><code>schema_mode</code>: one of the <code>SchemaMode</code> values controlling how <code>schema</code> should be applied.  </li>
-</ul>
-</li>
-<li>
-<p>Planning and coding agents construct a <code>StructuredAgentTask</code> and delegate execution to a concrete backend.</p>
-</li>
-<li>
-<p><strong><code>AgentBackend</code></strong>: <code>Protocol</code> defining the contract for all agent backends.  </p>
-</li>
-<li>Requires a single method <code>run(task, *, working_dir)</code> that:<ul>
-<li>validates and normalises the <code>working_dir</code>,  </li>
-<li>executes the task using a concrete backend mechanism (CLI, HTTP API, etc.), and  </li>
-<li>returns an <code>AgentInvocation</code> with the raw output and timing information.</li>
-</ul>
-</li>
-</ul>
-<h2 id="backend-resolution-helpers">Backend resolution helpers<a class="headerlink" href="#backend-resolution-helpers" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong><code>resolve_schema_mode(configured_mode, api_spec)</code></strong>: determines the effective schema mode based on configuration and the selected API surface.  </li>
-<li>If <code>configured_mode</code> is anything other than <code>"auto"</code>, it is returned unchanged.  </li>
-<li>When <code>configured_mode="auto"</code> and <code>api_spec="chat_completions"</code>, it returns <code>"prompt"</code> so that schemas are enforced via prompt engineering.  </li>
-<li>
-<p>When <code>configured_mode="auto"</code> and <code>api_spec="responses"</code>, it returns <code>"native"</code> so that native tool/JSON capabilities are used.</p>
-</li>
-<li>
-<p><strong><code>load_agent_backend(ref, *, label)</code></strong>: resolves and instantiates an <code>AgentBackend</code> from a dotted reference string.  </p>
-</li>
-<li>Accepts both <code>"module:attr"</code> and <code>"module.attr"</code> forms.  </li>
-<li>Internally splits the reference, imports the target module, and walks the attribute path.  </li>
-<li>Supports three patterns:<ul>
-<li>an already‑instantiated backend object exposing a callable <code>run</code> method,  </li>
-<li>a class implementing the <code>AgentBackend</code> protocol (constructed with no arguments), or  </li>
-<li>a factory callable that returns a backend instance when called with no arguments.  </li>
-</ul>
-</li>
-<li>Validates that the resulting object has a callable <code>run</code> attribute and raises a descriptive <code>RuntimeError</code> otherwise.</li>
-</ul>
-<h2 id="cli-backends">CLI backends<a class="headerlink" href="#cli-backends" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong><code>CodexCliBackend</code></strong>: concrete <code>AgentBackend</code> implementation that delegates to the external Codex CLI.  </li>
-<li>Configuration fields:<ul>
-<li><code>bin</code>: CLI executable to invoke (for example, <code>"codex"</code>).  </li>
-<li><code>profile</code>: optional profile name passed as <code>--profile</code> to select a Codex configuration.  </li>
-<li><code>timeout_seconds</code>: hard timeout for the subprocess invocation.  </li>
-<li><code>extra_env</code>: dict of additional environment variables merged into the subprocess environment.  </li>
-<li><code>schema_override</code>: optional path to a JSON schema file to use instead of the task‑provided schema.  </li>
-<li><code>error_cls</code>: concrete <code>RuntimeError</code> subtype used for all user‑facing errors (planning/coding use module‑specific error types).  </li>
-<li><code>full_auto</code>: when <code>True</code>, appends <code>--full-auto</code> so the CLI can drive multi‑step interactions autonomously.</li>
-</ul>
-</li>
-<li>
-<p><strong><code>run(task, *, working_dir)</code></strong>:</p>
-<ul>
-<li>Validates that <code>working_dir</code> exists, is a directory, and contains a <code>.git</code> folder via <code>_validate_workdir()</code>.  </li>
-<li>Builds the CLI <code>command</code> list starting from <code>[bin, "exec"]</code>, optionally adding <code>--full-auto</code>.  </li>
-<li>When <code>task.schema_mode=="native"</code>:</li>
-<li>uses <code>schema_override</code> if provided and points to an existing file, or  </li>
-<li>materialises <code>task.schema</code> into a temporary JSON file via <code>_materialise_schema_to_temp()</code> and passes it as <code>--output-schema</code>.  </li>
-<li>Adds <code>--profile</code> when a profile is configured, merges <code>extra_env</code> into a copy of <code>os.environ</code>, and feeds <code>task.prompt</code> on stdin.  </li>
-<li>Runs the process with <code>subprocess.run(...)</code>, capturing stdout/stderr, enforcing the timeout, and deleting any temporary schema file afterwards.  </li>
-<li>Raises <code>error_cls</code> when the process exits non‑zero or times out; even when stdout is empty it still returns an <code>AgentInvocation</code>, leaving it to higher‑level agents (and their validation modes) to decide whether an empty payload is acceptable.</li>
-</ul>
-</li>
-<li>
-<p><strong><code>CursorCliBackend</code></strong>: concrete <code>AgentBackend</code> implementation that delegates to the Cursor Agent CLI (<code>cursor-agent</code>).  </p>
-</li>
-<li>Configuration fields:<ul>
-<li><code>bin</code>: CLI executable to invoke (default <code>"cursor-agent"</code>).  </li>
-<li><code>model</code>: model identifier passed as <code>--model</code>; defaults to <code>"gpt-5.1-codex-max-high"</code> and can be overridden (for example, <code>"gpt-5"</code>), including via the <code>cursor_backend_from_settings()</code> helper that reads <code>WORKER_CURSOR_MODEL</code>.  </li>
-<li><code>timeout_seconds</code>: hard timeout for the subprocess invocation.  </li>
-<li><code>extra_env</code>: dict of additional environment variables merged into the subprocess environment.  </li>
-<li><code>output_format</code>: value passed as <code>--output-format</code> (default <code>"text"</code>), typically left as <code>"text"</code> so the agent can emit a single JSON object as plain text.  </li>
-<li><code>force</code>: when <code>True</code> (default), appends <code>--force</code> so the Cursor agent allows commands unless explicitly denied; set to <code>False</code> to omit the flag.  </li>
-<li><code>error_cls</code>: concrete <code>RuntimeError</code> subtype used for all user‑facing errors.</li>
-</ul>
-</li>
-<li><strong><code>run(task, *, working_dir)</code></strong>:<ul>
-<li>Validates that <code>working_dir</code> exists, is a directory, and contains a <code>.git</code> folder via <code>_validate_workdir()</code>.  </li>
-<li>Builds the CLI <code>command</code> list starting from <code>[bin]</code>, adding:</li>
-<li><code>-p &lt;prompt&gt;</code> to forward <code>task.prompt</code> to the Cursor agent,  </li>
-<li><code>--model</code> when <code>model</code> is configured, and  </li>
-<li><code>--output-format</code> when <code>output_format</code> is set, and  </li>
-<li><code>--force</code> when <code>force=True</code>.  </li>
-<li>Merges <code>extra_env</code> into a copy of <code>os.environ</code> and runs <code>cursor-agent</code> in the provided working directory.  </li>
-<li>Captures stdout/stderr and enforces the timeout via <code>subprocess.run(...)</code>.  </li>
-<li>Raises <code>error_cls</code> when the process exits non‑zero or times out; even when stdout is empty it still returns an <code>AgentInvocation</code>, leaving it to higher‑level agents and validation logic to decide how to handle the result.  </li>
-<li>Does not pass JSON Schema to the CLI directly; structured agents are expected to enforce schemas via prompt engineering (for example by embedding the schema in the prompt when using <code>"prompt"</code> schema mode).</li>
-</ul>
-</li>
-<li><strong>Factory helper</strong>: <code>cursor_backend_from_settings()</code> builds a <code>CursorCliBackend</code> using application settings (notably <code>WORKER_CURSOR_MODEL</code>) so deployments can pick a Cursor model without writing custom wiring.</li>
-</ul>
-<h2 id="internal-utilities">Internal utilities<a class="headerlink" href="#internal-utilities" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong><code>_validate_workdir()</code></strong>: expands and checks the working directory path, ensuring it exists, is a directory, and contains a <code>.git</code> subdirectory; raises the configured error type with clear messages when any condition fails.  </li>
-<li><strong><code>_materialise_schema_to_temp()</code></strong>: writes a JSON schema dict to a temporary file with a deterministic prefix/suffix and returns its path, used only when running in <code>"native"</code> schema mode without a <code>schema_override</code>.  </li>
-<li><strong><code>_split_backend_reference()</code></strong> and <strong><code>_import_backend_target()</code></strong>: low‑level helpers used by <code>load_agent_backend()</code> to parse dotted references and resolve the final object, with detailed error messages for invalid module names or attribute paths.  </li>
-<li>These helpers are internal but form part of the stable backend loading behaviour relied on by the planning and coding agents.</li>
-</ul>
+<h1 id="adr-0020-split-built-in-agent-backends-and-extract-a-shared-structured-agent-runner">ADR 0020: Split built-in agent backends and extract a shared structured-agent runner<a class="headerlink" href="#adr-0020-split-built-in-agent-backends-and-extract-a-shared-structured-agent-runner" title="Permanent link">&para;</a></h1>
+<p>Date: 2026-01-14</p>
+<p>Context: <code>planning</code> and <code>coding</code> duplicated the same retry loop, task construction, truncation, and debug-dir logic, while concrete CLI backends and core contracts/utilities were not clearly separated.
+Decision: Create a dedicated core package <code>loreley.core.worker.agent</code> for shared contracts and orchestration utilities (<code>build_structured_agent_task</code>, <code>coerce_structured_output</code>, <code>run_structured_agent_task</code>, <code>resolve_worker_debug_dir</code>, <code>TruncationMixin</code>, plus loader/utils) and implement built-in CLI backends under <code>loreley.core.worker.agent.backends.*</code> (<code>CodexCliBackend</code>, <code>CursorCliBackend</code>).
+Constraints: Keep <code>loreley.core.worker.agent</code> backend-agnostic (no imports/re-exports of built-in backends) so imports remain acyclic; built-in backends may depend only on <code>loreley.core.worker.agent</code> APIs.
+Consequences: Worker agents become thinner and easier to evolve; adding new backends requires less boilerplate, and configuration strings should reference <code>loreley.core.worker.agent.backends</code>.</p>
 
 
 
@@ -1960,10 +1695,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../../../..", "features": [], "search": "../../../../assets/javascripts/workers/search.7a47a382.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.7a47a382.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../../../assets/javascripts/bundle.e71a0d61.min.js"></script>
+      <script src="../../assets/javascripts/bundle.e71a0d61.min.js"></script>
       
     
   </body>
