@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 import json
-import os
-import subprocess
 import tempfile
-from dataclasses import dataclass, field
 import inspect
+from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
-from time import monotonic
-from typing import Any, Literal, Protocol, cast
+from typing import Any, Callable, Literal, Protocol, TypeVar, cast
 
 from loguru import logger
 
@@ -19,15 +16,21 @@ __all__ = [
     "AgentBackend",
     "AgentInvocation",
     "StructuredAgentTask",
-    "CodexCliBackend",
-    "CursorCliBackend",
-    "DEFAULT_CURSOR_MODEL",
+    "TruncationMixin",
+    "ValidationMode",
+    "build_structured_agent_task",
+    "coerce_structured_output",
     "resolve_schema_mode",
+    "resolve_worker_debug_dir",
+    "run_structured_agent_task",
+    "truncate_text",
     "load_agent_backend",
-    "cursor_backend_from_settings",
 ]
 
 SchemaMode = Literal["native", "prompt", "none"]
+ValidationMode = Literal["strict", "lenient", "none"]
+
+ParsedT = TypeVar("ParsedT")
 
 
 @dataclass(slots=True, frozen=True)
@@ -69,6 +72,139 @@ def resolve_schema_mode(configured_mode: str, api_spec: str) -> SchemaMode:
     if api_spec == "chat_completions":
         return "prompt"
     return "native"
+
+
+def truncate_text(text: str, *, limit: int) -> str:
+    """Return a whitespace-trimmed string truncated to the specified limit."""
+    if not text:
+        return ""
+    stripped = text.strip()
+    if len(stripped) <= limit:
+        return stripped
+    return f"{stripped[:limit]}…"
+
+
+class TruncationMixin:
+    """Provide a consistent text truncation helper for worker agents."""
+
+    _truncate_limit: int
+
+    def _truncate(self, text: str, limit: int | None = None) -> str:
+        active_limit = int(limit or self._truncate_limit)
+        return truncate_text(text, limit=active_limit)
+
+
+def resolve_worker_debug_dir(*, logs_base_dir: str | None, kind: str) -> Path:
+    """Resolve directory for worker debug artifacts under logs/worker/{kind}."""
+    if logs_base_dir:
+        base_dir = Path(logs_base_dir).expanduser()
+    else:
+        base_dir = Path.cwd()
+    logs_root = base_dir / "logs" / "worker" / kind
+    logs_root.mkdir(parents=True, exist_ok=True)
+    return logs_root
+
+
+def build_structured_agent_task(
+    *,
+    name: str,
+    prompt: str,
+    schema: dict[str, Any] | None,
+    schema_mode: SchemaMode,
+    validation_mode: ValidationMode,
+) -> StructuredAgentTask:
+    """Build a StructuredAgentTask whose schema enforcement matches the validation mode."""
+    if validation_mode in ("strict", "lenient"):
+        return StructuredAgentTask(
+            name=name,
+            prompt=prompt,
+            schema=schema,
+            schema_mode=schema_mode,
+        )
+    return StructuredAgentTask(
+        name=name,
+        prompt=prompt,
+        schema=None,
+        schema_mode="none",
+    )
+
+
+def coerce_structured_output(
+    *,
+    validation_mode: ValidationMode,
+    stdout: str,
+    parse: Callable[[str], ParsedT],
+    build_from_freeform: Callable[[str], ParsedT],
+    on_parse_error: Callable[[Exception], None] | None = None,
+    parse_exceptions: tuple[type[Exception], ...] = (json.JSONDecodeError,),
+) -> ParsedT:
+    """Coerce backend stdout into a structured value, honouring the validation mode."""
+    if validation_mode == "strict":
+        return parse(stdout)
+    if validation_mode == "lenient":
+        try:
+            return parse(stdout)
+        except parse_exceptions as exc:
+            if on_parse_error is not None:
+                on_parse_error(exc)
+            return build_from_freeform(stdout)
+    return build_from_freeform(stdout)
+
+
+def run_structured_agent_task(
+    *,
+    backend: AgentBackend,
+    task: StructuredAgentTask,
+    working_dir: Path,
+    max_attempts: int,
+    coerce_result: Callable[[AgentInvocation], ParsedT],
+    retryable_exceptions: tuple[type[Exception], ...],
+    error_cls: type[RuntimeError],
+    error_message: str,
+    debug_hook: Callable[[int, AgentInvocation | None, ParsedT | None, Exception | None], None]
+    | None = None,
+    on_attempt_start: Callable[[int, int], None] | None = None,
+    on_attempt_success: Callable[[int, int, AgentInvocation, ParsedT], None] | None = None,
+    on_attempt_retry: Callable[[int, int, Exception], None] | None = None,
+    post_check: Callable[[AgentInvocation, ParsedT], Exception | None] | None = None,
+) -> tuple[ParsedT, AgentInvocation, int]:
+    """Run a structured agent task with retries, optional post-check, and debug hooks."""
+    last_error: Exception | None = None
+    attempts = max(1, int(max_attempts))
+    for attempt in range(1, attempts + 1):
+        if on_attempt_start is not None:
+            on_attempt_start(attempt, attempts)
+
+        invocation: AgentInvocation | None = None
+        result: ParsedT | None = None
+        try:
+            invocation = backend.run(task, working_dir=working_dir)
+            result = coerce_result(invocation)
+
+            if post_check is not None:
+                post_error = post_check(invocation, result)
+                if post_error is not None:
+                    last_error = post_error
+                    if debug_hook is not None:
+                        debug_hook(attempt, invocation, result, post_error)
+                    if on_attempt_retry is not None:
+                        on_attempt_retry(attempt, attempts, post_error)
+                    continue
+
+            if debug_hook is not None:
+                debug_hook(attempt, invocation, result, None)
+            if on_attempt_success is not None:
+                on_attempt_success(attempt, attempts, invocation, result)
+            return result, invocation, attempt
+        except retryable_exceptions as exc:
+            last_error = exc
+            if debug_hook is not None:
+                debug_hook(attempt, invocation, result, exc)
+            if on_attempt_retry is not None:
+                on_attempt_retry(attempt, attempts, exc)
+            continue
+
+    raise error_cls(error_message) from last_error
 
 
 def _validate_workdir(
@@ -146,10 +282,6 @@ def _import_backend_target(module_name: str, attr_path: str) -> Any:
             ) from exc
     return target
 
-
-DEFAULT_CURSOR_MODEL = "gpt-5.2-high"
-
-
 def load_agent_backend(ref: str, *, label: str) -> AgentBackend:
     """Resolve and instantiate an AgentBackend from a dotted reference.
 
@@ -182,242 +314,3 @@ def load_agent_backend(ref: str, *, label: str) -> AgentBackend:
         f"Resolved {label} {ref!r} is not a valid AgentBackend "
         "(object must expose a callable 'run' method).",
     )
-
-
-@dataclass(slots=True)
-class CodexCliBackend:
-    """AgentBackend implementation that delegates to the Codex CLI."""
-
-    bin: str
-    profile: str | None
-    timeout_seconds: int
-    extra_env: dict[str, str]
-    schema_override: str | None
-    error_cls: type[RuntimeError]
-    full_auto: bool = False
-
-    def run(
-        self,
-        task: StructuredAgentTask,
-        *,
-        working_dir: Path,
-    ) -> AgentInvocation:
-        worktree = _validate_workdir(
-            working_dir,
-            error_cls=self.error_cls,
-            agent_name=task.name or "Agent",
-        )
-
-        command: list[str] = [self.bin, "exec"]
-        if self.full_auto:
-            command.append("--full-auto")
-
-        schema_path: Path | None = None
-        cleanup_path: Path | None = None
-
-        if task.schema_mode == "native":
-            if self.schema_override:
-                path = Path(self.schema_override).expanduser().resolve()
-                if not path.exists():
-                    raise self.error_cls(
-                        f"Configured agent schema {path} does not exist.",
-                    )
-                schema_path = path
-            else:
-                if not task.schema:
-                    raise self.error_cls(
-                        "Schema mode 'native' requires an output schema definition.",
-                    )
-                schema_path = _materialise_schema_to_temp(
-                    task.schema,
-                    error_cls=self.error_cls,
-                )
-                cleanup_path = schema_path
-
-            command.extend(["--output-schema", str(schema_path)])
-
-        if self.profile:
-            command.extend(["--profile", self.profile])
-
-        env = os.environ.copy()
-        env.update(self.extra_env or {})
-
-        start = monotonic()
-        log.debug(
-            "Running Codex CLI command: {} (cwd={}) for task={}",
-            command,
-            worktree,
-            task.name,
-        )
-        try:
-            result = subprocess.run(
-                command,
-                cwd=str(worktree),
-                env=env,
-                input=task.prompt,
-                text=True,
-                capture_output=True,
-                timeout=self.timeout_seconds,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise self.error_cls(
-                f"codex exec timed out after {self.timeout_seconds}s.",
-            ) from exc
-        finally:
-            if cleanup_path is not None:
-                cleanup_path.unlink(missing_ok=True)
-
-        duration = monotonic() - start
-        stdout = (result.stdout or "").strip()
-        stderr = (result.stderr or "").strip()
-
-        log.debug(
-            "Codex CLI finished (exit_code={}, duration={:.2f}s) for task={}",
-            result.returncode,
-            duration,
-            task.name,
-        )
-
-        if result.returncode != 0:
-            raise self.error_cls(
-                f"codex exec failed with exit code {result.returncode}. "
-                f"stderr: {stderr or 'N/A'}",
-            )
-
-        if not stdout:
-            log.warning(
-                "Codex CLI produced an empty stdout payload for task={} (command={})",
-                task.name,
-                command,
-            )
-
-        return AgentInvocation(
-            command=tuple(command),
-            stdout=stdout,
-            stderr=stderr,
-            duration_seconds=duration,
-        )
-
-
-@dataclass(slots=True)
-class CursorCliBackend:
-    """AgentBackend implementation that delegates to the Cursor Agent CLI.
-
-    This backend runs ``cursor-agent`` in non-interactive mode, forwarding the
-    structured prompt via ``-p`` and capturing plain-text output. It relies on
-    prompt engineering (rather than a native JSON schema API) to obtain
-    structured JSON results.
-    """
-
-    bin: str = "cursor-agent"
-    model: str | None = DEFAULT_CURSOR_MODEL
-    timeout_seconds: int = 1800
-    extra_env: dict[str, str] = field(default_factory=dict)
-    output_format: str = "text"
-    force: bool = True
-    error_cls: type[RuntimeError] = RuntimeError
-
-    def run(
-        self,
-        task: StructuredAgentTask,
-        *,
-        working_dir: Path,
-    ) -> AgentInvocation:
-        worktree = _validate_workdir(
-            working_dir,
-            error_cls=self.error_cls,
-            agent_name=task.name or "Agent",
-        )
-
-        command: list[str] = [self.bin]
-
-        if task.prompt:
-            command.extend(["-p", task.prompt])
-
-        if self.model:
-            command.extend(["--model", self.model])
-
-        if self.output_format:
-            command.extend(["--output-format", self.output_format])
-
-        if self.force:
-            command.append("--force")
-
-        env = os.environ.copy()
-        env.update(self.extra_env or {})
-
-        start = monotonic()
-        log.debug(
-            "Running Cursor CLI command: {} (cwd={}) for task={}",
-            command,
-            worktree,
-            task.name,
-        )
-        try:
-            result = subprocess.run(
-                command,
-                cwd=str(worktree),
-                env=env,
-                text=True,
-                capture_output=True,
-                timeout=self.timeout_seconds,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise self.error_cls(
-                f"cursor-agent timed out after {self.timeout_seconds}s.",
-            ) from exc
-
-        duration = monotonic() - start
-        stdout = (result.stdout or "").strip()
-        stderr = (result.stderr or "").strip()
-
-        log.debug(
-            "Cursor CLI finished (exit_code={}, duration={:.2f}s) for task={}",
-            result.returncode,
-            duration,
-            task.name,
-        )
-
-        if result.returncode != 0:
-            raise self.error_cls(
-                f"cursor-agent failed with exit code {result.returncode}. "
-                f"stderr: {stderr or 'N/A'}",
-            )
-
-        if not stdout:
-            log.warning(
-                "Cursor CLI produced an empty stdout payload for task={} (command={})",
-                task.name,
-                command,
-            )
-
-        return AgentInvocation(
-            command=tuple(command),
-            stdout=stdout,
-            stderr=stderr,
-            duration_seconds=duration,
-        )
-
-
-def cursor_backend_from_settings(
-    *,
-    settings: Any | None = None,
-    error_cls: type[RuntimeError] = RuntimeError,
-) -> CursorCliBackend:
-    """Factory to build a Cursor backend using configured defaults."""
-    if settings is None:
-        from loreley.config import get_settings
-
-        settings = get_settings()
-
-    model = getattr(settings, "worker_cursor_model", DEFAULT_CURSOR_MODEL)
-    force = getattr(settings, "worker_cursor_force", True)
-    return CursorCliBackend(
-        model=model or DEFAULT_CURSOR_MODEL,
-        force=force,
-        error_cls=error_cls,
-    )
-
-

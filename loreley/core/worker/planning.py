@@ -12,13 +12,18 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from rich.console import Console
 
 from loreley.config import Settings, get_settings
+from loreley.core.worker.agent_backends import CodexCliBackend
 from loreley.core.worker.agent_backend import (
     AgentBackend,
     AgentInvocation,
-    CodexCliBackend,
     SchemaMode,
-    StructuredAgentTask,
+    TruncationMixin,
+    ValidationMode,
+    build_structured_agent_task,
+    coerce_structured_output,
     load_agent_backend,
+    resolve_worker_debug_dir,
+    run_structured_agent_task,
     resolve_schema_mode,
 )
 from loreley.core.worker.output_sanitizer import sanitize_json_payload
@@ -275,7 +280,7 @@ PLANNING_OUTPUT_SCHEMA: dict[str, Any] = {
 }
 
 
-class PlanningAgent:
+class PlanningAgent(TruncationMixin):
     """Bridge between Loreley's worker and the configured planning backend."""
 
     def __init__(
@@ -285,7 +290,7 @@ class PlanningAgent:
     ) -> None:
         self.settings = settings or get_settings()
         self.max_attempts = max(1, self.settings.worker_planning_max_attempts)
-        self.validation_mode: str = self.settings.worker_planning_validation_mode
+        self.validation_mode: ValidationMode = self.settings.worker_planning_validation_mode
         self.schema_mode: SchemaMode = resolve_schema_mode(
             configured_mode=self.settings.worker_planning_codex_schema_mode,
             api_spec=self.settings.openai_api_spec,
@@ -293,7 +298,10 @@ class PlanningAgent:
         self._truncate_limit = 2000
         self._max_highlights = 8
         self._max_metrics = 10
-        self._debug_dir = self._resolve_debug_dir()
+        self._debug_dir = resolve_worker_debug_dir(
+            logs_base_dir=self.settings.logs_base_dir,
+            kind="planning",
+        )
         if backend is not None:
             self.backend: AgentBackend = backend
         elif self.settings.worker_planning_backend:
@@ -322,81 +330,81 @@ class PlanningAgent:
         worktree = Path(working_dir).expanduser().resolve()
         prompt = self._render_prompt(request)
 
-        if self.validation_mode in ("strict", "lenient"):
-            task = StructuredAgentTask(
-                name="planning",
+        task = build_structured_agent_task(
+            name="planning",
+            prompt=prompt,
+            schema=PLANNING_OUTPUT_SCHEMA,
+            schema_mode=self.schema_mode,
+            validation_mode=self.validation_mode,
+        )
+
+        def _debug_hook(
+            attempt: int,
+            invocation: AgentInvocation | None,
+            plan: PlanningPlan | None,
+            error: Exception | None,
+        ) -> None:
+            self._dump_debug_artifact(
+                request=request,
+                worktree=worktree,
+                invocation=invocation,
                 prompt=prompt,
-                schema=PLANNING_OUTPUT_SCHEMA,
-                schema_mode=self.schema_mode,
-            )
-        else:
-            # In 'none' validation mode we do not enforce a JSON schema at the backend level.
-            task = StructuredAgentTask(
-                name="planning",
-                prompt=prompt,
-                schema=None,
-                schema_mode="none",
+                attempt=attempt,
+                plan=plan,
+                error=error,
             )
 
-        last_error: Exception | None = None
-        for attempt in range(1, self.max_attempts + 1):
-            invocation: AgentInvocation | None = None
-            try:
-                console.log(
-                    "[cyan]Planning agent[/] requesting plan "
-                    f"(attempt {attempt}/{self.max_attempts})",
-                )
-                invocation = self.backend.run(
-                    task,
-                    working_dir=worktree,
-                )
-                plan = self._coerce_plan_from_invocation(
-                    request=request,
-                    invocation=invocation,
-                )
-                self._dump_debug_artifact(
-                    request=request,
-                    worktree=worktree,
-                    invocation=invocation,
-                    prompt=prompt,
-                    attempt=attempt,
-                    plan=plan,
-                    error=None,
-                )
-                console.log(
-                    "[bold green]Planning agent[/] generated plan "
-                    f"in {invocation.duration_seconds:.1f}s "
-                    f"(attempt {attempt}/{self.max_attempts})",
-                )
-                return PlanningAgentResponse(
-                    plan=plan,
-                    raw_output=invocation.stdout,
-                    prompt=prompt,
-                    command=invocation.command,
-                    stderr=invocation.stderr,
-                    attempts=attempt,
-                    duration_seconds=invocation.duration_seconds,
-                )
-            except (PlanningError, ValidationError, json.JSONDecodeError) as exc:
-                last_error = exc
-                self._dump_debug_artifact(
-                    request=request,
-                    worktree=worktree,
-                    invocation=None,
-                    prompt=prompt,
-                    attempt=attempt,
-                    plan=None,
-                    error=exc,
-                )
-                log.warning(
-                    "Planning attempt {} failed: {}",
-                    attempt,
-                    exc,
-                )
-        raise PlanningError(
-            "Planning agent could not produce a valid plan after "
-            f"{self.max_attempts} attempt(s).",
-        ) from last_error
+        def _on_attempt_start(attempt: int, total: int) -> None:
+            console.log(
+                "[cyan]Planning agent[/] requesting plan "
+                f"(attempt {attempt}/{total})",
+            )
+
+        def _on_attempt_success(
+            attempt: int,
+            total: int,
+            invocation: AgentInvocation,
+            _plan: PlanningPlan,
+        ) -> None:
+            console.log(
+                "[bold green]Planning agent[/] generated plan "
+                f"in {invocation.duration_seconds:.1f}s "
+                f"(attempt {attempt}/{total})",
+            )
+
+        def _on_attempt_retry(attempt: int, _total: int, exc: Exception) -> None:
+            log.warning("Planning attempt {} failed: {}", attempt, exc)
+
+        plan, invocation, attempts = run_structured_agent_task(
+            backend=self.backend,
+            task=task,
+            working_dir=worktree,
+            max_attempts=self.max_attempts,
+            coerce_result=lambda inv: self._coerce_plan_from_invocation(
+                request=request,
+                invocation=inv,
+            ),
+            retryable_exceptions=(PlanningError, ValidationError, json.JSONDecodeError),
+            error_cls=PlanningError,
+            error_message=(
+                "Planning agent could not produce a valid plan after "
+                f"{self.max_attempts} attempt(s)."
+            ),
+            debug_hook=_debug_hook,
+            on_attempt_start=_on_attempt_start,
+            on_attempt_success=_on_attempt_success,
+            on_attempt_retry=_on_attempt_retry,
+        )
+
+        return PlanningAgentResponse(
+            plan=plan,
+            raw_output=invocation.stdout,
+            prompt=prompt,
+            command=invocation.command,
+            stderr=invocation.stderr,
+            attempts=attempts,
+            duration_seconds=invocation.duration_seconds,
+        )
 
     def _render_prompt(self, request: PlanningAgentRequest) -> str:
         """Compose the narrative prompt for the planning backend."""
@@ -569,25 +577,21 @@ Deliverable requirements:
         invocation: AgentInvocation,
     ) -> PlanningPlan:
         """Turn backend output into a PlanningPlan, honouring the validation mode."""
-        if self.validation_mode == "strict":
-            plan_model = self._parse_plan(invocation.stdout)
+
+        def parse(stdout: str) -> PlanningPlan:
+            plan_model = self._parse_plan(stdout)
             return self._to_domain(plan_model)
 
-        if self.validation_mode == "lenient":
-            try:
-                plan_model = self._parse_plan(invocation.stdout)
-                return self._to_domain(plan_model)
-            except (ValidationError, json.JSONDecodeError) as exc:
-                self._log_invalid_output(invocation, exc)
-                return self._build_plan_from_freeform_output(
-                    request=request,
-                    raw_output=invocation.stdout,
-                )
-
-        # validation_mode == "none": skip JSON parsing entirely and treat output as free-form.
-        return self._build_plan_from_freeform_output(
-            request=request,
-            raw_output=invocation.stdout,
+        return coerce_structured_output(
+            validation_mode=self.validation_mode,
+            stdout=invocation.stdout,
+            parse=parse,
+            build_from_freeform=lambda stdout: self._build_plan_from_freeform_output(
+                request=request,
+                raw_output=stdout,
+            ),
+            on_parse_error=lambda exc: self._log_invalid_output(invocation, exc),
+            parse_exceptions=(ValidationError, json.JSONDecodeError),
         )
 
     def _parse_plan(self, payload: str) -> _PlanModel:
@@ -689,25 +693,6 @@ Deliverable requirements:
             stdout_preview,
             stderr_preview,
         )
-
-    def _truncate(self, text: str, limit: int | None = None) -> str:
-        if not text:
-            return ""
-        active_limit = limit or self._truncate_limit
-        stripped = text.strip()
-        if len(stripped) <= active_limit:
-            return stripped
-        return f"{stripped[:active_limit]}…"
-
-    def _resolve_debug_dir(self) -> Path:
-        """Resolve directory for planning debug artifacts."""
-        if self.settings.logs_base_dir:
-            base_dir = Path(self.settings.logs_base_dir).expanduser()
-        else:
-            base_dir = Path.cwd()
-        logs_root = base_dir / "logs" / "worker" / "planning"
-        logs_root.mkdir(parents=True, exist_ok=True)
-        return logs_root
 
     def _dump_debug_artifact(
         self,

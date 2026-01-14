@@ -236,7 +236,7 @@ class Settings(BaseSettings):
         alias="WORKER_CODING_BACKEND",
     )
     worker_cursor_model: str = Field(
-        default="gpt-5.1-codex-max-high",
+        default="gpt-5.2-high",
         alias="WORKER_CURSOR_MODEL",
     )
     worker_cursor_force: bool = Field(

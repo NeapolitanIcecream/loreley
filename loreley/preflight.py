@@ -302,11 +302,8 @@ def _check_agent_backend(
         return results
 
     try:
-        from loreley.core.worker.agent_backend import (
-            CodexCliBackend,
-            CursorCliBackend,
-            load_agent_backend,
-        )
+        from loreley.core.worker.agent_backends import CodexCliBackend, CursorCliBackend
+        from loreley.core.worker.agent_backend import load_agent_backend
 
         backend = load_agent_backend(backend_ref, label=label)
         results.append(CheckResult(label, "ok", f"loaded: {backend_ref!r}"))

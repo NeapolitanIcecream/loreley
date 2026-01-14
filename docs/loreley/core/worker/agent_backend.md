@@ -1,6 +1,8 @@
 # loreley.core.worker.agent_backend
 
-Shared abstractions and helpers for structured planning/coding agents plus the default Codex CLI backend.
+Shared abstractions and helpers for structured planning/coding agents.
+
+Built-in CLI backends are implemented under `loreley.core.worker.agent_backends`. This module focuses on backend-agnostic contracts and shared orchestration utilities.
 
 ## Core types
 
@@ -44,6 +46,7 @@ Shared abstractions and helpers for structured planning/coding agents plus the d
 ## CLI backends
 
 - **`CodexCliBackend`**: concrete `AgentBackend` implementation that delegates to the external Codex CLI.  
+  - Implemented in `loreley.core.worker.agent_backends.codex_cli`.  
   - Configuration fields:
     - `bin`: CLI executable to invoke (for example, `"codex"`).  
     - `profile`: optional profile name passed as `--profile` to select a Codex configuration.  
@@ -63,9 +66,10 @@ Shared abstractions and helpers for structured planning/coding agents plus the d
     - Raises `error_cls` when the process exits non‑zero or times out; even when stdout is empty it still returns an `AgentInvocation`, leaving it to higher‑level agents (and their validation modes) to decide whether an empty payload is acceptable.
 
 - **`CursorCliBackend`**: concrete `AgentBackend` implementation that delegates to the Cursor Agent CLI (`cursor-agent`).  
+  - Implemented in `loreley.core.worker.agent_backends.cursor_cli`.  
   - Configuration fields:
     - `bin`: CLI executable to invoke (default `"cursor-agent"`).  
-    - `model`: model identifier passed as `--model`; defaults to `"gpt-5.1-codex-max-high"` and can be overridden (for example, `"gpt-5"`), including via the `cursor_backend_from_settings()` helper that reads `WORKER_CURSOR_MODEL`.  
+    - `model`: model identifier passed as `--model`; defaults to `"gpt-5.2-high"` and can be overridden (for example, `"gpt-5"`), including via the `cursor_backend_from_settings()` helper that reads `WORKER_CURSOR_MODEL`.  
     - `timeout_seconds`: hard timeout for the subprocess invocation.  
     - `extra_env`: dict of additional environment variables merged into the subprocess environment.  
     - `output_format`: value passed as `--output-format` (default `"text"`), typically left as `"text"` so the agent can emit a single JSON object as plain text.  
@@ -83,6 +87,15 @@ Shared abstractions and helpers for structured planning/coding agents plus the d
     - Raises `error_cls` when the process exits non‑zero or times out; even when stdout is empty it still returns an `AgentInvocation`, leaving it to higher‑level agents and validation logic to decide how to handle the result.  
     - Does not pass JSON Schema to the CLI directly; structured agents are expected to enforce schemas via prompt engineering (for example by embedding the schema in the prompt when using `"prompt"` schema mode).
   - **Factory helper**: `cursor_backend_from_settings()` builds a `CursorCliBackend` using application settings (notably `WORKER_CURSOR_MODEL`) so deployments can pick a Cursor model without writing custom wiring.
+
+## Structured agent utilities
+
+- **`ValidationMode`**: type alias restricting validation modes to `"strict"`, `"lenient"`, or `"none"`. Used by higher-level agents to control schema enforcement and fallback behaviour.
+- **`build_structured_agent_task()`**: builds a `StructuredAgentTask` whose schema handling matches the given validation mode (schemas are disabled when `validation_mode="none"`).
+- **`coerce_structured_output()`**: helper to parse backend stdout under strict/lenient/none modes, optionally logging parse errors and synthesising results from free-form text in non-strict modes.
+- **`run_structured_agent_task()`**: shared retry loop for `StructuredAgentTask` executions, supporting debug hooks, progress callbacks, and an optional post-check (e.g. detecting a coding run that produced no git changes).
+- **`resolve_worker_debug_dir()`**: helper that resolves and creates the `logs/worker/{kind}` debug directory.
+- **`TruncationMixin`** / **`truncate_text()`**: consistent truncation utilities used across worker agents to keep prompts and logs bounded.
 
 ## Internal utilities
 

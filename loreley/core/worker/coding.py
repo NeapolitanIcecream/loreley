@@ -16,13 +16,18 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from rich.console import Console
 
 from loreley.config import Settings, get_settings
+from loreley.core.worker.agent_backends import CodexCliBackend
 from loreley.core.worker.agent_backend import (
     AgentBackend,
     AgentInvocation,
-    CodexCliBackend,
     SchemaMode,
-    StructuredAgentTask,
+    TruncationMixin,
+    ValidationMode,
+    build_structured_agent_task,
+    coerce_structured_output,
     load_agent_backend,
+    resolve_worker_debug_dir,
+    run_structured_agent_task,
     resolve_schema_mode,
 )
 from loreley.core.worker.planning import PlanStep, PlanningPlan
@@ -170,7 +175,7 @@ CODING_OUTPUT_SCHEMA: dict[str, Any] = {
 }
 
 
-class CodingAgent:
+class CodingAgent(TruncationMixin):
     """Drive the configured coding backend to implement a plan on the repository."""
 
     def __init__(
@@ -180,13 +185,16 @@ class CodingAgent:
     ) -> None:
         self.settings = settings or get_settings()
         self.max_attempts = max(1, self.settings.worker_coding_max_attempts)
-        self.validation_mode: str = self.settings.worker_coding_validation_mode
+        self.validation_mode: ValidationMode = self.settings.worker_coding_validation_mode
         self.schema_mode: SchemaMode = resolve_schema_mode(
             configured_mode=self.settings.worker_coding_codex_schema_mode,
             api_spec=self.settings.openai_api_spec,
         )
         self._truncate_limit = 2000
-        self._debug_dir = self._resolve_debug_dir()
+        self._debug_dir = resolve_worker_debug_dir(
+            logs_base_dir=self.settings.logs_base_dir,
+            kind="coding",
+        )
         if backend is not None:
             self.backend: AgentBackend = backend
         elif self.settings.worker_coding_backend:
@@ -216,97 +224,99 @@ class CodingAgent:
         prompt = self._render_prompt(request, worktree=worktree)
         baseline_status = self._snapshot_worktree_state(worktree)
 
-        if self.validation_mode in ("strict", "lenient"):
-            task = StructuredAgentTask(
-                name="coding",
+        task = build_structured_agent_task(
+            name="coding",
+            prompt=prompt,
+            schema=CODING_OUTPUT_SCHEMA,
+            schema_mode=self.schema_mode,
+            validation_mode=self.validation_mode,
+        )
+
+        class _NoRepoChangeError(CodingError):
+            """Raised when a coding attempt does not produce repository changes."""
+
+        def _debug_hook(
+            attempt: int,
+            invocation: AgentInvocation | None,
+            execution: CodingPlanExecution | None,
+            error: Exception | None,
+        ) -> None:
+            self._dump_debug_artifact(
+                request=request,
+                worktree=worktree,
+                invocation=invocation,
                 prompt=prompt,
-                schema=CODING_OUTPUT_SCHEMA,
-                schema_mode=self.schema_mode,
-            )
-        else:
-            # In 'none' validation mode we do not enforce a JSON schema at the backend level.
-            task = StructuredAgentTask(
-                name="coding",
-                prompt=prompt,
-                schema=None,
-                schema_mode="none",
+                attempt=attempt,
+                execution=execution,
+                error=error,
             )
 
-        last_error: Exception | None = None
-        for attempt in range(1, self.max_attempts + 1):
-            invocation: AgentInvocation | None = None
-            try:
+        def _post_check(invocation: AgentInvocation, execution: CodingPlanExecution) -> Exception | None:
+            current_status = self._snapshot_worktree_state(worktree)
+            if current_status == baseline_status:
+                return _NoRepoChangeError(
+                    "Coding agent finished without producing repository changes.",
+                )
+            return None
+
+        def _on_attempt_start(attempt: int, total: int) -> None:
+            console.log(
+                "[cyan]Coding agent[/] requesting execution "
+                f"(attempt {attempt}/{total})",
+            )
+
+        def _on_attempt_success(
+            attempt: int,
+            total: int,
+            invocation: AgentInvocation,
+            _execution: CodingPlanExecution,
+        ) -> None:
+            console.log(
+                "[bold green]Coding agent[/] finished in "
+                f"{invocation.duration_seconds:.1f}s "
+                f"(attempt {attempt}/{total})",
+            )
+
+        def _on_attempt_retry(attempt: int, _total: int, exc: Exception) -> None:
+            if isinstance(exc, _NoRepoChangeError):
                 console.log(
-                    "[cyan]Coding agent[/] requesting execution "
-                    f"(attempt {attempt}/{self.max_attempts})",
+                    "[yellow]Coding agent[/] produced no repository changes; retrying…",
                 )
-                invocation = self.backend.run(
-                    task,
-                    working_dir=worktree,
-                )
-                execution = self._coerce_execution_from_invocation(
-                    request=request,
-                    invocation=invocation,
-                )
-                current_status = self._snapshot_worktree_state(worktree)
-                if current_status == baseline_status:
-                    no_change_error = CodingError(
-                        "Coding agent finished without producing repository changes.",
-                    )
-                    self._dump_debug_artifact(
-                        request=request,
-                        worktree=worktree,
-                        invocation=invocation,
-                        prompt=prompt,
-                        attempt=attempt,
-                        execution=execution,
-                        error=no_change_error,
-                    )
-                    console.log(
-                        "[yellow]Coding agent[/] produced no repository changes; retrying…",
-                    )
-                    log.warning("Coding attempt {} produced no repository changes", attempt)
-                    last_error = no_change_error
-                    continue
-                self._dump_debug_artifact(
-                    request=request,
-                    worktree=worktree,
-                    invocation=invocation,
-                    prompt=prompt,
-                    attempt=attempt,
-                    execution=execution,
-                    error=None,
-                )
-                console.log(
-                    "[bold green]Coding agent[/] finished in "
-                    f"{invocation.duration_seconds:.1f}s "
-                    f"(attempt {attempt}/{self.max_attempts})",
-                )
-                return CodingAgentResponse(
-                    execution=execution,
-                    raw_output=invocation.stdout,
-                    prompt=prompt,
-                    command=invocation.command,
-                    stderr=invocation.stderr,
-                    attempts=attempt,
-                    duration_seconds=invocation.duration_seconds,
-                )
-            except (CodingError, ValidationError, json.JSONDecodeError) as exc:
-                last_error = exc
-                self._dump_debug_artifact(
-                    request=request,
-                    worktree=worktree,
-                    invocation=None,
-                    prompt=prompt,
-                    attempt=attempt,
-                    execution=None,
-                    error=exc,
-                )
-                log.warning("Coding attempt {} failed: {}", attempt, exc)
-        raise CodingError(
-            "Coding agent could not produce a valid report after "
-            f"{self.max_attempts} attempt(s).",
-        ) from last_error
+                log.warning("Coding attempt {} produced no repository changes", attempt)
+                return
+            log.warning("Coding attempt {} failed: {}", attempt, exc)
+
+        execution, invocation, attempts = run_structured_agent_task(
+            backend=self.backend,
+            task=task,
+            working_dir=worktree,
+            max_attempts=self.max_attempts,
+            coerce_result=lambda inv: self._coerce_execution_from_invocation(
+                request=request,
+                invocation=inv,
+            ),
+            retryable_exceptions=(CodingError, ValidationError, json.JSONDecodeError),
+            error_cls=CodingError,
+            error_message=(
+                "Coding agent could not produce a valid report after "
+                f"{self.max_attempts} attempt(s)."
+            ),
+            debug_hook=_debug_hook,
+            on_attempt_start=_on_attempt_start,
+            on_attempt_success=_on_attempt_success,
+            on_attempt_retry=_on_attempt_retry,
+            post_check=_post_check,
+        )
+
+        return CodingAgentResponse(
+            execution=execution,
+            raw_output=invocation.stdout,
+            prompt=prompt,
+            command=invocation.command,
+            stderr=invocation.stderr,
+            attempts=attempts,
+            duration_seconds=invocation.duration_seconds,
+        )
 
     # Internal helpers --------------------------------------------------
 
@@ -470,25 +480,21 @@ When you finish applying the plan:
         invocation: AgentInvocation,
     ) -> CodingPlanExecution:
         """Turn backend output into a CodingPlanExecution, honouring the validation mode."""
-        if self.validation_mode == "strict":
-            output_model = self._parse_output(invocation.stdout)
+
+        def parse(stdout: str) -> CodingPlanExecution:
+            output_model = self._parse_output(stdout)
             return self._to_domain(output_model)
 
-        if self.validation_mode == "lenient":
-            try:
-                output_model = self._parse_output(invocation.stdout)
-                return self._to_domain(output_model)
-            except (ValidationError, json.JSONDecodeError) as exc:
-                self._log_invalid_output(invocation, exc)
-                return self._build_execution_from_freeform_output(
-                    request=request,
-                    raw_output=invocation.stdout,
-                )
-
-        # validation_mode == "none": skip JSON parsing entirely and treat output as free-form.
-        return self._build_execution_from_freeform_output(
-            request=request,
-            raw_output=invocation.stdout,
+        return coerce_structured_output(
+            validation_mode=self.validation_mode,
+            stdout=invocation.stdout,
+            parse=parse,
+            build_from_freeform=lambda stdout: self._build_execution_from_freeform_output(
+                request=request,
+                raw_output=stdout,
+            ),
+            on_parse_error=lambda exc: self._log_invalid_output(invocation, exc),
+            parse_exceptions=(ValidationError, json.JSONDecodeError),
         )
 
     def _parse_output(self, payload: str) -> _CodingOutputModel:
@@ -568,25 +574,6 @@ When you finish applying the plan:
             follow_up_items=tuple(),
             notes=notes,
         )
-
-    def _truncate(self, text: str, limit: int | None = None) -> str:
-        if not text:
-            return ""
-        active_limit = limit or self._truncate_limit
-        stripped = text.strip()
-        if len(stripped) <= active_limit:
-            return stripped
-        return f"{stripped[:active_limit]}…"
-
-    def _resolve_debug_dir(self) -> Path:
-        """Resolve directory for coding debug artifacts."""
-        if self.settings.logs_base_dir:
-            base_dir = Path(self.settings.logs_base_dir).expanduser()
-        else:
-            base_dir = Path.cwd()
-        logs_root = base_dir / "logs" / "worker" / "coding"
-        logs_root.mkdir(parents=True, exist_ok=True)
-        return logs_root
 
     def _snapshot_worktree_state(self, worktree: Path) -> tuple[str, ...]:
         """Return a stable snapshot of the worktree status for change detection."""
