@@ -30,9 +30,10 @@ from .code_embedding import CommitCodeEmbedding, embed_chunked_files
 from .file_embedding_cache import DatabaseFileEmbeddingCache, FileEmbeddingCache, build_file_embedding_cache
 from .preprocess import CodePreprocessor, PreprocessedFile
 from .repository_files import (
-    GitignoreMatcher,
     ROOT_IGNORE_FILES,
     RepositoryFile,
+    build_pinned_ignore_spec,
+    is_ignored_path,
     list_repository_files,
 )
 
@@ -521,7 +522,7 @@ class RepositoryStateEmbedder:
         file_count = int(parent_agg.file_count)
 
         repo_prefix = _resolve_git_prefix(repo, repo_root)
-        ignore_matcher = GitignoreMatcher.from_gitignore_text(pinned_ignore) if pinned_ignore else None
+        ignore_spec = build_pinned_ignore_spec(pinned_ignore)
         preprocess_filter = CodePreprocessor(
             repo_root=repo_root,
             settings=self.settings,
@@ -563,7 +564,7 @@ class RepositoryStateEmbedder:
             git_path = path_str.strip().lstrip("/")
             if not git_path:
                 return False, None, None
-            if ignore_matcher and ignore_matcher.is_ignored(git_path):
+            if ignore_spec and is_ignored_path(ignore_spec, git_path):
                 return False, None, None
             repo_rel = _git_path_to_repo_rel(git_path, repo_prefix=repo_prefix)
             if repo_rel is None:

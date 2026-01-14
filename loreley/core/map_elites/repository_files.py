@@ -4,7 +4,8 @@ This module provides a lightweight way to enumerate *eligible* files for a given
 git commit hash while applying basic filtering:
 
 - Respect pinned repository-root ignore rules provided by the experiment snapshot
-  (`Settings.mapelites_repo_state_ignore_text`) using best-effort glob matching.
+  (`Settings.mapelites_repo_state_ignore_text`) using gitignore-compatible matching
+  via `pathspec.gitignore.GitIgnoreSpec`.
 - Respect MAP-Elites preprocessing filters (allowed extensions/filenames, excluded globs).
 - Exclude obviously unsuitable files (oversized blobs).
 
@@ -15,12 +16,13 @@ pairs to drive a file-level embedding cache.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
-from typing import Iterable, Sequence
+from pathlib import Path
+from typing import cast
 
 from git import Repo
 from git.exc import BadName, InvalidGitRepositoryError
 from loguru import logger
+from pathspec.gitignore import GitIgnoreSpec
 
 from loreley.config import Settings, get_settings
 from .preprocess import CodePreprocessor
@@ -29,7 +31,6 @@ log = logger.bind(module="map_elites.repository_files")
 
 __all__ = [
     "RepositoryFile",
-    "GitignoreMatcher",
     "ROOT_IGNORE_FILES",
     "RepositoryFileCatalog",
     "list_repository_files",
@@ -49,110 +50,42 @@ class RepositoryFile:
     def __post_init__(self) -> None:
         object.__setattr__(self, "path", Path(self.path))
 
+def _to_posix_repo_path(path: Path | str) -> str:
+    """Return a repo-relative, POSIX-style path suitable for gitignore matching."""
+    if isinstance(path, Path):
+        value = path.as_posix()
+    else:
+        value = str(path).replace("\\", "/")
+    return value.lstrip("/")
 
-@dataclass(frozen=True, slots=True)
-class _IgnoreRule:
-    raw: str
-    pattern: str
-    negated: bool
 
+def build_pinned_ignore_spec(ignore_text: str | None) -> GitIgnoreSpec | None:
+    """Compile pinned root ignore rules into a GitIgnoreSpec.
 
-class GitignoreMatcher:
-    """Best-effort `.gitignore`-style matcher for repository-relative paths.
-
-    Notes:
-    - This intentionally implements a pragmatic subset of gitignore semantics,
-      sufficient for filtering typical build/test artifacts in LLM embedding
-      pipelines.
-    - Patterns are applied in order; last match wins.
-    - Negation patterns (`!foo`) re-include previously ignored paths.
+    The input is the concatenation of repository-root `.gitignore` and `.loreleyignore`
+    text pinned in the experiment snapshot. Matching is root-only (no nested ignore
+    files and no global excludes).
     """
+    raw = str(ignore_text or "")
+    if not raw.strip():
+        return None
+    try:
+        return cast(GitIgnoreSpec, GitIgnoreSpec.from_lines(raw.splitlines()))
+    except Exception as exc:  # pragma: no cover - defensive
+        log.warning("Failed to compile pinned ignore rules: {}", exc)
+        return None
 
-    def __init__(self, patterns: Sequence[str]) -> None:
-        self._rules: tuple[_IgnoreRule, ...] = tuple(self._parse(patterns))
 
-    @classmethod
-    def from_gitignore_text(cls, text: str) -> "GitignoreMatcher":
-        patterns: list[str] = []
-        for raw_line in text.splitlines():
-            line = raw_line.rstrip("\n").strip()
-            if not line:
-                continue
-            if line.startswith("#"):
-                continue
-            patterns.append(line)
-        return cls(patterns)
-
-    def is_ignored(self, path: Path | str) -> bool:
-        candidate = self._to_posix(path)
-        ignored = False
-        for rule in self._rules:
-            if not rule.pattern:
-                continue
-            if self._match(candidate, rule.pattern):
-                ignored = not rule.negated
-        return ignored
-
-    @staticmethod
-    def _to_posix(path: Path | str) -> str:
-        if isinstance(path, Path):
-            return path.as_posix().lstrip("/")
-        return str(path).replace("\\", "/").lstrip("/")
-
-    def _parse(self, patterns: Sequence[str]) -> Iterable[_IgnoreRule]:
-        for raw in patterns:
-            if not raw:
-                continue
-            cleaned = raw.strip()
-            if not cleaned or cleaned.startswith("#"):
-                continue
-
-            negated = cleaned.startswith("!")
-            if negated:
-                cleaned = cleaned[1:].lstrip()
-            if not cleaned:
-                continue
-
-            # Directory rules like "dist/" should ignore everything beneath.
-            directory_rule = cleaned.endswith("/")
-            cleaned = cleaned.rstrip("/")
-
-            anchored = cleaned.startswith("/")
-            cleaned = cleaned.lstrip("/")
-
-            # Turn gitignore-ish patterns into a small set of glob patterns.
-            # We use PurePosixPath.match which treats path separators sanely.
-            globs: list[str] = []
-            if directory_rule:
-                base = cleaned
-                if anchored:
-                    globs.append(f"{base}/**")
-                else:
-                    globs.append(f"{base}/**")
-                    globs.append(f"**/{base}/**")
-            else:
-                base = cleaned
-                if anchored:
-                    globs.append(base)
-                else:
-                    # Patterns without slashes behave like matching any basename.
-                    if "/" not in base:
-                        globs.append(base)
-                        globs.append(f"**/{base}")
-                    else:
-                        globs.append(base)
-                        globs.append(f"**/{base}")
-
-            for glob in globs:
-                yield _IgnoreRule(raw=raw, pattern=glob, negated=negated)
-
-    @staticmethod
-    def _match(path_posix: str, pattern: str) -> bool:
-        try:
-            return PurePosixPath(path_posix).match(pattern)
-        except Exception:  # pragma: no cover - defensive
-            # If a pattern is malformed, ignore it rather than failing ingestion.
-            return False
+def is_ignored_path(ignore_spec: GitIgnoreSpec, path: Path | str) -> bool:
+    """Return True when the given path should be ignored by the pinned rules."""
+    candidate = _to_posix_repo_path(path)
+    if not candidate:
+        return False
+    try:
+        return bool(ignore_spec.match_file(candidate))
+    except Exception:  # pragma: no cover - defensive
+        # If path matching fails, do not fail ingestion.
+        return False
 
 
 class RepositoryFileCatalog:
@@ -182,7 +115,7 @@ class RepositoryFileCatalog:
         self._max_file_size_bytes = (
             max(self.settings.mapelites_preprocess_max_file_size_kb, 1) * 1024
         )
-        self._ignore_matcher = self._load_root_ignore_matcher()
+        self._ignore_spec = self._load_root_ignore_spec()
 
     def list_files(self) -> list[RepositoryFile]:
         """Return eligible files for this catalog.
@@ -220,7 +153,7 @@ class RepositoryFileCatalog:
                     continue
 
             # Apply root ignore filtering relative to git root.
-            if self._ignore_matcher and self._ignore_matcher.is_ignored(git_rel):
+            if self._ignore_spec and is_ignored_path(self._ignore_spec, git_rel):
                 continue
 
             repo_rel = self._to_repo_relative(git_rel)
@@ -294,7 +227,7 @@ class RepositoryFileCatalog:
                 return None
         return git_rel_path
 
-    def _load_root_ignore_matcher(self) -> GitignoreMatcher | None:
+    def _load_root_ignore_spec(self) -> GitIgnoreSpec | None:
         """Load pinned ignore rules from Settings (experiment snapshot)."""
         if not self._repo:
             return None
@@ -302,7 +235,7 @@ class RepositoryFileCatalog:
         pinned = str(getattr(self.settings, "mapelites_repo_state_ignore_text", "") or "").strip()
         if not pinned:
             return None
-        return GitignoreMatcher.from_gitignore_text(pinned)
+        return build_pinned_ignore_spec(pinned)
 
 
 def list_repository_files(
