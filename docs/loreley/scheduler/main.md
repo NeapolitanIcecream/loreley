@@ -51,8 +51,7 @@ The module invocation is kept as an alias to the unified CLI:
 uv run python -m loreley.scheduler.main --once
 ```
 
-For details about the dedicated CLI wrapper script (including logging setup and
-recommended usage), see `docs/script/run_scheduler.md`.
+For usage and operational details, see `docs/script/run_scheduler.md`.
 
 Running the module imports `loreley.tasks.workers`, so the Dramatiq broker is configured before the first dispatch. Rich console output summarises each tick, while Loguru records detailed diagnostics for ingestion, scheduling, and dispatching via the dedicated `job_scheduler` and `ingestion` helper classes. This makes the scheduler easy to supervise either interactively or under a process manager.
 

@@ -124,6 +124,29 @@ def configure_process_logging(
     return log_file
 
 
+def reset_database(*, console: Console, yes: bool) -> int:
+    """Drop and recreate all Loreley DB tables.
+
+    This operation is destructive and should only be used for local/dev databases.
+    """
+
+    if not bool(yes):
+        console.print("[bold red]Refusing to reset DB without --yes[/]")
+        console.print("This will drop ALL tables and recreate them from ORM models.")
+        return 2
+
+    try:
+        from loreley.db.base import reset_database_schema
+
+        reset_database_schema(include_console_log=True)
+    except Exception as exc:  # pragma: no cover - defensive
+        console.print(f"[bold red]Failed to reset database schema[/] reason={exc}")
+        log.exception("Database schema reset failed: {}", exc)
+        return 1
+
+    return 0
+
+
 def _install_worker_signal_handlers(worker: Worker, *, console: Console, stop_event: threading.Event) -> None:
     """Install SIGINT/SIGTERM handlers for graceful shutdown."""
     received_signals: dict[str, int] = {"count": 0}

@@ -8,7 +8,7 @@ Loreley intentionally does not ship migrations. For prototype workflows, the fas
 ## Usage
 
 ```bash
-uv run python script/reset_db.py --yes
+uv run loreley reset-db --yes
 ```
 
 ## Notes

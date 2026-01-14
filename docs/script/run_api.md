@@ -1,6 +1,6 @@
 ## Running the UI API
 
-This script starts the **read-only** UI API based on FastAPI.
+This command starts the **read-only** UI API based on FastAPI.
 
 ## Install UI dependencies
 
@@ -12,16 +12,13 @@ uv sync --extra ui
 
 ```bash
 uv run loreley api
-
-# legacy wrapper (still supported)
-uv run python script/run_api.py
 ```
 
 ## Options
 
 - `--host`: bind host (default: `127.0.0.1`)
 - `--port`: bind port (default: `8000`)
-- `--log-level`: override `LOG_LEVEL`
+- `--log-level`: global option (pass before the subcommand) that overrides `LOG_LEVEL` for this invocation
 - `--reload`: enable auto-reload (development only)
 
 ## Logs

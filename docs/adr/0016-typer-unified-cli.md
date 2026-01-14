@@ -8,5 +8,5 @@ Decision: Use Typer as the single CLI framework for `loreley` and implement all 
 
 Decision: Remove CLI parsing from `loreley.scheduler.main`; keep `main(settings=..., once=..., auto_approve=...)` as a reusable run function and route module execution through the unified CLI.
 
-Consequences: CLI code is shorter and help output is more consistent; wrapper scripts remain available but delegate to the same runtime entrypoints; minor CLI behavior changes are handled in docs/tests instead of maintaining parallel parsers.
+Consequences: CLI help output is consistent across commands, global options are shared, and the scheduler runtime is reusable without embedded CLI parsing.
 

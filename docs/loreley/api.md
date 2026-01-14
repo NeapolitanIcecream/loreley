@@ -18,9 +18,6 @@ Start the API:
 
 ```bash
 uv run loreley api
-
-# legacy wrapper (still supported)
-uv run python script/run_api.py
 ```
 
 See also: [Running the UI API](../script/run_api.md)

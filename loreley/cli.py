@@ -5,7 +5,6 @@ from __future__ import annotations
 This CLI is designed to:
 - provide a single entrypoint (`loreley ...`)
 - run preflight checks before starting long-running processes
-- keep legacy `script/run_*.py` wrappers usable for local development
 """
 
 import os
@@ -18,7 +17,7 @@ import typer
 from rich.console import Console
 
 from loreley.config import Settings, get_settings
-from loreley.entrypoints import configure_process_logging, run_api, run_scheduler, run_ui, run_worker
+from loreley.entrypoints import configure_process_logging, reset_database, run_api, run_scheduler, run_ui, run_worker
 from loreley.preflight import (
     CheckResult,
     preflight_all,
@@ -291,6 +290,23 @@ def ui(
         preflight=not bool(no_preflight),
         preflight_timeout_seconds=float(preflight_timeout_seconds),
     )
+    raise typer.Exit(code=int(code))
+
+
+@app.command("reset-db")
+def reset_db(
+    ctx: typer.Context,
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        help="Confirm that you want to irreversibly drop all tables.",
+        show_default=True,
+    ),
+) -> None:
+    """Drop and recreate all Loreley DB tables."""
+    settings = _load_settings_or_exit()
+    _configure_logging_or_exit(settings=settings, role="db", override_level=_get_log_level(ctx))
+    code = reset_database(console=console, yes=bool(yes))
     raise typer.Exit(code=int(code))
 
 

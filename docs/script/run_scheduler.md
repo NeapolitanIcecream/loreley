@@ -1,84 +1,39 @@
-# script/run_scheduler.py
+# Running the scheduler
 
-Thin CLI wrapper for running the Loreley evolution scheduler.
+The scheduler is the long-running process that keeps the evolution pipeline moving:
+it ingests completed jobs, samples new work from the MAP-Elites archive, and dispatches
+jobs to the Dramatiq worker queue.
 
-## Purpose
-
-- Expose a minimal CLI (`--help`, `--log-level`) that works even when required
-  environment variables are unset.
-- Configure global Loguru logging based on `loreley.config.Settings.log_level`
-  with optional per-invocation overrides.
-- Delegate scheduler-specific CLI parsing and control flow to
-  `loreley.entrypoints.run_scheduler`, which calls `loreley.scheduler.main.main(...)`.
-- Provide a convenient entrypoint for process managers and local development
-  without having to remember the module path.
-
-The underlying scheduling logic, MAP-Elites integration, and database
-interaction are all implemented in `loreley.scheduler.main.EvolutionScheduler`.
-
-## Behaviour
-
-- Parses wrapper CLI arguments (notably `--help` and `--log-level`) before
-  loading configuration, so help output works without a valid environment.
-- Calls `get_settings()` to load `Settings`; validation errors are printed to
-  the console and the process exits with code `1`.
-- Resets Loguru sinks and installs a stderr sink at the configured level,
-  disabling backtraces and diagnosis in production-style runs.
-- Resolves a log directory under `<BASE>/logs/scheduler` where `<BASE>` is:
-  - `LOGS_BASE_DIR` (expanded as a path) when set.
-  - the current working directory when `LOGS_BASE_DIR` is unset.
-- Adds a rotating file sink at `scheduler-YYYYMMDD-HHMMSS.log` inside that directory
-  with `rotation="10 MB"` and `retention="14 days"`, so scheduler output is
-  always persisted for later debugging.
-- Imports `loreley.scheduler.main.main` lazily after logging is configured; any
-  import failure is reported via console/log and exits with code `1`.
-- Runs the scheduler loop via `loreley.entrypoints.run_scheduler(...)`, which supports
-  `--once` (single tick) and `--yes` (auto-approve startup approval).
-
-Exit codes are determined by `loreley.scheduler.main.main(...)`: on success it returns
-`0`, while startup failures (e.g. lock contention) return non-zero exit codes.
-
-## CLI usage
+## Start
 
 Recommended usage with `uv`:
 
 ```bash
-uv run python script/run_scheduler.py        # continuous loop
-uv run python script/run_scheduler.py --once # single tick (cron / smoke tests)
-uv run python script/run_scheduler.py --log-level DEBUG
-uv run python script/run_scheduler.py --yes --once # non-interactive smoke test
+uv run loreley scheduler              # continuous loop
+uv run loreley scheduler --once       # single tick (cron / smoke tests)
+uv run loreley scheduler --yes --once # non-interactive run
 ```
 
-The wrapper is equivalent to invoking the unified CLI directly:
+On first start the scheduler performs a repo-state root scan at `MAPELITES_EXPERIMENT_ROOT_COMMIT`
+and requires operator approval. In non-interactive environments, pass `--yes` or set
+`SCHEDULER_STARTUP_APPROVE=true`.
 
-```bash
-uv run loreley scheduler
-uv run loreley scheduler --once
-uv run loreley scheduler --yes --once
-```
+## Options
 
-## Configuration
+- `--once`: execute a single scheduling tick and exit.
+- `--yes`: auto-approve startup approval and start without prompting.
+- `--no-preflight`: skip preflight validation.
+- `--preflight-timeout-seconds`: network timeout used for DB/Redis connectivity checks.
+- `--log-level`: global option (pass before the subcommand) that overrides `LOG_LEVEL` for this invocation.
 
-The script relies on `loreley.config.Settings`:
+## Logs
 
-- `LOG_LEVEL` controls the global Loguru log level for the scheduler process.
-- `LOGS_BASE_DIR` (optional) overrides the base directory used for scheduler
-  log files; when unset, logs are written under `./logs/scheduler` relative to
-  the current working directory.
-- All scheduler-related fields (`SCHEDULER_*`) and database/Redis settings are
-  consumed by `loreley.scheduler.main` and `loreley.tasks.broker`. See
-  `docs/loreley/config.md` and `docs/loreley/scheduler/main.md` for details.
+Logs are written to:
 
-The `examples/evol_circle_packing.py` helper simply delegates to this script
-when running the scheduler, so its runs use the same logging configuration and
-log file locations.
+- `logs/scheduler/scheduler-YYYYMMDD-HHMMSS.log`
 
-## Failure handling
+## Exit codes
 
-- Invalid or missing environment variables produce a short console message and
-  exit code `1` instead of an unhandled exception.
-- Errors while importing or launching the scheduler are logged and surfaced
-  before the process exits, so misconfigured dependencies do not produce long
-  stack traces.
-
-
+- `0`: success
+- `1`: startup or preflight failure
+- `2`: refused to start (e.g. lock contention)

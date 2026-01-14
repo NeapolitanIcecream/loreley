@@ -32,8 +32,6 @@ Dramatiq task actor builders that drive the Loreley evolution worker.
 Importing `loreley.tasks.workers` imports `loreley.tasks.broker`, which configures the global
 Dramatiq broker using the Redis settings in `loreley.config.Settings`.
 
-For details about the dedicated worker CLI wrapper script (including how it
-starts a single-process, single-threaded Dramatiq worker), see
-`docs/script/run_worker.md`.
+For usage and operational details, see `docs/script/run_worker.md`.
 
 

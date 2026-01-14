@@ -1,6 +1,6 @@
 # Doctor (environment checks)
 
-This script performs quick preflight checks to reduce onboarding friction before you start the scheduler/worker processes.
+This command performs quick preflight checks to reduce onboarding friction before you start the scheduler/worker processes.
 
 ## What it checks
 
@@ -19,9 +19,6 @@ This script performs quick preflight checks to reduce onboarding friction before
 
 ```bash
 uv run loreley doctor --role all
-
-# legacy wrapper (still supported)
-uv run python script/doctor.py --role all
 ```
 
 Validate only one component:
@@ -35,13 +32,13 @@ uv run loreley doctor --role ui
 Adjust network timeouts:
 
 ```bash
-uv run python script/doctor.py --role all --timeout-seconds 5
+uv run loreley doctor --role all --timeout-seconds 5
 ```
 
 Machine-readable output (CI):
 
 ```bash
-uv run python script/doctor.py --role all --json
+uv run loreley doctor --role all --json
 ```
 
 ## Exit codes

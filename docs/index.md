@@ -122,10 +122,6 @@ Note: on first start the scheduler performs a repo-state root scan at `MAPELITES
 ```bash
 uv run loreley scheduler
 uv run loreley worker --experiment-id <EXPERIMENT_UUID>
-
-# legacy wrappers (still supported)
-uv run python script/run_scheduler.py
-uv run python script/run_worker.py --experiment-id <EXPERIMENT_UUID>
 ```
 
 See: [Running the scheduler](script/run_scheduler.md), [Running the worker](script/run_worker.md)
@@ -259,12 +255,12 @@ Use this index as a quick map of the rest of the documentation:
 - **UI (optional)**
   - [UI API (`loreley.api`)](loreley/api.md)
   - [Streamlit UI (`loreley.ui`)](loreley/ui.md)
-- **Operational scripts**
-  - [Run scheduler script](script/run_scheduler.md)
-  - [Run worker script](script/run_worker.md)
-  - [Run UI API script](script/run_api.md)
-  - [Run UI script](script/run_ui.md)
-  - [Reset database schema](script/reset_db.md)
+- **Operations**
+  - [Running the scheduler](script/run_scheduler.md)
+  - [Running the worker](script/run_worker.md)
+  - [Running the UI API](script/run_api.md)
+  - [Running the UI](script/run_ui.md)
+  - [Resetting the database](script/reset_db.md)
 
 ---
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import signal
 
-from script.run_ui import _coerce_exit_code
+from loreley.entrypoints import _coerce_exit_code
 
 
 def test_coerce_exit_code_passes_through_normal_codes() -> None:

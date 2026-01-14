@@ -76,7 +76,7 @@ directory and plugin:
 3. Start the worker as usual, for example:
 
    ```bash
-   uv run python script/run_worker.py
+   uv run loreley worker --experiment-id <EXPERIMENT_UUID>
    ```
 
 Whenever Loreley schedules a job whose worktree contains a `solution.py` at its
