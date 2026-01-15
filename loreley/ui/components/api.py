@@ -22,11 +22,24 @@ def freeze_params(params: dict[str, Any] | None) -> tuple[tuple[str, str], ...]:
     return tuple(sorted(items))
 
 
+def get_api_client(base_url: str) -> LoreleyAPIClient:
+    """Return an API client with connection reuse enabled.
+
+    When available, this function is wrapped by `st.cache_resource` to keep a
+    single client per base URL across reruns.
+    """
+    return LoreleyAPIClient(base_url, reuse_connections=True)
+
+
+if hasattr(st, "cache_resource"):
+    get_api_client = st.cache_resource(show_spinner=False)(get_api_client)  # type: ignore[assignment]
+
+
 @st.cache_data(ttl=60, show_spinner=False)
 def api_get(base_url: str, path: str, params: tuple[tuple[str, str], ...] = ()) -> Any:
     """Cached GET request returning JSON."""
 
-    client = LoreleyAPIClient(base_url)
+    client = get_api_client(base_url)
     return client.get_json(path, params=dict(params))
 
 
@@ -49,7 +62,7 @@ def api_get_bytes_or_stop(
     """GET raw bytes, showing an error and stopping the page on failures."""
 
     try:
-        client = LoreleyAPIClient(base_url)
+        client = get_api_client(base_url)
         return client.get_bytes(path, params=params)
     except APIError as exc:
         st.error(f"API error: {exc}")

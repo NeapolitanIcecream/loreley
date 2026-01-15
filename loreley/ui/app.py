@@ -8,7 +8,7 @@ from typing import Any
 import streamlit as st
 
 from loreley.ui.client import APIError, LoreleyAPIClient
-from loreley.ui.components.api import api_get_or_stop
+from loreley.ui.components.api import api_get_or_stop, get_api_client
 from loreley.ui.pages.archive import render as render_archive
 from loreley.ui.pages.commits import render as render_commits
 from loreley.ui.pages.experiments import render as render_experiments
@@ -97,12 +97,17 @@ def _render_sidebar() -> None:
 
     if st.sidebar.button("Refresh data (clear cache)", key="clear_cache"):
         st.cache_data.clear()
+        if hasattr(st, "cache_resource"):
+            st.cache_resource.clear()
         st.sidebar.success("Cache cleared")
-
-    client = LoreleyAPIClient(api_base_url)
 
     with st.sidebar.expander("Connection", expanded=False):
         if st.button("Ping API", key="ping_api"):
+            try:
+                client = get_api_client(api_base_url)
+            except APIError as exc:
+                st.sidebar.error(f"API error: {exc}")
+                st.stop()
             payload = _fetch_json(client, "/api/v1/health")
             st.success("API reachable")
             st.json(payload)

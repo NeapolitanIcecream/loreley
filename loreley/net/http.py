@@ -7,11 +7,17 @@ sync wrapper that maps httpx exceptions into Loreley-friendly errors.
 from __future__ import annotations
 
 import json
+import weakref
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any, Mapping
 
 import httpx
 
 __all__ = ["HttpCallError", "HttpClient"]
+
+_MIN_TIMEOUT_SECONDS = 0.1
+_MAX_ERROR_TEXT_CHARS = 2048
 
 
 class HttpCallError(RuntimeError):
@@ -28,19 +34,41 @@ class HttpCallError(RuntimeError):
         return f"{self.message} (status={self.status_code})"
 
 
+def _truncate(text: str, *, limit: int) -> str:
+    """Return a truncated string with an ellipsis when needed."""
+    if limit <= 0:
+        return ""
+    if len(text) <= limit:
+        return text
+    head = text[: max(0, limit - 3)].rstrip()
+    return f"{head}..."
+
+
 def _safe_response_text(response: httpx.Response) -> str:
-    """Best-effort extraction of response text for error messages."""
+    """Best-effort extraction of response text for error messages.
+
+    The returned value is trimmed and truncated to keep logs and UI readable.
+    """
     try:
-        return (response.text or "").strip()
+        text = (response.text or "").strip()
     except Exception:
         try:
-            return response.content.decode("utf-8", errors="replace").strip()
+            text = response.content.decode("utf-8", errors="replace").strip()
         except Exception:
-            return ""
+            text = ""
+    return _truncate(text, limit=_MAX_ERROR_TEXT_CHARS)
 
 
 class HttpClient:
-    """Small sync HTTP client with consistent defaults and error mapping."""
+    """Small sync HTTP client with consistent defaults and error mapping.
+
+    Notes:
+        - By default, a short-lived `httpx.Client` is created per request.
+        - When `reuse_connections=True`, an internal persistent `httpx.Client` is
+          used to enable connection pooling. Call `close()` (or use this object
+          as a context manager) to release resources deterministically.
+        - Timeouts are clamped to at least `_MIN_TIMEOUT_SECONDS`.
+    """
 
     def __init__(
         self,
@@ -51,19 +79,28 @@ class HttpClient:
         user_agent: str | None = None,
         headers: Mapping[str, str] | None = None,
         transport: httpx.BaseTransport | None = None,
+        reuse_connections: bool = False,
     ) -> None:
         self.base_url = (base_url or "").rstrip("/") + "/" if base_url else None
         self.timeout_seconds = float(timeout_seconds)
         self.follow_redirects = bool(follow_redirects)
         self.transport = transport
+        self.reuse_connections = bool(reuse_connections)
 
         merged: dict[str, str] = dict(headers or {})
         if user_agent and "User-Agent" not in merged:
             merged["User-Agent"] = user_agent
         self.headers = merged
+        self._client: httpx.Client | None = None
+        self._finalizer: weakref.finalize | None = None
 
     def _build_client(self, *, timeout_seconds: float | None = None) -> httpx.Client:
-        timeout = float(max(0.1, timeout_seconds if timeout_seconds is not None else self.timeout_seconds))
+        timeout = float(
+            max(
+                _MIN_TIMEOUT_SECONDS,
+                timeout_seconds if timeout_seconds is not None else self.timeout_seconds,
+            )
+        )
         kwargs: dict[str, object] = {
             "timeout": timeout,
             "follow_redirects": self.follow_redirects,
@@ -74,6 +111,43 @@ class HttpClient:
         if self.transport is not None:
             kwargs["transport"] = self.transport
         return httpx.Client(**kwargs)  # type: ignore[arg-type]
+
+    def open(self) -> None:
+        """Open an internal persistent `httpx.Client` when reuse is enabled."""
+        if not self.reuse_connections:
+            return
+        if self._client is not None:
+            return
+        self._client = self._build_client()
+        # Ensure we don't leak open pools if callers forget to close explicitly.
+        self._finalizer = weakref.finalize(self, self._client.close)
+
+    def close(self) -> None:
+        """Close any internal persistent `httpx.Client`."""
+        if self._finalizer is not None:
+            self._finalizer.detach()
+            self._finalizer = None
+        if self._client is None:
+            return
+        self._client.close()
+        self._client = None
+
+    def __enter__(self) -> "HttpClient":
+        self.open()
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        self.close()
+
+    @contextmanager
+    def _client_ctx(self) -> Iterator[httpx.Client]:
+        if self.reuse_connections:
+            self.open()
+            assert self._client is not None
+            yield self._client
+            return
+        with self._build_client() as client:
+            yield client
 
     def request(
         self,
@@ -96,7 +170,7 @@ class HttpClient:
             raise ValueError("url_or_path must be non-empty.")
 
         try:
-            with self._build_client() as client:
+            with self._client_ctx() as client:
                 response = client.request(
                     method,
                     target,
@@ -160,8 +234,16 @@ class HttpClient:
         if not target:
             return False
         try:
-            with self._build_client(timeout_seconds=timeout_seconds) as client:
-                response = client.get(target, headers=dict(headers) if headers else None)
+            with self._client_ctx() as client:
+                if timeout_seconds is None:
+                    response = client.get(target, headers=dict(headers) if headers else None)
+                else:
+                    timeout = float(max(_MIN_TIMEOUT_SECONDS, timeout_seconds))
+                    response = client.get(
+                        target,
+                        headers=dict(headers) if headers else None,
+                        timeout=timeout,
+                    )
                 return 200 <= int(response.status_code) < 300
         except httpx.HTTPError:
             return False

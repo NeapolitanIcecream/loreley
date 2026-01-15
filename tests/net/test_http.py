@@ -60,6 +60,21 @@ def test_request_raises_with_status_code_on_http_error() -> None:
     assert "not found" in str(excinfo.value)
 
 
+def test_request_truncates_error_body_in_exception_message() -> None:
+    long_body = ("x" * 5000).encode("utf-8")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, content=long_body, request=request)
+
+    transport = httpx.MockTransport(handler)
+    client = HttpClient(base_url="http://example.local", transport=transport)
+    with pytest.raises(HttpCallError) as excinfo:
+        client.get_json("/too-long")
+    assert excinfo.value.status_code == 400
+    assert len(excinfo.value.message) <= 2048
+    assert excinfo.value.message.endswith("...")
+
+
 def test_get_bytes_returns_content_and_content_type() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(

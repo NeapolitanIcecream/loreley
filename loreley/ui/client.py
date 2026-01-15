@@ -27,7 +27,11 @@ class LoreleyAPIClient:
         *,
         timeout_seconds: float = 10.0,
         transport: "httpx.BaseTransport | None" = None,
+        reuse_connections: bool = False,
     ) -> None:
+        base_url = (base_url or "").strip()
+        if not base_url:
+            raise APIError("Invalid API base URL: value is empty.")
         self.base_url = base_url.rstrip("/") + "/"
         self.timeout_seconds = float(timeout_seconds)
         self._http = HttpClient(
@@ -35,7 +39,19 @@ class LoreleyAPIClient:
             timeout_seconds=self.timeout_seconds,
             user_agent="loreley-ui",
             transport=transport,
+            reuse_connections=bool(reuse_connections),
         )
+
+    def close(self) -> None:
+        """Close any underlying persistent HTTP resources."""
+        self._http.close()
+
+    def __enter__(self) -> "LoreleyAPIClient":
+        self._http.open()
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        self.close()
 
     def get_json(self, path: str, *, params: dict[str, Any] | None = None) -> Any:
         """GET a JSON response from the API."""
