@@ -6,10 +6,12 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import Field, field_validator
+
+from loreley.api.schemas import OrmOutModel
 
 
-class CommitGraphNodeOut(BaseModel):
+class CommitGraphNodeOut(OrmOutModel):
     commit_hash: str
     parent_commit_hash: str | None = None
     island_id: str | None = None
@@ -23,14 +25,21 @@ class CommitGraphNodeOut(BaseModel):
     is_elite: bool = False
     extra: dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("extra", mode="before")
+    @classmethod
+    def _extra_default(cls, v: object) -> dict[str, Any]:
+        if v is None:
+            return {}
+        return dict(v)  # type: ignore[arg-type]
 
-class CommitGraphEdgeOut(BaseModel):
+
+class CommitGraphEdgeOut(OrmOutModel):
     source: str
     target: str
     kind: str = "parent"
 
 
-class CommitGraphOut(BaseModel):
+class CommitGraphOut(OrmOutModel):
     experiment_id: UUID
     metric_name: str | None
     mode: str

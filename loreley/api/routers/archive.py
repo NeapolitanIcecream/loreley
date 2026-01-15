@@ -34,15 +34,7 @@ def get_islands(experiment_id: UUID) -> list[IslandStatsOut]:
             )
         except Exception as exc:  # pragma: no cover - defensive
             raise HTTPException(status_code=500, detail=str(exc)) from exc
-        out.append(
-            IslandStatsOut(
-                island_id=str(stats.get("island_id", island_id)),
-                occupied=int(stats.get("occupied", 0)),
-                cells=int(stats.get("cells", 0)),
-                qd_score=float(stats.get("qd_score", 0.0)),
-                best_fitness=float(stats.get("best_fitness", 0.0)),
-            )
-        )
+        out.append(IslandStatsOut.model_validate(stats))
     return out
 
 
@@ -60,20 +52,7 @@ def get_records(
     except Exception as exc:  # pragma: no cover - defensive
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    out: list[ArchiveRecordOut] = []
-    for r in records:
-        out.append(
-            ArchiveRecordOut(
-                commit_hash=str(getattr(r, "commit_hash", "")),
-                island_id=str(getattr(r, "island_id", effective_island)),
-                cell_index=int(getattr(r, "cell_index", -1)),
-                fitness=float(getattr(r, "fitness", 0.0)),
-                measures=[float(v) for v in getattr(r, "measures", ())],
-                solution=[float(v) for v in getattr(r, "solution", ())],
-                timestamp=float(getattr(r, "timestamp", 0.0)),
-            )
-        )
-    return out
+    return records
 
 
 @router.get("/archive/snapshot_meta", response_model=ArchiveSnapshotMetaOut)

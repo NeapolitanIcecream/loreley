@@ -23,24 +23,12 @@ def commit_lineage(
         max_nodes=max_nodes,
         mode=mode,
     )
-    nodes = [
-        CommitGraphNodeOut(
-            commit_hash=n.commit_hash,
-            parent_commit_hash=n.parent_commit_hash,
-            island_id=n.island_id,
-            experiment_id=n.experiment_id,
-            created_at=n.created_at,
-            author=n.author,
-            message=n.message,
-            metric_name=graph.metric_name,
-            metric_value=n.metric_value,
-            fitness=n.fitness,
-            is_elite=False,
-            extra=dict(n.extra or {}),
-        )
-        for n in graph.nodes
-    ]
-    edges = [CommitGraphEdgeOut(source=e.source, target=e.target, kind=e.kind) for e in graph.edges]
+    nodes: list[CommitGraphNodeOut] = []
+    for n in graph.nodes:
+        node = CommitGraphNodeOut.model_validate(n)
+        node.metric_name = graph.metric_name
+        nodes.append(node)
+    edges = [CommitGraphEdgeOut.model_validate(e) for e in graph.edges]
     return CommitGraphOut(
         experiment_id=experiment_id,
         metric_name=graph.metric_name,

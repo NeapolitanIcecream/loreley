@@ -6,10 +6,12 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import Field
+
+from loreley.api.schemas import OrmOutModel
 
 
-class IslandStatsOut(BaseModel):
+class IslandStatsOut(OrmOutModel):
     island_id: str
     occupied: int
     cells: int
@@ -17,24 +19,24 @@ class IslandStatsOut(BaseModel):
     best_fitness: float
 
 
-class ArchiveRecordOut(BaseModel):
+class ArchiveRecordOut(OrmOutModel):
     commit_hash: str
     island_id: str
     cell_index: int
     fitness: float
-    measures: list[float]
-    solution: list[float]
+    measures: list[float] = Field(default_factory=list)
+    solution: list[float] = Field(default_factory=list)
     timestamp: float
 
 
-class ArchiveSnapshotMetaOut(BaseModel):
+class ArchiveSnapshotMetaOut(OrmOutModel):
     experiment_id: UUID
     island_id: str
     entry_count: int
     dims: int
     cells_per_dim: int
-    lower_bounds: list[float]
-    upper_bounds: list[float]
+    lower_bounds: list[float] = Field(default_factory=list)
+    upper_bounds: list[float] = Field(default_factory=list)
     has_projection: bool
     history_length: int
     updated_at: datetime | None = None

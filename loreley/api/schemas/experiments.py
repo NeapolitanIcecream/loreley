@@ -6,10 +6,12 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import Field
+
+from loreley.api.schemas import OrmOutModel
 
 
-class ExperimentOut(BaseModel):
+class ExperimentOut(OrmOutModel):
     id: UUID
     repository_id: UUID
     config_hash: str
@@ -20,6 +22,6 @@ class ExperimentOut(BaseModel):
 
 
 class ExperimentDetailOut(ExperimentOut):
-    config_snapshot: dict[str, Any]
+    config_snapshot: dict[str, Any] = Field(default_factory=dict)
 
 

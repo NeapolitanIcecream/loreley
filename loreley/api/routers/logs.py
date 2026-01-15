@@ -20,14 +20,7 @@ def get_logs(
         files = list_log_files(settings, role=role)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return [
-        LogFileOut(
-            name=f.name,
-            size_bytes=f.size_bytes,
-            modified_at=f.modified_at,
-        )
-        for f in files
-    ]
+    return files
 
 
 @router.get("/logs/tail", response_model=LogTailOut)
