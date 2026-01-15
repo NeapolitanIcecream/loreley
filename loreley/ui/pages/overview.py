@@ -6,6 +6,7 @@ from typing import Any
 
 import streamlit as st
 
+from loreley.api.pagination import MAX_PAGE_LIMIT
 from loreley.ui.components.api import api_get_or_stop
 from loreley.ui.state import (
     API_BASE_URL_KEY,
@@ -46,7 +47,10 @@ def render() -> None:
 
     # Data pulls
     islands = api_get_or_stop(api_base_url, "/api/v1/archive/islands", params={"experiment_id": experiment_id}) or []
-    jobs = api_get_or_stop(api_base_url, "/api/v1/jobs", params={"experiment_id": experiment_id, "limit": 2000}) or []
+    jobs = (
+        api_get_or_stop(api_base_url, "/api/v1/jobs", params={"experiment_id": experiment_id, "limit": MAX_PAGE_LIMIT})
+        or []
+    )
     graph = api_get_or_stop(
         api_base_url,
         "/api/v1/graphs/commit_lineage",

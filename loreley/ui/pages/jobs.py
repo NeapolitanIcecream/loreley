@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import streamlit as st
 
+from loreley.api.pagination import MAX_PAGE_LIMIT
 from loreley.ui.components.aggrid import render_table, selected_rows
-from loreley.ui.components.api import api_get_bytes_or_stop, api_get_or_stop
+from loreley.ui.components.api import api_get_or_stop, render_artifact_downloads
 from loreley.ui.state import API_BASE_URL_KEY, EXPERIMENT_ID_KEY
 
 
@@ -27,7 +28,14 @@ def render() -> None:
         st.error(f"Missing pandas dependency: {exc}")
         return
 
-    rows = api_get_or_stop(api_base_url, "/api/v1/jobs", params={"experiment_id": experiment_id, "limit": 2000}) or []
+    rows = (
+        api_get_or_stop(
+            api_base_url,
+            "/api/v1/jobs",
+            params={"experiment_id": experiment_id, "limit": MAX_PAGE_LIMIT},
+        )
+        or []
+    )
     df = pd.DataFrame(rows)
 
     st.subheader("Jobs")
@@ -123,32 +131,12 @@ def render() -> None:
 
         artifacts = detail.get("artifacts") if isinstance(detail.get("artifacts"), dict) else {}
         with st.expander("Artifacts", expanded=False):
-            if not artifacts:
-                st.write("No artifacts available for this job.")
-            else:
-                label_map = {
-                    "planning_prompt_url": "Planning prompt",
-                    "planning_raw_output_url": "Planning raw output",
-                    "planning_plan_json_url": "Planning plan JSON",
-                    "coding_prompt_url": "Coding prompt",
-                    "coding_raw_output_url": "Coding raw output",
-                    "coding_execution_json_url": "Coding execution JSON",
-                    "evaluation_json_url": "Evaluation JSON",
-                    "evaluation_logs_url": "Evaluation logs",
-                }
-                for key, label in label_map.items():
-                    url = artifacts.get(key)
-                    if not url:
-                        continue
-                    data, content_type = api_get_bytes_or_stop(api_base_url, str(url))
-                    filename = str(url).rstrip("/").split("/")[-1] or f"{key}.txt"
-                    st.download_button(
-                        f"Download: {label}",
-                        data=data,
-                        file_name=filename,
-                        mime=content_type or "application/octet-stream",
-                        key=f"dl_job_{job_id}_{key}",
-                    )
+            render_artifact_downloads(
+                api_base_url=api_base_url,
+                artifacts=artifacts,
+                key_prefix=f"dl_job_{job_id}",
+                empty_message="No artifacts available for this job.",
+            )
     else:
         st.json(detail)
 

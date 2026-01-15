@@ -8,45 +8,26 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 
+from loreley.api.artifacts import (
+    ARTIFACT_KEYS,
+    artifact_filename,
+    artifact_media_type,
+    artifact_path_column,
+    build_artifact_urls,
+)
+from loreley.api.pagination import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT
 from loreley.api.schemas.jobs import JobArtifactsOut, JobDetailOut, JobOut
 from loreley.api.services.jobs import get_job, get_job_artifacts, list_jobs
 from loreley.db.models import JobStatus
 
 router = APIRouter()
 
-_ARTIFACT_KEY_MAP: dict[str, tuple[str, str, str]] = {
-    "planning_prompt": ("planning_prompt_path", "planning_prompt.txt", "text/plain"),
-    "planning_raw_output": ("planning_raw_output_path", "planning_raw_output.txt", "text/plain"),
-    "planning_plan_json": ("planning_plan_json_path", "planning_plan.json", "application/json"),
-    "coding_prompt": ("coding_prompt_path", "coding_prompt.txt", "text/plain"),
-    "coding_raw_output": ("coding_raw_output_path", "coding_raw_output.txt", "text/plain"),
-    "coding_execution_json": ("coding_execution_json_path", "coding_execution.json", "application/json"),
-    "evaluation_json": ("evaluation_json_path", "evaluation.json", "application/json"),
-    "evaluation_logs": ("evaluation_logs_path", "evaluation_logs.txt", "text/plain"),
-}
-
-
-def _artifact_urls(job_id: UUID, row) -> JobArtifactsOut | None:
-    if row is None:
-        return None
-    base = f"/api/v1/jobs/{job_id}/artifacts"
-    return JobArtifactsOut(
-        planning_prompt_url=f"{base}/planning_prompt" if getattr(row, "planning_prompt_path", None) else None,
-        planning_raw_output_url=f"{base}/planning_raw_output" if getattr(row, "planning_raw_output_path", None) else None,
-        planning_plan_json_url=f"{base}/planning_plan_json" if getattr(row, "planning_plan_json_path", None) else None,
-        coding_prompt_url=f"{base}/coding_prompt" if getattr(row, "coding_prompt_path", None) else None,
-        coding_raw_output_url=f"{base}/coding_raw_output" if getattr(row, "coding_raw_output_path", None) else None,
-        coding_execution_json_url=f"{base}/coding_execution_json" if getattr(row, "coding_execution_json_path", None) else None,
-        evaluation_json_url=f"{base}/evaluation_json" if getattr(row, "evaluation_json_path", None) else None,
-        evaluation_logs_url=f"{base}/evaluation_logs" if getattr(row, "evaluation_logs_path", None) else None,
-    )
-
 
 @router.get("/jobs", response_model=list[JobOut])
 def get_jobs(
     experiment_id: UUID | None = None,
     status: JobStatus | None = None,
-    limit: int = Query(default=200, ge=1, le=2000),
+    limit: int = Query(default=DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
     offset: int = Query(default=0, ge=0),
 ) -> list[JobOut]:
     return list_jobs(experiment_id=experiment_id, status=status, limit=limit, offset=offset)
@@ -59,7 +40,10 @@ def get_job_detail(job_id: UUID) -> JobDetailOut:
         raise HTTPException(status_code=404, detail="Job not found.")
     artifacts = get_job_artifacts(job_id=job_id)
     base = JobDetailOut.model_validate(job)
-    return base.model_copy(update={"artifacts": _artifact_urls(job.id, artifacts)})
+    artifacts_out = None
+    if artifacts is not None:
+        artifacts_out = JobArtifactsOut(**build_artifact_urls(job_id=job.id, row=artifacts))
+    return base.model_copy(update={"artifacts": artifacts_out})
 
 
 @router.get("/jobs/{job_id}/artifacts", response_model=JobArtifactsOut)
@@ -67,8 +51,7 @@ def get_job_artifacts_index(job_id: UUID) -> JobArtifactsOut:
     row = get_job_artifacts(job_id=job_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Artifacts not found.")
-    out = _artifact_urls(job_id, row)
-    return out or JobArtifactsOut()
+    return JobArtifactsOut(**build_artifact_urls(job_id=job_id, row=row))
 
 
 @router.get("/jobs/{job_id}/artifacts/{artifact_key}")
@@ -76,16 +59,19 @@ def download_job_artifact(job_id: UUID, artifact_key: str):
     row = get_job_artifacts(job_id=job_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Artifacts not found.")
-    spec = _ARTIFACT_KEY_MAP.get(artifact_key)
-    if spec is None:
+    if artifact_key not in ARTIFACT_KEYS:
         raise HTTPException(status_code=404, detail="Unknown artifact key.")
-    column, filename, media_type = spec
+    column = artifact_path_column(artifact_key)
     raw_path = getattr(row, column, None)
     if not raw_path:
         raise HTTPException(status_code=404, detail="Artifact missing.")
     path = Path(str(raw_path))
     if not path.exists() or not path.is_file():
         raise HTTPException(status_code=404, detail="Artifact file not found.")
-    return FileResponse(path, media_type=media_type, filename=filename)
+    return FileResponse(
+        path,
+        media_type=artifact_media_type(artifact_key),
+        filename=artifact_filename(artifact_key),
+    )
 
 

@@ -6,6 +6,7 @@ from uuid import UUID
 
 from sqlalchemy import select
 
+from loreley.api.pagination import normalize_pagination
 from loreley.db.base import session_scope
 from loreley.db.models import EvolutionJob, JobArtifacts, JobStatus
 
@@ -19,8 +20,7 @@ def list_jobs(
 ) -> list[EvolutionJob]:
     """Return jobs ordered by completion time (or creation time) descending."""
 
-    limit = max(1, min(int(limit), 2000))
-    offset = max(0, int(offset))
+    limit, offset = normalize_pagination(limit, offset)
 
     with session_scope() as session:
         stmt = select(EvolutionJob)

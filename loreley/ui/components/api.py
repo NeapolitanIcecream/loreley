@@ -6,6 +6,7 @@ from typing import Any
 
 import streamlit as st
 
+from loreley.api.artifacts import ARTIFACT_SPECS, artifact_filename
 from loreley.ui.client import APIError, LoreleyAPIClient
 
 
@@ -67,5 +68,37 @@ def api_get_bytes_or_stop(
     except APIError as exc:
         st.error(f"API error: {exc}")
         st.stop()
+
+
+def render_artifact_downloads(
+    *,
+    api_base_url: str,
+    artifacts: dict[str, Any] | None,
+    key_prefix: str,
+    empty_message: str = "No artifacts available.",
+) -> None:
+    """Render artifact download buttons for an artifacts URL dict."""
+
+    if not artifacts:
+        st.write(empty_message)
+        return
+
+    rendered = False
+    for artifact_key, label in ARTIFACT_SPECS:
+        url = artifacts.get(f"{artifact_key}_url")
+        if not url:
+            continue
+        data, content_type = api_get_bytes_or_stop(api_base_url, str(url))
+        st.download_button(
+            f"Download: {label}",
+            data=data,
+            file_name=artifact_filename(artifact_key),
+            mime=content_type or "application/octet-stream",
+            key=f"{key_prefix}_{artifact_key}",
+        )
+        rendered = True
+
+    if not rendered:
+        st.write(empty_message)
 
 
