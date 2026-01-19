@@ -4,6 +4,7 @@ import inspect
 from importlib import import_module
 from typing import Any, cast
 
+from loreley.config import Settings
 from loreley.core.worker.agent.contracts import AgentBackend
 
 
@@ -43,7 +44,25 @@ def _import_backend_target(module_name: str, attr_path: str) -> Any:
     return target
 
 
-def load_agent_backend(ref: str, *, label: str) -> AgentBackend:
+def _supports_settings_injection(target: Any) -> bool:
+    try:
+        signature = inspect.signature(target)
+    except (TypeError, ValueError):
+        return False
+    if "settings" in signature.parameters:
+        return True
+    return any(
+        param.kind == inspect.Parameter.VAR_KEYWORD
+        for param in signature.parameters.values()
+    )
+
+
+def load_agent_backend(
+    ref: str,
+    *,
+    label: str,
+    settings: Settings | None = None,
+) -> AgentBackend:
     """Resolve and instantiate an AgentBackend from a dotted reference.
 
     The reference can point to:
@@ -63,7 +82,10 @@ def load_agent_backend(ref: str, *, label: str) -> AgentBackend:
 
     # Class or factory function returning a backend instance.
     if callable(target):
-        instance = target()
+        if settings is not None and _supports_settings_injection(target):
+            instance = target(settings=settings)
+        else:
+            instance = target()
         if hasattr(instance, "run") and callable(getattr(instance, "run")):
             return cast(AgentBackend, instance)
         raise RuntimeError(

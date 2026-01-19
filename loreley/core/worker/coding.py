@@ -201,6 +201,7 @@ class CodingAgent(TruncationMixin):
             self.backend = load_agent_backend(
                 self.settings.worker_coding_backend,
                 label="coding backend",
+                settings=self.settings,
             )
         else:
             self.backend = CodexCliBackend(

@@ -23,7 +23,10 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from loreley.config import Settings, get_settings
-from loreley.core.experiment_config import BEHAVIOR_SNAPSHOT_PREFIXES, EXPERIMENT_SNAPSHOT_SCHEMA_VERSION
+from loreley.core.experiment_config import (
+    EXPERIMENT_SNAPSHOT_SCHEMA_VERSION,
+    experiment_behavior_keys,
+)
 from loreley.core.map_elites.repository_files import ROOT_IGNORE_FILES
 from loreley.db.base import session_scope
 from loreley.db.models import Experiment, Repository
@@ -315,13 +318,19 @@ def build_experiment_config_snapshot(
     payload = settings.model_dump()
     snapshot: dict[str, Any] = {}
     snapshot["experiment_snapshot_schema_version"] = int(EXPERIMENT_SNAPSHOT_SCHEMA_VERSION)
-    for key, value in payload.items():
-        if not key.startswith(BEHAVIOR_SNAPSHOT_PREFIXES):
-            continue
+
+    behavior_keys = experiment_behavior_keys()
+    for key in behavior_keys:
+        if key not in payload:
+            raise ExperimentError(f"Experiment behavior key {key!r} is missing from Settings payload.")
         if key == "mapelites_experiment_root_commit":
             snapshot[key] = canonical_root
             continue
-        snapshot[key] = _coerce_json_compatible(value)
+        if key in ("mapelites_repo_state_ignore_text", "mapelites_repo_state_ignore_sha256"):
+            # Pin root ignore rules from the canonical root commit.
+            continue
+        snapshot[key] = _coerce_json_compatible(payload[key])
+
     # Pin root ignore rules for the full experiment lifecycle.
     snapshot["mapelites_repo_state_ignore_text"] = ignore_text
     snapshot["mapelites_repo_state_ignore_sha256"] = ignore_sha

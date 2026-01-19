@@ -308,6 +308,7 @@ class PlanningAgent(TruncationMixin):
             self.backend = load_agent_backend(
                 self.settings.worker_planning_backend,
                 label="planning backend",
+                settings=self.settings,
             )
         else:
             self.backend = CodexCliBackend(

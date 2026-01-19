@@ -120,15 +120,10 @@ class CursorCliBackend:
 
 def cursor_backend_from_settings(
     *,
-    settings: Any | None = None,
+    settings: Any,
     error_cls: type[RuntimeError] = RuntimeError,
 ) -> CursorCliBackend:
     """Factory to build a Cursor backend using configured defaults."""
-    if settings is None:
-        from loreley.config import get_settings
-
-        settings = get_settings()
-
     model = getattr(settings, "worker_cursor_model", DEFAULT_CURSOR_MODEL)
     force = getattr(settings, "worker_cursor_force", True)
     return CursorCliBackend(

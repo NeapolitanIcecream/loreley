@@ -95,6 +95,56 @@ def test_load_agent_backend_supports_instance_and_factory(monkeypatch) -> None:
         load_agent_backend("dummy_backend_mod.missing", label="test")
 
 
+def test_load_agent_backend_passes_settings_to_factory(settings: Settings) -> None:
+    module: Any = types.ModuleType("dummy_backend_mod_settings")
+
+    class DummyBackend:
+        def run(self, task, working_dir):  # pragma: no cover - trivial
+            return (task, working_dir)
+
+    received: dict[str, Any] = {}
+
+    def backend_factory(*, settings: Settings) -> DummyBackend:
+        received["settings"] = settings
+        return DummyBackend()
+
+    module.backend_factory = backend_factory
+    sys.modules[module.__name__] = module
+
+    instance = load_agent_backend(
+        "dummy_backend_mod_settings:backend_factory",
+        label="test",
+        settings=settings,
+    )
+    assert isinstance(instance, DummyBackend)
+    assert received["settings"] is settings
+
+
+def test_load_agent_backend_does_not_inject_settings_when_unsupported(settings: Settings) -> None:
+    module: Any = types.ModuleType("dummy_backend_mod_no_settings")
+
+    class DummyBackend:
+        def run(self, task, working_dir):  # pragma: no cover - trivial
+            return (task, working_dir)
+
+    called: dict[str, int] = {"factory": 0}
+
+    def backend_factory_no_settings() -> DummyBackend:
+        called["factory"] += 1
+        return DummyBackend()
+
+    module.backend_factory_no_settings = backend_factory_no_settings
+    sys.modules[module.__name__] = module
+
+    instance = load_agent_backend(
+        "dummy_backend_mod_no_settings:backend_factory_no_settings",
+        label="test",
+        settings=settings,
+    )
+    assert isinstance(instance, DummyBackend)
+    assert called["factory"] == 1
+
+
 def test_codex_cli_backend_runs_and_cleans_schema(tmp_path: Path, monkeypatch) -> None:
     repo_dir = tmp_path / "repo"
     (repo_dir / ".git").mkdir(parents=True)

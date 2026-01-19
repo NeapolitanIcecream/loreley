@@ -298,10 +298,14 @@ class DimensionReducer:
             )
             return None
 
+        seed = int(getattr(self.settings, "mapelites_dimensionality_seed", 0) or 0)
+        if seed < 0:
+            seed = 0
         model = PCA(
             n_components=n_components,
             svd_solver="auto",
             whiten=True,
+            random_state=seed,
         )
         try:
             model.fit([entry.vector for entry in samples])

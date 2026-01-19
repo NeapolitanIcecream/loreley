@@ -64,12 +64,46 @@ def test_experiment_config_snapshot_includes_mapelites_and_excludes_unrelated(
 
     # Map-Elites and evaluator knobs should be present.
     assert "mapelites_preprocess_max_file_size_kb" in snapshot
+    assert "mapelites_sampler_seed" in snapshot
+    assert "mapelites_dimensionality_seed" in snapshot
     assert "worker_evaluator_timeout_seconds" in snapshot
     assert "worker_evolution_global_goal" in snapshot
+    assert "worker_planning_timeout_seconds" in snapshot
+    assert "worker_coding_timeout_seconds" in snapshot
+    assert "worker_cursor_model" in snapshot
+    assert "openai_api_spec" in snapshot
+    assert "openai_base_url" in snapshot
 
     # Unrelated environment fields should not be part of the experiment key.
     assert "app_name" not in snapshot
     assert "environment" not in snapshot
+
+    # Secrets and deployment-only knobs must never be persisted.
+    assert "openai_api_key" not in snapshot
+    assert "worker_planning_extra_env" not in snapshot
+    assert "worker_coding_extra_env" not in snapshot
+    assert "worker_planning_codex_bin" not in snapshot
+    assert "worker_coding_codex_bin" not in snapshot
+
+
+def test_experiment_config_hash_changes_when_worker_planning_knob_changes(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path)
+    (tmp_path / "a.py").write_text("print('a')\n", encoding="utf-8")
+    root_commit = _commit_all(repo, "init")
+    settings.mapelites_experiment_root_commit = root_commit
+
+    snapshot_1 = build_experiment_config_snapshot(settings, repo=repo)
+    hash_1 = hash_experiment_config(snapshot_1)
+
+    settings.worker_planning_timeout_seconds += 1
+    snapshot_2 = build_experiment_config_snapshot(settings, repo=repo)
+    hash_2 = hash_experiment_config(snapshot_2)
+
+    assert snapshot_1 != snapshot_2
+    assert hash_1 != hash_2
 
 
 def test_experiment_config_hash_changes_when_experiment_knob_changes(

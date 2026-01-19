@@ -28,7 +28,6 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
-from loreley.config import get_settings
 from loreley.db.base import session_scope
 from loreley.db.models import MapElitesArchiveCell, MapElitesPcaHistory, MapElitesState
 from .dimension_reduction import PCAProjection, PcaHistoryEntry
@@ -386,7 +385,7 @@ class DatabaseSnapshotBackend(SnapshotBackend):
                 select(MapElitesArchiveCell).where(
                     MapElitesArchiveCell.experiment_id == self.experiment_id,
                     MapElitesArchiveCell.island_id == island_id,
-                )
+                ).order_by(MapElitesArchiveCell.cell_index.asc())
             )
             .scalars()
             .all()
@@ -412,19 +411,7 @@ class DatabaseSnapshotBackend(SnapshotBackend):
         island_id: str,
         limit: int | None,
     ) -> list[dict[str, Any]]:
-        effective_limit = limit
-        if effective_limit is None:
-            settings = get_settings()
-            min_fit = max(
-                2,
-                int(settings.mapelites_dimensionality_min_fit_samples),
-                int(settings.mapelites_feature_normalization_warmup_samples),
-            )
-            effective_limit = max(
-                min_fit,
-                int(settings.mapelites_dimensionality_history_size),
-            )
-        effective_limit = max(0, int(effective_limit or 0))
+        effective_limit = max(0, int(limit or 0))
 
         stmt = (
             select(MapElitesPcaHistory)
@@ -432,7 +419,10 @@ class DatabaseSnapshotBackend(SnapshotBackend):
                 MapElitesPcaHistory.experiment_id == self.experiment_id,
                 MapElitesPcaHistory.island_id == island_id,
             )
-            .order_by(MapElitesPcaHistory.last_seen_at.desc())
+            .order_by(
+                MapElitesPcaHistory.last_seen_at.desc(),
+                MapElitesPcaHistory.commit_hash.asc(),
+            )
         )
         if effective_limit:
             stmt = stmt.limit(effective_limit)
@@ -571,6 +561,8 @@ class DatabaseSnapshotBackend(SnapshotBackend):
         cleaned["schema_version"] = 2
         cleaned["storage_backend"] = "cells_history_v2"
         cleaned["last_update_at"] = now
+        if isinstance(history_payload, list):
+            cleaned["history_limit"] = int(len(history_payload))
         cleaned.setdefault("last_migrated_at", now)
         state_row.snapshot = cleaned
 

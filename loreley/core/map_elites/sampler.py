@@ -91,7 +91,12 @@ class MapElitesSampler:
     ) -> None:
         self.manager = manager
         self.settings = settings or get_settings()
-        self._rng = rng or random.Random()
+        if rng is None:
+            seed = int(getattr(self.settings, "mapelites_sampler_seed", 0) or 0)
+            if seed < 0:
+                seed = 0
+            rng = random.Random(seed)
+        self._rng = rng
         self._target_dims = max(1, self.settings.mapelites_dimensionality_target_dims)
         self._cells_per_dim = max(2, self.settings.mapelites_archive_cells_per_dim)
         self._grid_shape = tuple(self._cells_per_dim for _ in range(self._target_dims))

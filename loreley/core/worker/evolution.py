@@ -35,7 +35,6 @@ from loreley.core.worker.planning import (
 )
 from loreley.core.worker.commit_summary import CommitSummarizer, CommitSummaryError
 from loreley.core.worker.trajectory import build_inspiration_trajectory_rollup
-from loreley.core.experiment_config import resolve_experiment_settings
 from loreley.core.worker.job_store import (
     EvolutionJobStore,
     EvolutionWorkerError,
@@ -115,6 +114,12 @@ class EvolutionWorker:
             if isinstance(attached_experiment_id, UUID)
             else (UUID(str(attached_experiment_id)) if attached_experiment_id else None)
         )
+        if self.attached_experiment_id is None:
+            raise EvolutionWorkerError(
+                "EvolutionWorker must be attached to a single experiment id. "
+                "Set WORKER_EXPERIMENT_ID (or pass attached_experiment_id) and "
+                "route jobs via per-experiment queues.",
+            )
         self.repository = repository or WorkerRepository(self.settings)
         self.planning_agent = planning_agent or PlanningAgent(self.settings)
         self.coding_agent = coding_agent or CodingAgent(self.settings)
@@ -211,18 +216,6 @@ class EvolutionWorker:
             job_id,
             expected_experiment_id=self.attached_experiment_id,
         )
-
-        if self.attached_experiment_id is None:
-            # Legacy mode: resolve experiment-scoped settings per job when an experiment id is present.
-            if locked_job.experiment_id is not None:
-                self.settings = resolve_experiment_settings(
-                    experiment_id=locked_job.experiment_id,
-                    base_settings=self.settings,
-                )
-                # Evaluator behaviour is experiment-scoped; rebuild to pick up the
-                # effective snapshot settings (plugin ref, timeout, etc.).
-                if isinstance(self.evaluator, Evaluator):
-                    self.evaluator = Evaluator(self.settings)
 
         goal = (locked_job.goal or "").strip()
         if not goal:

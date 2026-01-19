@@ -18,28 +18,71 @@ from loreley.db.models import Experiment
 
 __all__ = [
     "EXPERIMENT_SNAPSHOT_SCHEMA_VERSION",
+    "experiment_behavior_keys",
     "ExperimentConfigError",
     "load_experiment_config_snapshot",
     "apply_experiment_config_snapshot",
     "resolve_experiment_settings",
 ]
 
-EXPERIMENT_SNAPSHOT_SCHEMA_VERSION = 1
+EXPERIMENT_SNAPSHOT_SCHEMA_VERSION = 2
+
+EXPERIMENT_BEHAVIOR_PREFIXES: tuple[str, ...] = (
+    "mapelites_",
+    "worker_evaluator_",
+    "worker_evolution_",
+    "worker_planning_",
+    "worker_coding_",
+    "worker_cursor_",
+    "openai_",
+)
+
+# Experiment snapshots must not persist secrets or deployment-only wiring.
+EXPERIMENT_BEHAVIOR_EXCLUDED_KEYS: frozenset[str] = frozenset(
+    {
+        # Secrets.
+        "openai_api_key",
+        # Deployment-scoped environment passthrough.
+        "worker_planning_extra_env",
+        "worker_coding_extra_env",
+        # Deployment-scoped agent binaries and local schema paths.
+        "worker_planning_codex_bin",
+        "worker_planning_codex_profile",
+        "worker_planning_schema_path",
+        "worker_coding_codex_bin",
+        "worker_coding_codex_profile",
+        "worker_coding_schema_path",
+    }
+)
+
+
+def _build_experiment_behavior_keys() -> tuple[str, ...]:
+    keys: list[str] = []
+    for name in Settings.model_fields:
+        if not any(name.startswith(prefix) for prefix in EXPERIMENT_BEHAVIOR_PREFIXES):
+            continue
+        if name in EXPERIMENT_BEHAVIOR_EXCLUDED_KEYS:
+            continue
+        keys.append(name)
+    keys_sorted = tuple(sorted(keys))
+    if not keys_sorted:
+        raise RuntimeError("Experiment behavior keyset must not be empty.")
+    return keys_sorted
+
+
+EXPERIMENT_BEHAVIOR_KEYS: tuple[str, ...] = _build_experiment_behavior_keys()
+
+
+def experiment_behavior_keys() -> tuple[str, ...]:
+    """Return the full set of experiment-scoped behaviour keys."""
+
+    return EXPERIMENT_BEHAVIOR_KEYS
 
 # Keys that are required in every persisted experiment snapshot. Loreley does not
 # support forward-compatible snapshot schemas; missing keys indicate a stale DB.
 _REQUIRED_SNAPSHOT_KEYS: tuple[str, ...] = (
     "experiment_snapshot_schema_version",
-    "mapelites_experiment_root_commit",
-    "mapelites_repo_state_ignore_text",
-    "mapelites_repo_state_ignore_sha256",
-)
-
-BEHAVIOR_SNAPSHOT_PREFIXES = (
-    "mapelites_",
-    "worker_evaluator_",
-    "worker_evolution_",
-    "worker_planning_trajectory_",
+    *EXPERIMENT_BEHAVIOR_KEYS,
 )
 
 
@@ -89,18 +132,23 @@ def _validate_experiment_snapshot(snapshot: Mapping[str, Any]) -> None:
 
     missing = [key for key in _REQUIRED_SNAPSHOT_KEYS if key not in snapshot]
     if missing:
+        preview = ", ".join(missing[:20])
+        suffix = f", ... (+{len(missing) - 20} more)" if len(missing) > 20 else ""
         raise ExperimentConfigError(
             "Experiment config snapshot is missing required keys: "
-            f"{', '.join(missing)}. "
+            f"{preview}{suffix}. "
             "Loreley does not support forward-compatible snapshot schemas; "
             "reset the database schema to upgrade.",
         )
 
     raw_version = snapshot.get("experiment_snapshot_schema_version")
-    try:
-        version = int(raw_version)
-    except (TypeError, ValueError):
+    if raw_version is None:
         version = -1
+    else:
+        try:
+            version = int(raw_version)
+        except (TypeError, ValueError):
+            version = -1
     if version != EXPERIMENT_SNAPSHOT_SCHEMA_VERSION:
         raise ExperimentConfigError(
             "Experiment config snapshot schema version mismatch "
@@ -166,9 +214,8 @@ def apply_experiment_config_snapshot(
     if not isinstance(restored, Mapping):
         raise ExperimentConfigError("Experiment config snapshot must be a mapping.")
 
-    overrides = {
-        str(k): v for k, v in restored.items() if str(k).startswith(BEHAVIOR_SNAPSHOT_PREFIXES)
-    }
+    allowed = set(EXPERIMENT_BEHAVIOR_KEYS)
+    overrides = {str(k): v for k, v in restored.items() if str(k) in allowed}
     if not overrides:
         return base_settings
 

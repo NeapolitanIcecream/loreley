@@ -510,6 +510,11 @@ class Settings(BaseSettings):
         default=50,
         alias="MAPELITES_DIMENSION_REDUCTION_REFIT_INTERVAL",
     )
+    # Seed used for PCA randomness (e.g. randomized SVD) to keep projections reproducible.
+    mapelites_dimensionality_seed: int = Field(
+        default=0,
+        alias="MAPELITES_DIMENSION_REDUCTION_SEED",
+    )
     mapelites_dimensionality_penultimate_normalize: bool = Field(
         default=True,
         alias="MAPELITES_DIMENSION_REDUCTION_PENULTIMATE_NORMALIZE",
@@ -565,6 +570,11 @@ class Settings(BaseSettings):
     mapelites_sampler_inspiration_count: int = Field(
         default=3,
         alias="MAPELITES_SAMPLER_INSPIRATION_COUNT",
+    )
+    # Deterministic RNG seed used by the MAP-Elites job sampler.
+    mapelites_sampler_seed: int = Field(
+        default=0,
+        alias="MAPELITES_SAMPLER_SEED",
     )
     mapelites_sampler_neighbor_radius: int = Field(
         default=1,

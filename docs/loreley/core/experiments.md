@@ -24,7 +24,8 @@ Helpers for deriving canonical repository and experiment context from the curren
 
 - **`build_experiment_config_snapshot(settings, *, repo)`**: extracts just the configuration fields that define an experiment.  
   - Starts from `settings.model_dump()`.  
-  - Keeps only keys with prefixes `mapelites_`, `worker_evaluator_`, `worker_evolution_`, and `worker_planning_trajectory_`, so that experiments stay stable across unrelated configuration changes (logging, Redis URLs, etc.).  
+  - Persists an explicit experiment-scoped behaviour keyset derived from `Settings.model_fields` (e.g. `mapelites_*`, `worker_planning_*`, `worker_coding_*`, `worker_cursor_*`, `worker_evaluator_*`, `worker_evolution_*`, and `openai_*`).  
+  - Excludes secrets and deployment-only knobs from the snapshot (e.g. `openai_api_key`, `WORKER_*_EXTRA_ENV`, and local Codex binary/profile/schema-path wiring) so operators can manage them outside experiment identity.  
   - Resolves `mapelites_experiment_root_commit` to a canonical full hash and persists it in the snapshot.  
   - Pins repository-root ignore rules at experiment creation time by persisting `mapelites_repo_state_ignore_text` and `mapelites_repo_state_ignore_sha256` (derived from the root commit).  
   - Adds `experiment_snapshot_schema_version` and requires it when loading experiment settings; Loreley does not support forward-compatible snapshot schemas in development (reset DB to upgrade).  

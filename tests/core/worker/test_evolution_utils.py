@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 from loreley.config import Settings
@@ -19,6 +20,7 @@ def make_worker(settings: Settings) -> EvolutionWorker:
     settings.worker_repo_remote_url = "https://example.invalid/repo.git"
     return EvolutionWorker(
         settings=settings,
+        attached_experiment_id=uuid.UUID(int=0),
         repository=_DummyRepo(),
         planning_agent=object(),
         coding_agent=object(),
