@@ -145,6 +145,31 @@ def test_load_agent_backend_does_not_inject_settings_when_unsupported(settings: 
     assert called["factory"] == 1
 
 
+def test_load_agent_backend_does_not_inject_settings_into_kwargs_only_factory(settings: Settings) -> None:
+    module: Any = types.ModuleType("dummy_backend_mod_kwargs_only")
+
+    class DummyBackend:
+        def run(self, task, working_dir):  # pragma: no cover - trivial
+            return (task, working_dir)
+
+    received: dict[str, Any] = {}
+
+    def backend_factory_kwargs_only(**kwargs: Any) -> DummyBackend:
+        received.update(kwargs)
+        return DummyBackend()
+
+    module.backend_factory_kwargs_only = backend_factory_kwargs_only
+    sys.modules[module.__name__] = module
+
+    instance = load_agent_backend(
+        "dummy_backend_mod_kwargs_only:backend_factory_kwargs_only",
+        label="test",
+        settings=settings,
+    )
+    assert isinstance(instance, DummyBackend)
+    assert received == {}
+
+
 def test_codex_cli_backend_runs_and_cleans_schema(tmp_path: Path, monkeypatch) -> None:
     repo_dir = tmp_path / "repo"
     (repo_dir / ".git").mkdir(parents=True)

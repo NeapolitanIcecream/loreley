@@ -14,7 +14,7 @@ Built-in CLI backends live under `loreley.core.worker.agent.backends` and depend
 
 ## Backend resolution
 
-- **`load_agent_backend(ref, *, label, settings=None)`**: resolves an `AgentBackend` from a dotted reference (`"module:attr"` or `"module.attr"`). The target may be an instance, a class, or a factory callable. When a class or factory declares a `settings` parameter (or accepts `**kwargs`), Loreley injects the already-resolved effective `Settings` instance so backends do not read environment variables implicitly.
+- **`load_agent_backend(ref, *, label, settings=None)`**: resolves an `AgentBackend` from a dotted reference (`"module:attr"` or `"module.attr"`). The target may be an instance, a class, or a factory callable. When a class or factory declares a `settings` parameter, Loreley injects the already-resolved effective `Settings` instance so backends do not read environment variables implicitly.
 
 ## Structured execution utilities
 

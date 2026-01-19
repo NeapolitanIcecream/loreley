@@ -44,17 +44,25 @@ def _import_backend_target(module_name: str, attr_path: str) -> Any:
     return target
 
 
-def _supports_settings_injection(target: Any) -> bool:
+def _settings_injection_mode(target: Any) -> str | None:
     try:
         signature = inspect.signature(target)
     except (TypeError, ValueError):
-        return False
-    if "settings" in signature.parameters:
-        return True
-    return any(
-        param.kind == inspect.Parameter.VAR_KEYWORD
-        for param in signature.parameters.values()
-    )
+        return None
+
+    param = signature.parameters.get("settings")
+    if param is None:
+        return None
+
+    if param.kind == inspect.Parameter.POSITIONAL_ONLY:
+        # Positional-only parameters cannot be injected by keyword; only support
+        # the common case where `settings` is the first argument.
+        first = next(iter(signature.parameters), None)
+        if first == "settings":
+            return "positional"
+        return None
+
+    return "keyword"
 
 
 def load_agent_backend(
@@ -82,8 +90,12 @@ def load_agent_backend(
 
     # Class or factory function returning a backend instance.
     if callable(target):
-        if settings is not None and _supports_settings_injection(target):
-            instance = target(settings=settings)
+        injection_mode = _settings_injection_mode(target) if settings is not None else None
+        if settings is not None and injection_mode is not None:
+            if injection_mode == "positional":
+                instance = target(settings)
+            else:
+                instance = target(settings=settings)
         else:
             instance = target()
         if hasattr(instance, "run") and callable(getattr(instance, "run")):
