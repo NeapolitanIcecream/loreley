@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
 from uuid import UUID
-
-from pydantic import Field
 
 from loreley.api.schemas import OrmOutModel
 
@@ -22,6 +19,6 @@ class ExperimentOut(OrmOutModel):
 
 
 class ExperimentDetailOut(ExperimentOut):
-    config_snapshot: dict[str, Any] = Field(default_factory=dict)
+    """Detailed experiment view."""
 
 

@@ -8,11 +8,9 @@ This module is responsible for:
 """
 
 import hashlib
-import json
-import math
 import re
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 from urllib.parse import urlparse, urlunparse
 
 from git import Repo
@@ -23,10 +21,6 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from loreley.config import Settings, get_settings
-from loreley.core.experiment_config import (
-    EXPERIMENT_SNAPSHOT_SCHEMA_VERSION,
-    experiment_behavior_keys,
-)
 from loreley.core.map_elites.repository_files import ROOT_IGNORE_FILES
 from loreley.db.base import session_scope
 from loreley.db.models import Experiment, Repository
@@ -37,8 +31,6 @@ log = logger.bind(module="core.experiments")
 __all__ = [
     "ExperimentError",
     "canonicalise_repository",
-    "build_experiment_config_snapshot",
-    "hash_experiment_config",
     "derive_experiment",
     "get_or_create_experiment",
 ]
@@ -47,29 +39,11 @@ __all__ = [
 class ExperimentError(RuntimeError):
     """Raised when the repository/experiment context cannot be resolved."""
 
+def _hash_experiment_config(*, root_commit: str) -> str:
+    """Return a stable experiment hash for the current env-only settings model."""
 
-def _coerce_json_compatible(value: Any) -> Any:
-    """Return a JSON-serialisable representation of the given value.
-
-    PostgreSQL JSONB does not accept NaN/Infinity values, but some Settings
-    defaults (e.g. mapelites_archive_threshold_min=-inf) rely on them
-    internally. For persistence we encode non-finite floats as a reversible
-    JSON-compatible sentinel so that experiment hashes remain collision-free.
-    """
-
-    if isinstance(value, float):
-        if math.isfinite(value):
-            return value
-        if math.isnan(value):
-            return {"__float__": "nan"}
-        if value > 0:
-            return {"__float__": "inf"}
-        return {"__float__": "-inf"}
-    if isinstance(value, Mapping):
-        return {str(k): _coerce_json_compatible(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [_coerce_json_compatible(v) for v in value]
-    return value
+    seed = f"root_commit:{(root_commit or '').strip()}"
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()
 
 
 def _normalise_remote_url(raw: str) -> str:
@@ -284,77 +258,17 @@ def _load_root_ignore_text_from_commit(*, repo: Repo, commit_hash: str) -> str:
     return "\n".join(chunks).strip()
 
 
-def build_experiment_config_snapshot(
-    settings: Settings,
-    *,
-    repo: Repo,
-) -> dict[str, Any]:
-    """Extract the subset of Settings that defines the experiment configuration.
-
-    This intentionally focuses on MAP-Elites and evaluation-related knobs so that
-    experiments are stable across non-functional configuration changes.
-    """
-
-    dims = getattr(settings, "mapelites_code_embedding_dimensions", None)
-    if dims is None or int(dims) <= 0:
-        raise ExperimentError(
-            "MAPELITES_CODE_EMBEDDING_DIMENSIONS is required to derive an experiment config snapshot. "
-            "Configure it for the scheduler so it can persist a stable experiment-scoped behaviour snapshot.",
-        )
+def derive_experiment(settings: Settings, repository: Repository, *, repo: Repo) -> Experiment:
+    """Return or create an Experiment row for the given repository/settings."""
 
     root_ref = (settings.mapelites_experiment_root_commit or "").strip()
     if not root_ref:
-        raise ExperimentError(
-            "MAPELITES_EXPERIMENT_ROOT_COMMIT is required to derive an experiment config snapshot.",
-        )
-
+        raise ExperimentError("MAPELITES_EXPERIMENT_ROOT_COMMIT is required to derive an experiment.")
     canonical_root = _ensure_commit_available(repo=repo, commit_hash=root_ref)
     if not canonical_root:
         raise ExperimentError(f"Cannot resolve root commit {root_ref!r}.")
 
-    ignore_text = _load_root_ignore_text_from_commit(repo=repo, commit_hash=canonical_root)
-    ignore_sha = hashlib.sha256(ignore_text.encode("utf-8")).hexdigest()
-
-    payload = settings.model_dump()
-    snapshot: dict[str, Any] = {}
-    snapshot["experiment_snapshot_schema_version"] = int(EXPERIMENT_SNAPSHOT_SCHEMA_VERSION)
-
-    behavior_keys = experiment_behavior_keys()
-    for key in behavior_keys:
-        if key not in payload:
-            raise ExperimentError(f"Experiment behavior key {key!r} is missing from Settings payload.")
-        if key == "mapelites_experiment_root_commit":
-            snapshot[key] = canonical_root
-            continue
-        if key in ("mapelites_repo_state_ignore_text", "mapelites_repo_state_ignore_sha256"):
-            # Pin root ignore rules from the canonical root commit.
-            continue
-        snapshot[key] = _coerce_json_compatible(payload[key])
-
-    # Pin root ignore rules for the full experiment lifecycle.
-    snapshot["mapelites_repo_state_ignore_text"] = ignore_text
-    snapshot["mapelites_repo_state_ignore_sha256"] = ignore_sha
-    return snapshot
-
-
-def hash_experiment_config(snapshot: Mapping[str, Any]) -> str:
-    """Return a stable SHA-256 hash for an experiment config snapshot."""
-
-    # Normalise using JSON with sorted keys so that key order does not matter.
-    normalised = json.dumps(
-        snapshot,
-        sort_keys=True,
-        separators=(",", ":"),
-        default=str,
-    )
-    return hashlib.sha256(normalised.encode("utf-8")).hexdigest()
-
-
-def derive_experiment(settings: Settings, repository: Repository, *, repo: Repo) -> Experiment:
-    """Return or create an Experiment row for the given repository/settings."""
-
-    snapshot = build_experiment_config_snapshot(settings, repo=repo)
-    config_hash = hash_experiment_config(snapshot)
+    config_hash = _hash_experiment_config(root_commit=canonical_root)
 
     try:
         with session_scope() as session:
@@ -371,7 +285,6 @@ def derive_experiment(settings: Settings, repository: Repository, *, repo: Repo)
                 repository_id=repository.id,
                 config_hash=config_hash,
                 name=name,
-                config_snapshot=dict(snapshot),
                 status="active",
             )
             session.add(experiment)
@@ -425,15 +338,26 @@ def get_or_create_experiment(
         raise ExperimentError(message) from exc
 
     repository = canonicalise_repository(settings=settings, repo_root=root, repo=repo_obj)
-    experiment = derive_experiment(settings, repository, repo=repo_obj)
-    # Reload effective settings from the persisted snapshot so the database is the
-    # single source of truth for experiment-scoped behaviour configuration.
-    from loreley.core.experiment_config import ExperimentConfigError, resolve_experiment_settings
+    root_ref = (settings.mapelites_experiment_root_commit or "").strip()
+    if not root_ref:
+        raise ExperimentError(
+            "MAPELITES_EXPERIMENT_ROOT_COMMIT is required for scheduler startup.",
+        )
+    canonical_root = _ensure_commit_available(repo=repo_obj, commit_hash=root_ref)
+    ignore_text = _load_root_ignore_text_from_commit(repo=repo_obj, commit_hash=canonical_root)
+    ignore_sha = hashlib.sha256(ignore_text.encode("utf-8")).hexdigest()
 
-    try:
-        effective_settings = resolve_experiment_settings(experiment_id=experiment.id, base_settings=settings)
-    except ExperimentConfigError as exc:
-        raise ExperimentError(str(exc)) from exc
+    # Pin root ignore rules in memory for the full scheduler process lifetime.
+    # This deliberately does not persist settings inside the database.
+    settings = settings.model_copy(
+        update={
+            "mapelites_experiment_root_commit": canonical_root,
+            "mapelites_repo_state_ignore_text": ignore_text,
+            "mapelites_repo_state_ignore_sha256": ignore_sha,
+        }
+    )
+
+    experiment = derive_experiment(settings, repository, repo=repo_obj)
 
     console.log(
         "[bold cyan]Using experiment[/] id={} repo={} hash={}".format(
@@ -448,6 +372,6 @@ def get_or_create_experiment(
         repository.slug,
         experiment.config_hash,
     )
-    return repository, experiment, effective_settings
+    return repository, experiment, settings
 
 

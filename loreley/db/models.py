@@ -107,11 +107,6 @@ class Experiment(TimestampMixin, Base):
     )
     config_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     name: Mapped[str | None] = mapped_column(String(255))
-    config_snapshot: Mapped[dict[str, Any]] = mapped_column(
-        MutableDict.as_mutable(JSONB),
-        default=dict,
-        nullable=False,
-    )
     status: Mapped[str | None] = mapped_column(String(32))
 
     repository: Mapped["Repository"] = relationship(

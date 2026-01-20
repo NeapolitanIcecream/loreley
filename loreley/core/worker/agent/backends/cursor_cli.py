@@ -5,10 +5,10 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import monotonic
-from typing import Any
 
 from loguru import logger
 
+from loreley.config import get_settings
 from loreley.core.worker.agent.contracts import AgentInvocation, StructuredAgentTask
 from loreley.core.worker.agent.utils import validate_workdir
 
@@ -118,20 +118,17 @@ class CursorCliBackend:
         )
 
 
-def cursor_backend_from_settings(
-    *,
-    settings: Any,
-    error_cls: type[RuntimeError] = RuntimeError,
-) -> CursorCliBackend:
-    """Factory to build a Cursor backend using configured defaults."""
+def cursor_backend() -> CursorCliBackend:
+    """Factory to build a Cursor backend using env-only settings."""
+
+    settings = get_settings()
     model = getattr(settings, "worker_cursor_model", DEFAULT_CURSOR_MODEL)
     force = getattr(settings, "worker_cursor_force", True)
     return CursorCliBackend(
         model=model or DEFAULT_CURSOR_MODEL,
-        force=force,
-        error_cls=error_cls,
+        force=bool(force),
     )
 
 
-__all__ = ["CursorCliBackend", "DEFAULT_CURSOR_MODEL", "cursor_backend_from_settings"]
+__all__ = ["CursorCliBackend", "DEFAULT_CURSOR_MODEL", "cursor_backend"]
 

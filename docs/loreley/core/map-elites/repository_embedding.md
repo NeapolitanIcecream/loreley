@@ -36,7 +36,7 @@ Eligibility is determined by a combination of:
 - Scheduler startup approval gate: the root eligible file count is scanned at startup and must be explicitly approved by the operator (interactive y/n prompt by default, or `--yes` / `SCHEDULER_STARTUP_APPROVE=true` for non-interactive runs).
 
 !!! note
-    Ignore filtering uses `pathspec.gitignore.GitIgnoreSpec` to apply repository-root `.gitignore` + `.loreleyignore` rules with gitignore semantics. In experiment runs, the effective ignore rules are **pinned at experiment creation time** and persisted in `Experiment.config_snapshot` as `mapelites_repo_state_ignore_text` (derived from the experiment root commit). `.loreleyignore` rules are applied after `.gitignore` (so `!pattern` can re-include). Nested `.gitignore` files and global excludes are not applied.
+    Ignore filtering uses `pathspec.gitignore.GitIgnoreSpec` to apply repository-root `.gitignore` + `.loreleyignore` rules with gitignore semantics. In scheduler runs, Loreley **pins** the ignore rule text once at process startup by reading it from the configured root commit and storing it in `Settings.mapelites_repo_state_ignore_text` for the lifetime of the scheduler process. `.loreleyignore` rules are applied after `.gitignore` (so `!pattern` can re-include). Nested `.gitignore` files and global excludes are not applied.
 
 For each eligible file we keep:
 
@@ -57,9 +57,8 @@ Cache key:
 - `experiment_id`
 - `blob_sha`
 
-The embedding model name and output dimensionality are experiment-scoped
-invariants pinned in `Experiment.config_snapshot`. The database cache stores
-`embedding_model` and `dimensions` alongside vectors for validation and debugging.
+The database cache stores `embedding_model` and `dimensions` alongside vectors for
+validation and debugging.
 
 The database-backed cache is **insert-only**: when multiple processes attempt to
 write the same key, the first insert wins and later writes are ignored (no overwrite).

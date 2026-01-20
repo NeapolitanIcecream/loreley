@@ -10,7 +10,6 @@ from uuid import UUID
 from sqlalchemy import select
 
 from loreley.config import Settings, get_settings
-from loreley.core.experiment_config import resolve_experiment_settings
 from loreley.db.base import session_scope
 from loreley.db.models import CommitCard, Metric
 
@@ -58,14 +57,10 @@ def build_commit_lineage_graph(
     """
 
     base_settings = settings or get_settings()
-    effective_settings = resolve_experiment_settings(
-        experiment_id=experiment_id,
-        base_settings=base_settings,
-    )
-    metric_name = (effective_settings.mapelites_fitness_metric or "").strip() or None
-    higher_is_better = bool(effective_settings.mapelites_fitness_higher_is_better)
+    metric_name = (base_settings.mapelites_fitness_metric or "").strip() or None
+    higher_is_better = bool(base_settings.mapelites_fitness_higher_is_better)
     direction = 1.0 if higher_is_better else -1.0
-    fitness_floor = float(effective_settings.mapelites_fitness_floor)
+    fitness_floor = float(base_settings.mapelites_fitness_floor)
 
     limit = max(1, min(int(max_nodes), 5000))
     mode = (mode or "parent_chain").strip()

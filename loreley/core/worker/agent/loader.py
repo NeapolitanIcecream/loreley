@@ -4,7 +4,6 @@ import inspect
 from importlib import import_module
 from typing import Any, cast
 
-from loreley.config import Settings
 from loreley.core.worker.agent.contracts import AgentBackend
 
 
@@ -44,32 +43,10 @@ def _import_backend_target(module_name: str, attr_path: str) -> Any:
     return target
 
 
-def _settings_injection_mode(target: Any) -> str | None:
-    try:
-        signature = inspect.signature(target)
-    except (TypeError, ValueError):
-        return None
-
-    param = signature.parameters.get("settings")
-    if param is None:
-        return None
-
-    if param.kind == inspect.Parameter.POSITIONAL_ONLY:
-        # Positional-only parameters cannot be injected by keyword; only support
-        # the common case where `settings` is the first argument.
-        first = next(iter(signature.parameters), None)
-        if first == "settings":
-            return "positional"
-        return None
-
-    return "keyword"
-
-
 def load_agent_backend(
     ref: str,
     *,
     label: str,
-    settings: Settings | None = None,
 ) -> AgentBackend:
     """Resolve and instantiate an AgentBackend from a dotted reference.
 
@@ -90,14 +67,7 @@ def load_agent_backend(
 
     # Class or factory function returning a backend instance.
     if callable(target):
-        injection_mode = _settings_injection_mode(target) if settings is not None else None
-        if settings is not None and injection_mode is not None:
-            if injection_mode == "positional":
-                instance = target(settings)
-            else:
-                instance = target(settings=settings)
-        else:
-            instance = target()
+        instance = target()
         if hasattr(instance, "run") and callable(getattr(instance, "run")):
             return cast(AgentBackend, instance)
         raise RuntimeError(

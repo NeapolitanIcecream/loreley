@@ -15,7 +15,7 @@ High-level manager that runs the MAP-Elites pipeline on git commits and maintain
   - Configured via `Settings` map-elites options: preprocessing and repository file filtering, repo-state code embeddings (file cache), dimensionality reduction (PCA with whitening), feature normalisation/truncation (`MAPELITES_FEATURE_TRUNCATION_K`, `MAPELITES_FEATURE_NORMALIZATION_WARMUP_SAMPLES`, `MAPELITES_FEATURE_CLIP`), archive grid, fitness metric, and default island identifiers.
   - Accepts an optional `experiment_id` at construction time; when provided, all persisted `MapElitesState` rows are scoped by `(experiment_id, island_id)`, allowing multiple experiments to maintain independent archives even when they share island identifiers. When omitted, archive state is kept purely in-memory and snapshots are not written.
   - `ingest(commit_hash, ...)` runs the full pipeline for a commit in **repo-state** embedding mode:
-    - enumerates eligible code files at `commit_hash` using pinned ignore rules from the experiment snapshot (`mapelites_repo_state_ignore_text`) plus basic filtering,
+    - enumerates eligible code files at `commit_hash` using pinned ignore rules from `Settings.mapelites_repo_state_ignore_text` plus basic filtering,
     - reuses a file-level embedding cache keyed by git blob SHA,
     - embeds only cache misses (new/changed blobs),
     - aggregates all file embeddings into a single commit vector via **uniform averaging**,

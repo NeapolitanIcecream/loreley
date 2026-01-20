@@ -84,10 +84,13 @@ class Settings(BaseSettings):
     )
     # Experiment-scoped, pinned ignore rules used by repo-state embeddings.
     #
-    # These values are persisted in the experiment config snapshot and loaded from
-    # the database by long-running services. They are intentionally optional at
-    # process startup so that local tools and tests can construct Settings without
-    # an experiment context.
+    # In the env-only settings model, the scheduler pins these values once at
+    # process startup by reading `.gitignore` + `.loreleyignore` from the
+    # configured root commit and storing the combined ignore text + hash in
+    # Settings for the lifetime of the process.
+    #
+    # They remain optional at process startup so local tools/tests can construct
+    # Settings without a repository context.
     mapelites_repo_state_ignore_text: str | None = Field(
         default=None,
         alias="MAPELITES_REPO_STATE_IGNORE_TEXT",
@@ -470,10 +473,8 @@ class Settings(BaseSettings):
     )
     # Fixed embedding dimensionality for the entire experiment lifecycle.
     #
-    # This is an experiment-scoped behaviour parameter persisted in the DB via
-    # `Experiment.config_snapshot`. The scheduler must set it when deriving an
-    # experiment; UI/API/workers should load it from the persisted snapshot and
-    # should not require it at process startup.
+    # In the env-only settings model, this must be provided via environment
+    # variables and kept consistent across long-running processes.
     mapelites_code_embedding_dimensions: PositiveInt | None = Field(
         default=None,
         alias="MAPELITES_CODE_EMBEDDING_DIMENSIONS",

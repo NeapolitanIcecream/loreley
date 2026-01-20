@@ -15,7 +15,6 @@ from loreley.api.services.archive import (
     snapshot_updated_at,
 )
 from loreley.config import get_settings
-from loreley.core.experiment_config import resolve_experiment_settings
 
 router = APIRouter()
 
@@ -44,8 +43,7 @@ def get_records(
     island_id: str = Query(default="", description="Island ID; empty means default island."),
 ) -> list[ArchiveRecordOut]:
     settings = get_settings()
-    effective_settings = resolve_experiment_settings(experiment_id=experiment_id, base_settings=settings)
-    effective_island = island_id.strip() or (effective_settings.mapelites_default_island_id or "main")
+    effective_island = island_id.strip() or (settings.mapelites_default_island_id or "main")
 
     try:
         records = list_records(experiment_id=experiment_id, island_id=effective_island, settings=settings)
@@ -61,9 +59,8 @@ def get_snapshot_meta(
     island_id: str,
 ) -> ArchiveSnapshotMetaOut:
     settings = get_settings()
-    effective_settings = resolve_experiment_settings(experiment_id=experiment_id, base_settings=settings)
-    effective_island = island_id.strip() or (effective_settings.mapelites_default_island_id or "main")
-    cells_per_dim = max(2, int(effective_settings.mapelites_archive_cells_per_dim))
+    effective_island = island_id.strip() or (settings.mapelites_default_island_id or "main")
+    cells_per_dim = max(2, int(settings.mapelites_archive_cells_per_dim))
 
     meta = snapshot_meta(experiment_id=experiment_id, island_id=effective_island, settings=settings)
     dims = max(1, len(meta.lower_bounds))

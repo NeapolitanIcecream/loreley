@@ -259,7 +259,6 @@ def run_worker(
         )
         return 1
 
-    from loreley.core.experiment_config import ExperimentConfigError, resolve_experiment_settings
     from loreley.tasks.queues import experiment_queue_name
 
     queue = experiment_queue_name(
@@ -267,22 +266,10 @@ def run_worker(
         experiment_id=attached_experiment,
     )
 
-    try:
-        effective_settings = resolve_experiment_settings(
-            experiment_id=attached_experiment,
-            base_settings=settings,
-        )
-    except ExperimentConfigError as exc:
-        console.log(
-            "[bold red]Worker refused to start[/] "
-            f"reason={exc}",
-        )
-        return 1
-
     console.log(
         "[bold green]Loreley worker online[/] "
         f"experiment={attached_experiment} queue={queue!r} queue_prefix={settings.tasks_queue_name!r} "
-        f"worktree={effective_settings.worker_repo_worktree!r}",
+        f"worktree={settings.worker_repo_worktree!r}",
     )
 
     try:
@@ -295,7 +282,7 @@ def run_worker(
         dramatiq_broker = broker_module.broker
         ensure_database_schema()
         # Register the experiment-attached actor bound to the derived queue.
-        build_evolution_job_worker_actor(settings=effective_settings, experiment_id=attached_experiment)
+        build_evolution_job_worker_actor(settings=settings, experiment_id=attached_experiment)
     except Exception as exc:  # pragma: no cover - defensive
         console.log(
             "[bold red]Failed to initialise worker dependencies[/] "

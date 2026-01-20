@@ -13,7 +13,7 @@ ORM models and enums for tracking evolutionary jobs, commits, and associated met
   - Stores a stable `slug` derived from either the canonical remote URL or local worktree path, the current `remote_url`, optional `root_path`, and an `extra` JSONB payload with additional metadata (canonical origin, remotes, etc.).
   - Owns a collection of `Experiment` rows and is treated as the top-level key when reasoning about experiments in a multi-repository deployment.
 - **`Experiment`** (`experiments` table): captures a single experiment configuration within a repository.
-  - References a `repository_id`, a stable `config_hash` computed from a subset of `Settings`, an optional human-readable `name`, a JSONB `config_snapshot` of the relevant settings, and a free-form `status`.
+  - References a `repository_id`, a stable `config_hash` derived from the canonical experiment root commit, an optional human-readable `name`, and a free-form `status`.
   - Relates to `EvolutionJob`, `CommitCard`, and `MapElitesState` so that jobs, commits, and archive state can all be grouped by experiment.
 - **`CommitCard`** (`commit_cards` table): stores a lightweight, size-bounded commit representation used for inspiration and UI.
   - Primary key: `id` (UUID).

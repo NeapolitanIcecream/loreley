@@ -2,7 +2,7 @@
 
 Date: 2026-01-09
 
-Context: Loreley locks experiment-scoped behaviour settings in `Experiment.config_snapshot` to avoid dynamic configuration complexity. Some caches still include extra signature dimensions (`filter_signature`, `prompt_signature`) that only exist to support dynamic changes.
+Context: Loreley assumes env-only settings are stable for the lifetime of a database. Some caches still include extra signature dimensions (`filter_signature`, `prompt_signature`) that only exist to support dynamic changes.
 
 Decision: Remove `filter_signature` from repo-state commit aggregates and key `MapElitesRepoStateAggregate` only by `(experiment_id, commit_hash)`.
 

@@ -61,9 +61,6 @@ def render() -> None:
     detail = api_get_or_stop(api_base_url, f"/api/v1/experiments/{effective_experiment_id}")
     st.subheader(f"Selected experiment: {experiment_label or effective_experiment_id}")
 
-    with st.expander("Config snapshot", expanded=True):
-        st.json(detail.get("config_snapshot") if isinstance(detail, dict) else detail)
-
     islands = api_get_or_stop(
         api_base_url,
         "/api/v1/archive/islands",

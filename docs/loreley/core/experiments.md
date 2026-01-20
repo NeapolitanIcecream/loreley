@@ -20,48 +20,36 @@ Helpers for deriving canonical repository and experiment context from the curren
     - creates and persists a new `Repository` row with the derived slug, remote URL, root path, and extra metadata.  
   - Logs concise status messages via `rich` (for human‑friendly console output) and `loguru` (for structured logs).
 
-## Experiment configuration snapshots
+## Experiment identity (env-only settings)
 
-- **`build_experiment_config_snapshot(settings, *, repo)`**: extracts just the configuration fields that define an experiment.  
-  - Starts from `settings.model_dump()`.  
-  - Persists an explicit experiment-scoped behaviour keyset derived from `Settings.model_fields` (e.g. `mapelites_*`, `worker_planning_*`, `worker_coding_*`, `worker_cursor_*`, `worker_evaluator_*`, `worker_evolution_*`, and `openai_*`).  
-  - Excludes secrets and deployment-only knobs from the snapshot (e.g. `openai_api_key`, `WORKER_*_EXTRA_ENV`, and local Codex binary/profile/schema-path wiring) so operators can manage them outside experiment identity.  
-  - Resolves `mapelites_experiment_root_commit` to a canonical full hash and persists it in the snapshot.  
-  - Pins repository-root ignore rules at experiment creation time by persisting `mapelites_repo_state_ignore_text` and `mapelites_repo_state_ignore_sha256` (derived from the root commit).  
-  - Adds `experiment_snapshot_schema_version` and requires it when loading experiment settings; Loreley does not support forward-compatible snapshot schemas in development (reset DB to upgrade).  
-  - Recursively applies `_coerce_json_compatible()` so that non‑finite floats (NaN/±inf) are encoded as a reversible JSON sentinel, keeping snapshots safe for PostgreSQL JSONB and avoiding experiment-hash collisions:
-    - `-inf` → `{"__float__":"-inf"}`
-    - `inf` → `{"__float__":"inf"}`
-    - `nan` → `{"__float__":"nan"}`
+Loreley assumes **runtime behaviour settings are provided via environment variables** and remain stable for the lifetime of a database. The database does not persist a settings snapshot.
 
-- **`hash_experiment_config(snapshot)`**: computes a stable SHA‑256 hash for a configuration snapshot.  
-  - Serialises the snapshot with `json.dumps(..., sort_keys=True, separators=(",", ":"), default=str)` so that key ordering does not affect the result.  
-  - Returns a hex digest used as `Experiment.config_hash` and as part of the default experiment name.
+- **Identity anchor**: `MAPELITES_EXPERIMENT_ROOT_COMMIT` (resolved to a canonical full hash).
+- **`Experiment.config_hash`**: derived from the canonical root commit only (stable across unrelated env tweaks).
 
 ## Experiment derivation
 
 - **`derive_experiment(settings, repository, *, repo)`**: returns or creates an `Experiment` row for a given repository and settings.  
-  - Builds a snapshot via `build_experiment_config_snapshot()`, hashes it with `hash_experiment_config()`, and looks for an existing `Experiment` with the same `(repository_id, config_hash)`.  
+  - Resolves the configured root commit to a canonical full hash and computes `config_hash` from that value.  
   - When found, returns the existing row unchanged.  
   - Otherwise creates a new `Experiment` with:
     - `name` derived from `repository.slug` plus the first 8 characters of the config hash,  
-    - `config_snapshot` set to the JSON‑compatible snapshot, and  
     - `status="active"`.  
   - Logs both to the console and to the structured logger when creating a new experiment.
 
-- **`get_or_create_experiment(*, settings=None, repo_root=None)`**: convenience helper that resolves the `Repository` / `Experiment` pair and returns effective experiment-scoped settings.  
+- **`get_or_create_experiment(*, settings=None, repo_root=None)`**: convenience helper that resolves the `Repository` / `Experiment` pair and returns settings for the scheduler process.  
   - Resolves settings via `get_settings()` when not provided explicitly.  
   - Chooses the repository root in this order: explicit `repo_root`, `Settings.scheduler_repo_root`, then `Settings.worker_repo_worktree`.  
   - Validates that the chosen root is a git repository, logging and raising `ExperimentError` when it is not.  
   - Reuses the discovered `git.Repo` instance when calling `canonicalise_repository()` to avoid redundant discovery work.  
+  - Pins repository-root ignore rules for repo-state embeddings by reading `.gitignore` + `.loreleyignore` from the root commit and storing the combined ignore text + hash in `Settings` for the scheduler process lifetime.  
   - Calls `derive_experiment()` to obtain the current experiment and logs the selected `(repository.slug, experiment.id, experiment.config_hash)` pair.  
-  - Loads the persisted experiment snapshot from the database and returns an **effective `Settings`** instance that applies experiment-scoped overrides, making the DB snapshot the single source of truth for experiment behaviour.  
-  - Returns `(Repository, Experiment, Settings)` so callers can pass the effective settings downstream consistently.
+  - Returns `(Repository, Experiment, Settings)` so callers can pass the settings downstream consistently.
 
 ## Logging and error handling
 
 - All operations are logged through a `loguru` logger bound with `module="core.experiments"` plus a `rich` console for user‑facing status messages.  
 - Git and database failures are wrapped into `ExperimentError` with concise, user‑oriented messages while preserving the original exception as the cause.  
-- Configuration snapshots intentionally focus on experiment behaviour knobs so that operational tweaks (logging verbosity, queue names, etc.) do not fragment experiments in the database.
+- Experiment identity is intentionally minimal so that operational tweaks do not fragment experiments in the database.
 
 

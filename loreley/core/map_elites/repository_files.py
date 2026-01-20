@@ -228,7 +228,12 @@ class RepositoryFileCatalog:
         return git_rel_path
 
     def _load_root_ignore_spec(self) -> GitIgnoreSpec | None:
-        """Load pinned ignore rules from Settings (experiment snapshot)."""
+        """Load pinned repository-root ignore rules from Settings.
+
+        In scheduler runs, Loreley pins the ignore rules once at process startup by
+        reading `.gitignore` + `.loreleyignore` from the configured root commit and
+        storing the combined text in `Settings.mapelites_repo_state_ignore_text`.
+        """
         if not self._repo:
             return None
 

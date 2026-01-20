@@ -305,7 +305,7 @@ def _check_agent_backend(
         from loreley.core.worker.agent import load_agent_backend
         from loreley.core.worker.agent.backends import CodexCliBackend, CursorCliBackend
 
-        backend = load_agent_backend(backend_ref, label=label, settings=settings)
+        backend = load_agent_backend(backend_ref, label=label)
         results.append(CheckResult(label, "ok", f"loaded: {backend_ref!r}"))
 
         # Best-effort binary checks for built-in backends.

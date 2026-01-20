@@ -5,12 +5,11 @@ aggregates them into a commit-level vector. This module provides a cache so that
 unchanged files can reuse prior embeddings across commits.
 
 Cache key:
-- `experiment_id`: experiment scope for stable, locked behaviour settings.
+- `experiment_id`: experiment scope for isolating caches per experiment.
 - `blob_sha`: git blob SHA (preferred content fingerprint).
 
-The embedding model name and output dimensionality are experiment-scoped
-invariants persisted in `Experiment.config_snapshot`. The database cache stores
-them alongside vectors for validation and debugging.
+The cache stores the embedding model name and output dimensionality alongside
+vectors for validation and debugging.
 """
 
 from __future__ import annotations
@@ -60,18 +59,15 @@ class FileEmbeddingCache(Protocol):
 def _resolve_requested_dimensions(settings: Settings) -> int:
     """Return configured embedding dimensionality or raise a helpful error.
 
-    The embedding dimensionality is an experiment-scoped invariant persisted in
-    `Experiment.config_snapshot`. Long-running services should load it from the
-    DB snapshot (via `resolve_experiment_settings`) instead of relying on local
-    environment variables.
+    In the env-only settings model, this value must be provided via environment
+    variables and kept consistent across long-running processes.
     """
 
     raw = getattr(settings, "mapelites_code_embedding_dimensions", None)
     if raw is None:
         raise ValueError(
             "MAPELITES_CODE_EMBEDDING_DIMENSIONS is not configured. "
-            "This value is experiment-scoped and must be provided by the scheduler "
-            "when deriving an experiment, then loaded from the DB snapshot by other services.",
+            "Set it in the environment for scheduler/worker/UI processes.",
         )
     dims = int(raw)
     if dims <= 0:

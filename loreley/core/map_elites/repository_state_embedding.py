@@ -3,7 +3,8 @@
 This module implements the repo-state embedding design:
 
 - Enumerate eligible files for a given commit hash using pinned ignore rules
-  from the experiment snapshot plus basic MAP-Elites preprocessing filters.
+  from `Settings` (pinned at scheduler startup from the configured root commit)
+  plus basic MAP-Elites preprocessing filters.
 - Reuse a file-level embedding cache keyed by git blob SHA.
 - Only embed cache misses (new/modified files).
 - Aggregate all file embeddings into a single commit vector via **uniform mean**
