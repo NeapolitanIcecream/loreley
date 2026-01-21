@@ -18,8 +18,10 @@ The read/write entry point is `DatabaseSnapshotStore`.
 - On island initialisation it calls `store.load(island_id)` and applies the payload with `apply_snapshot(...)`.
 - After ingestion and `clear_island()` it emits a `SnapshotUpdate` and calls `store.apply_update(...)`.
 
-## Compatibility
+## Constraints
 
-Legacy snapshot payloads embedding `archive`/`history` inside `MapElitesState.snapshot` are not supported. Reset the database schema for upgrades (`uv run loreley reset-db --yes`).
+`MapElitesState.snapshot` is reserved for lightweight metadata and must not embed `archive` or `history`.
+
+If your local database contains unsupported payloads, reset it: `uv run loreley reset-db --yes`.
 
 

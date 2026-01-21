@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Process entrypoint helpers used by both the unified CLI and legacy scripts.
+"""Process entrypoint helpers used by the unified CLI and script wrappers.
 
 This module intentionally contains no business logic beyond:
 - logging configuration

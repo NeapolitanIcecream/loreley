@@ -5,14 +5,16 @@ Loreley stores MAP-Elites state in Postgres using:
 - `map_elites_archive_cells`: occupied archive cells (incremental upserts).
 - `map_elites_pca_history`: PCA history entries (incremental upserts).
 
-Legacy snapshot formats are intentionally not supported. If the database contains
-legacy fields, reset it (`uv run loreley reset-db --yes`).
+Only the incremental Postgres storage model is supported.
+If the database contains unsupported snapshot payloads, reset it with
+`uv run loreley reset-db --yes`.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 import time
+import uuid
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -38,11 +40,34 @@ __all__ = [
     "array_to_list",
     "deserialize_history",
     "deserialize_projection",
+    "ensure_supported_snapshot_meta",
     "purge_island_commit_mappings",
     "restore_archive_entries",
     "serialize_projection",
     "to_list",
 ]
+
+UNSUPPORTED_META_KEYS = ("archive", "history")
+
+
+def ensure_supported_snapshot_meta(
+    meta: Mapping[str, Any] | None,
+    *,
+    experiment_id: Any,
+    island_id: str,
+) -> None:
+    """Fail fast when a stored snapshot payload contains unsupported fields."""
+
+    if not meta:
+        return
+    for key in UNSUPPORTED_META_KEYS:
+        if key in meta:
+            raise ValueError(
+                "Unsupported MAP-Elites snapshot payload detected; reset the database schema with "
+                "`uv run loreley reset-db --yes`. "
+                f"(experiment_id={experiment_id} island_id={island_id})"
+            )
+
 
 
 @dataclass(slots=True, frozen=True)
@@ -86,7 +111,11 @@ def _coerce_int(value: Any, *, default: int) -> int:
 class DatabaseSnapshotStore:
     """Postgres-backed snapshot store using the incremental MAP-Elites tables."""
 
-    experiment_id: Any
+    experiment_id: uuid.UUID
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.experiment_id, uuid.UUID):
+            self.experiment_id = uuid.UUID(str(self.experiment_id))
 
     def load(self, island_id: str) -> dict[str, Any] | None:
         """Load a snapshot payload compatible with `apply_snapshot()`."""
@@ -102,11 +131,7 @@ class DatabaseSnapshotStore:
                     return None
 
                 meta = dict(state.snapshot or {})
-                if "archive" in meta or "history" in meta:
-                    raise ValueError(
-                        "Legacy MAP-Elites snapshot detected; reset the database schema (dev). "
-                        f"(experiment_id={self.experiment_id} island_id={island_id})"
-                    )
+                ensure_supported_snapshot_meta(meta, experiment_id=self.experiment_id, island_id=island_id)
 
                 lower = meta.get("lower_bounds")
                 upper = meta.get("upper_bounds")
@@ -167,11 +192,7 @@ class DatabaseSnapshotStore:
                 existing = session.execute(stmt).scalar_one_or_none()
                 meta: dict[str, Any] = dict(existing.snapshot or {}) if existing else {}
 
-                if "archive" in meta or "history" in meta:
-                    raise ValueError(
-                        "Legacy MAP-Elites snapshot detected; reset the database schema (dev). "
-                        f"(experiment_id={self.experiment_id} island_id={island_id})"
-                    )
+                ensure_supported_snapshot_meta(meta, experiment_id=self.experiment_id, island_id=island_id)
 
                 meta["schema_version"] = 2
                 meta["storage_backend"] = "cells_history_v2"

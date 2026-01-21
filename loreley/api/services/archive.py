@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 
 from loreley.config import Settings, get_settings
 from loreley.core.map_elites.map_elites import MapElitesManager
+from loreley.core.map_elites.snapshot import ensure_supported_snapshot_meta
 from loreley.db.base import session_scope
 from loreley.db.models import MapElitesArchiveCell, MapElitesPcaHistory, MapElitesState
 
@@ -83,11 +84,7 @@ def snapshot_meta(
         )
         row = session.execute(stmt).scalar_one_or_none()
         snapshot = dict(row.snapshot or {}) if row and row.snapshot else {}
-        if "archive" in snapshot or "history" in snapshot:
-            raise ValueError(
-                "Legacy MAP-Elites snapshot detected; reset the database schema (dev). "
-                f"(experiment_id={experiment_id} island_id={island_id})"
-            )
+        ensure_supported_snapshot_meta(snapshot, experiment_id=experiment_id, island_id=island_id)
         entry_count = int(
             session.execute(
                 select(func.count())

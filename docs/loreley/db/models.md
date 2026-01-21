@@ -35,7 +35,7 @@ ORM models and enums for tracking evolutionary jobs, commits, and associated met
   - Stores a JSONB `snapshot` payload containing **lightweight metadata** (feature bounds, PCA projection payload, schema version, and other knobs).
   - Archive cells and PCA history are stored incrementally in separate tables and reconstructed on load by
     `loreley.core.map_elites.snapshot.DatabaseSnapshotStore`.
-  - Legacy snapshot payloads embedding `archive`/`history` are not supported; reset the database schema for upgrades.
+  - The `snapshot` JSON must not embed `archive` or `history`. If your local database contains unsupported payloads, reset it: `uv run loreley reset-db --yes`.
 - **`MapElitesArchiveCell`** (`map_elites_archive_cells` table): one row per occupied MAP-Elites archive cell.
   - Primary key: `(experiment_id, island_id, cell_index)`.
   - Stores the cell's `commit_hash`, `objective`, behaviour `measures`, stored `solution` vector, and `timestamp`.

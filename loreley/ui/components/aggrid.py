@@ -149,7 +149,7 @@ def selected_rows(grid_response: Mapping[str, Any]) -> list[dict[str, Any]]:
     if isinstance(value, list):
         return [row for row in value if isinstance(row, dict)]
 
-    # Streamlit-AgGrid legacy shapes.
+    # Streamlit-AgGrid version-dependent shapes.
     value = grid_response.get("selected")
     if isinstance(value, list):
         return [row for row in value if isinstance(row, dict)]
