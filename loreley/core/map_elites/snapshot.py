@@ -1,21 +1,16 @@
-"""Snapshot serialisation and persistence helpers for MAP-Elites archives.
+"""Snapshot persistence helpers for MAP-Elites archives.
 
-This module focuses on **how** MAP-Elites snapshots are represented,
-serialised and stored, while callers such as ``MapElitesManager`` decide
-**when** a snapshot should be loaded or persisted.
+Loreley stores MAP-Elites state in Postgres using:
+- `map_elites_states`: lightweight per-island metadata (bounds, projection, knobs).
+- `map_elites_archive_cells`: occupied archive cells (incremental upserts).
+- `map_elites_pca_history`: PCA history entries (incremental upserts).
 
-The design keeps the surface area small and decoupled:
-
-- Pure helper functions handle conversion between in-memory structures
-  (PCA history/projection, ``GridArchive`` contents) and JSON-compatible
-  payloads.
-- A pluggable ``SnapshotBackend`` abstraction encapsulates the storage
-  mechanism (database, no-op, etc.).
+Legacy snapshot formats are intentionally not supported. If the database contains
+legacy fields, reset it (`uv run loreley reset-db --yes`).
 """
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import time
 from typing import Any, Mapping, Sequence
@@ -23,9 +18,8 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 from loguru import logger
 from ribs.archives import GridArchive
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from loreley.db.base import session_scope
@@ -37,22 +31,16 @@ log = logger.bind(module="map_elites.snapshot")
 Vector = tuple[float, ...]
 
 __all__ = [
+    "DatabaseSnapshotStore",
     "SnapshotCellUpsert",
     "SnapshotUpdate",
-    "SnapshotBackend",
-    "NullSnapshotBackend",
-    "DatabaseSnapshotBackend",
-    "build_snapshot_backend",
-    "build_snapshot",
     "apply_snapshot",
-    "serialize_history",
-    "deserialize_history",
-    "serialize_projection",
-    "deserialize_projection",
-    "serialize_archive",
-    "restore_archive_entries",
-    "purge_island_commit_mappings",
     "array_to_list",
+    "deserialize_history",
+    "deserialize_projection",
+    "purge_island_commit_mappings",
+    "restore_archive_entries",
+    "serialize_projection",
     "to_list",
 ]
 
@@ -87,68 +75,22 @@ class SnapshotUpdate:
     history_limit: int | None = None
 
 
-class SnapshotBackend(ABC):
-    """Abstract storage backend for island snapshots.
-
-    Callers provide the *decision* of when to save/load snapshots, while
-    backends encapsulate how those snapshots are persisted.
-    """
-
-    @abstractmethod
-    def load(self, island_id: str) -> dict[str, Any] | None:  # pragma: no cover - interface
-        """Load a snapshot for the given island or return ``None``."""
-
-    @abstractmethod
-    def save(self, island_id: str, snapshot: Mapping[str, Any]) -> None:  # pragma: no cover - interface
-        """Persist a snapshot for the given island."""
-
-    def apply_update(  # pragma: no cover - thin default
-        self,
-        island_id: str,
-        *,
-        state: Any,
-        update: SnapshotUpdate | None = None,
-    ) -> None:
-        """Persist an incremental update.
-
-        Default implementation falls back to serialising the full snapshot and
-        delegating to ``save``. Storage backends can override this method to
-        implement incremental persistence without rewriting large JSON blobs.
-        """
-
-        snapshot = build_snapshot(island_id, state)
-        self.save(island_id, snapshot)
+def _coerce_int(value: Any, *, default: int) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return int(default)
 
 
 @dataclass(slots=True)
-class NullSnapshotBackend(SnapshotBackend):
-    """No-op backend used when snapshot persistence is disabled."""
-
-    def load(self, island_id: str) -> dict[str, Any] | None:
-        return None
-
-    def save(self, island_id: str, snapshot: Mapping[str, Any]) -> None:
-        # Intentionally ignore all writes.
-        return None
-
-    def apply_update(
-        self,
-        island_id: str,
-        *,
-        state: Any,
-        update: SnapshotUpdate | None = None,
-    ) -> None:
-        # Intentionally ignore all writes, including full-snapshot fallbacks.
-        return None
-
-
-@dataclass(slots=True)
-class DatabaseSnapshotBackend(SnapshotBackend):
-    """Database-backed snapshot storage using the ``MapElitesState`` table."""
+class DatabaseSnapshotStore:
+    """Postgres-backed snapshot store using the incremental MAP-Elites tables."""
 
     experiment_id: Any
 
     def load(self, island_id: str) -> dict[str, Any] | None:
+        """Load a snapshot payload compatible with `apply_snapshot()`."""
+
         try:
             with session_scope() as session:
                 stmt = select(MapElitesState).where(
@@ -160,14 +102,12 @@ class DatabaseSnapshotBackend(SnapshotBackend):
                     return None
 
                 meta = dict(state.snapshot or {})
-                meta = self._maybe_migrate_legacy_snapshot(session, state, meta, island_id=island_id)
+                if "archive" in meta or "history" in meta:
+                    raise ValueError(
+                        "Legacy MAP-Elites snapshot detected; reset the database schema (dev). "
+                        f"(experiment_id={self.experiment_id} island_id={island_id})"
+                    )
 
-                schema_version = _coerce_int(meta.get("schema_version"), default=1)
-                if schema_version < 2:
-                    # Legacy mode: return the stored payload as-is.
-                    return meta or None
-
-                # Assemble a snapshot payload compatible with `apply_snapshot()`.
                 lower = meta.get("lower_bounds")
                 upper = meta.get("upper_bounds")
                 projection_payload = meta.get("projection")
@@ -180,7 +120,7 @@ class DatabaseSnapshotBackend(SnapshotBackend):
                     limit=history_limit,
                 )
 
-                payload: dict[str, Any] = {
+                return {
                     **meta,
                     "island_id": island_id,
                     "lower_bounds": lower if isinstance(lower, Sequence) else None,
@@ -189,7 +129,8 @@ class DatabaseSnapshotBackend(SnapshotBackend):
                     "history": history_entries,
                     "archive": archive_entries,
                 }
-                return payload
+        except ValueError:
+            raise
         except SQLAlchemyError as exc:
             log.error(
                 "Failed to load MAP-Elites snapshot for experiment {} island {}: {}",
@@ -197,6 +138,7 @@ class DatabaseSnapshotBackend(SnapshotBackend):
                 island_id,
                 exc,
             )
+            return None
         except Exception as exc:  # pragma: no cover - defensive
             log.error(
                 "Unexpected error while loading snapshot for experiment {} island {}: {}",
@@ -204,59 +146,20 @@ class DatabaseSnapshotBackend(SnapshotBackend):
                 island_id,
                 exc,
             )
-        return None
-
-    def save(self, island_id: str, snapshot: Mapping[str, Any]) -> None:
-        try:
-            with session_scope() as session:
-                stmt = select(MapElitesState).where(
-                    MapElitesState.experiment_id == self.experiment_id,
-                    MapElitesState.island_id == island_id,
-                )
-                existing = session.execute(stmt).scalar_one_or_none()
-                if existing:
-                    existing.snapshot = dict(snapshot)
-                else:
-                    session.add(
-                        MapElitesState(
-                            experiment_id=self.experiment_id,
-                            island_id=island_id,
-                            snapshot=dict(snapshot),
-                        )
-                    )
-        except SQLAlchemyError as exc:
-            log.error(
-                "Failed to persist MAP-Elites snapshot for experiment {} island {}: {}",
-                self.experiment_id,
-                island_id,
-                exc,
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            log.error(
-                "Unexpected error while persisting snapshot for experiment {} island {}: {}",
-                self.experiment_id,
-                island_id,
-                exc,
-            )
+            return None
 
     def apply_update(
         self,
         island_id: str,
         *,
-        state: Any,
-        update: SnapshotUpdate | None = None,
+        update: SnapshotUpdate,
     ) -> None:
         """Persist an incremental update into per-cell/history tables + lightweight metadata."""
-
-        if update is None:
-            # Backwards-compatible fallback.
-            return super().apply_update(island_id, state=state, update=update)
 
         now = float(update.history_seen_at) if update.history_seen_at is not None else time.time()
 
         try:
             with session_scope() as session:
-                # Upsert lightweight metadata row.
                 stmt = select(MapElitesState).where(
                     MapElitesState.experiment_id == self.experiment_id,
                     MapElitesState.island_id == island_id,
@@ -264,9 +167,11 @@ class DatabaseSnapshotBackend(SnapshotBackend):
                 existing = session.execute(stmt).scalar_one_or_none()
                 meta: dict[str, Any] = dict(existing.snapshot or {}) if existing else {}
 
-                # Ensure we do not keep legacy large fields around.
-                meta.pop("archive", None)
-                meta.pop("history", None)
+                if "archive" in meta or "history" in meta:
+                    raise ValueError(
+                        "Legacy MAP-Elites snapshot detected; reset the database schema (dev). "
+                        f"(experiment_id={self.experiment_id} island_id={island_id})"
+                    )
 
                 meta["schema_version"] = 2
                 meta["storage_backend"] = "cells_history_v2"
@@ -309,7 +214,6 @@ class DatabaseSnapshotBackend(SnapshotBackend):
                     )
                     return
 
-                # Incremental cell upsert (only when a commit improved a cell).
                 if update.cell_upsert is not None:
                     cell = update.cell_upsert
                     values = {
@@ -339,7 +243,6 @@ class DatabaseSnapshotBackend(SnapshotBackend):
                     )
                     session.execute(stmt)
 
-                # Incremental history upsert (idempotent per commit hash).
                 if update.history_upsert is not None:
                     entry = update.history_upsert
                     values = {
@@ -364,16 +267,18 @@ class DatabaseSnapshotBackend(SnapshotBackend):
                         },
                     )
                     session.execute(stmt)
+        except ValueError:
+            raise
         except SQLAlchemyError as exc:
             log.error(
-                "Failed to persist incremental MAP-Elites snapshot for experiment {} island {}: {}",
+                "Failed to persist MAP-Elites snapshot for experiment {} island {}: {}",
                 self.experiment_id,
                 island_id,
                 exc,
             )
         except Exception as exc:  # pragma: no cover - defensive
             log.error(
-                "Unexpected error while persisting incremental snapshot for experiment {} island {}: {}",
+                "Unexpected error while persisting snapshot for experiment {} island {}: {}",
                 self.experiment_id,
                 island_id,
                 exc,
@@ -382,10 +287,12 @@ class DatabaseSnapshotBackend(SnapshotBackend):
     def _load_archive_entries(self, session, *, island_id: str) -> list[dict[str, Any]]:
         rows = list(
             session.execute(
-                select(MapElitesArchiveCell).where(
+                select(MapElitesArchiveCell)
+                .where(
                     MapElitesArchiveCell.experiment_id == self.experiment_id,
                     MapElitesArchiveCell.island_id == island_id,
-                ).order_by(MapElitesArchiveCell.cell_index.asc())
+                )
+                .order_by(MapElitesArchiveCell.cell_index.asc())
             )
             .scalars()
             .all()
@@ -412,7 +319,6 @@ class DatabaseSnapshotBackend(SnapshotBackend):
         limit: int | None,
     ) -> list[dict[str, Any]]:
         effective_limit = max(0, int(limit or 0))
-
         stmt = (
             select(MapElitesPcaHistory)
             .where(
@@ -440,173 +346,6 @@ class DatabaseSnapshotBackend(SnapshotBackend):
             )
         return payload
 
-    def _maybe_migrate_legacy_snapshot(
-        self,
-        session,
-        state_row: MapElitesState,
-        meta: dict[str, Any],
-        *,
-        island_id: str,
-    ) -> dict[str, Any]:
-        schema_version = _coerce_int(meta.get("schema_version"), default=1)
-        if schema_version >= 2:
-            return meta
-
-        archive_payload = meta.get("archive")
-        history_payload = meta.get("history")
-
-        has_archive = isinstance(archive_payload, list) and bool(archive_payload)
-        has_history = isinstance(history_payload, list) and bool(history_payload)
-        if not has_archive and not has_history:
-            return meta
-
-        now = time.time()
-        migrated_cells = 0
-        migrated_history = 0
-
-        if isinstance(archive_payload, list):
-            for entry in archive_payload:
-                if not isinstance(entry, Mapping):
-                    continue
-                stored_index = entry.get("index")
-                if stored_index is None:
-                    continue
-                try:
-                    cell_index = int(stored_index)
-                except (TypeError, ValueError):
-                    continue
-
-                measures = array_to_list(entry.get("measures"))
-                solution = array_to_list(entry.get("solution"))
-                if not measures or not solution:
-                    # Skip malformed rows; restore logic similarly expects both.
-                    continue
-
-                values = {
-                    "experiment_id": self.experiment_id,
-                    "island_id": island_id,
-                    "cell_index": cell_index,
-                    "commit_hash": str(entry.get("commit_hash", "")),
-                    "objective": float(entry.get("objective", 0.0)),
-                    "measures": [float(v) for v in measures],
-                    "solution": [float(v) for v in solution],
-                    "timestamp": float(entry.get("timestamp", 0.0)),
-                }
-                stmt = pg_insert(MapElitesArchiveCell).values(**values)
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=[
-                        MapElitesArchiveCell.__table__.c.experiment_id,
-                        MapElitesArchiveCell.__table__.c.island_id,
-                        MapElitesArchiveCell.__table__.c.cell_index,
-                    ],
-                    set_={
-                        "commit_hash": stmt.excluded.commit_hash,
-                        "objective": stmt.excluded.objective,
-                        "measures": stmt.excluded.measures,
-                        "solution": stmt.excluded.solution,
-                        "timestamp": stmt.excluded.timestamp,
-                    },
-                )
-                session.execute(stmt)
-                migrated_cells += 1
-
-        if isinstance(history_payload, list):
-            n = len(history_payload)
-            for idx, entry in enumerate(history_payload):
-                if not isinstance(entry, Mapping):
-                    continue
-                commit_hash = str(entry.get("commit_hash", "")).strip()
-                if not commit_hash:
-                    continue
-                vec_values = entry.get("vector") or []
-                if not isinstance(vec_values, (list, tuple)):
-                    vec_values = []
-                last_seen_at = now - float(max(0, (n - 1) - idx))
-                embedding_model = (
-                    str(
-                        entry.get("embedding_model")
-                        or entry.get("code_model")
-                        or entry.get("model")
-                        or ""
-                    )
-                    .strip()
-                )
-                values = {
-                    "experiment_id": self.experiment_id,
-                    "island_id": island_id,
-                    "commit_hash": commit_hash,
-                    "vector": [float(v) for v in vec_values],
-                    "embedding_model": embedding_model,
-                    "last_seen_at": float(last_seen_at),
-                }
-                stmt = pg_insert(MapElitesPcaHistory).values(**values)
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=[
-                        MapElitesPcaHistory.experiment_id,
-                        MapElitesPcaHistory.island_id,
-                        MapElitesPcaHistory.commit_hash,
-                    ],
-                    set_={
-                        "vector": stmt.excluded.vector,
-                        "embedding_model": stmt.excluded.embedding_model,
-                        "last_seen_at": stmt.excluded.last_seen_at,
-                    },
-                )
-                session.execute(stmt)
-                migrated_history += 1
-
-        cleaned = dict(meta)
-        cleaned.pop("archive", None)
-        cleaned.pop("history", None)
-        cleaned["schema_version"] = 2
-        cleaned["storage_backend"] = "cells_history_v2"
-        cleaned["last_update_at"] = now
-        if isinstance(history_payload, list):
-            cleaned["history_limit"] = int(len(history_payload))
-        cleaned.setdefault("last_migrated_at", now)
-        state_row.snapshot = cleaned
-
-        log.info(
-            "Migrated legacy MAP-Elites snapshot to incremental tables (experiment={} island={} cells={} history={})",
-            self.experiment_id,
-            island_id,
-            migrated_cells,
-            migrated_history,
-        )
-        return cleaned
-
-
-def build_snapshot_backend(experiment_id: Any | None) -> SnapshotBackend:
-    """Factory that picks the appropriate snapshot backend.
-
-    - When ``experiment_id`` is ``None``, snapshot persistence is disabled and
-      a ``NullSnapshotBackend`` is returned.
-    - Otherwise, snapshots are stored in the database via ``MapElitesState``.
-    """
-
-    if experiment_id is None:
-        return NullSnapshotBackend()
-    return DatabaseSnapshotBackend(experiment_id=experiment_id)
-
-
-def build_snapshot(island_id: str, state: Any) -> dict[str, Any]:
-    """Serialise an island state into a JSON-compatible snapshot payload.
-
-    The ``state`` object is expected to expose the attributes used here
-    (``lower_bounds``, ``upper_bounds``, ``history``, ``projection``,
-    and ``archive``) but does not need to be a specific class; this makes
-    the function reusable in tests and alternative implementations.
-    """
-
-    return {
-        "island_id": island_id,
-        "lower_bounds": np.asarray(getattr(state, "lower_bounds")).tolist(),
-        "upper_bounds": np.asarray(getattr(state, "upper_bounds")).tolist(),
-        "history": serialize_history(getattr(state, "history")),
-        "projection": serialize_projection(getattr(state, "projection")),
-        "archive": serialize_archive(getattr(state, "archive")),
-    }
-
 
 def apply_snapshot(
     *,
@@ -615,11 +354,7 @@ def apply_snapshot(
     island_id: str,
     commit_to_island: dict[str, str],
 ) -> None:
-    """Apply a previously serialised snapshot onto an island state.
-
-    This updates feature bounds, PCA history/projection, restores archive
-    entries, and rebuilds commit-to-cell mappings.
-    """
+    """Apply a previously serialised snapshot onto an island state."""
 
     lower_bounds = snapshot.get("lower_bounds")
     upper_bounds = snapshot.get("upper_bounds")
@@ -645,24 +380,7 @@ def apply_snapshot(
         restore_archive_entries(state, archive_entries, island_id, commit_to_island)
 
 
-def serialize_history(history: Sequence[PcaHistoryEntry]) -> list[dict[str, Any]]:
-    """Convert PCA history into a JSON-compatible list of dicts."""
-
-    payload: list[dict[str, Any]] = []
-    for entry in history:
-        payload.append(
-            {
-                "commit_hash": entry.commit_hash,
-                "vector": [float(value) for value in entry.vector],
-                "embedding_model": str(entry.embedding_model),
-            }
-        )
-    return payload
-
-
-def deserialize_history(
-    payload: Sequence[Mapping[str, Any]],
-) -> tuple[PcaHistoryEntry, ...]:
+def deserialize_history(payload: Sequence[Mapping[str, Any]]) -> tuple[PcaHistoryEntry, ...]:
     """Rebuild PCA history from a JSON-compatible payload."""
 
     history: list[PcaHistoryEntry] = []
@@ -680,7 +398,7 @@ def deserialize_history(
 
 
 def serialize_projection(projection: PCAProjection | None) -> dict[str, Any] | None:
-    """Convert a ``PCAProjection`` into a JSON-compatible dict."""
+    """Convert a `PCAProjection` into a JSON-compatible dict."""
 
     if not projection:
         return None
@@ -699,7 +417,7 @@ def serialize_projection(projection: PCAProjection | None) -> dict[str, Any] | N
 
 
 def deserialize_projection(payload: Mapping[str, Any] | None) -> PCAProjection | None:
-    """Rebuild a ``PCAProjection`` instance from JSON-compatible data."""
+    """Rebuild a `PCAProjection` instance from JSON-compatible data."""
 
     if not payload:
         return None
@@ -723,37 +441,6 @@ def deserialize_projection(payload: Mapping[str, Any] | None) -> PCAProjection |
     )
 
 
-def serialize_archive(archive: GridArchive) -> list[dict[str, Any]]:
-    """Serialise a ``GridArchive`` into a list of JSON-compatible entries."""
-
-    data = archive.data()
-    if archive.empty or not isinstance(data, dict):
-        return []
-
-    indices = to_list(data.get("index"))
-    if not indices:
-        return []
-
-    objectives = to_list(data.get("objective"))
-    measures = to_list(data.get("measures"))
-    solutions = to_list(data.get("solution"))
-    commit_hashes = to_list(data.get("commit_hash"))
-    timestamps = to_list(data.get("timestamp"))
-
-    entries: list[dict[str, Any]] = []
-    for idx, cell_index in enumerate(indices):
-        entry = {
-            "index": int(cell_index),
-            "objective": float(objectives[idx]) if idx < len(objectives) else 0.0,
-            "measures": array_to_list(measures[idx]) if idx < len(measures) else [],
-            "solution": array_to_list(solutions[idx]) if idx < len(solutions) else [],
-            "commit_hash": str(commit_hashes[idx]) if idx < len(commit_hashes) else "",
-            "timestamp": float(timestamps[idx]) if idx < len(timestamps) else 0.0,
-        }
-        entries.append(entry)
-    return entries
-
-
 def restore_archive_entries(
     state: Any,
     entries: Sequence[Mapping[str, Any]],
@@ -771,6 +458,7 @@ def restore_archive_entries(
             expected_cell_count = int(np.prod(getattr(archive, "dims", ())))
         except Exception:  # pragma: no cover - defensive
             expected_cell_count = None
+
     for entry in entries:
         solution_values = array_to_list(entry.get("solution"))
         measures_values = array_to_list(entry.get("measures"))
@@ -784,9 +472,7 @@ def restore_archive_entries(
 
         if expected_solution_dim is not None and solution_batch.shape[1] != int(expected_solution_dim):
             log.warning(
-                "Skipping snapshot archive entry due to incompatible solution_dim "
-                "(experiment={} island={} expected={} got={})",
-                getattr(getattr(archive, "experiment_id", None), "hex", None) or "?",
+                "Skipping snapshot archive entry due to incompatible solution_dim (island={} expected={} got={})",
                 island_id,
                 int(expected_solution_dim),
                 int(solution_batch.shape[1]),
@@ -794,8 +480,7 @@ def restore_archive_entries(
             continue
         if expected_measures_dim is not None and measures_batch.shape[1] != int(expected_measures_dim):
             log.warning(
-                "Skipping snapshot archive entry due to incompatible measures dimensionality "
-                "(island={} expected={} got={})",
+                "Skipping snapshot archive entry due to incompatible measures dimensionality (island={} expected={} got={})",
                 island_id,
                 int(expected_measures_dim),
                 int(measures_batch.shape[1]),
@@ -844,7 +529,7 @@ def restore_archive_entries(
 
 
 def purge_island_commit_mappings(commit_to_island: dict[str, str], island_id: str) -> None:
-    """Remove any commit-to-island mappings that point at ``island_id``."""
+    """Remove any commit-to-island mappings that point at `island_id`."""
 
     for commit, mapped_island in tuple(commit_to_island.items()):
         if mapped_island == island_id:
@@ -857,30 +542,29 @@ def array_to_list(values: Any) -> list[float]:
     if values is None:
         return []
     if isinstance(values, np.ndarray):
-        return values.astype(float).tolist()
+        try:
+            return [float(v) for v in values.tolist()]
+        except Exception:
+            return []
     if isinstance(values, (list, tuple)):
-        return [float(value) for value in values]
-    return [float(values)]
+        return [float(v) for v in values if v is not None]
+    try:
+        return [float(values)]
+    except Exception:
+        return []
 
 
 def to_list(values: Any) -> list[Any]:
-    """Normalise numpy arrays and scalars into Python lists."""
+    """Convert numpy arrays or scalar-like values into a Python list."""
 
     if values is None:
         return []
     if isinstance(values, np.ndarray):
-        return values.tolist()
-    if isinstance(values, list):
-        return values
-    if isinstance(values, tuple):
+        try:
+            return list(values.tolist())
+        except Exception:
+            return []
+    if isinstance(values, (list, tuple)):
         return list(values)
     return [values]
-
-
-def _coerce_int(value: Any, *, default: int) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return int(default)
-
 

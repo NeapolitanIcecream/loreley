@@ -150,8 +150,7 @@ def _render_sidebar() -> None:
         if not exp_id:
             continue
         name = (e.get("name") or "").strip()
-        config_hash = (e.get("config_hash") or "").strip()
-        label = name or f"{config_hash[:8]}" if config_hash else str(exp_id)
+        label = name or str(exp_id)[:8]
         exp_items.append((label, str(exp_id)))
 
     if not exp_items:

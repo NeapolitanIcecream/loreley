@@ -13,7 +13,7 @@ High-level manager that runs the MAP-Elites pipeline on git commits and maintain
 
 - **`MapElitesManager`**: orchestrates preprocessing, chunking, embedding, dimensionality reduction, archive updates, and snapshot persistence.
   - Configured via `Settings` map-elites options: preprocessing and repository file filtering, repo-state code embeddings (file cache), dimensionality reduction (PCA with whitening), feature normalisation/truncation (`MAPELITES_FEATURE_TRUNCATION_K`, `MAPELITES_FEATURE_NORMALIZATION_WARMUP_SAMPLES`, `MAPELITES_FEATURE_CLIP`), archive grid, fitness metric, and default island identifiers.
-  - Accepts an optional `experiment_id` at construction time; when provided, all persisted `MapElitesState` rows are scoped by `(experiment_id, island_id)`, allowing multiple experiments to maintain independent archives even when they share island identifiers. When omitted, archive state is kept purely in-memory and snapshots are not written.
+  - Requires `experiment_id` at construction time; all persisted MAP-Elites state is scoped by `(experiment_id, island_id)`, allowing multiple experiments to maintain independent archives even when they share island identifiers.
   - `ingest(commit_hash, ...)` runs the full pipeline for a commit in **repo-state** embedding mode:
     - enumerates eligible code files at `commit_hash` using pinned ignore rules from `Settings.mapelites_repo_state_ignore_text` plus basic filtering,
     - reuses a file-level embedding cache keyed by git blob SHA,
@@ -22,7 +22,7 @@ High-level manager that runs the MAP-Elites pipeline on git commits and maintain
     - reduces it to the behaviour space (PCA), resolves fitness, and updates the island's `GridArchive`.
   - Tracks per-island PCA history and projection so that new embeddings are consistent with previous ones, logging detailed progress and warnings with `loguru`.
   - Behaviour descriptors are clipped to `[-k, k]` (k from `MAPELITES_FEATURE_TRUNCATION_K`), linearly mapped into `[0, 1]^d`, and archives are constructed with fixed `[0, 1]` bounds per dimension to avoid manual per-dimension tuning and boundary crowding.
-  - Delegates snapshot serialisation and persistence to `loreley.core.map_elites.snapshot`, which exposes pure helpers for encoding/decoding archive state plus pluggable storage backends (database or no-op).
+  - Delegates snapshot loading and incremental persistence to `loreley.core.map_elites.snapshot.DatabaseSnapshotStore`.
 
 ## Query helpers
 

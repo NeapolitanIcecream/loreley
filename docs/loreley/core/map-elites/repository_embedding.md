@@ -71,9 +71,8 @@ Note: The database-backed cache is experiment-scoped and requires an `experiment
 
 ## Repo-state aggregate cache (commit-level)
 
-When `MapElitesManager` is constructed with an `experiment_id` (the scheduler does this),
-repo-state embeddings persist a commit-level aggregate so future ingests can avoid
-re-enumerating the full tree.
+Repo-state embeddings persist a commit-level aggregate (scoped to `experiment_id`) so
+future ingests can avoid re-enumerating the full tree.
 
 Stored in:
 

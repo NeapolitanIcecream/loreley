@@ -12,8 +12,9 @@ ORM models and enums for tracking evolutionary jobs, commits, and associated met
 - **`Repository`** (`repositories` table): normalised view of a source code repository.
   - Stores a stable `slug` derived from either the canonical remote URL or local worktree path, the current `remote_url`, optional `root_path`, and an `extra` JSONB payload with additional metadata (canonical origin, remotes, etc.).
   - Owns a collection of `Experiment` rows and is treated as the top-level key when reasoning about experiments in a multi-repository deployment.
-- **`Experiment`** (`experiments` table): captures a single experiment configuration within a repository.
-  - References a `repository_id`, a stable `config_hash` derived from the canonical experiment root commit, an optional human-readable `name`, and a free-form `status`.
+- **`Experiment`** (`experiments` table): captures a single experiment scope within a repository.
+  - Primary key: `id` (UUID), provided explicitly via `EXPERIMENT_ID`.
+  - References a `repository_id`, an optional human-readable `name`, and a free-form `status`.
   - Relates to `EvolutionJob`, `CommitCard`, and `MapElitesState` so that jobs, commits, and archive state can all be grouped by experiment.
 - **`CommitCard`** (`commit_cards` table): stores a lightweight, size-bounded commit representation used for inspiration and UI.
   - Primary key: `id` (UUID).
@@ -32,10 +33,9 @@ ORM models and enums for tracking evolutionary jobs, commits, and associated met
 - **`MapElitesState`** (`map_elites_states` table): persists per-experiment, per-island snapshots of the MAP-Elites archive.
   - Uses a composite primary key `(experiment_id, island_id)` so that multiple experiments can maintain independent archives even when they share island identifiers.
   - Stores a JSONB `snapshot` payload containing **lightweight metadata** (feature bounds, PCA projection payload, schema version, and other knobs).
-  - For `schema_version >= 2`, the large `archive`/`history` payloads are stored incrementally in separate tables and
-    reconstructed on load by `loreley.core.map_elites.snapshot.DatabaseSnapshotBackend`.
-  - For legacy rows (`schema_version < 2`) that still embed `archive`/`history` lists, the loader performs **lazy migration**
-    into the incremental tables on first read and strips the large fields from `snapshot`.
+  - Archive cells and PCA history are stored incrementally in separate tables and reconstructed on load by
+    `loreley.core.map_elites.snapshot.DatabaseSnapshotStore`.
+  - Legacy snapshot payloads embedding `archive`/`history` are not supported; reset the database schema for upgrades.
 - **`MapElitesArchiveCell`** (`map_elites_archive_cells` table): one row per occupied MAP-Elites archive cell.
   - Primary key: `(experiment_id, island_id, cell_index)`.
   - Stores the cell's `commit_hash`, `objective`, behaviour `measures`, stored `solution` vector, and `timestamp`.

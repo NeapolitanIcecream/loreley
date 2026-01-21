@@ -8,14 +8,13 @@ the planning/coding/evaluation pipeline for jobs dispatched by the scheduler.
 Recommended usage with `uv`:
 
 ```bash
-uv run loreley worker --experiment-id <EXPERIMENT_UUID>
+uv run loreley worker
 ```
 
-If `WORKER_EXPERIMENT_ID` is set, you can omit `--experiment-id`.
+This command requires `EXPERIMENT_ID` to be set in the environment (or `.env`).
 
 ## Options
 
-- `--experiment-id`: attach this worker process to a single experiment UUID (overrides `WORKER_EXPERIMENT_ID`).
 - `--no-preflight`: skip preflight validation.
 - `--preflight-timeout-seconds`: network timeout used for DB/Redis connectivity checks.
 - `--log-level`: global option (pass before the subcommand) that overrides `LOG_LEVEL` for this invocation.

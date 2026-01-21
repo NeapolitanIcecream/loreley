@@ -45,11 +45,8 @@ def test_manager_lazy_loads_persisted_snapshot_for_stats_and_records(settings: S
                 return None
             return dict(self._payload)
 
-        def save(self, island_id: str, payload: object) -> None:
-            return None
-
     manager = MapElitesManager(settings=settings, repo_root=Path("."), experiment_id="00000000-0000-0000-0000-000000000000")
-    manager._snapshot_backend = DummySnapshotBackend(snapshot)  # type: ignore[attr-defined]
+    manager._snapshot_store = DummySnapshotBackend(snapshot)  # type: ignore[attr-defined]
 
     stats = manager.describe_island("main")
     assert stats["cells"] == 16
@@ -92,15 +89,12 @@ def test_manager_rejects_snapshot_dimensionality_when_settings_mismatch(settings
                 return None
             return dict(self._payload)
 
-        def save(self, island_id: str, payload: object) -> None:
-            return None
-
     manager = MapElitesManager(
         settings=settings,
         repo_root=Path("."),
         experiment_id="00000000-0000-0000-0000-000000000000",
     )
-    manager._snapshot_backend = DummySnapshotBackend(snapshot)  # type: ignore[attr-defined]
+    manager._snapshot_store = DummySnapshotBackend(snapshot)  # type: ignore[attr-defined]
 
     with pytest.raises(ValueError, match="Snapshot dimensionality mismatch"):
         _ = manager.describe_island("main")
@@ -126,7 +120,19 @@ def test_ingest_short_circuits_when_no_repo_state_embedding(
         lambda *args, **kwargs: (None, stats),
     )
 
-    manager = MapElitesManager(settings=settings, repo_root=Path("."))
+    manager = MapElitesManager(
+        settings=settings,
+        repo_root=Path("."),
+        experiment_id="00000000-0000-0000-0000-000000000000",
+    )
+    class NullSnapshotStore:
+        def load(self, island_id: str) -> None:
+            return None
+
+        def apply_update(self, island_id: str, *, update: object) -> None:
+            return None
+
+    manager._snapshot_store = NullSnapshotStore()  # type: ignore[attr-defined]
     result = manager.ingest(
         commit_hash="abc",
     )
@@ -186,7 +192,19 @@ def test_ingest_builds_record_with_stubbed_dependencies(
         lambda **kwargs: (final_embedding, (entry,), None),
     )
 
-    manager = MapElitesManager(settings=settings, repo_root=Path("."))
+    manager = MapElitesManager(
+        settings=settings,
+        repo_root=Path("."),
+        experiment_id="00000000-0000-0000-0000-000000000000",
+    )
+    class NullSnapshotStore:
+        def load(self, island_id: str) -> None:
+            return None
+
+        def apply_update(self, island_id: str, *, update: object) -> None:
+            return None
+
+    manager._snapshot_store = NullSnapshotStore()  # type: ignore[attr-defined]
     monkeypatch.setattr(manager, "_persist_island_state", lambda *args, **kwargs: None)
 
     captured: dict[str, object] = {}

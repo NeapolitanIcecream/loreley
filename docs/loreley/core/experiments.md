@@ -24,18 +24,10 @@ Helpers for deriving canonical repository and experiment context from the curren
 
 Loreley assumes **runtime behaviour settings are provided via environment variables** and remain stable for the lifetime of a database. The database does not persist a settings snapshot.
 
-- **Identity anchor**: `MAPELITES_EXPERIMENT_ROOT_COMMIT` (resolved to a canonical full hash).
-- **`Experiment.config_hash`**: derived from the canonical root commit only (stable across unrelated env tweaks).
+- **Identity anchor**: `EXPERIMENT_ID` (explicit UUID provided via environment variables).
+- **Operational anchor**: `MAPELITES_EXPERIMENT_ROOT_COMMIT` (resolved to a canonical full hash) used for repo-state bootstrap and pinned ignore rules.
 
-## Experiment derivation
-
-- **`derive_experiment(settings, repository, *, repo)`**: returns or creates an `Experiment` row for a given repository and settings.  
-  - Resolves the configured root commit to a canonical full hash and computes `config_hash` from that value.  
-  - When found, returns the existing row unchanged.  
-  - Otherwise creates a new `Experiment` with:
-    - `name` derived from `repository.slug` plus the first 8 characters of the config hash,  
-    - `status="active"`.  
-  - Logs both to the console and to the structured logger when creating a new experiment.
+## Experiment resolution
 
 - **`get_or_create_experiment(*, settings=None, repo_root=None)`**: convenience helper that resolves the `Repository` / `Experiment` pair and returns settings for the scheduler process.  
   - Resolves settings via `get_settings()` when not provided explicitly.  
@@ -43,7 +35,7 @@ Loreley assumes **runtime behaviour settings are provided via environment variab
   - Validates that the chosen root is a git repository, logging and raising `ExperimentError` when it is not.  
   - Reuses the discovered `git.Repo` instance when calling `canonicalise_repository()` to avoid redundant discovery work.  
   - Pins repository-root ignore rules for repo-state embeddings by reading `.gitignore` + `.loreleyignore` from the root commit and storing the combined ignore text + hash in `Settings` for the scheduler process lifetime.  
-  - Calls `derive_experiment()` to obtain the current experiment and logs the selected `(repository.slug, experiment.id, experiment.config_hash)` pair.  
+  - Loads or creates the `Experiment` row using `EXPERIMENT_ID` as the primary key. If an existing row points at a different repository, the function fails fast.  
   - Returns `(Repository, Experiment, Settings)` so callers can pass the settings downstream consistently.
 
 ## Logging and error handling

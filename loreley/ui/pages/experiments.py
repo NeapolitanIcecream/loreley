@@ -49,7 +49,7 @@ def render() -> None:
         picked_id = picked.get("id")
         if picked_id:
             st.session_state[EXPERIMENT_ID_KEY] = str(picked_id)
-            st.session_state[EXPERIMENT_LABEL_KEY] = str(picked.get("name") or picked.get("config_hash") or picked_id)
+            st.session_state[EXPERIMENT_LABEL_KEY] = str(picked.get("name") or picked_id)
 
     st.divider()
 

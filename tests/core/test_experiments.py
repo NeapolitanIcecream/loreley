@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from uuid import UUID
+
 from loreley.core.experiments import (
-    _hash_experiment_config,
     _build_slug_from_source,
+    _build_default_experiment_name,
     _normalise_remote_url,
 )
 
@@ -12,14 +14,14 @@ def test_build_slug_from_source_basic() -> None:
     assert slug == "github.com/owner/repo"
 
 
-def test_experiment_config_hash_depends_only_on_root_commit() -> None:
-    hash_1 = _hash_experiment_config(root_commit="a" * 40)
-    hash_2 = _hash_experiment_config(root_commit="b" * 40)
-    assert hash_1 != hash_2
-
-    # Same input => stable hash.
-    hash_1_again = _hash_experiment_config(root_commit="a" * 40)
-    assert hash_1_again == hash_1
+def test_default_experiment_name_uses_repository_slug_and_id_prefix() -> None:
+    experiment_id = UUID("00000000-0000-0000-0000-000000000000")
+    name = _build_default_experiment_name(
+        repository_slug="github.com/owner/repo",
+        experiment_id=experiment_id,
+    )
+    assert name.endswith("-00000000")
+    assert name.startswith("github.com/owner/repo")
 
 
 def test_normalise_remote_url_canonicalises_and_strips_credentials() -> None:

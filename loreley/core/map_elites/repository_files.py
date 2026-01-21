@@ -3,7 +3,7 @@
 This module provides a lightweight way to enumerate *eligible* files for a given
 git commit hash while applying basic filtering:
 
-- Respect pinned repository-root ignore rules provided by the experiment snapshot
+- Respect pinned repository-root ignore rules provided via `Settings`
   (`Settings.mapelites_repo_state_ignore_text`) using gitignore-compatible matching
   via `pathspec.gitignore.GitIgnoreSpec`.
 - Respect MAP-Elites preprocessing filters (allowed extensions/filenames, excluded globs).
@@ -63,8 +63,8 @@ def build_pinned_ignore_spec(ignore_text: str | None) -> GitIgnoreSpec | None:
     """Compile pinned root ignore rules into a GitIgnoreSpec.
 
     The input is the concatenation of repository-root `.gitignore` and `.loreleyignore`
-    text pinned in the experiment snapshot. Matching is root-only (no nested ignore
-    files and no global excludes).
+    text pinned at scheduler startup. Matching is root-only (no nested ignore files
+    and no global excludes).
     """
     raw = str(ignore_text or "")
     if not raw.strip():

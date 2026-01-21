@@ -117,7 +117,7 @@ class EvolutionWorker:
         if self.attached_experiment_id is None:
             raise EvolutionWorkerError(
                 "EvolutionWorker must be attached to a single experiment id. "
-                "Set WORKER_EXPERIMENT_ID (or pass attached_experiment_id) and "
+                "Set EXPERIMENT_ID (or pass attached_experiment_id) and "
                 "route jobs via per-experiment queues.",
             )
         self.repository = repository or WorkerRepository(self.settings)

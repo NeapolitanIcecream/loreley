@@ -2,11 +2,11 @@
 
 Date: 2026-01-05
 
-Status: Superseded by ADR 0024.
+Status: Superseded by ADR 0025.
 
 Decision
 
 Loreley uses an env-only settings model and does not persist an experiment settings snapshot in the database.
-See ADR 0024 for the current configuration model.
+See ADR 0025 for the current configuration model.
 
 

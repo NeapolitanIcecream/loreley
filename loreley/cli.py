@@ -198,11 +198,6 @@ def scheduler(
 @app.command()
 def worker(
     ctx: typer.Context,
-    experiment_id: str | None = typer.Option(
-        None,
-        "--experiment-id",
-        help="Attach this worker process to a single experiment UUID (overrides WORKER_EXPERIMENT_ID).",
-    ),
     no_preflight: bool = typer.Option(False, "--no-preflight", help="Skip preflight validation."),
     preflight_timeout_seconds: float = typer.Option(
         2.0,
@@ -219,7 +214,6 @@ def worker(
         console=console,
         preflight=not bool(no_preflight),
         preflight_timeout_seconds=float(preflight_timeout_seconds),
-        experiment_id=experiment_id,
     )
     raise typer.Exit(code=int(code))
 

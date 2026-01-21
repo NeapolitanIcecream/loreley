@@ -2,7 +2,7 @@
 
 Date: 2026-01-09
 
-Status: Superseded by ADR 0024.
+Status: Superseded by ADR 0025.
 
 Decision
 

@@ -3,17 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-import uuid
-
 import numpy as np
 
 from loreley.core.map_elites.dimension_reduction import PCAProjection, PcaHistoryEntry
 from loreley.core.map_elites.snapshot import (
-    DatabaseSnapshotBackend,
-    NullSnapshotBackend,
     apply_snapshot,
-    build_snapshot,
-    build_snapshot_backend,
+    serialize_projection,
 )
 
 
@@ -102,7 +97,29 @@ def test_build_and_apply_snapshot_round_trip_basic() -> None:
         projection=_make_projection(),
     )
 
-    snapshot = build_snapshot("main", original_state)
+    snapshot = {
+        "island_id": "main",
+        "lower_bounds": original_state.lower_bounds.tolist(),
+        "upper_bounds": original_state.upper_bounds.tolist(),
+        "history": [
+            {
+                "commit_hash": entry.commit_hash,
+                "vector": [float(v) for v in entry.vector],
+                "embedding_model": str(entry.embedding_model),
+            }
+        ],
+        "projection": serialize_projection(original_state.projection),
+        "archive": [
+            {
+                "index": 0,
+                "objective": 1.23,
+                "measures": [0.1, 0.2],
+                "solution": [0.1, 0.2],
+                "commit_hash": "c1",
+                "timestamp": 42.0,
+            }
+        ],
+    }
 
     # Apply snapshot onto a fresh, empty state.
     restored_state = DummyState(archive=DummyArchive())
@@ -128,15 +145,5 @@ def test_build_and_apply_snapshot_round_trip_basic() -> None:
     assert restored_state.commit_to_index == {"c1": 0}
     assert commit_to_island == {"c1": "main"}
     assert len(restored_state.archive.add_calls) == 1
-
-
-def test_build_snapshot_backend_picks_null_or_db_backend() -> None:
-    null_backend = build_snapshot_backend(None)
-    assert isinstance(null_backend, NullSnapshotBackend)
-
-    some_id = uuid.uuid4()
-    db_backend = build_snapshot_backend(some_id)
-    assert isinstance(db_backend, DatabaseSnapshotBackend)
-    assert db_backend.experiment_id == some_id
 
 

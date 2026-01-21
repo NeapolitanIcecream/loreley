@@ -350,6 +350,14 @@ def preflight_scheduler(settings: Settings, *, timeout_seconds: float = 2.0) -> 
     results.append(check_git_repo(Path(candidate).expanduser().resolve(), label="scheduler_repo_root"))
     results.append(
         check_non_empty(
+            str(settings.experiment_id) if settings.experiment_id else None,
+            label="experiment_id",
+            env_name="EXPERIMENT_ID",
+            help_text="required to scope the scheduler to a single experiment",
+        )
+    )
+    results.append(
+        check_non_empty(
             settings.mapelites_experiment_root_commit,
             label="mapelites_experiment_root_commit",
             env_name="MAPELITES_EXPERIMENT_ROOT_COMMIT",
@@ -390,9 +398,9 @@ def preflight_worker(settings: Settings, *, timeout_seconds: float = 2.0) -> lis
     )
     results.append(
         check_non_empty(
-            str(settings.worker_experiment_id) if settings.worker_experiment_id else None,
-            label="worker_experiment_id",
-            env_name="WORKER_EXPERIMENT_ID",
+            str(settings.experiment_id) if settings.experiment_id else None,
+            label="experiment_id",
+            env_name="EXPERIMENT_ID",
             help_text="required to attach this worker process to a single experiment",
         )
     )

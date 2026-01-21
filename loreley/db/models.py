@@ -90,9 +90,7 @@ class Experiment(TimestampMixin, Base):
 
     __tablename__ = "experiments"
     __table_args__ = (
-        UniqueConstraint("repository_id", "config_hash", name="uq_experiments_repo_config"),
         Index("ix_experiments_repository_id", "repository_id"),
-        Index("ix_experiments_config_hash", "config_hash"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -105,7 +103,6 @@ class Experiment(TimestampMixin, Base):
         ForeignKey("repositories.id", ondelete="CASCADE"),
         nullable=False,
     )
-    config_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     name: Mapped[str | None] = mapped_column(String(255))
     status: Mapped[str | None] = mapped_column(String(32))
 
@@ -126,7 +123,7 @@ class Experiment(TimestampMixin, Base):
     )
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
-        return f"<Experiment id={self.id} repository_id={self.repository_id} hash={self.config_hash[:8]!r}>"
+        return f"<Experiment id={self.id} repository_id={self.repository_id}>"
 
 
 class CommitCard(TimestampMixin, Base):

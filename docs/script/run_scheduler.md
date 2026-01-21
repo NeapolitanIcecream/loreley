@@ -14,6 +14,8 @@ uv run loreley scheduler --once       # single tick (cron / smoke tests)
 uv run loreley scheduler --yes --once # non-interactive run
 ```
 
+This command requires `EXPERIMENT_ID` to be set in the environment (or `.env`).
+
 On first start the scheduler performs a repo-state root scan at `MAPELITES_EXPERIMENT_ROOT_COMMIT`
 and requires operator approval. In non-interactive environments, pass `--yes` or set
 `SCHEDULER_STARTUP_APPROVE=true`.

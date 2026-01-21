@@ -24,11 +24,10 @@ from .dimension_reduction import (
 from .preprocess import PreprocessedFile
 from .repository_state_embedding import RepoStateEmbeddingStats, embed_repository_state
 from .snapshot import (
-    SnapshotBackend,
+    DatabaseSnapshotStore,
     SnapshotCellUpsert,
     SnapshotUpdate,
     apply_snapshot,
-    build_snapshot_backend,
     to_list,
 )
 
@@ -121,7 +120,7 @@ class MapElitesManager:
         *,
         settings: Settings | None = None,
         repo_root: Path | None = None,
-        experiment_id: uuid.UUID | str | None = None,
+        experiment_id: uuid.UUID | str,
     ) -> None:
         self.settings = settings or get_settings()
         self.repo_root = Path(repo_root or Path.cwd()).resolve()
@@ -135,18 +134,13 @@ class MapElitesManager:
         self._archives: dict[str, IslandState] = {}
         self._commit_to_island: dict[str, str] = {}
         self._default_island = self.settings.mapelites_default_island_id or "default"
-        # When provided, this experiment_id is used to scope persisted snapshots
-        # in the map_elites_states table. If omitted, state persistence is disabled
-        # and archives are kept in-memory only.
-        exp_id: uuid.UUID | None = None
-        if experiment_id is not None:
-            if isinstance(experiment_id, uuid.UUID):
-                exp_id = experiment_id
-            else:
-                exp_id = uuid.UUID(str(experiment_id))
-        self._experiment_id: uuid.UUID | None = exp_id
-        # Backend that knows how to load and persist archive snapshots.
-        self._snapshot_backend: SnapshotBackend = build_snapshot_backend(self._experiment_id)
+        # Experiment id scopes all persisted MAP-Elites state and tables.
+        self._experiment_id: uuid.UUID = (
+            experiment_id
+            if isinstance(experiment_id, uuid.UUID)
+            else uuid.UUID(str(experiment_id))
+        )
+        self._snapshot_store = DatabaseSnapshotStore(experiment_id=self._experiment_id)
 
     @staticmethod
     def _infer_snapshot_target_dims(snapshot: Mapping[str, Any]) -> int | None:
@@ -524,7 +518,7 @@ class MapElitesManager:
         if state:
             return state
 
-        snapshot = self._snapshot_backend.load(island_id)
+        snapshot = self._snapshot_store.load(island_id)
         snapshot_dims = self._infer_snapshot_target_dims(snapshot) if snapshot else None
         if snapshot_dims and snapshot_dims != self._target_dims:
             raise ValueError(
@@ -693,11 +687,11 @@ class MapElitesManager:
     ) -> None:
         """Persist incremental snapshot updates for an island when enabled."""
 
-        if not state or self._experiment_id is None:
+        if not state:
             return
         if update is None:
             return
-        self._snapshot_backend.apply_update(island_id, state=state, update=update)
+        self._snapshot_store.apply_update(island_id, update=update)
 
     def _resolve_history_limit(self) -> int:
         """Return the bounded history window size used by the PCA reducer."""

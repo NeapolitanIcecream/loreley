@@ -4,11 +4,12 @@ from __future__ import annotations
 
 This module is responsible for:
   - Normalising a git repository into a stable Repository row.
-  - Deriving an Experiment from the current Settings configuration.
+  - Resolving a single Experiment scope for long-running processes.
 """
 
 import hashlib
 import re
+import uuid
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse, urlunparse
@@ -31,20 +32,12 @@ log = logger.bind(module="core.experiments")
 __all__ = [
     "ExperimentError",
     "canonicalise_repository",
-    "derive_experiment",
     "get_or_create_experiment",
 ]
 
 
 class ExperimentError(RuntimeError):
     """Raised when the repository/experiment context cannot be resolved."""
-
-def _hash_experiment_config(*, root_commit: str) -> str:
-    """Return a stable experiment hash for the current env-only settings model."""
-
-    seed = f"root_commit:{(root_commit or '').strip()}"
-    return hashlib.sha256(seed.encode("utf-8")).hexdigest()
-
 
 def _normalise_remote_url(raw: str) -> str:
     """Return a canonical remote URL without credentials.
@@ -258,60 +251,73 @@ def _load_root_ignore_text_from_commit(*, repo: Repo, commit_hash: str) -> str:
     return "\n".join(chunks).strip()
 
 
-def derive_experiment(settings: Settings, repository: Repository, *, repo: Repo) -> Experiment:
-    """Return or create an Experiment row for the given repository/settings."""
+def _coerce_experiment_id(settings: Settings) -> uuid.UUID:
+    value = getattr(settings, "experiment_id", None)
+    if value is None:
+        raise ExperimentError("EXPERIMENT_ID is required to start long-running processes.")
+    if isinstance(value, uuid.UUID):
+        return value
+    try:
+        return uuid.UUID(str(value))
+    except Exception as exc:
+        raise ExperimentError(f"EXPERIMENT_ID is not a valid UUID: {value!r}") from exc
 
-    root_ref = (settings.mapelites_experiment_root_commit or "").strip()
-    if not root_ref:
-        raise ExperimentError("MAPELITES_EXPERIMENT_ROOT_COMMIT is required to derive an experiment.")
-    canonical_root = _ensure_commit_available(repo=repo, commit_hash=root_ref)
-    if not canonical_root:
-        raise ExperimentError(f"Cannot resolve root commit {root_ref!r}.")
 
-    config_hash = _hash_experiment_config(root_commit=canonical_root)
+def _build_default_experiment_name(*, repository_slug: str, experiment_id: uuid.UUID) -> str:
+    slug = (repository_slug or "").strip()
+    suffix = str(experiment_id).split("-", 1)[0]
+    if not slug:
+        return suffix
+    name = f"{slug}-{suffix}"
+    if len(name) <= 255:
+        return name
+    trimmed = slug[: max(0, 255 - len(suffix) - 1)].rstrip("-")
+    return f"{trimmed}-{suffix}" if trimmed else suffix
 
+
+def _get_or_create_experiment_row(
+    *,
+    experiment_id: uuid.UUID,
+    repository: Repository,
+) -> Experiment:
     try:
         with session_scope() as session:
-            stmt = select(Experiment).where(
-                Experiment.repository_id == repository.id,
-                Experiment.config_hash == config_hash,
-            )
-            existing = session.execute(stmt).scalar_one_or_none()
-            if existing:
+            existing = session.get(Experiment, experiment_id)
+            if existing is not None:
+                if getattr(existing, "repository_id", None) != repository.id:
+                    raise ExperimentError(
+                        "EXPERIMENT_ID already exists for a different repository. "
+                        f"(experiment_id={experiment_id} expected_repository_id={repository.id} "
+                        f"actual_repository_id={existing.repository_id})"
+                    )
                 return existing
 
-            name = f"{repository.slug}-{config_hash[:8]}"
             experiment = Experiment(
+                id=experiment_id,
                 repository_id=repository.id,
-                config_hash=config_hash,
-                name=name,
+                name=_build_default_experiment_name(
+                    repository_slug=str(getattr(repository, "slug", "") or ""),
+                    experiment_id=experiment_id,
+                ),
                 status="active",
             )
             session.add(experiment)
             session.flush()
             console.log(
-                "[bold green]Created experiment[/] id={} repo={} hash={}".format(
+                "[bold green]Created experiment[/] id={} repo={}".format(
                     experiment.id,
                     repository.slug,
-                    config_hash[:8],
                 ),
             )
             log.info(
-                "Created experiment id={} repository_id={} hash={}",
+                "Created experiment id={} repository_id={}",
                 experiment.id,
                 experiment.repository_id,
-                config_hash,
             )
             return experiment
     except SQLAlchemyError as exc:  # pragma: no cover - DB failure handling
-        log.error(
-            "Failed to derive experiment for repository {}: {}",
-            repository.slug,
-            exc,
-        )
-        raise ExperimentError(
-            f"Failed to derive experiment for repository {repository.slug}: {exc}",
-        ) from exc
+        log.error("Failed to resolve experiment {}: {}", experiment_id, exc)
+        raise ExperimentError(f"Failed to resolve experiment {experiment_id}: {exc}") from exc
 
 
 def get_or_create_experiment(
@@ -327,6 +333,7 @@ def get_or_create_experiment(
     """
 
     settings = settings or get_settings()
+    experiment_id = _coerce_experiment_id(settings)
     root_candidate = repo_root or settings.scheduler_repo_root or settings.worker_repo_worktree
     root = Path(root_candidate).expanduser().resolve()
 
@@ -356,21 +363,18 @@ def get_or_create_experiment(
             "mapelites_repo_state_ignore_sha256": ignore_sha,
         }
     )
-
-    experiment = derive_experiment(settings, repository, repo=repo_obj)
+    experiment = _get_or_create_experiment_row(experiment_id=experiment_id, repository=repository)
 
     console.log(
-        "[bold cyan]Using experiment[/] id={} repo={} hash={}".format(
+        "[bold cyan]Using experiment[/] id={} repo={}".format(
             experiment.id,
             repository.slug,
-            experiment.config_hash[:8],
         ),
     )
     log.info(
-        "Using experiment id={} repository_slug={} hash={}",
+        "Using experiment id={} repository_slug={}",
         experiment.id,
         repository.slug,
-        experiment.config_hash,
     )
     return repository, experiment, settings
 

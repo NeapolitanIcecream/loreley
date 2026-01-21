@@ -25,13 +25,14 @@ Central orchestration loop that keeps the Loreley evolution pipeline moving by c
 
 The scheduler consumes the following `Settings` fields (all exposed as environment variables):
 
+- `EXPERIMENT_ID`: required UUID that scopes this scheduler process to a single experiment namespace in the database and task queues.
 - `SCHEDULER_REPO_ROOT`: optional path to a read-only clone of the evolved repository; defaults to `WORKER_REPO_WORKTREE`.
 - `SCHEDULER_POLL_INTERVAL_SECONDS`: delay between scheduler ticks (default: `30` seconds).
 - `SCHEDULER_MAX_UNFINISHED_JOBS`: hard cap on the number of jobs that are not yet finished (`pending`, `queued`, `running`).
 - `SCHEDULER_SCHEDULE_BATCH_SIZE`: maximum number of new jobs sampled from MAP-Elites per tick (bounded by the unused capacity).
 - `SCHEDULER_DISPATCH_BATCH_SIZE`: number of pending jobs promoted to `QUEUED` and sent to Dramatiq per tick.
 - `SCHEDULER_INGEST_BATCH_SIZE`: number of newly succeeded jobs ingested into MAP-Elites per tick.
-- `MAPELITES_EXPERIMENT_ROOT_COMMIT`: required git commit identifier used as the logical root for the current experiment. The scheduler resolves it to a canonical full hash, uses it as the experiment identity anchor, pins root ignore rules for repo-state embeddings by reading `.gitignore` + `.loreleyignore` at that root commit, bootstraps the repo-state aggregate, and runs a one-off baseline evaluation to populate `Metric` rows, treating it as an experiment-wide baseline rather than inserting it into any MAP-Elites archive. During cold-start, when the archive is empty and no jobs exist yet, the scheduler first generates up to `MAPELITES_SEED_POPULATION_SIZE` seed evolution jobs from this root commit to form the initial population before switching to regular MAP-Elites sampling.
+- `MAPELITES_EXPERIMENT_ROOT_COMMIT`: required git commit identifier used as the logical root for repo-state bootstrap and incremental-only ingestion. The scheduler resolves it to a canonical full hash, pins root ignore rules for repo-state embeddings by reading `.gitignore` + `.loreleyignore` at that root commit, bootstraps the repo-state aggregate, and runs a one-off baseline evaluation to populate `Metric` rows, treating it as an experiment-wide baseline rather than inserting it into any MAP-Elites archive. During cold-start, when the archive is empty and no jobs exist yet, the scheduler first generates up to `MAPELITES_SEED_POPULATION_SIZE` seed evolution jobs from this root commit to form the initial population before switching to regular MAP-Elites sampling.
 
 Startup approval: before entering the main loop, the scheduler prints the observed eligible repo-state file count (and filter knobs) at `MAPELITES_EXPERIMENT_ROOT_COMMIT` and asks the operator to confirm with a y/n question. In non-interactive environments, pass `--yes` or set `SCHEDULER_STARTUP_APPROVE=true`; otherwise the scheduler refuses to start (fail fast).
 

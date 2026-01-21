@@ -200,7 +200,7 @@ def test_persist_success_updates_job_and_records_metadata(
             self.ingestion_reason = None
 
     job_row = DummyJob()
-    experiment_row = Experiment(id=experiment_id, repository_id=repository_id, config_hash="hash")  # type: ignore[arg-type]
+    experiment_row = Experiment(id=experiment_id, repository_id=repository_id)
     added: list[Any] = []
 
     class DummySession:

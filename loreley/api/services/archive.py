@@ -83,43 +83,34 @@ def snapshot_meta(
         )
         row = session.execute(stmt).scalar_one_or_none()
         snapshot = dict(row.snapshot or {}) if row and row.snapshot else {}
-
-        schema_version = int(snapshot.get("schema_version") or 1)
-
-        # Prefer incremental tables (schema_version>=2). For legacy snapshots that
-        # have not yet been migrated, fall back to counting embedded JSON fields.
-        legacy_archive = snapshot.get("archive")
-        legacy_history = snapshot.get("history")
-
-        if schema_version < 2 and isinstance(legacy_archive, list):
-            entry_count = len(legacy_archive)
-        else:
-            entry_count = int(
-                session.execute(
-                    select(func.count())
-                    .select_from(MapElitesArchiveCell)
-                    .where(
-                        MapElitesArchiveCell.experiment_id == experiment_id,
-                        MapElitesArchiveCell.island_id == island_id,
-                    )
-                ).scalar_one()
-                or 0
+        if "archive" in snapshot or "history" in snapshot:
+            raise ValueError(
+                "Legacy MAP-Elites snapshot detected; reset the database schema (dev). "
+                f"(experiment_id={experiment_id} island_id={island_id})"
             )
+        entry_count = int(
+            session.execute(
+                select(func.count())
+                .select_from(MapElitesArchiveCell)
+                .where(
+                    MapElitesArchiveCell.experiment_id == experiment_id,
+                    MapElitesArchiveCell.island_id == island_id,
+                )
+            ).scalar_one()
+            or 0
+        )
 
-        if schema_version < 2 and isinstance(legacy_history, list):
-            history_length = len(legacy_history)
-        else:
-            history_length = int(
-                session.execute(
-                    select(func.count())
-                    .select_from(MapElitesPcaHistory)
-                    .where(
-                        MapElitesPcaHistory.experiment_id == experiment_id,
-                        MapElitesPcaHistory.island_id == island_id,
-                    )
-                ).scalar_one()
-                or 0
-            )
+        history_length = int(
+            session.execute(
+                select(func.count())
+                .select_from(MapElitesPcaHistory)
+                .where(
+                    MapElitesPcaHistory.experiment_id == experiment_id,
+                    MapElitesPcaHistory.island_id == island_id,
+                )
+            ).scalar_one()
+            or 0
+        )
 
     lower = snapshot.get("lower_bounds") or [0.0] * dims
     upper = snapshot.get("upper_bounds") or [1.0] * dims
