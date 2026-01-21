@@ -27,6 +27,7 @@ def settings(monkeypatch: pytest.MonkeyPatch) -> Generator[Settings, None, None]
     """
 
     monkeypatch.setenv("MAPELITES_CODE_EMBEDDING_DIMENSIONS", "8")
-    yield Settings(mapelites_code_embedding_dimensions=8, _env_file=None)
+    monkeypatch.setenv("EXPERIMENT_ID", "test")
+    yield Settings(_env_file=None)
 
 

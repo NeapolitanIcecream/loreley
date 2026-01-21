@@ -28,7 +28,11 @@ def resolve_logs_root(settings: Settings) -> Path:
         base_dir = Path(settings.logs_base_dir).expanduser()
     else:
         base_dir = Path.cwd()
-    return (base_dir / "logs").resolve()
+    from loreley.naming import safe_namespace_from_settings
+
+    exp_ns = safe_namespace_from_settings(settings)
+    root = (base_dir / "logs" / exp_ns) if exp_ns else (base_dir / "logs")
+    return root.resolve()
 
 
 def sanitize_dsn(raw_dsn: str) -> str:

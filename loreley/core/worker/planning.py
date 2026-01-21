@@ -301,6 +301,7 @@ class PlanningAgent(TruncationMixin):
         self._debug_dir = resolve_worker_debug_dir(
             logs_base_dir=self.settings.logs_base_dir,
             kind="planning",
+            experiment_id=self.settings.experiment_id,
         )
         if backend is not None:
             self.backend: AgentBackend = backend

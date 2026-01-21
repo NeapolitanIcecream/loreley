@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import uuid
-
 import dramatiq
 from loguru import logger
 from rich.console import Console
@@ -9,7 +7,7 @@ from rich.console import Console
 from loreley.config import Settings
 from loreley.core.worker.evolution import EvolutionWorker, EvolutionWorkerResult
 from loreley.core.worker.job_store import EvolutionWorkerError, JobLockConflict, JobPreconditionError
-from loreley.tasks.queues import experiment_queue_name
+from loreley.naming import resolve_experiment_uuid, tasks_queue_name
 
 # Ensure the broker is configured before registering any actors.
 from loreley.tasks.broker import broker  # noqa: F401
@@ -23,12 +21,6 @@ __all__ = [
 ]
 
 
-def _coerce_uuid(value: uuid.UUID | str) -> uuid.UUID:
-    if isinstance(value, uuid.UUID):
-        return value
-    return uuid.UUID(str(value))
-
-
 def _time_limit_ms(settings: Settings) -> int:
     return max(int(settings.tasks_worker_time_limit_seconds * 1000), 0)
 
@@ -36,7 +28,6 @@ def _time_limit_ms(settings: Settings) -> int:
 def build_evolution_job_sender_actor(
     *,
     settings: Settings,
-    experiment_id: uuid.UUID | str,
 ) -> dramatiq.Actor:
     """Build a scheduler-side actor used only for enqueueing messages.
 
@@ -44,8 +35,7 @@ def build_evolution_job_sender_actor(
     `.send(...)` can produce correctly-formed Dramatiq messages.
     """
 
-    exp_id = _coerce_uuid(experiment_id)
-    queue = experiment_queue_name(base_queue=settings.tasks_queue_name, experiment_id=exp_id)
+    queue = tasks_queue_name(getattr(settings, "experiment_id", None))
     time_limit = _time_limit_ms(settings)
 
     @dramatiq.actor(
@@ -65,7 +55,6 @@ def build_evolution_job_sender_actor(
 def build_evolution_job_worker_actor(
     *,
     settings: Settings,
-    experiment_id: uuid.UUID | str,
 ) -> dramatiq.Actor:
     """Build an experiment-attached worker actor.
 
@@ -73,8 +62,8 @@ def build_evolution_job_worker_actor(
     single `EvolutionWorker` instance for the full process lifetime.
     """
 
-    exp_id = _coerce_uuid(experiment_id)
-    queue = experiment_queue_name(base_queue=settings.tasks_queue_name, experiment_id=exp_id)
+    exp_id = resolve_experiment_uuid(getattr(settings, "experiment_id", None))
+    queue = tasks_queue_name(getattr(settings, "experiment_id", None))
     time_limit = _time_limit_ms(settings)
 
     evolution_worker = EvolutionWorker(settings=settings, attached_experiment_id=exp_id)

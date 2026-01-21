@@ -24,7 +24,7 @@ Helpers for deriving canonical repository and experiment context from the curren
 
 Loreley assumes **runtime behaviour settings are provided via environment variables** and remain stable for the lifetime of a database. The database does not persist a settings snapshot.
 
-- **Identity anchor**: `EXPERIMENT_ID` (explicit UUID provided via environment variables).
+- **Identity anchor**: `EXPERIMENT_ID` (explicit experiment id provided via environment variables). It can be a UUID or a short slug; slugs are mapped to stable UUIDs (uuid5) for DB keys.
 - **Operational anchor**: `MAPELITES_EXPERIMENT_ROOT_COMMIT` (resolved to a canonical full hash) used for repo-state bootstrap and pinned ignore rules.
 
 ## Experiment resolution

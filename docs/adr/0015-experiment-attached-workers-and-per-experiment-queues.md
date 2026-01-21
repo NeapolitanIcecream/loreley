@@ -6,6 +6,6 @@ Status: Superseded by ADR 0025.
 
 Decision
 
-Loreley attaches long-running processes to an explicit `EXPERIMENT_ID` and routes jobs via per-experiment queues derived from `TASKS_QUEUE_NAME`: `"{TASKS_QUEUE_NAME}.{experiment_id.hex}"`.
+Loreley attaches long-running processes to an explicit `EXPERIMENT_ID` and routes jobs via a per-experiment queue derived from `EXPERIMENT_ID` (not separately configurable).
 See ADR 0025 for the current attachment model and constraints.
 

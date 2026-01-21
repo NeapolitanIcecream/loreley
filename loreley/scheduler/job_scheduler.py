@@ -45,7 +45,6 @@ class JobScheduler:
         # Build a sender-only actor that targets the experiment-scoped queue.
         self._sender_actor = build_evolution_job_sender_actor(
             settings=self.settings,
-            experiment_id=self.experiment_id,
         )
 
     # Measuring -------------------------------------------------------------

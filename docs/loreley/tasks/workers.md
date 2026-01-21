@@ -4,11 +4,14 @@ Dramatiq task actor builders that drive the Loreley evolution worker.
 
 ## Evolution worker
 
-- **`build_evolution_job_worker_actor(settings: Settings, experiment_id: UUID | str) -> dramatiq.Actor`**  
+- **`build_evolution_job_worker_actor(settings: Settings) -> dramatiq.Actor`**  
   Builds an **experiment-attached** Dramatiq actor that runs a single evolution job via
   `loreley.core.worker.evolution.EvolutionWorker`. The returned actor is bound to the
-  per-experiment queue derived from `TASKS_QUEUE_NAME` (prefix) and the experiment UUID hex:
-  `"{TASKS_QUEUE_NAME}.{experiment_id.hex}"`.
+  per-experiment queue derived from `EXPERIMENT_ID`:
+  `"loreley.evolution.{experiment_namespace}"`.
+
+  `EXPERIMENT_ID` can be a UUID or a short slug; slugs are mapped to stable UUIDs (uuid5) and
+  yield a stable `experiment_namespace` for routing and filesystem naming.
 
   The actor reuses a single `EvolutionWorker` instance for the lifetime of the worker process
   (no per-job config reloads / no dynamic rebuilding). On execution, it:
@@ -23,7 +26,7 @@ Dramatiq task actor builders that drive the Loreley evolution worker.
     - Any other unexpected exception: logs with a full stack trace and re-raises as a defensive fallback.
   - Logs a “job complete” event including the resulting candidate commit hash on success.
 
-- **`build_evolution_job_sender_actor(settings: Settings, experiment_id: UUID | str) -> dramatiq.Actor`**  
+- **`build_evolution_job_sender_actor(settings: Settings) -> dramatiq.Actor`**  
   Builds a scheduler-side sender stub used only for enqueueing messages via `.send(...)`. The
   callable body is not expected to run in the scheduler process.
 

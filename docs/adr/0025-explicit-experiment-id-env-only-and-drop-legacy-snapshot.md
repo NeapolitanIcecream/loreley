@@ -16,7 +16,7 @@ The simplest and most legible model is:
 ## Decision
 
 - **Experiment identity is explicit and env-only**:
-  - `EXPERIMENT_ID` (UUID) is required for the scheduler and worker processes.
+  - `EXPERIMENT_ID` (UUID or slug) is required for the scheduler and worker processes.
   - Experiment identity is not derived from repository commits or other settings.
 
 - **Remove derived experiment configuration identity**:

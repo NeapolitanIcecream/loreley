@@ -21,16 +21,19 @@ This command requires `EXPERIMENT_ID` to be set in the environment (or `.env`).
 
 ## Queue naming
 
-The worker consumes jobs from an experiment-scoped queue derived from the configured queue
-prefix (`TASKS_QUEUE_NAME`) and the experiment UUID hex:
+The worker consumes jobs from a single experiment-scoped queue derived from `EXPERIMENT_ID`.
+The queue name is not configurable and is derived as:
 
-`"{TASKS_QUEUE_NAME}.{experiment_id.hex}"`
+`"loreley.evolution.{experiment_namespace}"`
+
+`EXPERIMENT_ID` can be a UUID or a short slug. Slugs are mapped to a stable UUID (uuid5)
+and the derived `experiment_namespace` is stable across processes.
 
 ## Logs
 
 Logs are written to:
 
-- `logs/worker/worker-YYYYMMDD-HHMMSS.log`
+- `logs/{experiment_namespace}/worker/worker-YYYYMMDD-HHMMSS.log`
 
 ## Exit codes
 

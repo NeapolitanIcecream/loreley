@@ -50,6 +50,12 @@ APP_NAME: str = "loreley-circle-packing"
 APP_ENV: str = "development"
 LOG_LEVEL: str = "INFO"
 
+# --- Experiment attachment ---------------------------------------------------
+#
+# All naming isolation in Loreley (Redis namespace, Dramatiq queue name, log paths,
+# and remote job branch prefix) is derived from this single identifier.
+EXPERIMENT_ID: str = "circle-packing"
+
 # --- PostgreSQL database DSN -----------------------------------------------
 # Loreley requires PostgreSQL because the ORM models use Postgres-specific
 # types (JSONB, ARRAY, UUID). Adjust credentials/host/db name as needed.
@@ -73,10 +79,8 @@ DATABASE_URL: str = (
 
 # Single Redis URL is usually the simplest way to configure the broker.
 TASKS_REDIS_URL: str = "redis://localhost:6379/0"
-TASKS_REDIS_NAMESPACE: str = "loreley"
-
-# Queue name used by the Dramatiq actor in loreley.tasks.workers.
-TASKS_QUEUE_NAME: str = "loreley.evolution.circle_packing"
+# Loreley derives the Redis broker namespace and the Dramatiq queue name from
+# EXPERIMENT_ID so multiple experiments can share a Redis instance safely.
 
 # --- Worker repository configuration ----------------------------------------
 # The worker will clone this git remote into WORKER_REPO_WORKTREE and push
@@ -225,6 +229,7 @@ def _apply_base_env(*, include_worker_repo: bool = False) -> None:
     _set_env_if_unset("APP_NAME", APP_NAME)
     _set_env_if_unset("APP_ENV", APP_ENV)
     _set_env_if_unset("LOG_LEVEL", LOG_LEVEL)
+    _set_env_if_unset("EXPERIMENT_ID", EXPERIMENT_ID)
 
     # Database (PostgreSQL).
     _set_env_if_unset("DATABASE_URL", DATABASE_URL)
@@ -241,8 +246,6 @@ def _apply_base_env(*, include_worker_repo: bool = False) -> None:
 
     # Redis / Dramatiq broker.
     _set_env_if_unset("TASKS_REDIS_URL", TASKS_REDIS_URL)
-    _set_env_if_unset("TASKS_REDIS_NAMESPACE", TASKS_REDIS_NAMESPACE)
-    _set_env_if_unset("TASKS_QUEUE_NAME", TASKS_QUEUE_NAME)
 
     # Worker repository.
     _set_env_if_unset("WORKER_REPO_REMOTE_URL", WORKER_REPO_REMOTE_URL)
@@ -396,6 +399,26 @@ def _print_environment_summary() -> None:
     """Print a short summary of the effective runtime configuration."""
 
     worker_worktree = os.getenv("WORKER_REPO_WORKTREE", "<unset>")
+    exp_raw = os.getenv("EXPERIMENT_ID", "").strip()
+    exp_display = exp_raw or "<unset>"
+    exp_ns_display = "<unset>"
+    redis_ns_display = "<unset>"
+    queue_display = "<unset>"
+    branch_prefix_display = "<unset>"
+
+    if exp_raw:
+        from loreley.naming import (
+            safe_namespace_or_none,
+            tasks_queue_name,
+            tasks_redis_namespace,
+            worker_job_branch_prefix,
+        )
+
+        exp_ns = safe_namespace_or_none(exp_raw)
+        exp_ns_display = exp_ns or "<unset>"
+        redis_ns_display = tasks_redis_namespace(exp_raw)
+        queue_display = tasks_queue_name(exp_raw)
+        branch_prefix_display = worker_job_branch_prefix(exp_raw)
 
     console.log(
         "[bold cyan]Circle-packing evolution launcher[/] "
@@ -405,16 +428,26 @@ def _print_environment_summary() -> None:
         "[green]DB[/] DATABASE_URL={}".format(os.getenv("DATABASE_URL", "<unset>")),
     )
     console.log(
-        "[green]Redis[/] TASKS_REDIS_URL={} namespace={}".format(
-            os.getenv("TASKS_REDIS_URL", "<unset>"),
-            os.getenv("TASKS_REDIS_NAMESPACE", "<unset>"),
+        "[green]Experiment[/] EXPERIMENT_ID={} namespace={}".format(
+            exp_display,
+            exp_ns_display,
         ),
     )
     console.log(
-        "[green]Worker repo[/] remote={} branch={} worktree={}".format(
+        "[green]Redis[/] TASKS_REDIS_URL={} namespace={}".format(
+            os.getenv("TASKS_REDIS_URL", "<unset>"),
+            redis_ns_display,
+        ),
+    )
+    console.log(
+        "[green]Dramatiq[/] queue={}".format(queue_display),
+    )
+    console.log(
+        "[green]Worker repo[/] remote={} branch={} worktree={} job_branch_prefix={}".format(
             os.getenv("WORKER_REPO_REMOTE_URL", "<unset>"),
             os.getenv("WORKER_REPO_BRANCH", "<unset>"),
             os.getenv("WORKER_REPO_WORKTREE", "<unset>"),
+            branch_prefix_display,
         ),
     )
     console.log(
@@ -439,7 +472,7 @@ def _reset_database() -> None:
     Loreley intentionally does not ship migrations. The most reliable way to
     align the DB schema with the current code is to drop all ORM-managed tables
     and recreate them. This helper also clears all Dramatiq queues in the
-    configured Redis namespace.
+    experiment-scoped Redis namespace derived from EXPERIMENT_ID.
     """
 
     _apply_base_env()
@@ -471,12 +504,12 @@ def _reset_database() -> None:
         redis_broker.flush_all()
         console.log(
             "[bold green]Redis broker reset complete[/] namespace={}".format(
-                os.getenv("TASKS_REDIS_NAMESPACE", "<unset>"),
+                getattr(redis_broker, "namespace", "<unknown>"),
             ),
         )
         log.info(
             "Redis broker reset complete for namespace {}",
-            os.getenv("TASKS_REDIS_NAMESPACE", "<unset>"),
+            getattr(redis_broker, "namespace", "<unknown>"),
         )
     except Exception as exc:  # pragma: no cover - defensive
         console.log(

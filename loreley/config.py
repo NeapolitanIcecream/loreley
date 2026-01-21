@@ -65,8 +65,6 @@ class Settings(BaseSettings):
     tasks_redis_port: int = Field(default=6379, alias="TASKS_REDIS_PORT")
     tasks_redis_db: int = Field(default=0, alias="TASKS_REDIS_DB")
     tasks_redis_password: str | None = Field(default=None, alias="TASKS_REDIS_PASSWORD")
-    tasks_redis_namespace: str = Field(default="loreley", alias="TASKS_REDIS_NAMESPACE")
-    tasks_queue_name: str = Field(default="loreley.evolution", alias="TASKS_QUEUE_NAME")
     tasks_worker_max_retries: int = Field(default=0, alias="TASKS_WORKER_MAX_RETRIES")
     tasks_worker_time_limit_seconds: int = Field(
         default=3600,
@@ -74,7 +72,7 @@ class Settings(BaseSettings):
     )
 
     # Experiment / evolution configuration
-    experiment_id: uuid.UUID | None = Field(
+    experiment_id: uuid.UUID | str | None = Field(
         default=None,
         alias="EXPERIMENT_ID",
     )
@@ -168,10 +166,6 @@ class Settings(BaseSettings):
     worker_repo_clean_excludes: list[str] = Field(
         default_factory=lambda: [".venv", ".uv", ".python-version"],
         alias="WORKER_REPO_CLEAN_EXCLUDES",
-    )
-    worker_repo_job_branch_prefix: str = Field(
-        default="evolution/job",
-        alias="WORKER_REPO_JOB_BRANCH_PREFIX",
     )
     worker_repo_enable_lfs: bool = Field(
         default=True,
@@ -640,6 +634,13 @@ class Settings(BaseSettings):
 
     def export_safe(self) -> dict[str, Any]:
         """Return non-sensitive settings for debugging/logging."""
+        from loreley.naming import (
+            DEFAULT_TASKS_QUEUE_PREFIX,
+            DEFAULT_TASKS_REDIS_NAMESPACE_PREFIX,
+            safe_namespace_or_none,
+        )
+
+        exp_ns = safe_namespace_or_none(self.experiment_id)
         return {
             "app_name": self.app_name,
             "environment": self.environment,
@@ -653,7 +654,10 @@ class Settings(BaseSettings):
             "db_echo": self.db_echo,
             "tasks_redis_host": self.tasks_redis_host,
             "tasks_redis_port": self.tasks_redis_port,
-            "tasks_queue_name": self.tasks_queue_name,
+            "tasks_redis_namespace": (
+                f"{DEFAULT_TASKS_REDIS_NAMESPACE_PREFIX}.{exp_ns}" if exp_ns else None
+            ),
+            "tasks_queue_name": f"{DEFAULT_TASKS_QUEUE_PREFIX}.{exp_ns}" if exp_ns else None,
             "experiment_id": str(self.experiment_id) if self.experiment_id else None,
             "worker_repo_worktree": self.worker_repo_worktree,
             "worker_repo_branch": self.worker_repo_branch,

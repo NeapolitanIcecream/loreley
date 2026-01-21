@@ -252,15 +252,13 @@ def _load_root_ignore_text_from_commit(*, repo: Repo, commit_hash: str) -> str:
 
 
 def _coerce_experiment_id(settings: Settings) -> uuid.UUID:
+    from loreley.naming import resolve_experiment_uuid
+
     value = getattr(settings, "experiment_id", None)
-    if value is None:
-        raise ExperimentError("EXPERIMENT_ID is required to start long-running processes.")
-    if isinstance(value, uuid.UUID):
-        return value
     try:
-        return uuid.UUID(str(value))
-    except Exception as exc:
-        raise ExperimentError(f"EXPERIMENT_ID is not a valid UUID: {value!r}") from exc
+        return resolve_experiment_uuid(value)
+    except ValueError as exc:
+        raise ExperimentError(str(exc)) from exc
 
 
 def _build_default_experiment_name(*, repository_slug: str, experiment_id: uuid.UUID) -> str:

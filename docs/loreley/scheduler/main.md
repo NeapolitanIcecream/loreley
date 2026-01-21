@@ -25,7 +25,7 @@ Central orchestration loop that keeps the Loreley evolution pipeline moving by c
 
 The scheduler consumes the following `Settings` fields (all exposed as environment variables):
 
-- `EXPERIMENT_ID`: required UUID that scopes this scheduler process to a single experiment namespace in the database and task queues.
+- `EXPERIMENT_ID`: required experiment id (UUID or slug) that scopes this scheduler process to a single experiment namespace in the database and task queues.
 - `SCHEDULER_REPO_ROOT`: optional path to a read-only clone of the evolved repository; defaults to `WORKER_REPO_WORKTREE`.
 - `SCHEDULER_POLL_INTERVAL_SECONDS`: delay between scheduler ticks (default: `30` seconds).
 - `SCHEDULER_MAX_UNFINISHED_JOBS`: hard cap on the number of jobs that are not yet finished (`pending`, `queued`, `running`).

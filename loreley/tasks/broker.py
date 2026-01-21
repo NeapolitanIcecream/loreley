@@ -9,6 +9,7 @@ from loguru import logger
 from rich.console import Console
 
 from loreley.config import Settings, get_settings
+from loreley.naming import DEFAULT_TASKS_REDIS_NAMESPACE_PREFIX, safe_namespace_from_settings
 
 console = Console()
 log = logger.bind(module="tasks.broker")
@@ -38,8 +39,14 @@ def build_redis_broker(settings: Settings | None = None) -> RedisBroker:
     """Instantiate the Redis broker using application configuration."""
 
     settings = settings or get_settings()
+    exp_ns = safe_namespace_from_settings(settings)
+    namespace = (
+        f"{DEFAULT_TASKS_REDIS_NAMESPACE_PREFIX}.{exp_ns}"
+        if exp_ns
+        else DEFAULT_TASKS_REDIS_NAMESPACE_PREFIX
+    )
     broker_kwargs: dict[str, Any] = {
-        "namespace": settings.tasks_redis_namespace,
+        "namespace": namespace,
     }
     if settings.tasks_redis_url:
         broker_kwargs["url"] = settings.tasks_redis_url
@@ -64,12 +71,12 @@ def setup_broker(settings: Settings | None = None) -> RedisBroker:
     connection_repr = _safe_connection_repr(settings)
     console.log(
         "[bold green]Configured dramatiq broker[/] "
-        f"redis={connection_repr} namespace={settings.tasks_redis_namespace!r}",
+        f"redis={connection_repr} namespace={redis_broker.namespace!r}",
     )
     log.info(
         "Redis broker ready: redis={} namespace={}",
         connection_repr,
-        settings.tasks_redis_namespace,
+        redis_broker.namespace,
     )
     return redis_broker
 

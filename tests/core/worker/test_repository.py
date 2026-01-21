@@ -7,6 +7,7 @@ import pytest
 
 from loreley.config import Settings
 from loreley.core.worker.repository import RepositoryError, WorkerRepository
+from loreley.naming import worker_job_branch_prefix
 
 
 class _DummyGitError(Exception):
@@ -38,7 +39,6 @@ class _FakeRepo:
 def _make_repo(settings: Settings, tmp_path) -> WorkerRepository:
     settings.worker_repo_remote_url = "https://example.invalid/repo.git"
     settings.worker_repo_worktree = str(tmp_path / "repo")
-    settings.worker_repo_job_branch_prefix = "jobs"
     return WorkerRepository(settings=settings)
 
 
@@ -54,7 +54,8 @@ def test_sanitize_value_masks_credentials() -> None:
 def test_format_job_branch_applies_prefix_and_sanitises(tmp_path, settings: Settings) -> None:
     repo = _make_repo(settings, tmp_path)
     branch = repo._format_job_branch("Job ID 123 !!")
-    assert branch.startswith("jobs/")
+    expected_prefix = worker_job_branch_prefix(settings.experiment_id).strip("/") + "/"
+    assert branch.startswith(expected_prefix)
     assert " " not in branch
     assert "!" not in branch
 

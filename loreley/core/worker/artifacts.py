@@ -30,7 +30,11 @@ def _resolve_artifacts_dir(settings: Settings, job_id: UUID) -> Path:
         base_dir = Path(settings.logs_base_dir).expanduser()
     else:
         base_dir = Path.cwd()
-    root = base_dir / "logs" / "worker" / "artifacts" / str(job_id)
+    from loreley.naming import safe_namespace_or_none
+
+    exp_ns = safe_namespace_or_none(getattr(settings, "experiment_id", None))
+    logs_root = (base_dir / "logs" / exp_ns) if exp_ns else (base_dir / "logs")
+    root = logs_root / "worker" / "artifacts" / str(job_id)
     root.mkdir(parents=True, exist_ok=True)
     return root
 

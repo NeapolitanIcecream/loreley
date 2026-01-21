@@ -71,7 +71,10 @@ def _resolve_logs_dir(settings: Settings, role: str) -> Path:
     else:
         base_dir = Path.cwd()
 
-    logs_root = base_dir / "logs"
+    from loreley.naming import safe_namespace_from_settings
+
+    exp_ns = safe_namespace_from_settings(settings)
+    logs_root = (base_dir / "logs" / exp_ns) if exp_ns else (base_dir / "logs")
     log_dir = logs_root / role
     log_dir.mkdir(parents=True, exist_ok=True)
     return log_dir
@@ -217,16 +220,7 @@ def run_worker(
 ) -> int:
     """Run the Loreley evolution worker as a single Dramatiq consumer process."""
     attached_experiment = getattr(settings, "experiment_id", None)
-    if attached_experiment is not None and not isinstance(attached_experiment, uuid.UUID):
-        try:
-            attached_experiment = uuid.UUID(str(attached_experiment))
-        except Exception as exc:
-            console.log(
-                "[bold red]Invalid experiment id[/] "
-                f"value={attached_experiment!r} reason={exc}. "
-                "Set EXPERIMENT_ID to a valid UUID and retry.",
-            )
-            return 1
+    attached_raw = str(attached_experiment).strip() if attached_experiment is not None else ""
 
     if preflight:
         results = preflight_worker(settings, timeout_seconds=preflight_timeout_seconds)
@@ -243,7 +237,7 @@ def run_worker(
             console.log("Hint: copy `env.example` to `.env`, fill required values, then retry.")
             return 1
 
-    if attached_experiment is None:
+    if not attached_raw:
         console.log(
             "[bold red]Worker refused to start[/] "
             "reason=missing experiment attachment. "
@@ -251,16 +245,14 @@ def run_worker(
         )
         return 1
 
-    from loreley.tasks.queues import experiment_queue_name
+    from loreley.naming import resolve_experiment_identity, tasks_queue_name
 
-    queue = experiment_queue_name(
-        base_queue=settings.tasks_queue_name,
-        experiment_id=attached_experiment,
-    )
+    identity = resolve_experiment_identity(attached_raw)
+    queue = tasks_queue_name(attached_raw)
 
     console.log(
         "[bold green]Loreley worker online[/] "
-        f"experiment={attached_experiment} queue={queue!r} queue_prefix={settings.tasks_queue_name!r} "
+        f"experiment={identity.raw} experiment_uuid={identity.uuid} queue={queue!r} "
         f"worktree={settings.worker_repo_worktree!r}",
     )
 
@@ -274,7 +266,7 @@ def run_worker(
         dramatiq_broker = broker_module.broker
         ensure_database_schema()
         # Register the experiment-attached actor bound to the derived queue.
-        build_evolution_job_worker_actor(settings=settings, experiment_id=attached_experiment)
+        build_evolution_job_worker_actor(settings=settings)
     except Exception as exc:  # pragma: no cover - defensive
         console.log(
             "[bold red]Failed to initialise worker dependencies[/] "

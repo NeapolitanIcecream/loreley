@@ -21,6 +21,7 @@ from git import Repo
 from git.exc import BadName, GitCommandError, InvalidGitRepositoryError, NoSuchPathError
 
 from loreley.config import Settings, get_settings
+from loreley.naming import worker_job_branch_prefix
 
 console = Console()
 log = logger.bind(module="worker.repository")
@@ -75,7 +76,7 @@ class WorkerRepository:
         self.git_bin = self.settings.worker_repo_git_bin
         self.fetch_depth = self.settings.worker_repo_fetch_depth
         self.clean_excludes = tuple(self.settings.worker_repo_clean_excludes)
-        self.job_branch_prefix = self.settings.worker_repo_job_branch_prefix.strip("/")
+        self.job_branch_prefix = worker_job_branch_prefix(self.settings.experiment_id).strip("/")
         self.enable_lfs = self.settings.worker_repo_enable_lfs
         self.job_branch_ttl_hours = max(0, int(self.settings.worker_repo_job_branch_ttl_hours))
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any, cast
 
@@ -37,13 +38,22 @@ class TruncationMixin:
         return truncate_text(text, limit=active_limit)
 
 
-def resolve_worker_debug_dir(*, logs_base_dir: str | None, kind: str) -> Path:
-    """Resolve directory for worker debug artifacts under logs/worker/{kind}."""
+def resolve_worker_debug_dir(
+    *,
+    logs_base_dir: str | None,
+    kind: str,
+    experiment_id: uuid.UUID | str | None = None,
+) -> Path:
+    """Resolve directory for worker debug artifacts under logs/{experiment_namespace}/worker/{kind}."""
     if logs_base_dir:
         base_dir = Path(logs_base_dir).expanduser()
     else:
         base_dir = Path.cwd()
-    logs_root = base_dir / "logs" / "worker" / kind
+    from loreley.naming import safe_namespace_or_none
+
+    exp_ns = safe_namespace_or_none(experiment_id)
+    root = (base_dir / "logs" / exp_ns) if exp_ns else (base_dir / "logs")
+    logs_root = root / "worker" / kind
     logs_root.mkdir(parents=True, exist_ok=True)
     return logs_root
 
