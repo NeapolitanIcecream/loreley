@@ -6,8 +6,7 @@ from fastapi import FastAPI
 
 from loreley.api.routers.health import router as health_router
 from loreley.api.routers.archive import router as archive_router
-from loreley.api.routers.repositories import router as repositories_router
-from loreley.api.routers.experiments import router as experiments_router
+from loreley.api.routers.instance import router as instance_router
 from loreley.api.routers.jobs import router as jobs_router
 from loreley.api.routers.commits import router as commits_router
 from loreley.api.routers.logs import router as logs_router
@@ -29,9 +28,8 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(health_router, prefix=API_V1_PREFIX, tags=["health"])
+    app.include_router(instance_router, prefix=API_V1_PREFIX, tags=["instance"])
     app.include_router(archive_router, prefix=API_V1_PREFIX, tags=["archive"])
-    app.include_router(repositories_router, prefix=API_V1_PREFIX, tags=["repositories"])
-    app.include_router(experiments_router, prefix=API_V1_PREFIX, tags=["experiments"])
     app.include_router(jobs_router, prefix=API_V1_PREFIX, tags=["jobs"])
     app.include_router(commits_router, prefix=API_V1_PREFIX, tags=["commits"])
     app.include_router(logs_router, prefix=API_V1_PREFIX, tags=["logs"])

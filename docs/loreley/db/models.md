@@ -1,6 +1,6 @@
 # loreley.db.models
 
-ORM models and enums for tracking evolutionary jobs, commits, and associated metrics.
+ORM models and enums for single-tenant experiment databases.
 
 ## Shared mixins and enums
 
@@ -9,45 +9,45 @@ ORM models and enums for tracking evolutionary jobs, commits, and associated met
 
 ## Core models
 
-- **`Repository`** (`repositories` table): normalised view of a source code repository.
-  - Stores a stable `slug` derived from either the canonical remote URL or local worktree path, the current `remote_url`, optional `root_path`, and an `extra` JSONB payload with additional metadata (canonical origin, remotes, etc.).
-  - Owns a collection of `Experiment` rows and is treated as the top-level key when reasoning about experiments in a multi-repository deployment.
-- **`Experiment`** (`experiments` table): captures a single experiment scope within a repository.
-  - Primary key: `id` (UUID), derived from `EXPERIMENT_ID` (UUID or slug; slugs map to stable UUIDs via uuid5).
-  - References a `repository_id`, an optional human-readable `name`, and a free-form `status`.
-  - Relates to `EvolutionJob`, `CommitCard`, and `MapElitesState` so that jobs, commits, and archive state can all be grouped by experiment.
-- **`CommitCard`** (`commit_cards` table): stores a lightweight, size-bounded commit representation used for inspiration and UI.
+- **`InstanceMetadata`** (`instance_metadata` table): single-row marker for DB identity.
+  - Primary key: `id=1` enforced by a check constraint.
+  - Stores `schema_version`, `experiment_id_raw`, `experiment_uuid`, and the canonical `root_commit_hash`.
+  - Optional `repository_slug` and `repository_canonical_origin` fields aid observability.
+- **`CommitCard`** (`commit_cards` table): lightweight commit metadata used for inspiration and UI.
   - Primary key: `id` (UUID).
-  - Scoped by `experiment_id` (required); the `(experiment_id, commit_hash)` pair is unique so the same git commit hash can appear in multiple experiments with independent metadata.
+  - Unique constraint on `commit_hash` per database.
   - Tracks commit hash, parent hash, optional island identifier, optional `job_id`, author, subject, change summary, evaluation summary, tags, key files, and highlights.
-  - Defines relationships to associated `Metric` records (via `Metric.commit_card_id`) and back to the owning `Experiment`.
+  - Defines relationships to associated `Metric` records (via `Metric.commit_card_id`).
 - **`Metric`** (`metrics` table): records individual evaluation metrics for a commit.
   - Stores metric `name`, numeric `value`, optional `unit`, whether higher values are better, and a JSONB `details` payload.
   - Links back to `CommitCard` via `commit_card_id` and maintains uniqueness per `(commit_card_id, name)`.
 - **`EvolutionJob`** (`evolution_jobs` table): represents a single evolution iteration scheduled by the system.
-  - Tracks current `status`, base commit, island ID, optional `experiment_id`, inspiration commit hashes, size-bounded job spec fields (`goal`, `constraints`, `acceptance_criteria`, `notes`, `tags`, sampling hints), human-readable `plan_summary`, priority, scheduling/processing timestamps, and last error if any.
+  - Tracks current `status`, base commit, island ID, inspiration commit hashes, size-bounded job spec fields (`goal`, `constraints`, `acceptance_criteria`, `notes`, `tags`, sampling hints), human-readable `plan_summary`, priority, scheduling/processing timestamps, and last error if any.
   - Stores result/ingestion indexing fields (`result_commit_hash`, ingestion status/attempts/delta/cell index) without embedding large JSON payloads.
-  - Relates back to `Experiment` via `experiment_id`, enabling efficient per-experiment queries. `base_commit_hash` is a git commit hash string (not a foreign key).
 - **`JobArtifacts`** (`job_artifacts` table): filesystem references for cold-path artifacts produced by the worker.
   - Stores paths to planning/coding/evaluation prompts, raw outputs, and logs.
-- **`MapElitesState`** (`map_elites_states` table): persists per-experiment, per-island snapshots of the MAP-Elites archive.
-  - Uses a composite primary key `(experiment_id, island_id)` so that multiple experiments can maintain independent archives even when they share island identifiers.
-  - Stores a JSONB `snapshot` payload containing **lightweight metadata** (feature bounds, PCA projection payload, schema version, and other knobs).
+- **`CommitChunkSummary`** (`commit_chunk_summaries` table): cached trajectory summaries for commit chains.
+  - Primary key: `(start_commit_hash, end_commit_hash, block_size)`.
+  - Stores the summarizer model and bounded summary text for rollups.
+- **`MapElitesState`** (`map_elites_states` table): persists per-island MAP-Elites snapshots.
+  - Primary key: `(island_id)`.
+  - Stores a JSONB `snapshot` payload containing lightweight metadata (feature bounds, PCA projection payload, last update time).
   - Archive cells and PCA history are stored incrementally in separate tables and reconstructed on load by
     `loreley.core.map_elites.snapshot.DatabaseSnapshotStore`.
   - The `snapshot` JSON must not embed `archive` or `history`. If your local database contains unsupported payloads, reset it: `uv run loreley reset-db --yes`.
 - **`MapElitesArchiveCell`** (`map_elites_archive_cells` table): one row per occupied MAP-Elites archive cell.
-  - Primary key: `(experiment_id, island_id, cell_index)`.
+  - Primary key: `(island_id, cell_index)`.
   - Stores the cell's `commit_hash`, `objective`, behaviour `measures`, stored `solution` vector, and `timestamp`.
   - Enables cheap per-cell upserts when a commit improves a specific cell.
 - **`MapElitesPcaHistory`** (`map_elites_pca_history` table): incremental PCA history entries used to restore dimensionality reduction state.
-  - Primary key: `(experiment_id, island_id, commit_hash)`.
+  - Primary key: `(island_id, commit_hash)`.
   - Stores the commit embedding `vector` plus the `embedding_model` name and a `last_seen_at` marker used
     to restore ordered, bounded history windows across restarts.
-- **`MapElitesFileEmbeddingCache`** (`map_elites_file_embedding_cache` table): persistent file-level embedding cache scoped to an experiment.
-  - Uses a composite primary key `(experiment_id, blob_sha)`.
+- **`MapElitesFileEmbeddingCache`** (`map_elites_file_embedding_cache` table): persistent file-level embedding cache.
+  - Primary key: `(blob_sha)`.
   - Stores a float array `vector` containing the file embedding, allowing repo-state embeddings to reuse unchanged file vectors across commits.
   - Stores `embedding_model` and `dimensions` alongside vectors for validation and debugging.
 - **`MapElitesRepoStateAggregate`** (`map_elites_repo_state_aggregates` table): persistent commit-level aggregates for repo-state embeddings.
-  - Uses a composite primary key `(experiment_id, commit_hash)`.
+  - Primary key: `(commit_hash)`.
   - Stores `sum_vector` and `file_count` so the commit embedding can be derived as `sum_vector / file_count`.
+

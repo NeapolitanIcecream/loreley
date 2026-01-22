@@ -118,7 +118,6 @@ class MapElitesSampler:
         *,
         island_id: str | None = None,
         priority: int | None = None,
-        experiment_id: UUID | str | None = None,
     ) -> ScheduledSamplerJob | None:
         """Select base/inspiration commits and persist an EvolutionJob."""
         effective_island = island_id or self._default_island
@@ -136,13 +135,6 @@ class MapElitesSampler:
         if radius_used is not None:
             iteration_hint = f"MAP-Elites radius {radius_used} (initial {initial_radius})"
 
-        exp_id: UUID | None = None
-        if experiment_id is not None:
-            if isinstance(experiment_id, UUID):
-                exp_id = experiment_id
-            else:
-                exp_id = UUID(str(experiment_id))
-
         job = self._persist_job(
             island_id=effective_island,
             base=base_record,
@@ -150,7 +142,6 @@ class MapElitesSampler:
             selection_stats=selection_stats,
             iteration_hint=iteration_hint,
             priority=priority,
-            experiment_id=exp_id,
         )
         if not job:
             return None
@@ -316,7 +307,6 @@ class MapElitesSampler:
         selection_stats: Mapping[str, Any],
         iteration_hint: str | None,
         priority: int | None,
-        experiment_id: UUID | None,
     ) -> EvolutionJob | None:
         job_priority = self._default_priority if priority is None else priority
         goal = (self.settings.worker_evolution_global_goal or "").strip() or None
@@ -327,7 +317,6 @@ class MapElitesSampler:
             status=JobStatus.PENDING,
             base_commit_hash=base.commit_hash,
             island_id=island_id,
-            experiment_id=experiment_id,
             inspiration_commit_hashes=[record.commit_hash for record in inspirations],
             goal=goal,
             constraints=[],

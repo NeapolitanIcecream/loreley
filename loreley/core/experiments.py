@@ -1,58 +1,53 @@
 from __future__ import annotations
 
-"""Helpers for deriving repository and experiment dimensions.
+"""Helpers for single-tenant repository and instance bootstrap."""
 
-This module is responsible for:
-  - Normalising a git repository into a stable Repository row.
-  - Resolving a single Experiment scope for long-running processes.
-"""
-
+from dataclasses import dataclass
 import hashlib
 import re
-import uuid
 from pathlib import Path
-from typing import Any
 from urllib.parse import urlparse, urlunparse
 
 from git import Repo
 from git.exc import BadName, GitCommandError, InvalidGitRepositoryError, NoSuchPathError
 from loguru import logger
 from rich.console import Console
-from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
 
 from loreley.config import Settings, get_settings
 from loreley.core.map_elites.repository_files import ROOT_IGNORE_FILES
-from loreley.db.base import session_scope
-from loreley.db.models import Experiment, Repository
+from loreley.db.base import INSTANCE_SCHEMA_VERSION, session_scope
+from loreley.db.models import InstanceMetadata
 
 console = Console()
 log = logger.bind(module="core.experiments")
 
 __all__ = [
     "ExperimentError",
-    "canonicalise_repository",
-    "get_or_create_experiment",
+    "RepositoryIdentity",
+    "bootstrap_instance",
 ]
 
 
 class ExperimentError(RuntimeError):
-    """Raised when the repository/experiment context cannot be resolved."""
+    """Raised when the repository/instance context cannot be resolved."""
+
+
+@dataclass(frozen=True, slots=True)
+class RepositoryIdentity:
+    """Resolved identity for the repository backing this instance."""
+
+    slug: str
+    canonical_origin: str | None
+    root_path: str
+
 
 def _normalise_remote_url(raw: str) -> str:
-    """Return a canonical remote URL without credentials.
-
-    Handles both standard URLs (https://host/owner/repo.git) and scp-style
-    SSH URLs (git@github.com:owner/repo.git).
-    """
+    """Return a canonical remote URL without credentials."""
 
     url = raw.strip()
     if not url:
         return ""
 
-    # Convert scp-style SSH URL (git@github.com:owner/repo.git) into a proper
-    # URL so that urlparse can handle it. We preserve the username for SSH
-    # remotes (git@) but strip credentials for HTTPS.
     if "://" not in url and "@" in url and ":" in url.split("@", 1)[1]:
         user_host, path = url.split(":", 1)
         url = f"ssh://{user_host}/{path}"
@@ -62,9 +57,6 @@ def _normalise_remote_url(raw: str) -> str:
     host = parsed.hostname or ""
     path = parsed.path or ""
 
-    # Decide whether to keep the username in the canonical form.
-    # - For HTTPS/HTTP we drop any username to avoid leaking credentials.
-    # - For SSH-style remotes we keep the username (e.g. git@github.com).
     username = parsed.username or ""
     if scheme in ("http", "https"):
         userinfo = ""
@@ -77,7 +69,6 @@ def _normalise_remote_url(raw: str) -> str:
     if userinfo:
         netloc = f"{userinfo}{netloc}"
 
-    # Drop password, query and fragment for storage and hashing.
     return urlunparse((scheme, netloc, path, "", "", ""))
 
 
@@ -88,7 +79,6 @@ def _build_slug_from_source(source: str) -> str:
     if not text:
         return "default"
 
-    # Try to interpret the source as a URL (including scp-style SSH).
     candidate = text
     if "://" not in candidate and "@" in candidate and ":" in candidate.split("@", 1)[1]:
         user_host, path = candidate.split(":", 1)
@@ -99,12 +89,10 @@ def _build_slug_from_source(source: str) -> str:
     path = parsed.path or ""
 
     if host:
-        # URL-like input: build slug from host + path.
         if path.endswith(".git"):
             path = path[: -len(".git")]
         base = f"{host}{path}"
     else:
-        # Fallback: treat as a plain path or arbitrary string.
         base = text
         if base.endswith(".git"):
             base = base[: -len(".git")]
@@ -114,30 +102,10 @@ def _build_slug_from_source(source: str) -> str:
     return slug or "default"
 
 
-def canonicalise_repository(
-    *,
-    settings: Settings | None = None,
-    repo_root: Path | str | None = None,
-    repo: Repo | None = None,
-) -> Repository:
-    """Resolve or create a Repository row for the given git worktree.
-
-    The caller is responsible for ensuring that the DB is reachable.
-    """
-
-    settings = settings or get_settings()
-    root = Path(repo_root or settings.worker_repo_worktree).expanduser().resolve()
-
-    try:
-        repo_obj = repo or Repo(root)
-    except (InvalidGitRepositoryError, NoSuchPathError) as exc:
-        message = f"Path {root} is not a valid git repository."
-        log.error("{}: {}", message, exc)
-        raise ExperimentError(message) from exc
-
+def _resolve_repository_identity(*, repo: Repo, root: Path) -> RepositoryIdentity:
     origin_url: str | None = None
     try:
-        origin = getattr(repo_obj.remotes, "origin", None)
+        origin = getattr(repo.remotes, "origin", None)
         if origin is not None:
             origin_url = str(origin.url)
     except Exception:  # pragma: no cover - defensive
@@ -152,68 +120,12 @@ def canonicalise_repository(
         source = str(root)
 
     slug = _build_slug_from_source(source)
+    return RepositoryIdentity(
+        slug=slug,
+        canonical_origin=canonical_origin or None,
+        root_path=str(root),
+    )
 
-    extra: dict[str, Any] = {
-        "canonical_origin": canonical_origin or None,
-        "root_path": str(root),
-        "remotes": [
-            {"name": remote.name, "url": _normalise_remote_url(str(remote.url))}
-            for remote in getattr(repo_obj, "remotes", [])
-        ],
-    }
-
-    try:
-        with session_scope() as session:
-            stmt = select(Repository).where(Repository.slug == slug)
-            existing = session.execute(stmt).scalar_one_or_none()
-            if existing:
-                # Best-effort refresh of metadata; do not fail the call.
-                updated = False
-                if canonical_origin and existing.remote_url != canonical_origin:
-                    existing.remote_url = canonical_origin
-                    updated = True
-                if not existing.root_path:
-                    existing.root_path = str(root)
-                    updated = True
-                if extra and existing.extra != extra:
-                    # Merge rather than overwrite to avoid losing prior context.
-                    merged = dict(existing.extra or {})
-                    merged.update(extra)
-                    existing.extra = merged
-                    updated = True
-                if updated:
-                    console.log(
-                        "[cyan]Updated repository metadata[/] slug={} path={}".format(
-                            existing.slug,
-                            existing.root_path,
-                        ),
-                    )
-                return existing
-
-            repo_row = Repository(
-                slug=slug,
-                remote_url=canonical_origin or None,
-                root_path=str(root),
-                extra=extra,
-            )
-            session.add(repo_row)
-            session.flush()
-            console.log(
-                "[bold green]Registered repository[/] slug={} path={}".format(
-                    repo_row.slug,
-                    repo_row.root_path,
-                ),
-            )
-            log.info(
-                "Registered repository slug={} remote_url={} root_path={}",
-                repo_row.slug,
-                repo_row.remote_url,
-                repo_row.root_path,
-            )
-            return repo_row
-    except SQLAlchemyError as exc:  # pragma: no cover - DB failure handling
-        log.error("Failed to resolve repository {}: {}", slug, exc)
-        raise ExperimentError(f"Failed to resolve repository {slug}: {exc}") from exc
 
 def _ensure_commit_available(*, repo: Repo, commit_hash: str) -> str:
     """Return canonical hash for commit, fetching from remotes when needed."""
@@ -251,87 +163,83 @@ def _load_root_ignore_text_from_commit(*, repo: Repo, commit_hash: str) -> str:
     return "\n".join(chunks).strip()
 
 
-def _coerce_experiment_id(settings: Settings) -> uuid.UUID:
-    from loreley.naming import resolve_experiment_uuid
-
-    value = getattr(settings, "experiment_id", None)
-    try:
-        return resolve_experiment_uuid(value)
-    except ValueError as exc:
-        raise ExperimentError(str(exc)) from exc
+def _root_commit_matches(stored: str, configured: str) -> bool:
+    stored = (stored or "").strip()
+    configured = (configured or "").strip()
+    if not stored or not configured:
+        return False
+    return stored.startswith(configured) or configured.startswith(stored)
 
 
-def _build_default_experiment_name(*, repository_slug: str, experiment_id: uuid.UUID) -> str:
-    slug = (repository_slug or "").strip()
-    suffix = str(experiment_id).split("-", 1)[0]
-    if not slug:
-        return suffix
-    name = f"{slug}-{suffix}"
-    if len(name) <= 255:
-        return name
-    trimmed = slug[: max(0, 255 - len(suffix) - 1)].rstrip("-")
-    return f"{trimmed}-{suffix}" if trimmed else suffix
-
-
-def _get_or_create_experiment_row(
+def _validate_instance_metadata(
     *,
-    experiment_id: uuid.UUID,
-    repository: Repository,
-) -> Experiment:
-    try:
-        with session_scope() as session:
-            existing = session.get(Experiment, experiment_id)
-            if existing is not None:
-                if getattr(existing, "repository_id", None) != repository.id:
-                    raise ExperimentError(
-                        "EXPERIMENT_ID already exists for a different repository. "
-                        f"(experiment_id={experiment_id} expected_repository_id={repository.id} "
-                        f"actual_repository_id={existing.repository_id})"
-                    )
-                return existing
+    settings: Settings,
+    repository: RepositoryIdentity,
+    canonical_root: str,
+) -> None:
+    from loreley.naming import resolve_experiment_identity
 
-            experiment = Experiment(
-                id=experiment_id,
-                repository_id=repository.id,
-                name=_build_default_experiment_name(
-                    repository_slug=str(getattr(repository, "slug", "") or ""),
-                    experiment_id=experiment_id,
-                ),
-                status="active",
+    identity = resolve_experiment_identity(settings.experiment_id)
+    with session_scope() as session:
+        meta = session.get(InstanceMetadata, 1)
+        if meta is None:
+            raise ExperimentError(
+                "Instance metadata is missing. "
+                "Reset the database schema with `uv run loreley reset-db --yes`.",
             )
-            session.add(experiment)
-            session.flush()
+        if int(meta.schema_version or 0) != INSTANCE_SCHEMA_VERSION:
+            raise ExperimentError(
+                "Instance metadata schema_version mismatch. "
+                "Reset the database schema with `uv run loreley reset-db --yes`.",
+            )
+        if str(meta.experiment_id_raw or "").strip() != identity.raw:
+            raise ExperimentError(
+                "EXPERIMENT_ID does not match the database marker. "
+                "Reset the database schema with `uv run loreley reset-db --yes`.",
+            )
+        if str(meta.experiment_uuid or "") != str(identity.uuid):
+            raise ExperimentError(
+                "EXPERIMENT_ID UUID mapping does not match the database marker. "
+                "Reset the database schema with `uv run loreley reset-db --yes`.",
+            )
+        if not _root_commit_matches(str(meta.root_commit_hash or ""), canonical_root):
+            raise ExperimentError(
+                "MAPELITES_EXPERIMENT_ROOT_COMMIT does not match the database marker. "
+                "Reset the database schema with `uv run loreley reset-db --yes`.",
+            )
+
+        updated = False
+        if str(meta.root_commit_hash or "") != canonical_root:
+            meta.root_commit_hash = canonical_root
+            updated = True
+        if repository.slug and meta.repository_slug != repository.slug:
+            meta.repository_slug = repository.slug
+            updated = True
+        if repository.canonical_origin and meta.repository_canonical_origin != repository.canonical_origin:
+            meta.repository_canonical_origin = repository.canonical_origin
+            updated = True
+        if updated:
             console.log(
-                "[bold green]Created experiment[/] id={} repo={}".format(
-                    experiment.id,
+                "[cyan]Updated instance metadata[/] experiment_id={} repo={}".format(
+                    identity.raw,
                     repository.slug,
                 ),
             )
             log.info(
-                "Created experiment id={} repository_id={}",
-                experiment.id,
-                experiment.repository_id,
+                "Updated instance metadata experiment_id={} repository_slug={}",
+                identity.raw,
+                repository.slug,
             )
-            return experiment
-    except SQLAlchemyError as exc:  # pragma: no cover - DB failure handling
-        log.error("Failed to resolve experiment {}: {}", experiment_id, exc)
-        raise ExperimentError(f"Failed to resolve experiment {experiment_id}: {exc}") from exc
 
 
-def get_or_create_experiment(
+def bootstrap_instance(
     *,
     settings: Settings | None = None,
     repo_root: Path | str | None = None,
-) -> tuple[Repository, Experiment, Settings]:
-    """Resolve the Repository and Experiment for the current process.
-
-    This helper is intended to be called once during scheduler startup so that
-    all jobs and MAP-Elites state produced by that scheduler share the same
-    experiment identifier.
-    """
+) -> tuple[RepositoryIdentity, Settings]:
+    """Resolve repository identity and pin root ignore rules for the scheduler."""
 
     settings = settings or get_settings()
-    experiment_id = _coerce_experiment_id(settings)
     root_candidate = repo_root or settings.scheduler_repo_root or settings.worker_repo_worktree
     root = Path(root_candidate).expanduser().resolve()
 
@@ -342,7 +250,7 @@ def get_or_create_experiment(
         log.error("{}: {}", message, exc)
         raise ExperimentError(message) from exc
 
-    repository = canonicalise_repository(settings=settings, repo_root=root, repo=repo_obj)
+    repository = _resolve_repository_identity(repo=repo_obj, root=root)
     root_ref = (settings.mapelites_experiment_root_commit or "").strip()
     if not root_ref:
         raise ExperimentError(
@@ -352,8 +260,6 @@ def get_or_create_experiment(
     ignore_text = _load_root_ignore_text_from_commit(repo=repo_obj, commit_hash=canonical_root)
     ignore_sha = hashlib.sha256(ignore_text.encode("utf-8")).hexdigest()
 
-    # Pin root ignore rules in memory for the full scheduler process lifetime.
-    # This deliberately does not persist settings inside the database.
     settings = settings.model_copy(
         update={
             "mapelites_experiment_root_commit": canonical_root,
@@ -361,19 +267,24 @@ def get_or_create_experiment(
             "mapelites_repo_state_ignore_sha256": ignore_sha,
         }
     )
-    experiment = _get_or_create_experiment_row(experiment_id=experiment_id, repository=repository)
+
+    _validate_instance_metadata(
+        settings=settings,
+        repository=repository,
+        canonical_root=canonical_root,
+    )
 
     console.log(
-        "[bold cyan]Using experiment[/] id={} repo={}".format(
-            experiment.id,
+        "[bold cyan]Using instance[/] experiment={} repo={}".format(
+            settings.experiment_id,
             repository.slug,
         ),
     )
     log.info(
-        "Using experiment id={} repository_slug={}",
-        experiment.id,
+        "Using instance experiment_id={} repository_slug={}",
+        settings.experiment_id,
         repository.slug,
     )
-    return repository, experiment, settings
+    return repository, settings
 
 

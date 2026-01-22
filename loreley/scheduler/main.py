@@ -13,10 +13,10 @@ from git import Repo
 from git.exc import BadName, GitCommandError, InvalidGitRepositoryError, NoSuchPathError
 from loguru import logger
 from rich.console import Console
-from sqlalchemy import select, func
+from sqlalchemy import select
 
 from loreley.config import Settings, get_settings
-from loreley.core.experiments import ExperimentError, get_or_create_experiment
+from loreley.core.experiments import ExperimentError, bootstrap_instance
 from loreley.core.map_elites.map_elites import MapElitesManager
 from loreley.core.map_elites.sampler import MapElitesSampler
 from loreley.db.base import engine, ensure_database_schema, session_scope
@@ -27,6 +27,7 @@ from loreley.db.locks import (
     uuid_to_pg_bigint_lock_key,
 )
 from loreley.db.models import CommitCard, Metric
+from loreley.naming import resolve_experiment_namespace, resolve_experiment_uuid
 from loreley.scheduler.ingestion import MapElitesIngestion
 from loreley.scheduler.job_scheduler import JobScheduler
 from loreley.scheduler.startup_approval import (
@@ -61,7 +62,7 @@ class EvolutionScheduler:
         self.repo_root = self._resolve_repo_root()
         self._repo = self._init_repo()
         try:
-            self.repository, self.experiment, effective_settings = get_or_create_experiment(
+            self.repository, effective_settings = bootstrap_instance(
                 settings=base_settings,
                 repo_root=self.repo_root,
             )
@@ -83,14 +84,12 @@ class EvolutionScheduler:
         self.manager = MapElitesManager(
             settings=self.settings,
             repo_root=self.repo_root,
-            experiment_id=self.experiment.id,
         )
         self.sampler = MapElitesSampler(manager=self.manager, settings=self.settings)
         self.job_scheduler = JobScheduler(
             settings=self.settings,
             console=self.console,
             sampler=self.sampler,
-            experiment_id=self.experiment.id,
         )
         self.ingestion = MapElitesIngestion(
             settings=self.settings,
@@ -98,8 +97,6 @@ class EvolutionScheduler:
             repo_root=self.repo_root,
             repo=self._repo,
             manager=self.manager,
-            experiment=self.experiment,
-            repository=self.repository,
         )
         self._stop_requested = False
         self._total_scheduled_jobs = 0
@@ -124,7 +121,7 @@ class EvolutionScheduler:
             self.console.log(
                 "[bold green]Scheduler online[/] repo={} experiment={} interval={}s max_unfinished={}".format(
                     self.repo_root,
-                    getattr(self.experiment, "id", None),
+                    self.settings.experiment_id,
                     interval,
                     self.settings.scheduler_max_unfinished_jobs,
                 ),
@@ -257,10 +254,7 @@ class EvolutionScheduler:
     # DB coordination helpers ----------------------------------------------
 
     def _acquire_experiment_lock(self) -> AdvisoryLock:
-        experiment_id = getattr(self.experiment, "id", None)
-        if experiment_id is None:
-            raise SchedulerLockError("Cannot acquire scheduler lock: experiment_id is missing.")
-
+        experiment_id = resolve_experiment_uuid(self.settings.experiment_id)
         key = uuid_to_pg_bigint_lock_key(experiment_id)
         lock = try_acquire_pg_advisory_lock(engine=engine, key=key)
         if lock is None:
@@ -459,7 +453,6 @@ class EvolutionScheduler:
             order_column = Metric.value.desc() if is_higher_better else Metric.value.asc()
 
             conditions: list[Any] = [
-                CommitCard.experiment_id == self.experiment.id,
                 Metric.name == metric_name,
             ]
             if self._root_commit_hash:
@@ -524,7 +517,7 @@ class EvolutionScheduler:
         from loreley.db.models import EvolutionJob  # Local import to avoid cycles.
 
         with session_scope() as session:
-            stmt = select(EvolutionJob).where(EvolutionJob.experiment_id == self.experiment.id)
+            stmt = select(EvolutionJob)
             jobs = list(session.execute(stmt).scalars())
 
         total_jobs = len(jobs)
@@ -607,7 +600,6 @@ class EvolutionScheduler:
             parent_hash = session.execute(
                 select(CommitCard.parent_commit_hash).where(
                     CommitCard.commit_hash == current,
-                    CommitCard.experiment_id == self.experiment.id,
                 )
             ).scalar_one_or_none()
             if not parent_hash:
@@ -618,7 +610,6 @@ class EvolutionScheduler:
             exists = session.execute(
                 select(CommitCard.commit_hash).where(
                     CommitCard.commit_hash == parent_hash,
-                    CommitCard.experiment_id == self.experiment.id,
                 )
             ).scalar_one_or_none()
             if not exists:
@@ -649,7 +640,7 @@ class EvolutionScheduler:
             existing_names = set()
 
         prefix = "evolution/best"
-        experiment_suffix = str(self.experiment.id).split("-")[0]
+        experiment_suffix = resolve_experiment_namespace(self.settings.experiment_id)
         base_name = f"{prefix}/{experiment_suffix}"
         branch_name = base_name
         counter = 1

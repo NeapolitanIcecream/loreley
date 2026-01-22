@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
-from uuid import UUID
 
 from sqlalchemy import select
 
@@ -19,7 +18,6 @@ class CommitNode:
     commit_hash: str
     parent_commit_hash: str | None
     island_id: str | None
-    experiment_id: UUID | None
     created_at: datetime | None
     author: str | None
     message: str | None
@@ -45,12 +43,11 @@ class CommitGraph:
 
 def build_commit_lineage_graph(
     *,
-    experiment_id: UUID,
     max_nodes: int = 500,
     mode: str = "parent_chain",
     settings: Settings | None = None,
 ) -> CommitGraph:
-    """Build a simple commit-parent graph for the given experiment.
+    """Build a simple commit-parent graph for the current instance.
 
     Currently supported modes:
     - parent_chain: edges from parent -> child when parent is known in the same result set.
@@ -68,7 +65,6 @@ def build_commit_lineage_graph(
     with session_scope() as session:
         stmt = (
             select(CommitCard)
-            .where(CommitCard.experiment_id == experiment_id)
             .order_by(CommitCard.created_at.desc())
             .limit(limit)
         )
@@ -100,7 +96,6 @@ def build_commit_lineage_graph(
                 commit_hash=c.commit_hash,
                 parent_commit_hash=c.parent_commit_hash,
                 island_id=c.island_id,
-                experiment_id=c.experiment_id,
                 created_at=c.created_at,
                 author=c.author,
                 message=getattr(c, "subject", None),

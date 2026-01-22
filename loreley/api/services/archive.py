@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
-from uuid import UUID
 
 from sqlalchemy import func, select
 
@@ -24,11 +23,11 @@ class SnapshotMeta:
     history_length: int
 
 
-def list_islands(*, experiment_id: UUID) -> list[str]:
-    """Return known island IDs for an experiment."""
+def list_islands() -> list[str]:
+    """Return known island IDs for the instance."""
 
     with session_scope() as session:
-        stmt = select(MapElitesState.island_id).where(MapElitesState.experiment_id == experiment_id)
+        stmt = select(MapElitesState.island_id)
         values = [str(v) for v in session.execute(stmt).scalars().all() if v]
     # Deterministic order for UI.
     values = sorted(set(values))
@@ -42,33 +41,30 @@ def list_islands(*, experiment_id: UUID) -> list[str]:
 
 def describe_island(
     *,
-    experiment_id: UUID,
     island_id: str,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
     """Return MAP-Elites stats for an island using MapElitesManager."""
 
     base_settings = settings or get_settings()
-    manager = MapElitesManager(settings=base_settings, experiment_id=experiment_id)
+    manager = MapElitesManager(settings=base_settings)
     return dict(manager.describe_island(island_id))
 
 
 def list_records(
     *,
-    experiment_id: UUID,
     island_id: str,
     settings: Settings | None = None,
 ) -> list[Any]:
     """Return all elite records for an island."""
 
     base_settings = settings or get_settings()
-    manager = MapElitesManager(settings=base_settings, experiment_id=experiment_id)
+    manager = MapElitesManager(settings=base_settings)
     return list(manager.get_records(island_id))
 
 
 def snapshot_meta(
     *,
-    experiment_id: UUID,
     island_id: str,
     settings: Settings | None = None,
 ) -> SnapshotMeta:
@@ -79,18 +75,16 @@ def snapshot_meta(
 
     with session_scope() as session:
         stmt = select(MapElitesState).where(
-            MapElitesState.experiment_id == experiment_id,
             MapElitesState.island_id == island_id,
         )
         row = session.execute(stmt).scalar_one_or_none()
         snapshot = dict(row.snapshot or {}) if row and row.snapshot else {}
-        ensure_supported_snapshot_meta(snapshot, experiment_id=experiment_id, island_id=island_id)
+        ensure_supported_snapshot_meta(snapshot, island_id=island_id)
         entry_count = int(
             session.execute(
                 select(func.count())
                 .select_from(MapElitesArchiveCell)
                 .where(
-                    MapElitesArchiveCell.experiment_id == experiment_id,
                     MapElitesArchiveCell.island_id == island_id,
                 )
             ).scalar_one()
@@ -102,7 +96,6 @@ def snapshot_meta(
                 select(func.count())
                 .select_from(MapElitesPcaHistory)
                 .where(
-                    MapElitesPcaHistory.experiment_id == experiment_id,
                     MapElitesPcaHistory.island_id == island_id,
                 )
             ).scalar_one()
@@ -122,12 +115,11 @@ def snapshot_meta(
     )
 
 
-def snapshot_updated_at(*, experiment_id: UUID, island_id: str) -> Any:
+def snapshot_updated_at(*, island_id: str) -> Any:
     """Return updated_at timestamp for the stored snapshot row (if any)."""
 
     with session_scope() as session:
         stmt = select(MapElitesState.updated_at).where(
-            MapElitesState.experiment_id == experiment_id,
             MapElitesState.island_id == island_id,
         )
         return session.execute(stmt).scalar_one_or_none()

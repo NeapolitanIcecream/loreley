@@ -32,7 +32,6 @@ class CommitOut(OrmOutModel):
     commit_hash: str
     parent_commit_hash: str | None
     island_id: str | None
-    experiment_id: UUID | None
     job_id: UUID | None = None
     author: str | None
     subject: str

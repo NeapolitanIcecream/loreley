@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import math
 import time
-import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Sequence, cast
@@ -120,7 +119,6 @@ class MapElitesManager:
         *,
         settings: Settings | None = None,
         repo_root: Path | None = None,
-        experiment_id: uuid.UUID | str,
     ) -> None:
         self.settings = settings or get_settings()
         self.repo_root = Path(repo_root or Path.cwd()).resolve()
@@ -134,19 +132,13 @@ class MapElitesManager:
         self._archives: dict[str, IslandState] = {}
         self._commit_to_island: dict[str, str] = {}
         self._default_island = self.settings.mapelites_default_island_id or "default"
-        # Experiment id scopes all persisted MAP-Elites state and tables.
-        self._experiment_id: uuid.UUID = (
-            experiment_id
-            if isinstance(experiment_id, uuid.UUID)
-            else uuid.UUID(str(experiment_id))
-        )
-        self._snapshot_store = DatabaseSnapshotStore(experiment_id=self._experiment_id)
+        self._snapshot_store = DatabaseSnapshotStore()
 
     @staticmethod
     def _infer_snapshot_target_dims(snapshot: Mapping[str, Any]) -> int | None:
         """Infer the archive dimensionality from a persisted snapshot payload.
 
-        Persisted MAP-Elites state is experiment-scoped. When the current process
+        Persisted MAP-Elites state is single-tenant. When the current process
         settings disagree with the stored snapshot dimensionality, we fail fast
         instead of silently adopting a different dimensionality.
         """
@@ -200,9 +192,7 @@ class MapElitesManager:
                 str(self.settings.mapelites_file_embedding_cache_backend or "db").strip().lower() or "db"
             )
             repo_state_mode = (
-                "incremental_only"
-                if (self._experiment_id is not None and effective_cache_backend == "db")
-                else "auto"
+                "incremental_only" if effective_cache_backend == "db" else "auto"
             )
             code_embedding, repo_stats = embed_repository_state(
                 commit_hash=commit_hash,
@@ -210,7 +200,6 @@ class MapElitesManager:
                 settings=self.settings,
                 # Prefer the configured backend; default is DB.
                 cache_backend=effective_cache_backend,
-                experiment_id=self._experiment_id,
                 mode=repo_state_mode,
             )
             if not code_embedding or not code_embedding.vector:
@@ -523,7 +512,7 @@ class MapElitesManager:
         if snapshot_dims and snapshot_dims != self._target_dims:
             raise ValueError(
                 "Snapshot dimensionality mismatch "
-                f"(experiment={self._experiment_id} island={island_id} "
+                f"(island={island_id} "
                 f"settings_dims={self._target_dims} snapshot_dims={snapshot_dims})."
             )
 

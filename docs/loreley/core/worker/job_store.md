@@ -7,7 +7,7 @@ Persistence adapter for the evolution worker, responsible for locking jobs, stor
 - **`EvolutionWorkerError`**: base runtime error used when the worker cannot complete or persist a job due to configuration, database, or repository issues.
 - **`JobLockConflict`**: raised when `start_job()` fails to obtain a NOWAIT lock on a job row, indicating that another worker is already processing the same job.
 - **`JobPreconditionError`**: raised when a job cannot start because preconditions are not satisfied (missing row, unsupported status, missing `base_commit_hash`, etc.).
-- **`LockedJob`**: dataclass snapshot of the locked `EvolutionJob` row containing the `job_id`, `base_commit_hash`, optional `island_id`, optional `experiment_id` and `repository_id`, the bounded job spec fields, and the tuple of `inspiration_commit_hashes`. This is used by `EvolutionWorker` to build its `JobContext`.
+- **`LockedJob`**: dataclass snapshot of the locked `EvolutionJob` row containing the `job_id`, `base_commit_hash`, optional `island_id`, the bounded job spec fields, and the tuple of `inspiration_commit_hashes`. This is used by `EvolutionWorker` to build its `JobContext`.
 
 ## Artifacts
 

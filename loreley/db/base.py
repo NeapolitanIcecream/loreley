@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import uuid
 from typing import Iterator
 
 from loguru import logger
@@ -11,7 +12,9 @@ from sqlalchemy.engine import URL
 from sqlalchemy.engine.url import make_url
 from sqlalchemy.orm import DeclarativeBase, Session, scoped_session, sessionmaker
 
-from loreley.config import get_settings
+from loreley.config import Settings, get_settings
+
+INSTANCE_SCHEMA_VERSION = 3
 
 console = Console()
 log = logger.bind(module="db.base")
@@ -83,9 +86,10 @@ def ensure_database_schema() -> None:
         import loreley.db.models  # noqa: F401  # pylint: disable=unused-import
 
         Base.metadata.create_all(bind=engine)
+        _validate_instance_metadata(settings)
         console.log(
             "[green]Database schema ready[/] url={}".format(
-                settings.database_dsn,
+                _sanitize_dsn(settings.database_dsn),
             ),
         )
         log.info("Database schema ensured for {}", _sanitize_dsn(settings.database_dsn))
@@ -125,6 +129,78 @@ def reset_database_schema(*, include_console_log: bool = True) -> None:
             conn.execute(text(f'DROP TABLE IF EXISTS "{name}" CASCADE'))
 
     Base.metadata.create_all(bind=engine)
+    _seed_instance_metadata(settings)
     if include_console_log:
         console.log("[bold green]Database schema reset complete[/]")
     log.info("Database schema reset complete")
+
+
+def _resolve_instance_identity(settings: Settings) -> tuple[str, uuid.UUID, str]:
+    from loreley.naming import resolve_experiment_identity
+
+    try:
+        identity = resolve_experiment_identity(settings.experiment_id)
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
+
+    root_commit = (settings.mapelites_experiment_root_commit or "").strip()
+    if not root_commit:
+        raise RuntimeError("MAPELITES_EXPERIMENT_ROOT_COMMIT is required.")
+    return identity.raw, identity.uuid, root_commit
+
+
+def _validate_instance_metadata(settings: Settings) -> None:
+    from loreley.db.models import InstanceMetadata
+
+    raw, exp_uuid, root_commit = _resolve_instance_identity(settings)
+    with session_scope() as session:
+        meta = session.get(InstanceMetadata, 1)
+        if meta is None:
+            raise RuntimeError(
+                "Instance metadata is missing. "
+                "Reset the database schema with `uv run loreley reset-db --yes`.",
+            )
+        if int(meta.schema_version or 0) != INSTANCE_SCHEMA_VERSION:
+            raise RuntimeError(
+                "Instance metadata schema_version mismatch. "
+                "Reset the database schema with `uv run loreley reset-db --yes`.",
+            )
+        if str(meta.experiment_id_raw or "").strip() != raw:
+            raise RuntimeError(
+                "EXPERIMENT_ID does not match the database marker. "
+                "Reset the database schema with `uv run loreley reset-db --yes`.",
+            )
+        if uuid.UUID(str(meta.experiment_uuid)) != exp_uuid:
+            raise RuntimeError(
+                "EXPERIMENT_ID UUID mapping does not match the database marker. "
+                "Reset the database schema with `uv run loreley reset-db --yes`.",
+            )
+        meta_root = str(meta.root_commit_hash or "").strip()
+        if not _root_commit_matches(meta_root, root_commit):
+            raise RuntimeError(
+                "MAPELITES_EXPERIMENT_ROOT_COMMIT does not match the database marker. "
+                "Reset the database schema with `uv run loreley reset-db --yes`.",
+            )
+
+
+def _seed_instance_metadata(settings: Settings) -> None:
+    from loreley.db.models import InstanceMetadata
+
+    raw, exp_uuid, root_commit = _resolve_instance_identity(settings)
+    with session_scope() as session:
+        meta = InstanceMetadata(
+            id=1,
+            schema_version=INSTANCE_SCHEMA_VERSION,
+            experiment_id_raw=raw,
+            experiment_uuid=exp_uuid,
+            root_commit_hash=root_commit,
+        )
+        session.merge(meta)
+
+
+def _root_commit_matches(stored: str, configured: str) -> bool:
+    stored = (stored or "").strip()
+    configured = (configured or "").strip()
+    if not stored or not configured:
+        return False
+    return stored.startswith(configured) or configured.startswith(stored)

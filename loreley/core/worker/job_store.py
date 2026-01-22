@@ -18,7 +18,7 @@ from loreley.core.worker.coding import CodingAgentResponse
 from loreley.core.worker.evaluator import EvaluationResult
 from loreley.core.worker.planning import PlanningAgentResponse
 from loreley.db.base import session_scope
-from loreley.db.models import CommitCard, EvolutionJob, Experiment, JobArtifacts, JobStatus, Metric
+from loreley.db.models import CommitCard, EvolutionJob, JobArtifacts, JobStatus, Metric
 
 if TYPE_CHECKING:
     from loreley.core.worker.evolution import JobContext
@@ -53,8 +53,6 @@ class LockedJob:
     job_id: UUID
     base_commit_hash: str
     island_id: str | None
-    experiment_id: UUID | None
-    repository_id: UUID | None
     inspiration_commit_hashes: tuple[str, ...]
     goal: str | None
     constraints: tuple[str, ...]
@@ -77,18 +75,8 @@ class EvolutionJobStore:
     def start_job(
         self,
         job_id: UUID,
-        *,
-        expected_experiment_id: UUID | str | None = None,
     ) -> LockedJob:
         """Lock the job row, validate status, and mark it as running."""
-
-        expected: UUID | None = None
-        if expected_experiment_id is not None:
-            expected = (
-                expected_experiment_id
-                if isinstance(expected_experiment_id, UUID)
-                else UUID(str(expected_experiment_id))
-            )
 
         try:
             with session_scope() as session:
@@ -103,19 +91,6 @@ class EvolutionJobStore:
                 if not job.base_commit_hash:
                     raise EvolutionWorkerError("Evolution job is missing base_commit_hash.")
 
-                if expected is not None:
-                    job_experiment = getattr(job, "experiment_id", None)
-                    if job_experiment is None:
-                        raise JobPreconditionError(
-                            "Evolution job is missing experiment_id; "
-                            "this worker process is attached to a specific experiment.",
-                        )
-                    if UUID(str(job_experiment)) != expected:
-                        raise JobPreconditionError(
-                            "Evolution job belongs to a different experiment; "
-                            f"expected={expected} got={job_experiment}.",
-                        )
-
                 allowed_statuses = {JobStatus.PENDING, JobStatus.QUEUED}
                 if job.status not in allowed_statuses:
                     raise JobPreconditionError(
@@ -126,17 +101,10 @@ class EvolutionJobStore:
                 job.started_at = _utc_now()
                 job.last_error = None
 
-                experiment = getattr(job, "experiment", None)
-                repository_id = None
-                if experiment is not None:
-                    repository_id = getattr(experiment, "repository_id", None)
-
                 return LockedJob(
                     job_id=job.id,
                     base_commit_hash=job.base_commit_hash,
                     island_id=job.island_id,
-                    experiment_id=job.experiment_id,
-                    repository_id=repository_id,
                     inspiration_commit_hashes=tuple(job.inspiration_commit_hashes or []),
                     goal=(job.goal or None),
                     constraints=tuple(job.constraints or ()),
@@ -221,11 +189,6 @@ class EvolutionJobStore:
                     raise EvolutionWorkerError(
                         f"Evolution job {job_ctx.job_id} disappeared during persistence.",
                     )
-                if not job_ctx.experiment_id:
-                    raise EvolutionWorkerError(
-                        f"Evolution job {job_ctx.job_id} is missing experiment_id; "
-                        "cannot persist experiment-scoped CommitCard/Metric rows.",
-                    )
                 job.status = JobStatus.SUCCEEDED
                 job.completed_at = _utc_now()
                 job.plan_summary = plan.plan.summary
@@ -240,15 +203,10 @@ class EvolutionJobStore:
                 job.ingestion_last_attempt_at = None
                 job.ingestion_reason = None
 
-                # Ensure the owning experiment exists (best-effort).
-                if job_ctx.experiment_id:
-                    _ = session.get(Experiment, job_ctx.experiment_id)
-
                 card = CommitCard(
                     commit_hash=commit_hash,
                     parent_commit_hash=job_ctx.base_commit_hash,
                     island_id=job_ctx.island_id,
-                    experiment_id=job_ctx.experiment_id,
                     author=self.settings.worker_evolution_commit_author,
                     subject=subject,
                     change_summary=change_summary,

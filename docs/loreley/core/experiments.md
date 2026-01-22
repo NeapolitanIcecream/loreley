@@ -1,47 +1,33 @@
 # loreley.core.experiments
 
-Helpers for deriving canonical repository and experiment context from the current git worktree and `Settings`.
+Helpers for resolving repository identity and validating instance metadata in single-tenant databases.
 
 ## Errors
 
-- **`ExperimentError`**: runtime error raised when the repository or experiment context cannot be resolved.  
-  Used for git discovery failures (non‑existent or non‑repository paths) and database errors when reading or writing `Repository` / `Experiment` rows.
+- **`ExperimentError`**: runtime error raised when the repository or instance context cannot be resolved.
+  Used for git discovery failures (non‑existent or non‑repository paths) and instance metadata mismatches.
 
-## Repository normalisation
+## Repository identity
 
-- **`canonicalise_repository(*, settings=None, repo_root=None, repo=None)`**: resolves or creates a `Repository` row for a given git worktree.  
-  - Expands and normalises the target path, defaulting to `Settings.worker_repo_worktree` when `repo_root` is not provided.  
-  - Validates that the path is a git repository and extracts the `origin` remote URL when available.  
-  - Uses `_normalise_remote_url()` to strip credentials, support both HTTPS and SSH scp‑style URLs, and produce a canonical `remote_url` for hashing and storage.  
-  - Builds a stable `slug` from either the canonical remote URL or the local path via `_build_slug_from_source()`.  
-  - Populates an `extra` JSON payload with the canonical origin, root path, and all remotes (with URLs normalised for safe storage).  
-  - Within a DB `session_scope()`, either:
-    - returns an existing `Repository` with the same `slug` after best‑effort metadata refresh (remote URL, root path, extra), or  
-    - creates and persists a new `Repository` row with the derived slug, remote URL, root path, and extra metadata.  
-  - Logs concise status messages via `rich` (for human‑friendly console output) and `loguru` (for structured logs).
+- **`RepositoryIdentity`**: frozen dataclass containing `slug`, `canonical_origin`, and `root_path`.
+- **`_normalise_remote_url()`**: strips credentials and normalises HTTPS/SSH remotes into a stable URL string.
+- **`_build_slug_from_source()`**: builds a stable slug from canonical remote URLs or local paths.
+- **`_resolve_repository_identity()`**: extracts `origin` metadata from a `git.Repo` and returns a `RepositoryIdentity`.
 
-## Experiment identity (env-only settings)
+## Instance bootstrap
 
-Loreley assumes **runtime behaviour settings are provided via environment variables** and remain stable for the lifetime of a database. The database does not persist a settings snapshot.
-
-- **Identity anchor**: `EXPERIMENT_ID` (explicit experiment id provided via environment variables). It can be a UUID or a short slug; slugs are mapped to stable UUIDs (uuid5) for DB keys.
-- **Operational anchor**: `MAPELITES_EXPERIMENT_ROOT_COMMIT` (resolved to a canonical full hash) used for repo-state bootstrap and pinned ignore rules.
-
-## Experiment resolution
-
-- **`get_or_create_experiment(*, settings=None, repo_root=None)`**: convenience helper that resolves the `Repository` / `Experiment` pair and returns settings for the scheduler process.  
-  - Resolves settings via `get_settings()` when not provided explicitly.  
-  - Chooses the repository root in this order: explicit `repo_root`, `Settings.scheduler_repo_root`, then `Settings.worker_repo_worktree`.  
-  - Validates that the chosen root is a git repository, logging and raising `ExperimentError` when it is not.  
-  - Reuses the discovered `git.Repo` instance when calling `canonicalise_repository()` to avoid redundant discovery work.  
-  - Pins repository-root ignore rules for repo-state embeddings by reading `.gitignore` + `.loreleyignore` from the root commit and storing the combined ignore text + hash in `Settings` for the scheduler process lifetime.  
-  - Loads or creates the `Experiment` row using `EXPERIMENT_ID` as the primary key. If an existing row points at a different repository, the function fails fast.  
-  - Returns `(Repository, Experiment, Settings)` so callers can pass the settings downstream consistently.
+- **`bootstrap_instance(*, settings=None, repo_root=None)`**:
+  - Resolves settings via `get_settings()` when not provided explicitly.
+  - Chooses the repository root in this order: explicit `repo_root`, `Settings.scheduler_repo_root`, then `Settings.worker_repo_worktree`.
+  - Validates that the chosen root is a git repository, logging and raising `ExperimentError` when it is not.
+  - Resolves the canonical root commit from `MAPELITES_EXPERIMENT_ROOT_COMMIT` and pins repository‑root ignore rules by reading `.gitignore` + `.loreleyignore` from that commit.
+  - Stores the combined ignore text + SHA256 in `Settings` for the scheduler process lifetime (env-only settings model).
+  - Validates the single-row `InstanceMetadata` marker (schema version, experiment id, root commit) and updates
+    repository fields when available.
+  - Returns `(RepositoryIdentity, Settings)` so callers can pass settings downstream consistently.
 
 ## Logging and error handling
 
-- All operations are logged through a `loguru` logger bound with `module="core.experiments"` plus a `rich` console for user‑facing status messages.  
-- Git and database failures are wrapped into `ExperimentError` with concise, user‑oriented messages while preserving the original exception as the cause.  
-- Experiment identity is intentionally minimal so that operational tweaks do not fragment experiments in the database.
-
+- All operations are logged through a `loguru` logger bound with `module="core.experiments"` plus a `rich` console.
+- Git and metadata failures are wrapped into `ExperimentError` with concise, user‑oriented messages.
 

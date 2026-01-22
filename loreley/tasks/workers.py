@@ -7,7 +7,7 @@ from rich.console import Console
 from loreley.config import Settings
 from loreley.core.worker.evolution import EvolutionWorker, EvolutionWorkerResult
 from loreley.core.worker.job_store import EvolutionWorkerError, JobLockConflict, JobPreconditionError
-from loreley.naming import resolve_experiment_uuid, tasks_queue_name
+from loreley.naming import tasks_queue_name
 
 # Ensure the broker is configured before registering any actors.
 from loreley.tasks.broker import broker  # noqa: F401
@@ -62,11 +62,10 @@ def build_evolution_job_worker_actor(
     single `EvolutionWorker` instance for the full process lifetime.
     """
 
-    exp_id = resolve_experiment_uuid(getattr(settings, "experiment_id", None))
     queue = tasks_queue_name(getattr(settings, "experiment_id", None))
     time_limit = _time_limit_ms(settings)
 
-    evolution_worker = EvolutionWorker(settings=settings, attached_experiment_id=exp_id)
+    evolution_worker = EvolutionWorker(settings=settings)
 
     def _log_job_start(job_id: str) -> None:
         console.log(f"[bold cyan]Evolution job started[/] id={job_id} queue={queue}")

@@ -7,6 +7,7 @@ from typing import Any
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     Enum as SAEnum,
     ForeignKey,
@@ -52,78 +53,28 @@ class JobStatus(str, enum.Enum):
     CANCELLED = "cancelled"
 
 
-class Repository(TimestampMixin, Base):
-    """Source code repository tracked by Loreley."""
+class InstanceMetadata(TimestampMixin, Base):
+    """Single-row instance metadata marker for single-tenant databases."""
 
-    __tablename__ = "repositories"
+    __tablename__ = "instance_metadata"
     __table_args__ = (
-        UniqueConstraint("slug", name="uq_repositories_slug"),
-        Index("ix_repositories_slug", "slug"),
+        CheckConstraint("id = 1", name="ck_instance_metadata_single_row"),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-    )
-    slug: Mapped[str] = mapped_column(String(255), nullable=False)
-    remote_url: Mapped[str | None] = mapped_column(String(1024))
-    root_path: Mapped[str | None] = mapped_column(String(1024))
-    extra: Mapped[dict[str, Any]] = mapped_column(
-        MutableDict.as_mutable(JSONB),
-        default=dict,
-        nullable=False,
-    )
-
-    experiments: Mapped[list["Experiment"]] = relationship(
-        back_populates="repository",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    experiment_id_raw: Mapped[str] = mapped_column(String(128), nullable=False)
+    experiment_uuid: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    root_commit_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    repository_slug: Mapped[str | None] = mapped_column(String(255))
+    repository_canonical_origin: Mapped[str | None] = mapped_column(String(1024))
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
-        return f"<Repository slug={self.slug!r}>"
-
-
-class Experiment(TimestampMixin, Base):
-    """Single experiment run configuration within a repository."""
-
-    __tablename__ = "experiments"
-    __table_args__ = (
-        Index("ix_experiments_repository_id", "repository_id"),
-    )
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-    )
-    repository_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("repositories.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    name: Mapped[str | None] = mapped_column(String(255))
-    status: Mapped[str | None] = mapped_column(String(32))
-
-    repository: Mapped["Repository"] = relationship(
-        back_populates="experiments",
-    )
-    jobs: Mapped[list["EvolutionJob"]] = relationship(
-        back_populates="experiment",
-        passive_deletes=True,
-    )
-    commits: Mapped[list["CommitCard"]] = relationship(
-        back_populates="experiment",
-        passive_deletes=True,
-    )
-    map_elites_states: Mapped[list["MapElitesState"]] = relationship(
-        back_populates="experiment",
-        passive_deletes=True,
-    )
-
-    def __repr__(self) -> str:  # pragma: no cover - repr helper
-        return f"<Experiment id={self.id} repository_id={self.repository_id}>"
+        return (
+            "<InstanceMetadata "
+            f"experiment_id_raw={self.experiment_id_raw!r} "
+            f"root_commit_hash={self.root_commit_hash!r}>"
+        )
 
 
 class CommitCard(TimestampMixin, Base):
@@ -131,15 +82,10 @@ class CommitCard(TimestampMixin, Base):
 
     __tablename__ = "commit_cards"
     __table_args__ = (
-        UniqueConstraint(
-            "experiment_id",
-            "commit_hash",
-            name="uq_commit_cards_experiment_commit_hash",
-        ),
+        UniqueConstraint("commit_hash", name="uq_commit_cards_commit_hash"),
         Index("ix_commit_cards_island_id", "island_id"),
         Index("ix_commit_cards_parent_hash", "parent_commit_hash"),
-        Index("ix_commit_cards_experiment_created_at", "experiment_id", "created_at"),
-        Index("ix_commit_cards_experiment_island_id", "experiment_id", "island_id"),
+        Index("ix_commit_cards_created_at", "created_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -154,12 +100,6 @@ class CommitCard(TimestampMixin, Base):
     )
     parent_commit_hash: Mapped[str | None] = mapped_column(String(64))
     island_id: Mapped[str | None] = mapped_column(String(64))
-    experiment_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("experiments.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
     job_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("evolution_jobs.id", ondelete="SET NULL"),
@@ -192,15 +132,10 @@ class CommitCard(TimestampMixin, Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
-    experiment: Mapped["Experiment"] = relationship(
-        back_populates="commits",
-        foreign_keys=[experiment_id],
-    )
-
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return (
             f"<CommitCard id={self.id!r} commit_hash={self.commit_hash!r} "
-            f"island={self.island_id!r} experiment_id={self.experiment_id!r}>"
+            f"island={self.island_id!r}>"
         )
 
 
@@ -209,15 +144,10 @@ class CommitChunkSummary(TimestampMixin, Base):
 
     __tablename__ = "commit_chunk_summaries"
     __table_args__ = (
-        Index("ix_commit_chunk_summaries_end_hash", "experiment_id", "end_commit_hash"),
+        Index("ix_commit_chunk_summaries_end_hash", "end_commit_hash"),
     )
 
     # Cache key is stable for root-aligned full chunks on the CommitCard parent chain.
-    experiment_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("experiments.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
     start_commit_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
     end_commit_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
     block_size: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -300,12 +230,6 @@ class EvolutionJob(TimestampMixin, Base):
         nullable=True,
     )
     island_id: Mapped[str | None] = mapped_column(String(64))
-    experiment_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("experiments.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
     inspiration_commit_hashes: Mapped[list[str]] = mapped_column(
         MutableList.as_mutable(ARRAY(String(64))),
         default=list,
@@ -354,11 +278,6 @@ class EvolutionJob(TimestampMixin, Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
 
-    experiment: Mapped["Experiment | None"] = relationship(
-        back_populates="jobs",
-        foreign_keys=[experiment_id],
-    )
-
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return f"<EvolutionJob id={self.id} status={self.status}>"
 
@@ -391,11 +310,6 @@ class MapElitesState(TimestampMixin, Base):
 
     __tablename__ = "map_elites_states"
 
-    experiment_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("experiments.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
     island_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     snapshot: Mapped[dict[str, Any]] = mapped_column(
         MutableDict.as_mutable(JSONB),
@@ -403,14 +317,9 @@ class MapElitesState(TimestampMixin, Base):
         nullable=False,
     )
 
-    experiment: Mapped["Experiment"] = relationship(
-        back_populates="map_elites_states",
-    )
-
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return (
-            f"<MapElitesState experiment_id={self.experiment_id!r} "
-            f"island_id={self.island_id!r}>"
+            f"<MapElitesState island_id={self.island_id!r}>"
         )
 
 
@@ -425,7 +334,6 @@ class MapElitesArchiveCell(TimestampMixin, Base):
     __table_args__ = (
         Index(
             "ix_map_elites_archive_cells_island",
-            "experiment_id",
             "island_id",
         ),
         Index(
@@ -434,11 +342,6 @@ class MapElitesArchiveCell(TimestampMixin, Base):
         ),
     )
 
-    experiment_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("experiments.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
     island_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     cell_index: Mapped[int] = mapped_column(Integer, primary_key=True)
 
@@ -460,8 +363,8 @@ class MapElitesArchiveCell(TimestampMixin, Base):
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return (
             "<MapElitesArchiveCell "
-            f"experiment_id={self.experiment_id!r} island_id={self.island_id!r} "
-            f"cell_index={self.cell_index!r} commit={self.commit_hash!r}>"
+            f"island_id={self.island_id!r} cell_index={self.cell_index!r} "
+            f"commit={self.commit_hash!r}>"
         )
 
 
@@ -476,17 +379,11 @@ class MapElitesPcaHistory(TimestampMixin, Base):
     __table_args__ = (
         Index(
             "ix_map_elites_pca_history_last_seen",
-            "experiment_id",
             "island_id",
             "last_seen_at",
         ),
     )
 
-    experiment_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("experiments.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
     island_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     commit_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
 
@@ -503,27 +400,22 @@ class MapElitesPcaHistory(TimestampMixin, Base):
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return (
             "<MapElitesPcaHistory "
-            f"experiment_id={self.experiment_id!r} island_id={self.island_id!r} "
-            f"commit={self.commit_hash!r} last_seen_at={self.last_seen_at!r}>"
+            f"island_id={self.island_id!r} commit={self.commit_hash!r} "
+            f"last_seen_at={self.last_seen_at!r}>"
         )
 
 
 class MapElitesFileEmbeddingCache(TimestampMixin, Base):
-    """Persistent file-level embedding cache scoped to an experiment.
+    """Persistent file-level embedding cache for the repo-state pipeline.
 
-    The cache is designed for the repo-state embedding pipeline:
-    - Keyed by (experiment_id, blob_sha).
+    The cache is designed for single-tenant databases:
+    - Keyed by blob SHA.
     - Stores the final file-level embedding vector (list of floats).
     - Stores `embedding_model` and `dimensions` for validation and debugging.
     """
 
     __tablename__ = "map_elites_file_embedding_cache"
 
-    experiment_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("experiments.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
     blob_sha: Mapped[str] = mapped_column(String(64), primary_key=True)
     embedding_model: Mapped[str] = mapped_column(String(255), nullable=False)
     dimensions: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -536,8 +428,8 @@ class MapElitesFileEmbeddingCache(TimestampMixin, Base):
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return (
             "<MapElitesFileEmbeddingCache "
-            f"experiment_id={self.experiment_id!r} blob_sha={self.blob_sha!r} "
-            f"model={self.embedding_model!r} dims={self.dimensions!r}>"
+            f"blob_sha={self.blob_sha!r} model={self.embedding_model!r} "
+            f"dims={self.dimensions!r}>"
         )
 
 
@@ -552,16 +444,10 @@ class MapElitesRepoStateAggregate(TimestampMixin, Base):
     __table_args__ = (
         Index(
             "ix_map_elites_repo_state_aggregates_commit",
-            "experiment_id",
             "commit_hash",
         ),
     )
 
-    experiment_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("experiments.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
     commit_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
 
     file_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -574,6 +460,5 @@ class MapElitesRepoStateAggregate(TimestampMixin, Base):
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return (
             "<MapElitesRepoStateAggregate "
-            f"experiment_id={self.experiment_id!r} commit={self.commit_hash[:12]!r} "
-            f"files={self.file_count!r}>"
+            f"commit={self.commit_hash[:12]!r} files={self.file_count!r}>"
         )

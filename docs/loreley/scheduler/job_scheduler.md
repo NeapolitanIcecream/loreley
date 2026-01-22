@@ -18,8 +18,7 @@ from loreley.scheduler.job_scheduler import JobScheduler
 - **Construction**: created by `EvolutionScheduler` with:
   - a shared `Settings` instance,
   - the interactive `rich` console,
-  - the experiment-scoped `MapElitesSampler`,
-  - the current `experiment_id`.
+  - the `MapElitesSampler`.
 
 ### Measuring unfinished work
 
@@ -35,8 +34,7 @@ from loreley.scheduler.job_scheduler import JobScheduler
     `PENDING`/`QUEUED`/`RUNNING` jobs.
   - Respects the optional `SCHEDULER_MAX_TOTAL_JOBS` global cap using the
     `total_scheduled_jobs` counter maintained by `EvolutionScheduler`.
-  - Requests new work from MAP-Elites via
-    `MapElitesSampler.schedule_job(experiment_id=experiment_id)`.
+  - Requests new work from MAP-Elites via `MapElitesSampler.schedule_job()`.
   - Immediately transitions any newly created jobs to `QUEUED` and pushes them
     to Dramatiq using the private `_enqueue_jobs(...)` helper.
   - Returns the number of jobs scheduled during this tick.

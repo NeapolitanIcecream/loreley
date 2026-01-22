@@ -13,7 +13,6 @@ from loreley.db.models import EvolutionJob, JobArtifacts, JobStatus
 
 def list_jobs(
     *,
-    experiment_id: UUID | None = None,
     status: JobStatus | None = None,
     limit: int = 200,
     offset: int = 0,
@@ -24,8 +23,6 @@ def list_jobs(
 
     with session_scope() as session:
         stmt = select(EvolutionJob)
-        if experiment_id is not None:
-            stmt = stmt.where(EvolutionJob.experiment_id == experiment_id)
         if status is not None:
             stmt = stmt.where(EvolutionJob.status == status)
         stmt = stmt.order_by(EvolutionJob.completed_at.desc().nullslast(), EvolutionJob.created_at.desc())

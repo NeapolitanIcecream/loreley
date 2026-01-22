@@ -109,7 +109,6 @@ def test_repo_state_incremental_aggregate_add_and_modify(
         return vectors, len(vectors), 0
 
     cache = DatabaseFileEmbeddingCache(
-        experiment_id="00000000-0000-0000-0000-000000000000",
         embedding_model="stub",
         requested_dimensions=2,
     )
@@ -119,7 +118,6 @@ def test_repo_state_incremental_aggregate_add_and_modify(
         settings=settings,
         cache=cache,
         repo=repo,
-        experiment_id="00000000-0000-0000-0000-000000000000",
     )
 
     monkeypatch.setattr(embedder, "_load_aggregate", _fake_load_aggregate)

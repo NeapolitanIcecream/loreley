@@ -5,19 +5,15 @@ from __future__ import annotations
 import streamlit as st
 
 from loreley.ui.components.api import api_get_or_stop
-from loreley.ui.state import API_BASE_URL_KEY, EXPERIMENT_ID_KEY
+from loreley.ui.state import API_BASE_URL_KEY
 
 
 def render() -> None:
     st.title("Graphs")
 
     api_base_url = str(st.session_state.get(API_BASE_URL_KEY, "") or "")
-    experiment_id = st.session_state.get(EXPERIMENT_ID_KEY)
     if not api_base_url:
         st.error("API base URL is not configured.")
-        return
-    if not experiment_id:
-        st.warning("No experiment selected.")
         return
 
     mode = st.selectbox("Mode", ["parent_chain"], index=0)
@@ -26,7 +22,7 @@ def render() -> None:
     graph = api_get_or_stop(
         api_base_url,
         "/api/v1/graphs/commit_lineage",
-        params={"experiment_id": experiment_id, "max_nodes": max_nodes, "mode": mode},
+        params={"max_nodes": max_nodes, "mode": mode},
     ) or {}
 
     nodes = graph.get("nodes") if isinstance(graph, dict) else []

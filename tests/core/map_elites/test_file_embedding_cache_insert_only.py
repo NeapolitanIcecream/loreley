@@ -20,7 +20,6 @@ class _FakeSession:
 
 def test_db_file_cache_put_many_is_insert_only(monkeypatch: pytest.MonkeyPatch) -> None:
     cache = fec.DatabaseFileEmbeddingCache(
-        experiment_id="00000000-0000-0000-0000-000000000000",
         embedding_model="stub",
         requested_dimensions=2,
     )

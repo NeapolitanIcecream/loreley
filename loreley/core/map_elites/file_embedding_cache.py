@@ -5,7 +5,6 @@ aggregates them into a commit-level vector. This module provides a cache so that
 unchanged files can reuse prior embeddings across commits.
 
 Cache key:
-- `experiment_id`: experiment scope for isolating caches per experiment.
 - `blob_sha`: git blob SHA (preferred content fingerprint).
 
 The cache stores the embedding model name and output dimensionality alongside
@@ -16,7 +15,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Iterable, Mapping, Protocol, Sequence, TypeVar
-from uuid import UUID
 
 from loguru import logger
 from sqlalchemy import select
@@ -127,14 +125,8 @@ class InMemoryFileEmbeddingCache:
 class DatabaseFileEmbeddingCache:
     """Postgres-backed cache using `MapElitesFileEmbeddingCache` table."""
 
-    experiment_id: UUID
     embedding_model: str
     requested_dimensions: int
-
-    def __post_init__(self) -> None:
-        if isinstance(self.experiment_id, UUID):
-            return
-        self.experiment_id = UUID(str(self.experiment_id))
 
     def get_many(self, blob_shas: Sequence[str]) -> dict[str, Vector]:
         cleaned = _unique_clean_blob_shas(blob_shas)
@@ -150,7 +142,6 @@ class DatabaseFileEmbeddingCache:
             with session_scope() as session:
                 for batch in _batched(cleaned, 500):
                     base_conditions = [
-                        MapElitesFileEmbeddingCache.experiment_id == self.experiment_id,
                         MapElitesFileEmbeddingCache.blob_sha.in_(batch),
                     ]
 
@@ -159,34 +150,32 @@ class DatabaseFileEmbeddingCache:
                     if not rows:
                         continue
 
-                    # Validate cached rows against experiment-scoped invariants.
+                    # Validate cached rows against cache invariants.
                     for row in rows:
                         if str(getattr(row, "embedding_model", "") or "") != str(self.embedding_model):
                             raise ValueError(
                                 "File embedding cache entry has an unexpected embedding model; "
                                 "reset the DB (dev). "
-                                f"(experiment_id={self.experiment_id} blob_sha={row.blob_sha} "
-                                f"expected_model={self.embedding_model!r} got_model={row.embedding_model!r})"
+                                f"(blob_sha={row.blob_sha} expected_model={self.embedding_model!r} "
+                                f"got_model={row.embedding_model!r})"
                             )
                         if int(getattr(row, "dimensions", 0) or 0) != dims:
                             raise ValueError(
                                 "File embedding cache entry has unexpected dimensions; "
                                 "reset the DB (dev). "
-                                f"(experiment_id={self.experiment_id} blob_sha={row.blob_sha} "
-                                f"expected_dims={dims} got_dims={row.dimensions!r})"
+                                f"(blob_sha={row.blob_sha} expected_dims={dims} got_dims={row.dimensions!r})"
                             )
                         vector = tuple(float(v) for v in (row.vector or []))
                         if not vector:
                             raise ValueError(
                                 "File embedding cache contains an empty vector; reset the DB (dev). "
-                                f"(experiment_id={self.experiment_id} blob_sha={row.blob_sha} dims={dims})"
+                                f"(blob_sha={row.blob_sha} dims={dims})"
                             )
                         if len(vector) != dims:
                             raise ValueError(
                                 "File embedding cache vector has unexpected dimensions; "
                                 "reset the DB (dev). "
-                                f"(experiment_id={self.experiment_id} blob_sha={row.blob_sha} "
-                                f"expected_dims={dims} got_dims={len(vector)})"
+                                f"(blob_sha={row.blob_sha} expected_dims={dims} got_dims={len(vector)})"
                             )
                         found[str(row.blob_sha)] = vector
         except SQLAlchemyError as exc:
@@ -218,7 +207,6 @@ class DatabaseFileEmbeddingCache:
                 )
             values.append(
                 {
-                    "experiment_id": self.experiment_id,
                     "blob_sha": key,
                     "embedding_model": self.embedding_model,
                     "dimensions": len(vec),
@@ -235,7 +223,6 @@ class DatabaseFileEmbeddingCache:
                     stmt = pg_insert(MapElitesFileEmbeddingCache).values(batch)
                     stmt = stmt.on_conflict_do_nothing(
                         index_elements=[
-                            "experiment_id",
                             "blob_sha",
                         ],
                     )
@@ -248,7 +235,6 @@ def build_file_embedding_cache(
     *,
     settings: Settings | None = None,
     backend: str | None = None,
-    experiment_id: UUID | str | None = None,
 ) -> FileEmbeddingCache:
     """Factory for selecting an embedding cache backend.
 
@@ -271,14 +257,7 @@ def build_file_embedding_cache(
             requested_dimensions=requested_dimensions,
         )
     if chosen == "db":
-        if experiment_id is None:
-            raise ValueError(
-                "Experiment id is required for MAPELITES_FILE_EMBEDDING_CACHE_BACKEND=db. "
-                "Pass experiment_id to embed_repository_state / RepositoryStateEmbedder, "
-                "or use MAPELITES_FILE_EMBEDDING_CACHE_BACKEND=memory for local runs.",
-            )
         return DatabaseFileEmbeddingCache(
-            experiment_id=UUID(str(experiment_id)),
             embedding_model=embedding_model,
             requested_dimensions=requested_dimensions,
         )

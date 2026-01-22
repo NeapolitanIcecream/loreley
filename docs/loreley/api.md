@@ -30,6 +30,8 @@ database and logs configuration.
 Common variables:
 
 - `DATABASE_URL`
+- `EXPERIMENT_ID` (must match the database marker)
+- `MAPELITES_EXPERIMENT_ROOT_COMMIT` (must match the database marker)
 - `LOGS_BASE_DIR` (optional; logs are read from `<LOGS_BASE_DIR>/logs` or `<cwd>/logs`)
 - `LOG_LEVEL`
 
@@ -45,15 +47,13 @@ FastAPI also exposes OpenAPI docs by default:
 ## Endpoints (v1)
 
 - `GET /health`
-- `GET /repositories`
-- `GET /repositories/{repository_id}/experiments`
-- `GET /experiments/{experiment_id}`
+- `GET /instance`
 - `GET /jobs`
 - `GET /jobs/{job_id}`
 - `GET /jobs/{job_id}/artifacts`
 - `GET /jobs/{job_id}/artifacts/{artifact_key}`
 - `GET /commits`
-- `GET /commits/{commit_hash}` (requires `experiment_id` query parameter)
+- `GET /commits/{commit_hash}`
 - `GET /archive/islands`
 - `GET /archive/records`
 - `GET /archive/snapshot_meta`

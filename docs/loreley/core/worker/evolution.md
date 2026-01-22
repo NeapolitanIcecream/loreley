@@ -5,7 +5,7 @@ Autonomous evolution worker that orchestrates planning, coding, evaluation, repo
 ## Domain types
 
 - **`JobContext`**: in-memory representation of a locked evolution job containing:
-  - `job_id`, `base_commit_hash`, optional `island_id`, optional `experiment_id` and `repository_id`.
+  - `job_id`, `base_commit_hash`, optional `island_id`.
   - `inspiration_commit_hashes` (bounded list) used to load lightweight commit context.
   - size-bounded job spec fields: `goal`, `constraints`, `acceptance_criteria`, optional `iteration_hint`, free-form `notes`, and `tags`.
   - a boolean `is_seed_job` flag indicating whether the job is a cold-start seed job.

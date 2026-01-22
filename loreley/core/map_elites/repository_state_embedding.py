@@ -16,7 +16,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Literal, Sequence, cast
-from uuid import UUID
 
 from git import Repo
 from git.exc import GitCommandError
@@ -78,15 +77,12 @@ class RepositoryStateEmbedder:
         cache: FileEmbeddingCache | None = None,
         cache_backend: str | None = None,
         repo: Repo | None = None,
-        experiment_id: UUID | str | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         self._repo = repo
-        self._experiment_id: UUID | None = _coerce_uuid(experiment_id)
         self.cache = cache or build_file_embedding_cache(
             settings=self.settings,
             backend=cache_backend,
-            experiment_id=self._experiment_id,
         )
 
     def run(
@@ -140,7 +136,7 @@ class RepositoryStateEmbedder:
         if not canonical:
             raise ValueError(f"Unknown commit {requested_commit!r}")
 
-        # Fast path: use persisted aggregate when available (requires experiment_id + DB cache backend).
+        # Fast path: use persisted aggregate when available (requires DB cache backend).
         aggregate = self._load_aggregate(commit_hash=canonical, repo_root=root)
         if aggregate is not None:
             vector = _divide_vector(tuple(float(v) for v in aggregate.sum_vector), int(aggregate.file_count))
@@ -329,8 +325,6 @@ class RepositoryStateEmbedder:
         commit_hash: str,
         repo_root: Path,
     ) -> MapElitesRepoStateAggregate | None:
-        if self._experiment_id is None:
-            return None
         if not isinstance(self.cache, DatabaseFileEmbeddingCache):
             return None
 
@@ -340,7 +334,6 @@ class RepositoryStateEmbedder:
         try:
             with session_scope() as session:
                 stmt = select(MapElitesRepoStateAggregate).where(
-                    MapElitesRepoStateAggregate.experiment_id == self._experiment_id,
                     MapElitesRepoStateAggregate.commit_hash == str(commit_hash),
                 )
                 row = session.execute(stmt).scalar_one_or_none()
@@ -366,8 +359,6 @@ class RepositoryStateEmbedder:
         sum_vector: Vector,
         file_count: int,
     ) -> None:
-        if self._experiment_id is None:
-            return
         if not isinstance(self.cache, DatabaseFileEmbeddingCache):
             return
         if file_count <= 0 or not sum_vector:
@@ -375,7 +366,6 @@ class RepositoryStateEmbedder:
         if len(sum_vector) != int(getattr(self.cache, "requested_dimensions", 0) or 0):
             return
         row = MapElitesRepoStateAggregate(
-            experiment_id=self._experiment_id,
             commit_hash=str(commit_hash),
             file_count=int(file_count),
             sum_vector=[float(v) for v in sum_vector],
@@ -399,8 +389,6 @@ class RepositoryStateEmbedder:
     ) -> dict[str, "RepositoryStateEmbedder._VectorMeta"]:
         if not blob_shas:
             return {}
-        if self._experiment_id is None:
-            return {}
         if not isinstance(self.cache, DatabaseFileEmbeddingCache):
             return {}
         dims = int(dimensions or 0)
@@ -423,7 +411,6 @@ class RepositoryStateEmbedder:
                             MapElitesFileEmbeddingCache.dimensions,
                         )
                         .where(
-                            MapElitesFileEmbeddingCache.experiment_id == self._experiment_id,
                             MapElitesFileEmbeddingCache.blob_sha.in_(batch),
                         )
                     )
@@ -432,26 +419,24 @@ class RepositoryStateEmbedder:
                             raise RepoStateEmbeddingError(
                                 "File embedding cache entry has an unexpected embedding model; "
                                 "reset the DB (dev). "
-                                f"(experiment_id={self._experiment_id} blob_sha={sha} "
-                                f"expected_model={self.cache.embedding_model!r} got_model={model!r})"
+                                f"(blob_sha={sha} expected_model={self.cache.embedding_model!r} "
+                                f"got_model={model!r})"
                             )
                         if int(stored_dims or 0) != dims:
                             raise RepoStateEmbeddingError(
                                 "File embedding cache entry has unexpected dimensions; reset the DB (dev). "
-                                f"(experiment_id={self._experiment_id} blob_sha={sha} "
-                                f"expected_dims={dims} got_dims={stored_dims!r})"
+                                f"(blob_sha={sha} expected_dims={dims} got_dims={stored_dims!r})"
                             )
                         vector = tuple(float(v) for v in (vec or ()))
                         if not vector:
                             raise RepoStateEmbeddingError(
                                 "File embedding cache contains an empty vector; reset the DB (dev). "
-                                f"(experiment_id={self._experiment_id} blob_sha={sha} dims={dims})"
+                                f"(blob_sha={sha} dims={dims})"
                             )
                         if len(vector) != dims:
                             raise RepoStateEmbeddingError(
                                 "File embedding cache vector has unexpected dimensions; reset the DB (dev). "
-                                f"(experiment_id={self._experiment_id} blob_sha={sha} "
-                                f"expected_dims={dims} got_dims={len(vector)})"
+                                f"(blob_sha={sha} expected_dims={dims} got_dims={len(vector)})"
                             )
                         found[str(sha)] = RepositoryStateEmbedder._VectorMeta(vector=vector)
         except RepoStateEmbeddingError:
@@ -467,8 +452,6 @@ class RepositoryStateEmbedder:
         commit_hash: str,
         repo_root: Path,
     ) -> tuple[MapElitesRepoStateAggregate, Vector] | None:
-        if self._experiment_id is None:
-            return None
         if not isinstance(self.cache, DatabaseFileEmbeddingCache):
             return None
 
@@ -499,7 +482,7 @@ class RepositoryStateEmbedder:
             return None
 
         pinned_ignore = str(getattr(self.settings, "mapelites_repo_state_ignore_text", "") or "").strip()
-        # Ignore rules are pinned for the experiment lifecycle, so root ignore file changes in the
+        # Ignore rules are pinned for the instance lifecycle, so root ignore file changes in the
         # evolved history do not affect eligibility. We log a warning for observability.
         ignore_changed = False
         for filename in ROOT_IGNORE_FILES:
@@ -743,7 +726,6 @@ def embed_repository_state(
     cache: FileEmbeddingCache | None = None,
     cache_backend: str | None = None,
     repo: Repo | None = None,
-    experiment_id: UUID | str | None = None,
     mode: RepoStateEmbeddingMode = "auto",
 ) -> tuple[CommitCodeEmbedding | None, RepoStateEmbeddingStats]:
     """Functional wrapper around `RepositoryStateEmbedder`."""
@@ -753,7 +735,6 @@ def embed_repository_state(
         cache=cache,
         cache_backend=cache_backend,
         repo=repo,
-        experiment_id=experiment_id,
     )
     return embedder.run(
         commit_hash=commit_hash,
@@ -787,20 +768,6 @@ def _divide_vector(vector: Vector, count: int) -> Vector:
     if not vector or count <= 0:
         return ()
     return tuple(float(v) / float(count) for v in vector)
-
-
-def _coerce_uuid(value: UUID | str | None) -> UUID | None:
-    if value is None:
-        return None
-    if isinstance(value, UUID):
-        return value
-    text = str(value).strip()
-    if not text:
-        return None
-    try:
-        return UUID(text)
-    except Exception:
-        return None
 
 
 @dataclass(frozen=True, slots=True)

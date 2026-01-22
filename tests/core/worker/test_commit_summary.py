@@ -62,8 +62,6 @@ def _make_job_context() -> JobContext:
         job_id=uuid4(),
         base_commit_hash="abc",
         island_id=None,
-        experiment_id=None,
-        repository_id=None,
         inspiration_commit_hashes=(),
         goal="Improve docs",
         constraints=("c1",),

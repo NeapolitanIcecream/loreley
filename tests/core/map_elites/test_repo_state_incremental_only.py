@@ -39,7 +39,6 @@ def test_repo_state_incremental_only_raises_when_no_cache_hit_and_no_incremental
     c1 = _commit_all(repo, "c1")
 
     cache = DatabaseFileEmbeddingCache(
-        experiment_id="00000000-0000-0000-0000-000000000000",
         embedding_model="stub",
         requested_dimensions=2,
     )
@@ -47,7 +46,6 @@ def test_repo_state_incremental_only_raises_when_no_cache_hit_and_no_incremental
         settings=settings,
         cache=cache,
         repo=repo,
-        experiment_id="00000000-0000-0000-0000-000000000000",
     )
 
     monkeypatch.setattr(embedder, "_load_aggregate", lambda **_kwargs: None)

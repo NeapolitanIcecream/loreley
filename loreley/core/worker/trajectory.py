@@ -16,7 +16,6 @@ from __future__ import annotations
 import textwrap
 from dataclasses import dataclass
 from typing import Any, Sequence
-from uuid import UUID
 
 from loguru import logger
 from openai import OpenAI, OpenAIError
@@ -62,19 +61,15 @@ class TrajectoryRollup:
 def _get_commit_card(
     commit_hash: str,
     *,
-    experiment_id: UUID | None,
     session: Session,
 ) -> CommitCard | None:
-    """Return the CommitCard for (experiment_id, commit_hash) when available."""
+    """Return the CommitCard for commit_hash when available."""
 
     commit_hash = (commit_hash or "").strip()
-    if not commit_hash or experiment_id is None:
+    if not commit_hash:
         return None
     return session.execute(
-        select(CommitCard).where(
-            CommitCard.experiment_id == experiment_id,
-            CommitCard.commit_hash == commit_hash,
-        )
+        select(CommitCard).where(CommitCard.commit_hash == commit_hash)
     ).scalar_one_or_none()
 
 
@@ -82,7 +77,6 @@ def find_lca(
     base_commit_hash: str,
     inspiration_commit_hash: str,
     *,
-    experiment_id: UUID | None,
     session: Session,
     max_depth: int = 4096,
 ) -> str | None:
@@ -105,7 +99,7 @@ def find_lca(
     depth = 0
     while current and current not in ancestors and depth < max_depth:
         ancestors.add(current)
-        card = _get_commit_card(current, experiment_id=experiment_id, session=session)
+        card = _get_commit_card(current, session=session)
         parent = (getattr(card, "parent_commit_hash", None) or "").strip() if card else ""
         current = parent or None
         depth += 1
@@ -117,7 +111,7 @@ def find_lca(
         if current in ancestors:
             return current
         visited.add(current)
-        card = _get_commit_card(current, experiment_id=experiment_id, session=session)
+        card = _get_commit_card(current, session=session)
         parent = (getattr(card, "parent_commit_hash", None) or "").strip() if card else ""
         current = parent or None
         depth += 1
@@ -128,7 +122,6 @@ def walk_unique_path(
     lca_commit_hash: str,
     inspiration_commit_hash: str,
     *,
-    experiment_id: UUID | None,
     session: Session,
     limit: int = 4096,
 ) -> list[CommitCard]:
@@ -150,7 +143,7 @@ def walk_unique_path(
         if current == lca_commit_hash:
             break
         visited.add(current)
-        card = _get_commit_card(current, experiment_id=experiment_id, session=session)
+        card = _get_commit_card(current, session=session)
         if card is None:
             break
         cards_tip_to_root.append(card)
@@ -175,7 +168,6 @@ class _AnchorIndex:
 def _build_anchor_index(
     tip_commit_hash: str,
     *,
-    experiment_id: UUID | None,
     session: Session,
     anchor_commit_hash: str | None,
     max_depth: int = 4096,
@@ -203,7 +195,7 @@ def _build_anchor_index(
         if requested_anchor and current == requested_anchor:
             reached = True
             break
-        card = _get_commit_card(current, experiment_id=experiment_id, session=session)
+        card = _get_commit_card(current, session=session)
         if card is None:
             break
         parent = (getattr(card, "parent_commit_hash", None) or "").strip()
@@ -241,7 +233,6 @@ def get_full_chunk_pairs_from_tip(
     inspiration_commit_hash: str,
     *,
     block_size: int,
-    experiment_id: UUID | None,
     session: Session,
     anchor_commit_hash: str | None = None,
     max_pairs: int | None = None,
@@ -266,7 +257,6 @@ def get_full_chunk_pairs_from_tip(
 
     index = _build_anchor_index(
         inspiration_commit_hash,
-        experiment_id=experiment_id,
         session=session,
         anchor_commit_hash=anchor_commit_hash,
         max_depth=max_depth,
@@ -294,7 +284,6 @@ def get_or_build_chunk_summary(
     end_commit_hash: str,
     block_size: int,
     *,
-    experiment_id: UUID | None,
     session: Session,
     settings: Settings | None = None,
     client: OpenAI | None = None,
@@ -307,14 +296,10 @@ def get_or_build_chunk_summary(
     block_size = int(block_size)
     if not start_commit_hash or not end_commit_hash or block_size <= 0:
         return ""
-    if experiment_id is None:
-        return ""
-
     model = (settings.worker_planning_trajectory_summary_model or "").strip() or settings.worker_evolution_commit_model
 
     existing = session.execute(
         select(CommitChunkSummary).where(
-            CommitChunkSummary.experiment_id == experiment_id,
             CommitChunkSummary.start_commit_hash == start_commit_hash,
             CommitChunkSummary.end_commit_hash == end_commit_hash,
             CommitChunkSummary.block_size == block_size,
@@ -335,7 +320,6 @@ def get_or_build_chunk_summary(
         start_commit_hash=start_commit_hash,
         end_commit_hash=end_commit_hash,
         step_count=block_size,
-        experiment_id=experiment_id,
         session=session,
     )
     step_lines = [_format_step(card) for card in step_cards]
@@ -359,7 +343,6 @@ def get_or_build_chunk_summary(
         return fallback
 
     row = CommitChunkSummary(
-        experiment_id=experiment_id,
         start_commit_hash=start_commit_hash,
         end_commit_hash=end_commit_hash,
         block_size=block_size,
@@ -375,7 +358,6 @@ def get_or_build_chunk_summary(
         # Another worker may have inserted the same cache row concurrently.
         existing = session.execute(
             select(CommitChunkSummary).where(
-                CommitChunkSummary.experiment_id == experiment_id,
                 CommitChunkSummary.start_commit_hash == start_commit_hash,
                 CommitChunkSummary.end_commit_hash == end_commit_hash,
                 CommitChunkSummary.block_size == block_size,
@@ -398,7 +380,6 @@ def build_inspiration_trajectory_rollup(
     base_commit_hash: str,
     inspiration_commit_hash: str,
     *,
-    experiment_id: UUID | None,
     session: Session,
     settings: Settings | None = None,
     client: OpenAI | None = None,
@@ -411,7 +392,6 @@ def build_inspiration_trajectory_rollup(
     meta: dict[str, Any] = {
         "base_commit_hash": base_commit_hash,
         "inspiration_commit_hash": inspiration_commit_hash,
-        "experiment_id": str(experiment_id) if experiment_id is not None else None,
         "lca_commit_hash": None,
         "unique_steps_count": 0,
         "omitted_steps": 0,
@@ -423,7 +403,6 @@ def build_inspiration_trajectory_rollup(
     lca = find_lca(
         base_commit_hash=base_commit_hash,
         inspiration_commit_hash=inspiration_commit_hash,
-        experiment_id=experiment_id,
         session=session,
     )
     meta["lca_commit_hash"] = lca
@@ -438,7 +417,6 @@ def build_inspiration_trajectory_rollup(
     steps = walk_unique_path(
         lca_commit_hash=lca,
         inspiration_commit_hash=inspiration_commit_hash,
-        experiment_id=experiment_id,
         session=session,
     )
     unique_steps_count = len(steps)
@@ -459,7 +437,6 @@ def build_inspiration_trajectory_rollup(
     anchor_index = _build_anchor_index(
         inspiration_commit_hash,
         session=session,
-        experiment_id=experiment_id,
         anchor_commit_hash=anchor_candidate,
     )
     meta["anchor_commit_hash"] = anchor_index.anchor_commit_hash
@@ -577,7 +554,6 @@ def build_inspiration_trajectory_rollup(
             start_commit_hash=start_hash,
             end_commit_hash=end_hash,
             block_size=block_size,
-            experiment_id=experiment_id,
             session=session,
             settings=settings,
             client=client,
@@ -633,7 +609,6 @@ def _ancestor_hash(
     commit_hash: str,
     *,
     steps: int,
-    experiment_id: UUID | None,
     session: Session,
     max_depth: int = 4096,
 ) -> str | None:
@@ -649,7 +624,7 @@ def _ancestor_hash(
     visited: set[str] = set()
     while current and walked < steps and walked < max_depth and current not in visited:
         visited.add(current)
-        card = _get_commit_card(current, experiment_id=experiment_id, session=session)
+        card = _get_commit_card(current, session=session)
         if card is None:
             return None
         parent = (getattr(card, "parent_commit_hash", None) or "").strip()
@@ -665,7 +640,6 @@ def _collect_chunk_cards(
     start_commit_hash: str,
     end_commit_hash: str,
     step_count: int,
-    experiment_id: UUID | None,
     session: Session,
 ) -> list[CommitCard]:
     """Collect CommitCards representing `step_count` edges from start->...->end."""
@@ -681,7 +655,7 @@ def _collect_chunk_cards(
     for _ in range(step_count):
         if not current:
             return []
-        card = _get_commit_card(current, experiment_id=experiment_id, session=session)
+        card = _get_commit_card(current, session=session)
         if card is None:
             return []
         cards_tip_to_root.append(card)

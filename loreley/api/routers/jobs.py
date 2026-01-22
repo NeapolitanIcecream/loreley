@@ -25,12 +25,11 @@ router = APIRouter()
 
 @router.get("/jobs", response_model=list[JobOut])
 def get_jobs(
-    experiment_id: UUID | None = None,
     status: JobStatus | None = None,
     limit: int = Query(default=DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
     offset: int = Query(default=0, ge=0),
 ) -> list[JobOut]:
-    return list_jobs(experiment_id=experiment_id, status=status, limit=limit, offset=offset)
+    return list_jobs(status=status, limit=limit, offset=offset)
 
 
 @router.get("/jobs/{job_id}", response_model=JobDetailOut)

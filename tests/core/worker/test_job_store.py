@@ -22,7 +22,7 @@ from loreley.core.worker.job_store import (
     JobPreconditionError,
 )
 from loreley.core.worker.planning import PlanStep, PlanningAgentResponse, PlanningPlan
-from loreley.db.models import Experiment, EvolutionJob, JobStatus
+from loreley.db.models import EvolutionJob, JobStatus
 
 
 def test_is_lock_conflict_matches_pgcode_and_messages(settings: Settings) -> None:
@@ -57,7 +57,6 @@ def test_start_job_marks_running_and_returns_snapshot(
             self.id = job_id
             self.base_commit_hash = "abc123"
             self.island_id = "island"
-            self.experiment_id = uuid.uuid4()
             self.inspiration_commit_hashes = ["i1", "i2"]
             self.goal = "value"
             self.constraints = []
@@ -73,11 +72,6 @@ def test_start_job_marks_running_and_returns_snapshot(
             self.status = JobStatus.PENDING
             self.started_at = None
             self.last_error = "previous"
-            self.experiment = type(
-                "Exp",
-                (),
-                {"repository_id": uuid.uuid4()},
-            )()
 
     dummy_job = DummyJob()
 
@@ -111,7 +105,6 @@ def test_start_job_marks_running_and_returns_snapshot(
     assert locked.job_id == job_id
     assert locked.base_commit_hash == dummy_job.base_commit_hash
     assert locked.inspiration_commit_hashes == tuple(dummy_job.inspiration_commit_hashes)
-    assert locked.repository_id == dummy_job.experiment.repository_id
 
 
 def test_start_job_rejects_missing_or_invalid_jobs(
@@ -146,7 +139,6 @@ def test_start_job_rejects_missing_or_invalid_jobs(
             self.id = uuid.uuid4()
             self.base_commit_hash = "hash"
             self.island_id = None
-            self.experiment_id = None
             self.inspiration_commit_hashes = []
             self.goal = "g"
             self.constraints = []
@@ -160,7 +152,6 @@ def test_start_job_rejects_missing_or_invalid_jobs(
             self.sampling_radius_used = None
             self.sampling_fallback_inspirations = None
             self.status = JobStatus.RUNNING
-            self.experiment = None
 
     @contextmanager
     def invalid_status_scope() -> Any:
@@ -176,8 +167,6 @@ def test_persist_success_updates_job_and_records_metadata(
     settings: Settings,
 ) -> None:
     job_id = uuid.uuid4()
-    experiment_id = uuid.uuid4()
-    repository_id = uuid.uuid4()
 
     class DummyJob:
         def __init__(self) -> None:
@@ -186,7 +175,6 @@ def test_persist_success_updates_job_and_records_metadata(
             self.plan_summary: str | None = None
             self.completed_at = None
             self.last_error = "err"
-            self.experiment_id = experiment_id
             self.island_id = "island"
             self.base_commit_hash = "base"
             self.result_commit_hash = None
@@ -200,7 +188,6 @@ def test_persist_success_updates_job_and_records_metadata(
             self.ingestion_reason = None
 
     job_row = DummyJob()
-    experiment_row = Experiment(id=experiment_id, repository_id=repository_id)
     added: list[Any] = []
 
     class DummySession:
@@ -210,8 +197,6 @@ def test_persist_success_updates_job_and_records_metadata(
         def get(self, model: Any, key: Any) -> Any:
             if model is EvolutionJob and key == job_id:
                 return job_row
-            if model is Experiment and key == experiment_id:
-                return experiment_row
             return None
 
         def add(self, obj: Any) -> None:
@@ -291,8 +276,6 @@ def test_persist_success_updates_job_and_records_metadata(
         job_id=job_id,
         base_commit_hash="base",
         island_id="island",
-        experiment_id=experiment_id,
-        repository_id=repository_id,
         inspiration_commit_hashes=(),
         goal="goal",
         constraints=("c",),

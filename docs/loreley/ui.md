@@ -63,7 +63,6 @@ The API relies on standard Loreley settings (database/logs). See:
 The Streamlit UI is multi-page (implemented under `loreley/ui/pages`):
 
 - **Overview**: quick KPIs, fitness trend, island table.
-- **Experiments**: experiment list and selected experiment details.
 - **Jobs**: job table with filters and a details panel.
 - **Commits**: commit table with search; commit details with charts.
 - **Archive**: island stats, snapshot metadata, record plots and table.

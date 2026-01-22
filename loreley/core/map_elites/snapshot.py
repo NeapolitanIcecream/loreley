@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import time
-import uuid
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -53,7 +52,6 @@ UNSUPPORTED_META_KEYS = ("archive", "history")
 def ensure_supported_snapshot_meta(
     meta: Mapping[str, Any] | None,
     *,
-    experiment_id: Any,
     island_id: str,
 ) -> None:
     """Fail fast when a stored snapshot payload contains unsupported fields."""
@@ -65,7 +63,7 @@ def ensure_supported_snapshot_meta(
             raise ValueError(
                 "Unsupported MAP-Elites snapshot payload detected; reset the database schema with "
                 "`uv run loreley reset-db --yes`. "
-                f"(experiment_id={experiment_id} island_id={island_id})"
+                f"(island_id={island_id})"
             )
 
 
@@ -107,15 +105,8 @@ def _coerce_int(value: Any, *, default: int) -> int:
         return int(default)
 
 
-@dataclass(slots=True)
 class DatabaseSnapshotStore:
     """Postgres-backed snapshot store using the incremental MAP-Elites tables."""
-
-    experiment_id: uuid.UUID
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.experiment_id, uuid.UUID):
-            self.experiment_id = uuid.UUID(str(self.experiment_id))
 
     def load(self, island_id: str) -> dict[str, Any] | None:
         """Load a snapshot payload compatible with `apply_snapshot()`."""
@@ -123,7 +114,6 @@ class DatabaseSnapshotStore:
         try:
             with session_scope() as session:
                 stmt = select(MapElitesState).where(
-                    MapElitesState.experiment_id == self.experiment_id,
                     MapElitesState.island_id == island_id,
                 )
                 state = session.execute(stmt).scalar_one_or_none()
@@ -131,7 +121,7 @@ class DatabaseSnapshotStore:
                     return None
 
                 meta = dict(state.snapshot or {})
-                ensure_supported_snapshot_meta(meta, experiment_id=self.experiment_id, island_id=island_id)
+                ensure_supported_snapshot_meta(meta, island_id=island_id)
 
                 lower = meta.get("lower_bounds")
                 upper = meta.get("upper_bounds")
@@ -158,16 +148,14 @@ class DatabaseSnapshotStore:
             raise
         except SQLAlchemyError as exc:
             log.error(
-                "Failed to load MAP-Elites snapshot for experiment {} island {}: {}",
-                self.experiment_id,
+                "Failed to load MAP-Elites snapshot for island {}: {}",
                 island_id,
                 exc,
             )
             return None
         except Exception as exc:  # pragma: no cover - defensive
             log.error(
-                "Unexpected error while loading snapshot for experiment {} island {}: {}",
-                self.experiment_id,
+                "Unexpected error while loading snapshot for island {}: {}",
                 island_id,
                 exc,
             )
@@ -186,16 +174,13 @@ class DatabaseSnapshotStore:
         try:
             with session_scope() as session:
                 stmt = select(MapElitesState).where(
-                    MapElitesState.experiment_id == self.experiment_id,
                     MapElitesState.island_id == island_id,
                 )
                 existing = session.execute(stmt).scalar_one_or_none()
                 meta: dict[str, Any] = dict(existing.snapshot or {}) if existing else {}
 
-                ensure_supported_snapshot_meta(meta, experiment_id=self.experiment_id, island_id=island_id)
+                ensure_supported_snapshot_meta(meta, island_id=island_id)
 
-                meta["schema_version"] = 2
-                meta["storage_backend"] = "cells_history_v2"
                 meta["last_update_at"] = now
 
                 if update.history_limit is not None:
@@ -214,7 +199,6 @@ class DatabaseSnapshotStore:
                 else:
                     session.add(
                         MapElitesState(
-                            experiment_id=self.experiment_id,
                             island_id=island_id,
                             snapshot=meta,
                         )
@@ -223,13 +207,11 @@ class DatabaseSnapshotStore:
                 if update.clear:
                     session.execute(
                         delete(MapElitesArchiveCell).where(
-                            MapElitesArchiveCell.experiment_id == self.experiment_id,
                             MapElitesArchiveCell.island_id == island_id,
                         )
                     )
                     session.execute(
                         delete(MapElitesPcaHistory).where(
-                            MapElitesPcaHistory.experiment_id == self.experiment_id,
                             MapElitesPcaHistory.island_id == island_id,
                         )
                     )
@@ -238,7 +220,6 @@ class DatabaseSnapshotStore:
                 if update.cell_upsert is not None:
                     cell = update.cell_upsert
                     values = {
-                        "experiment_id": self.experiment_id,
                         "island_id": island_id,
                         "cell_index": int(cell.cell_index),
                         "commit_hash": str(cell.commit_hash),
@@ -250,7 +231,6 @@ class DatabaseSnapshotStore:
                     stmt = pg_insert(MapElitesArchiveCell).values(**values)
                     stmt = stmt.on_conflict_do_update(
                         index_elements=[
-                            MapElitesArchiveCell.__table__.c.experiment_id,
                             MapElitesArchiveCell.__table__.c.island_id,
                             MapElitesArchiveCell.__table__.c.cell_index,
                         ],
@@ -267,7 +247,6 @@ class DatabaseSnapshotStore:
                 if update.history_upsert is not None:
                     entry = update.history_upsert
                     values = {
-                        "experiment_id": self.experiment_id,
                         "island_id": island_id,
                         "commit_hash": str(entry.commit_hash),
                         "vector": [float(v) for v in entry.vector],
@@ -277,7 +256,6 @@ class DatabaseSnapshotStore:
                     stmt = pg_insert(MapElitesPcaHistory).values(**values)
                     stmt = stmt.on_conflict_do_update(
                         index_elements=[
-                            MapElitesPcaHistory.experiment_id,
                             MapElitesPcaHistory.island_id,
                             MapElitesPcaHistory.commit_hash,
                         ],
@@ -292,15 +270,13 @@ class DatabaseSnapshotStore:
             raise
         except SQLAlchemyError as exc:
             log.error(
-                "Failed to persist MAP-Elites snapshot for experiment {} island {}: {}",
-                self.experiment_id,
+                "Failed to persist MAP-Elites snapshot for island {}: {}",
                 island_id,
                 exc,
             )
         except Exception as exc:  # pragma: no cover - defensive
             log.error(
-                "Unexpected error while persisting snapshot for experiment {} island {}: {}",
-                self.experiment_id,
+                "Unexpected error while persisting snapshot for island {}: {}",
                 island_id,
                 exc,
             )
@@ -310,7 +286,6 @@ class DatabaseSnapshotStore:
             session.execute(
                 select(MapElitesArchiveCell)
                 .where(
-                    MapElitesArchiveCell.experiment_id == self.experiment_id,
                     MapElitesArchiveCell.island_id == island_id,
                 )
                 .order_by(MapElitesArchiveCell.cell_index.asc())
@@ -343,7 +318,6 @@ class DatabaseSnapshotStore:
         stmt = (
             select(MapElitesPcaHistory)
             .where(
-                MapElitesPcaHistory.experiment_id == self.experiment_id,
                 MapElitesPcaHistory.island_id == island_id,
             )
             .order_by(

@@ -15,7 +15,6 @@ class JobOut(OrmOutModel):
     status: str
     priority: int
     island_id: str | None
-    experiment_id: UUID | None
     base_commit_hash: str | None
     scheduled_at: datetime | None
     started_at: datetime | None

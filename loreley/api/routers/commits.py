@@ -17,22 +17,18 @@ router = APIRouter()
 
 @router.get("/commits", response_model=list[CommitOut])
 def get_commits(
-    experiment_id: UUID | None = None,
     island_id: str | None = None,
     limit: int = Query(default=DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
     offset: int = Query(default=0, ge=0),
 ) -> list[CommitOut]:
-    return list_commits(experiment_id=experiment_id, island_id=island_id, limit=limit, offset=offset)
+    return list_commits(island_id=island_id, limit=limit, offset=offset)
 
 
 @router.get("/commits/{commit_hash}", response_model=CommitDetailOut)
 def get_commit_detail(
     commit_hash: str,
-    experiment_id: UUID | None = Query(default=None),
 ) -> CommitDetailOut:
-    if experiment_id is None:
-        raise HTTPException(status_code=400, detail="experiment_id is required.")
-    commit = get_commit(experiment_id=experiment_id, commit_hash=commit_hash)
+    commit = get_commit(commit_hash=commit_hash)
     if commit is None:
         raise HTTPException(status_code=404, detail="Commit not found.")
     metrics = list_metrics(commit_card_id=commit.id)

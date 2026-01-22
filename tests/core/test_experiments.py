@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-from uuid import UUID
-
 from loreley.core.experiments import (
     _build_slug_from_source,
-    _build_default_experiment_name,
     _normalise_remote_url,
 )
 
@@ -12,16 +9,6 @@ from loreley.core.experiments import (
 def test_build_slug_from_source_basic() -> None:
     slug = _build_slug_from_source("https://github.com/Owner/Repo.git")
     assert slug == "github.com/owner/repo"
-
-
-def test_default_experiment_name_uses_repository_slug_and_id_prefix() -> None:
-    experiment_id = UUID("00000000-0000-0000-0000-000000000000")
-    name = _build_default_experiment_name(
-        repository_slug="github.com/owner/repo",
-        experiment_id=experiment_id,
-    )
-    assert name.endswith("-00000000")
-    assert name.startswith("github.com/owner/repo")
 
 
 def test_normalise_remote_url_canonicalises_and_strips_credentials() -> None:

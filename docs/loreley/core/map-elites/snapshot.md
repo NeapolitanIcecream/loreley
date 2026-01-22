@@ -14,7 +14,7 @@ The read/write entry point is `DatabaseSnapshotStore`.
 
 ## Integration with `MapElitesManager`
 
-- `MapElitesManager` requires `experiment_id` and uses `DatabaseSnapshotStore(experiment_id=...)`.
+- `MapElitesManager` uses `DatabaseSnapshotStore()` for persistence.
 - On island initialisation it calls `store.load(island_id)` and applies the payload with `apply_snapshot(...)`.
 - After ingestion and `clear_island()` it emits a `SnapshotUpdate` and calls `store.apply_update(...)`.
 

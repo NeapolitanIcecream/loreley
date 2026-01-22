@@ -15,4 +15,5 @@ Database engine and session management for Loreley.
 
 ## Schema helpers
 
-- **`ensure_database_schema()`**: imports `loreley.db.models` and calls `Base.metadata.create_all(bind=engine)` to create any missing tables. This is safe to call multiple times and is used by the UI API at startup.
+- **`ensure_database_schema()`**: imports `loreley.db.models`, calls `Base.metadata.create_all(bind=engine)` to create any missing tables, then validates the single-row `InstanceMetadata` marker against the current environment. This is safe to call multiple times and is used by the UI API at startup.
+- **`reset_database_schema()`**: drops and recreates all ORM tables, then seeds `InstanceMetadata` from the current environment (`EXPERIMENT_ID` and `MAPELITES_EXPERIMENT_ROOT_COMMIT`). This is the supported upgrade path for destructive schema changes.

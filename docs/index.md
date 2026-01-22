@@ -226,8 +226,8 @@ Use this index as a quick map of the rest of the documentation:
 - **Database**
   - [Engine and sessions](loreley/db/base.md)
   - [ORM models](loreley/db/models.md)
-- **Experiments**
-  - [Repository & experiment helpers](loreley/core/experiments.md)
+- **Instance**
+  - [Repository & instance helpers](loreley/core/experiments.md)
 - **Core contracts**
   - [Hot-path contracts](loreley/core/contracts.md)
 - **MAP-Elites core**

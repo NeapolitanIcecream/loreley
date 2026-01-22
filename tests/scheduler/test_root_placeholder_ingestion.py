@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 from loreley.config import Settings
@@ -35,17 +34,12 @@ def test_root_initialisation_evaluates_without_ingesting_into_archive(
 
     settings = Settings(mapelites_code_embedding_dimensions=8)
     manager = DummyManager()
-    experiment = SimpleNamespace(id="exp-123")
-    repository = SimpleNamespace(id="repo-456")
-
     ingestion = MapElitesIngestion(
         settings=settings,
         console=ingestion_mod.Console(),
         repo_root=tmp_path,
         repo=object(),
         manager=manager,  # type: ignore[arg-type]
-        experiment=experiment,
-        repository=repository,
     )
 
     calls: dict[str, int] = {"available": 0, "metadata": 0, "repo_state_bootstrap": 0, "evaluated": 0}

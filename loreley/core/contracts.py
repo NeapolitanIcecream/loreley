@@ -73,7 +73,6 @@ class CommitCard(BaseModel):
 
     commit_hash: Annotated[str, Field(min_length=1, max_length=64)]
     parent_commit_hash: Annotated[str | None, Field(max_length=64)] = None
-    experiment_id: UUID | None = None
     island_id: Annotated[str | None, Field(max_length=64)] = None
     job_id: UUID | None = None
 

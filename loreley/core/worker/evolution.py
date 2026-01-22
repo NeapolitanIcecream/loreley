@@ -63,8 +63,6 @@ class JobContext:
     job_id: UUID
     base_commit_hash: str
     island_id: str | None
-    experiment_id: UUID | None
-    repository_id: UUID | None
     inspiration_commit_hashes: tuple[str, ...]
     goal: str
     constraints: tuple[str, ...]
@@ -100,7 +98,6 @@ class EvolutionWorker:
         self,
         *,
         settings: Settings | None = None,
-        attached_experiment_id: UUID | str | None = None,
         repository: WorkerRepository | None = None,
         planning_agent: PlanningAgent | None = None,
         coding_agent: CodingAgent | None = None,
@@ -109,17 +106,6 @@ class EvolutionWorker:
         job_store: EvolutionJobStore | None = None,
     ) -> None:
         self.settings = settings or get_settings()
-        self.attached_experiment_id: UUID | None = (
-            attached_experiment_id
-            if isinstance(attached_experiment_id, UUID)
-            else (UUID(str(attached_experiment_id)) if attached_experiment_id else None)
-        )
-        if self.attached_experiment_id is None:
-            raise EvolutionWorkerError(
-                "EvolutionWorker must be attached to a single experiment id. "
-                "Set EXPERIMENT_ID (or pass attached_experiment_id) and "
-                "route jobs via per-experiment queues.",
-            )
         self.repository = repository or WorkerRepository(self.settings)
         self.planning_agent = planning_agent or PlanningAgent(self.settings)
         self.coding_agent = coding_agent or CodingAgent(self.settings)
@@ -214,7 +200,6 @@ class EvolutionWorker:
     def _start_job(self, job_id: UUID) -> JobContext:
         locked_job = self.job_store.start_job(
             job_id,
-            expected_experiment_id=self.attached_experiment_id,
         )
 
         goal = (locked_job.goal or "").strip()
@@ -254,12 +239,6 @@ class EvolutionWorker:
             job_id=locked_job.job_id,
             base_commit_hash=locked_job.base_commit_hash,
             island_id=locked_job.island_id,
-            experiment_id=(
-                self.attached_experiment_id
-                if self.attached_experiment_id is not None
-                else locked_job.experiment_id
-            ),
-            repository_id=locked_job.repository_id,
             inspiration_commit_hashes=tuple(locked_job.inspiration_commit_hashes or ()),
             goal=goal,
             constraints=tuple(locked_job.constraints or ()),
@@ -281,13 +260,11 @@ class EvolutionWorker:
     ) -> PlanningAgentResponse:
         base_context = self._load_commit_planning_context(
             commit_hash=job_ctx.base_commit_hash,
-            experiment_id=job_ctx.experiment_id,
             island_id=job_ctx.island_id,
         )
         inspiration_contexts = [
             self._load_commit_planning_context(
                 commit_hash=commit_hash,
-                experiment_id=job_ctx.experiment_id,
                 island_id=job_ctx.island_id,
             )
             for commit_hash in job_ctx.inspiration_commit_hashes
@@ -311,7 +288,6 @@ class EvolutionWorker:
                         rollup = build_inspiration_trajectory_rollup(
                             base_commit_hash=base_context.commit_hash,
                             inspiration_commit_hash=ctx.commit_hash,
-                            experiment_id=job_ctx.experiment_id,
                             session=session,
                             settings=self.settings,
                             client=shared_client,
@@ -448,8 +424,6 @@ class EvolutionWorker:
             "job": {
                 "id": str(job_ctx.job_id),
                 "island_id": job_ctx.island_id,
-                "experiment_id": str(job_ctx.experiment_id) if job_ctx.experiment_id else None,
-                "repository_id": str(job_ctx.repository_id) if job_ctx.repository_id else None,
                 "goal": job_ctx.goal,
                 "constraints": list(job_ctx.constraints),
                 "acceptance_criteria": list(job_ctx.acceptance_criteria),
@@ -507,32 +481,24 @@ class EvolutionWorker:
         self,
         *,
         commit_hash: str,
-        experiment_id: UUID | None,
         island_id: str | None,
     ) -> CommitPlanningContext:
         card: CommitCard | None = None
         metric_rows: Sequence[Metric] = ()
         cell: MapElitesArchiveCell | None = None
         with session_scope() as session:
-            if experiment_id is not None:
-                card = session.execute(
-                    select(CommitCard).where(
-                        CommitCard.experiment_id == experiment_id,
-                        CommitCard.commit_hash == commit_hash,
-                    )
-                ).scalar_one_or_none()
-            else:
-                card = None
+            card = session.execute(
+                select(CommitCard).where(CommitCard.commit_hash == commit_hash)
+            ).scalar_one_or_none()
             if card is not None:
                 metric_rows = session.scalars(
                     select(Metric).where(Metric.commit_card_id == card.id)
                 ).all()
             else:
                 metric_rows = ()
-            if experiment_id and island_id:
+            if island_id:
                 cell = session.execute(
                     select(MapElitesArchiveCell).where(
-                        MapElitesArchiveCell.experiment_id == experiment_id,
                         MapElitesArchiveCell.island_id == island_id,
                         MapElitesArchiveCell.commit_hash == commit_hash,
                     )

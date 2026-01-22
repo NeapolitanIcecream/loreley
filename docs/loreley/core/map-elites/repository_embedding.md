@@ -54,7 +54,6 @@ Implemented by:
 
 Cache key:
 
-- `experiment_id`
 - `blob_sha`
 
 The database cache stores `embedding_model` and `dimensions` alongside vectors for
@@ -67,11 +66,11 @@ Backend selection:
 
 - `MAPELITES_FILE_EMBEDDING_CACHE_BACKEND=db|memory` (default: `db`)
 
-Note: The database-backed cache is experiment-scoped and requires an `experiment_id`. Use the `memory` backend for local runs without an experiment context.
+Note: The database-backed cache is single-tenant. Use the `memory` backend for local runs without a database.
 
 ## Repo-state aggregate cache (commit-level)
 
-Repo-state embeddings persist a commit-level aggregate (scoped to `experiment_id`) so
+Repo-state embeddings persist a commit-level aggregate so
 future ingests can avoid re-enumerating the full tree.
 
 Stored in:

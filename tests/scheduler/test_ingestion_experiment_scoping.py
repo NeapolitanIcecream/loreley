@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import uuid
 from contextlib import contextmanager
-from types import SimpleNamespace
 from typing import Any
 
 from loreley.config import Settings
@@ -10,25 +8,19 @@ from loreley.scheduler import ingestion as ingestion_mod
 from loreley.scheduler.ingestion import MapElitesIngestion
 
 
-def test_jobs_requiring_ingestion_filters_by_experiment_id(
+def test_jobs_requiring_ingestion_does_not_require_experiment_filter(
     monkeypatch,
     tmp_path,
 ) -> None:
-    """Ensure ingestion never scans SUCCEEDED jobs across experiments."""
+    """Ensure ingestion does not require experiment scoping."""
 
     settings = Settings(mapelites_code_embedding_dimensions=8)
-    experiment_id = uuid.uuid4()
-    experiment = SimpleNamespace(id=experiment_id)
-    repository = SimpleNamespace(id=uuid.uuid4())
-
     ingestion = MapElitesIngestion(
         settings=settings,
         console=ingestion_mod.Console(),
         repo_root=tmp_path,
         repo=object(),
         manager=object(),  # not used by _jobs_requiring_ingestion
-        experiment=experiment,
-        repository=repository,
     )
 
     class DummyResult:
@@ -41,9 +33,7 @@ def test_jobs_requiring_ingestion_filters_by_experiment_id(
                 params = stmt.compile().params
             except Exception:  # pragma: no cover - defensive
                 params = {}
-            # We don't parse the full SQL; it's enough to ensure the expected
-            # experiment id is bound into the statement params.
-            assert any(str(v) == str(experiment_id) for v in params.values())
+            assert "experiment_id" not in params
             return DummyResult()
 
     @contextmanager

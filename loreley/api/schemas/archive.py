@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
-from uuid import UUID
 
 from pydantic import Field
 
@@ -30,7 +29,6 @@ class ArchiveRecordOut(OrmOutModel):
 
 
 class ArchiveSnapshotMetaOut(OrmOutModel):
-    experiment_id: UUID
     island_id: str
     entry_count: int
     dims: int

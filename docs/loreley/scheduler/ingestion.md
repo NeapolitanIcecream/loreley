@@ -66,7 +66,6 @@ When `MAPELITES_EXPERIMENT_ROOT_COMMIT` is set, `EvolutionScheduler` asks
 2. `_ensure_root_commit_metadata(...)` creates or updates a `CommitCard`
    row with:
    - the commit's parent, author, and message,
-   - the current `experiment_id`,
    - a default island id (from `MAPELITES_DEFAULT_ISLAND_ID` or `"main"`),
    - bounded commit-card fields (`subject`, `change_summary`, `highlights`).
 3. `_ensure_root_commit_repo_state_bootstrap(...)` bootstraps the baseline

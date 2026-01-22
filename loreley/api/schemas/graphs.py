@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
-from uuid import UUID
 
 from pydantic import Field, field_validator
 
@@ -15,7 +14,6 @@ class CommitGraphNodeOut(OrmOutModel):
     commit_hash: str
     parent_commit_hash: str | None = None
     island_id: str | None = None
-    experiment_id: UUID | None = None
     created_at: datetime | None = None
     author: str | None = None
     message: str | None = None
@@ -40,7 +38,6 @@ class CommitGraphEdgeOut(OrmOutModel):
 
 
 class CommitGraphOut(OrmOutModel):
-    experiment_id: UUID
     metric_name: str | None
     mode: str
     max_nodes: int

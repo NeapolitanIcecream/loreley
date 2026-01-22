@@ -8,13 +8,7 @@ import streamlit as st
 
 from loreley.api.pagination import MAX_PAGE_LIMIT
 from loreley.ui.components.api import api_get_or_stop
-from loreley.ui.state import (
-    API_BASE_URL_KEY,
-    EXPERIMENT_ID_KEY,
-    EXPERIMENT_LABEL_KEY,
-    ISLAND_ID_KEY,
-    REPOSITORY_SLUG_KEY,
-)
+from loreley.ui.state import API_BASE_URL_KEY, ISLAND_ID_KEY
 
 def render() -> None:
     """Render the overview page."""
@@ -22,39 +16,31 @@ def render() -> None:
     st.title("Overview")
 
     api_base_url = str(st.session_state.get(API_BASE_URL_KEY, "") or "")
-    experiment_id = st.session_state.get(EXPERIMENT_ID_KEY)
-    experiment_label = st.session_state.get(EXPERIMENT_LABEL_KEY)
-    repo_slug = st.session_state.get(REPOSITORY_SLUG_KEY)
     island_id = st.session_state.get(ISLAND_ID_KEY)
 
     if not api_base_url:
         st.error("API base URL is not configured.")
         return
-    if not experiment_id:
-        st.warning("No experiment selected.")
-        return
 
     with st.expander("Context", expanded=False):
+        instance = api_get_or_stop(api_base_url, "/api/v1/instance") or {}
         st.write(
             {
-                "repository": repo_slug,
-                "experiment": experiment_label,
-                "experiment_id": experiment_id,
+                "experiment_id": instance.get("experiment_id_raw"),
+                "root_commit_hash": instance.get("root_commit_hash"),
+                "repository_slug": instance.get("repository_slug"),
                 "island": island_id,
                 "api_base_url": api_base_url,
             }
         )
 
     # Data pulls
-    islands = api_get_or_stop(api_base_url, "/api/v1/archive/islands", params={"experiment_id": experiment_id}) or []
-    jobs = (
-        api_get_or_stop(api_base_url, "/api/v1/jobs", params={"experiment_id": experiment_id, "limit": MAX_PAGE_LIMIT})
-        or []
-    )
+    islands = api_get_or_stop(api_base_url, "/api/v1/archive/islands") or []
+    jobs = api_get_or_stop(api_base_url, "/api/v1/jobs", params={"limit": MAX_PAGE_LIMIT}) or []
     graph = api_get_or_stop(
         api_base_url,
         "/api/v1/graphs/commit_lineage",
-        params={"experiment_id": experiment_id, "max_nodes": 1000},
+        params={"max_nodes": 1000},
     ) or {}
 
     # KPI cards

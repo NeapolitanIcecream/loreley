@@ -38,7 +38,6 @@ class JobScheduler:
     settings: Settings
     console: Console
     sampler: MapElitesSampler
-    experiment_id: UUID
     _sender_actor: object = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -61,7 +60,6 @@ class JobScheduler:
             stmt = (
                 select(func.count(EvolutionJob.id))
                 .where(EvolutionJob.status.in_(unfinished_statuses))
-                .where(EvolutionJob.experiment_id == self.experiment_id)
             )
             return int(session.execute(stmt).scalar_one())
 
@@ -148,7 +146,6 @@ class JobScheduler:
                     status=JobStatus.PENDING,
                     base_commit_hash=base_commit_hash,
                     island_id=effective_island,
-                    experiment_id=self.experiment_id,
                     inspiration_commit_hashes=[],
                     goal=goal,
                     constraints=[],
@@ -194,7 +191,7 @@ class JobScheduler:
 
     def _schedule_single_job(self) -> ScheduledSamplerJob | None:
         try:
-            scheduled = self.sampler.schedule_job(experiment_id=self.experiment_id)
+            scheduled = self.sampler.schedule_job()
         except Exception as exc:  # pragma: no cover - defensive
             self.console.log(f"[bold red]Sampler failed[/] reason={exc}")
             log.exception("Sampler failed to create a job: {}", exc)
@@ -241,7 +238,6 @@ class JobScheduler:
                 select(EvolutionJob.id)
                 .where(
                     EvolutionJob.status == JobStatus.PENDING,
-                    EvolutionJob.experiment_id == self.experiment_id,
                 )
                 .order_by(
                     EvolutionJob.priority.desc(),

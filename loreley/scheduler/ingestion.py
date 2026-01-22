@@ -39,8 +39,6 @@ class JobSnapshot:
     job_id: UUID
     base_commit_hash: str | None
     island_id: str | None
-    experiment_id: UUID | None
-    repository_id: UUID | None
     result_commit_hash: str
     completed_at: datetime | None
 
@@ -54,8 +52,6 @@ class MapElitesIngestion:
     repo_root: Path
     repo: Repo
     manager: MapElitesManager
-    experiment: Any
-    repository: Any | None
 
     # Public API ------------------------------------------------------------
 
@@ -113,7 +109,6 @@ class MapElitesIngestion:
                 select(EvolutionJob)
                 .where(
                     EvolutionJob.status == JobStatus.SUCCEEDED,
-                    EvolutionJob.experiment_id == getattr(self.experiment, "id", None),
                 )
                 .order_by(EvolutionJob.completed_at.asc())
                 .limit(batch_limit)
@@ -126,19 +121,11 @@ class MapElitesIngestion:
                 if not commit_hash:
                     continue
 
-                experiment_id = getattr(job, "experiment_id", None)
-                repository_id = None
-                experiment = getattr(job, "experiment", None)
-                if experiment is not None:
-                    repository_id = getattr(experiment, "repository_id", None)
-
                 snapshots.append(
                     JobSnapshot(
                         job_id=job.id,
                         base_commit_hash=job.base_commit_hash,
                         island_id=job.island_id,
-                        experiment_id=experiment_id,
-                        repository_id=repository_id,
                         result_commit_hash=commit_hash,
                         completed_at=job.completed_at,
                     )
@@ -162,14 +149,9 @@ class MapElitesIngestion:
             return False
         metrics_payload: list[dict[str, Any]] = []
         with session_scope() as session:
-            commit_row = None
-            if snapshot.experiment_id is not None:
-                commit_row = session.execute(
-                    select(CommitCard).where(
-                        CommitCard.experiment_id == snapshot.experiment_id,
-                        CommitCard.commit_hash == commit_hash,
-                    )
-                ).scalar_one_or_none()
+            commit_row = session.execute(
+                select(CommitCard).where(CommitCard.commit_hash == commit_hash)
+            ).scalar_one_or_none()
             if commit_row is not None:
                 rows = session.scalars(
                     select(Metric).where(Metric.commit_card_id == commit_row.id)
@@ -277,10 +259,7 @@ class MapElitesIngestion:
         # Skip evaluation when metrics already exist for this commit.
         with session_scope() as session:
             commit_row = session.execute(
-                select(CommitCard).where(
-                    CommitCard.experiment_id == getattr(self.experiment, "id", None),
-                    CommitCard.commit_hash == commit_hash,
-                )
+                select(CommitCard).where(CommitCard.commit_hash == commit_hash)
             ).scalar_one_or_none()
             if commit_row is not None:
                 existing = session.execute(
@@ -317,8 +296,6 @@ class MapElitesIngestion:
                     "job": {
                         "id": None,
                         "island_id": default_island,
-                        "experiment_id": str(self.experiment.id),
-                        "repository_id": str(self.repository.id) if self.repository is not None else None,
                         "goal": goal,
                         "constraints": [],
                         "acceptance_criteria": [],
@@ -340,8 +317,6 @@ class MapElitesIngestion:
                     plan_summary=goal,
                     metadata={
                         "root_commit": True,
-                        "experiment_id": str(self.experiment.id),
-                        "repository_id": str(self.repository.id) if self.repository is not None else None,
                     },
                 )  # type: ignore[call-arg]
 
@@ -369,10 +344,7 @@ class MapElitesIngestion:
 
         with session_scope() as session:
             commit_row = session.execute(
-                select(CommitCard).where(
-                    CommitCard.experiment_id == getattr(self.experiment, "id", None),
-                    CommitCard.commit_hash == commit_hash,
-                )
+                select(CommitCard).where(CommitCard.commit_hash == commit_hash)
             ).scalar_one_or_none()
             if commit_row is None:
                 # Ensure the commit record exists before writing metrics so that
@@ -394,7 +366,6 @@ class MapElitesIngestion:
                     commit_hash=commit_hash,
                     parent_commit_hash=parent_hash,
                     island_id=default_island,
-                    experiment_id=getattr(self.experiment, "id", None),
                     author=author,
                     subject=subject,
                     change_summary="Root baseline commit.",
@@ -462,7 +433,6 @@ class MapElitesIngestion:
             settings=self.settings,
             cache_backend=backend,
             repo=self.repo,
-            experiment_id=getattr(self.experiment, "id", None),
             mode="auto",
         )
 
@@ -478,7 +448,6 @@ class MapElitesIngestion:
             settings=self.settings,
             cache_backend=backend,
             repo=self.repo,
-            experiment_id=getattr(self.experiment, "id", None),
         )
         canonical = str(getattr(self.repo.commit(commit_hash), "hexsha", "") or "").strip()
         persisted = embedder.load_aggregate(commit_hash=canonical, repo_root=self.repo_root)
@@ -516,7 +485,6 @@ class MapElitesIngestion:
         with session_scope() as session:
             stmt = select(CommitCard).where(
                 CommitCard.commit_hash == commit_hash,
-                CommitCard.experiment_id == self.experiment.id,
             )
             existing = session.execute(stmt).scalar_one_or_none()
             default_island = self.settings.mapelites_default_island_id or "main"
@@ -538,9 +506,8 @@ class MapElitesIngestion:
                     updated = True
                 if updated:
                     self.console.log(
-                        "[cyan]Updated root commit metadata[/] commit={} experiment={} island={}".format(
+                        "[cyan]Updated root commit metadata[/] commit={} island={}".format(
                             commit_hash,
-                            existing.experiment_id,
                             existing.island_id,
                         ),
                     )
@@ -552,7 +519,6 @@ class MapElitesIngestion:
                 commit_hash=commit_hash,
                 parent_commit_hash=parent_hash,
                 island_id=default_island,
-                experiment_id=self.experiment.id,
                 author=author,
                 subject=subject,
                 change_summary="Root baseline commit.",
@@ -564,16 +530,14 @@ class MapElitesIngestion:
             )
             session.add(metadata)
             self.console.log(
-                "[bold green]Registered root commit[/] commit={} experiment={} island={}".format(
+                "[bold green]Registered root commit[/] commit={} island={}".format(
                     commit_hash,
-                    self.experiment.id,
                     default_island,
                 ),
             )
             log.info(
-                "Registered root commit {} for experiment {} on island {}",
+                "Registered root commit {} on island {}",
                 commit_hash,
-                self.experiment.id,
                 default_island,
             )
 

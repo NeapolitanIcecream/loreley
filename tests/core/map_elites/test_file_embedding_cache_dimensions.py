@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-import uuid
 from types import SimpleNamespace
 
 import pytest
@@ -30,26 +29,8 @@ class _FakeSession:
         return _FakeScalarResult(rows)
 
 
-def _extract_experiment_id_predicates(stmt) -> list[str]:  # type: ignore[no-untyped-def]
-    values: list[str] = []
-    for crit in list(getattr(stmt, "_where_criteria", ())):
-        left = getattr(crit, "left", None)
-        right = getattr(crit, "right", None)
-        if left is None or right is None:
-            continue
-        if getattr(left, "key", None) != "experiment_id":
-            continue
-        bind_value = getattr(right, "value", None)
-        if bind_value is None:
-            continue
-        values.append(str(bind_value))
-    return values
-
-
-def test_db_file_cache_scopes_by_experiment_id(monkeypatch: pytest.MonkeyPatch) -> None:
-    exp_id = "00000000-0000-0000-0000-000000000000"
+def test_db_file_cache_batches_queries(monkeypatch: pytest.MonkeyPatch) -> None:
     cache = fec.DatabaseFileEmbeddingCache(
-        experiment_id=exp_id,
         embedding_model="stub",
         requested_dimensions=2,
     )
@@ -76,16 +57,12 @@ def test_db_file_cache_scopes_by_experiment_id(monkeypatch: pytest.MonkeyPatch) 
     assert set(found.keys()) == {"sha0", "sha500"}
     assert all(len(vec) == 2 for vec in found.values())
 
-    # Ensure every batch query scopes by experiment id.
+    # Ensure batch queries are executed for large inputs.
     assert len(calls) == 2
-    for stmt in calls:
-        exp_ids = _extract_experiment_id_predicates(stmt)
-        assert exp_ids == [str(uuid.UUID(exp_id))]
 
 
 def test_db_file_cache_raises_on_dimension_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
     cache = fec.DatabaseFileEmbeddingCache(
-        experiment_id="00000000-0000-0000-0000-000000000000",
         embedding_model="stub",
         requested_dimensions=2,
     )

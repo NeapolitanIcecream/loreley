@@ -8,20 +8,16 @@ import streamlit as st
 
 from loreley.ui.components.aggrid import render_table, selected_rows
 from loreley.ui.components.api import api_get_or_stop
-from loreley.ui.state import API_BASE_URL_KEY, EXPERIMENT_ID_KEY, ISLAND_ID_KEY
+from loreley.ui.state import API_BASE_URL_KEY, ISLAND_ID_KEY
 
 
 def render() -> None:
     st.title("Archive")
 
     api_base_url = str(st.session_state.get(API_BASE_URL_KEY, "") or "")
-    experiment_id = st.session_state.get(EXPERIMENT_ID_KEY)
     island_id = st.session_state.get(ISLAND_ID_KEY)
     if not api_base_url:
         st.error("API base URL is not configured.")
-        return
-    if not experiment_id:
-        st.warning("No experiment selected.")
         return
 
     try:
@@ -31,7 +27,7 @@ def render() -> None:
         st.error(f"Missing dependency: {exc}")
         return
 
-    islands = api_get_or_stop(api_base_url, "/api/v1/archive/islands", params={"experiment_id": experiment_id}) or []
+    islands = api_get_or_stop(api_base_url, "/api/v1/archive/islands") or []
     st.subheader("Islands")
     st.dataframe(islands, width="stretch")
 
@@ -42,7 +38,7 @@ def render() -> None:
     meta = api_get_or_stop(
         api_base_url,
         "/api/v1/archive/snapshot_meta",
-        params={"experiment_id": experiment_id, "island_id": island_id},
+        params={"island_id": island_id},
     ) or {}
 
     dims = int(meta.get("dims", 0) or 0)
@@ -52,7 +48,7 @@ def render() -> None:
     records = api_get_or_stop(
         api_base_url,
         "/api/v1/archive/records",
-        params={"experiment_id": experiment_id, "island_id": island_id},
+        params={"island_id": island_id},
     ) or []
     records_df = pd.DataFrame(records)
     if records_df.empty:
@@ -139,7 +135,6 @@ def render() -> None:
             detail = api_get_or_stop(
                 api_base_url,
                 f"/api/v1/commits/{commit_hash}",
-                params={"experiment_id": experiment_id},
             )
             with st.expander("Selected commit detail", expanded=False):
                 st.json(detail)

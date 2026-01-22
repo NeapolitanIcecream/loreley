@@ -11,20 +11,12 @@ from loreley.ui.client import APIError, LoreleyAPIClient
 from loreley.ui.components.api import api_get_or_stop, get_api_client
 from loreley.ui.pages.archive import render as render_archive
 from loreley.ui.pages.commits import render as render_commits
-from loreley.ui.pages.experiments import render as render_experiments
 from loreley.ui.pages.graphs import render as render_graphs
 from loreley.ui.pages.jobs import render as render_jobs
 from loreley.ui.pages.logs import render as render_logs
 from loreley.ui.pages.overview import render as render_overview
 from loreley.ui.pages.settings import render as render_settings
-from loreley.ui.state import (
-    API_BASE_URL_KEY,
-    EXPERIMENT_ID_KEY,
-    EXPERIMENT_LABEL_KEY,
-    ISLAND_ID_KEY,
-    REPOSITORY_ID_KEY,
-    REPOSITORY_SLUG_KEY,
-)
+from loreley.ui.state import API_BASE_URL_KEY, ISLAND_ID_KEY
 
 
 # Streamlit infers the URL pathname for callable pages from the callable's name.
@@ -33,10 +25,6 @@ from loreley.ui.state import (
 # named callables to ensure stable, unique routing.
 def overview() -> None:
     render_overview()
-
-
-def experiments() -> None:
-    render_experiments()
 
 
 def jobs() -> None:
@@ -66,10 +54,6 @@ def settings() -> None:
 def _init_session_defaults() -> None:
     api_base_url = os.getenv("LORELEY_UI_API_BASE_URL", "http://127.0.0.1:8000")
     st.session_state.setdefault(API_BASE_URL_KEY, api_base_url)
-    st.session_state.setdefault(REPOSITORY_ID_KEY, None)
-    st.session_state.setdefault(REPOSITORY_SLUG_KEY, None)
-    st.session_state.setdefault(EXPERIMENT_ID_KEY, None)
-    st.session_state.setdefault(EXPERIMENT_LABEL_KEY, None)
     st.session_state.setdefault(ISLAND_ID_KEY, None)
 
 
@@ -112,70 +96,19 @@ def _render_sidebar() -> None:
             st.success("API reachable")
             st.json(payload)
 
-    repos = api_get_or_stop(api_base_url, "/api/v1/repositories") or []
-    if not repos:
-        st.sidebar.warning("No repositories found.")
-        st.stop()
+    instance = api_get_or_stop(api_base_url, "/api/v1/instance") or {}
+    if isinstance(instance, dict):
+        exp_id = instance.get("experiment_id_raw")
+        root_commit = instance.get("root_commit_hash")
+        repo_slug = instance.get("repository_slug")
+        if exp_id:
+            st.sidebar.caption(f"Experiment: {exp_id}")
+        if repo_slug:
+            st.sidebar.caption(f"Repository: {repo_slug}")
+        if root_commit:
+            st.sidebar.caption(f"Root commit: {str(root_commit)[:12]}")
 
-    slug_to_repo: dict[str, dict[str, Any]] = {}
-    for r in repos:
-        if not isinstance(r, dict):
-            continue
-        slug = r.get("slug")
-        repo_id = r.get("id")
-        if not slug or not repo_id:
-            continue
-        slug_to_repo[str(slug)] = r
-
-    repo_slugs = sorted(slug_to_repo)
-    if not repo_slugs:
-        st.sidebar.warning("No repositories found.")
-        st.stop()
-
-    current_slug = st.session_state.get(REPOSITORY_SLUG_KEY)
-    if current_slug not in slug_to_repo:
-        current_slug = repo_slugs[0]
-
-    selected_slug = st.sidebar.selectbox("Repository", repo_slugs, index=repo_slugs.index(current_slug))
-    repo = slug_to_repo[selected_slug]
-    st.session_state[REPOSITORY_SLUG_KEY] = selected_slug
-    st.session_state[REPOSITORY_ID_KEY] = repo.get("id")
-
-    experiments = api_get_or_stop(api_base_url, f"/api/v1/repositories/{repo['id']}/experiments") or []
-    exp_items: list[tuple[str, str]] = []
-    for e in experiments:
-        if not isinstance(e, dict):
-            continue
-        exp_id = e.get("id")
-        if not exp_id:
-            continue
-        name = (e.get("name") or "").strip()
-        label = name or str(exp_id)[:8]
-        exp_items.append((label, str(exp_id)))
-
-    if not exp_items:
-        st.sidebar.warning("No experiments found for this repository.")
-        st.stop()
-
-    label_to_id = {label: exp_id for label, exp_id in exp_items}
-    labels = [label for label, _ in exp_items]
-
-    current_label = st.session_state.get(EXPERIMENT_LABEL_KEY)
-    if current_label not in label_to_id:
-        current_label = labels[0]
-
-    selected_label = st.sidebar.selectbox("Experiment", labels, index=labels.index(current_label))
-    st.session_state[EXPERIMENT_LABEL_KEY] = selected_label
-    st.session_state[EXPERIMENT_ID_KEY] = label_to_id[selected_label]
-
-    islands = (
-        api_get_or_stop(
-            api_base_url,
-            "/api/v1/archive/islands",
-            params={"experiment_id": label_to_id[selected_label]},
-        )
-        or []
-    )
+    islands = api_get_or_stop(api_base_url, "/api/v1/archive/islands") or []
     island_ids = [
         i.get("island_id")
         for i in islands
@@ -205,7 +138,6 @@ def main() -> None:
     if hasattr(st, "Page") and hasattr(st, "navigation"):
         pages = [
             st.Page(overview, title="Overview"),
-            st.Page(experiments, title="Experiments"),
             st.Page(jobs, title="Jobs"),
             st.Page(commits, title="Commits"),
             st.Page(archive, title="Archive"),

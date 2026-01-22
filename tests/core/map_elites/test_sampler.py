@@ -134,7 +134,7 @@ def test_schedule_job_with_and_without_records(monkeypatch, settings: Settings) 
     records = [FakeRecord(commit_hash=f"c{i}", cell_index=i) for i in range(4)]
     sampler = MapElitesSampler(manager=FakeManager(records), settings=settings)
 
-    captured_experiment_ids: list[Any] = []
+    captured_calls: list[dict[str, Any]] = []
 
     def fake_persist_job(  # type: ignore[unused-argument]
         self,
@@ -145,26 +145,26 @@ def test_schedule_job_with_and_without_records(monkeypatch, settings: Settings) 
         selection_stats,
         iteration_hint,
         priority,
-        experiment_id,
     ):
-        captured_experiment_ids.append(experiment_id)
+        captured_calls.append(
+            {
+                "island_id": island_id,
+                "base": base,
+                "inspirations": inspirations,
+                "selection_stats": selection_stats,
+                "iteration_hint": iteration_hint,
+                "priority": priority,
+            }
+        )
         return SimpleNamespace(id=uuid4())
 
     monkeypatch.setattr(MapElitesSampler, "_persist_job", fake_persist_job)
 
-    # When no experiment_id is provided, jobs are still scheduled and the
-    # persisted row should see a null experiment identifier.
+    # Jobs are still scheduled for non-empty archives.
     job = sampler.schedule_job()
     assert job is not None
     assert job.job_id is not None
     assert job.base_commit_hash in {record.commit_hash for record in records}
-    assert captured_experiment_ids[-1] is None
-
-    # When an experiment_id is provided, it should be threaded through
-    # to the persistence layer unchanged.
-    exp_id = uuid4()
-    job_with_exp = sampler.schedule_job(experiment_id=exp_id)
-    assert job_with_exp is not None
-    assert captured_experiment_ids[-1] == exp_id
+    assert captured_calls
 
 

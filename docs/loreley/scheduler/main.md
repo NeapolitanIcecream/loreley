@@ -5,7 +5,7 @@ Central orchestration loop that keeps the Loreley evolution pipeline moving by c
 ## EvolutionScheduler
 
 - **Purpose**: continuously monitors unfinished jobs (`pending`, `queued`, `running`), schedules new work from the MAP-Elites archive when capacity allows, dispatches pending jobs to the Dramatiq `run_evolution_job` actor, and backfills the archive with freshly evaluated commits.
-- **Construction**: `EvolutionScheduler(settings=None)` loads `loreley.config.Settings`, resolves the target repository root (preferring `SCHEDULER_REPO_ROOT` and falling back to `WORKER_REPO_WORKTREE`), initialises a `git` repository handle, derives a `Repository`/`Experiment` pair via `loreley.core.experiments.get_or_create_experiment()`, and pins repo-root ignore rules in memory for the lifetime of the scheduler process. It acquires an experiment-scoped Postgres advisory lock (fail fast if already held), performs a startup scan of eligible repo-state files at the experiment root commit and requires **interactive operator approval** (y/n), wires `MapElitesManager` (scoped to that `experiment_id`) plus `MapElitesSampler`, and delegates root-commit registration, repo-state bootstrap, and baseline evaluation to `loreley.scheduler.ingestion.MapElitesIngestion`.
+- **Construction**: `EvolutionScheduler(settings=None)` loads `loreley.config.Settings`, resolves the target repository root (preferring `SCHEDULER_REPO_ROOT` and falling back to `WORKER_REPO_WORKTREE`), initialises a `git` repository handle, bootstraps the instance via `loreley.core.experiments.bootstrap_instance()` (pins repo-root ignore rules for the scheduler lifetime and validates `InstanceMetadata`), and acquires a Postgres advisory lock derived from `EXPERIMENT_ID`. It performs a startup scan of eligible repo-state files at the experiment root commit and requires **interactive operator approval** (y/n), wires `MapElitesManager` plus `MapElitesSampler`, and delegates root-commit registration, repo-state bootstrap, and baseline evaluation to `loreley.scheduler.ingestion.MapElitesIngestion`.
 - **Lifecycle**:
   1. `tick()` runs the ingest → dispatch → measure → seed → schedule pipeline and logs a concise summary for observability. Each stage is isolated so failures are logged and do not crash the loop.
   2. `run_forever()` installs `SIGINT`/`SIGTERM` handlers, runs `tick()` at the configured poll interval, and keeps looping until interrupted.
@@ -13,7 +13,7 @@ Central orchestration loop that keeps the Loreley evolution pipeline moving by c
 - **Job scheduling & dispatching**: the scheduler delegates all capacity calculations, MAP-Elites sampling, and Dramatiq job submission to `loreley.scheduler.job_scheduler.JobScheduler`, which:
   - counts unfinished jobs in the database,
   - enforces `SCHEDULER_MAX_UNFINISHED_JOBS` and the optional `SCHEDULER_MAX_TOTAL_JOBS` cap,
-  - calls `MapElitesSampler.schedule_job(experiment_id=experiment.id)` to produce new work, and
+  - calls `MapElitesSampler.schedule_job()` to produce new work, and
   - marks rows as `QUEUED` and sends them to the `run_evolution_job` actor in priority order.
 - **MAP-Elites maintenance**: ingestion of succeeded jobs is handled by `loreley.scheduler.ingestion.MapElitesIngestion`, which:
   - scans for `SUCCEEDED` jobs that have not yet been fully ingested,
@@ -25,7 +25,7 @@ Central orchestration loop that keeps the Loreley evolution pipeline moving by c
 
 The scheduler consumes the following `Settings` fields (all exposed as environment variables):
 
-- `EXPERIMENT_ID`: required experiment id (UUID or slug) that scopes this scheduler process to a single experiment namespace in the database and task queues.
+- `EXPERIMENT_ID`: required experiment id (UUID or slug) used for task queue naming and the scheduler advisory lock. The database itself is single-tenant and identified by `DATABASE_URL` plus `InstanceMetadata`.
 - `SCHEDULER_REPO_ROOT`: optional path to a read-only clone of the evolved repository; defaults to `WORKER_REPO_WORKTREE`.
 - `SCHEDULER_POLL_INTERVAL_SECONDS`: delay between scheduler ticks (default: `30` seconds).
 - `SCHEDULER_MAX_UNFINISHED_JOBS`: hard cap on the number of jobs that are not yet finished (`pending`, `queued`, `running`).
