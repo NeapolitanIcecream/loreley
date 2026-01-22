@@ -279,14 +279,10 @@ class EvolutionScheduler:
                 "and incremental-only ingestion."
             )
         auto_approve = bool(getattr(self.settings, "scheduler_startup_approve", False))
-
-        self._ensure_commit_available(root_commit)
         try:
             canonical = str(getattr(self._repo.commit(root_commit), "hexsha", "") or "").strip()
         except Exception as exc:
-            raise SchedulerError(
-                f"Cannot resolve root commit {root_commit!r} for repo-state scan."
-            ) from exc
+            raise SchedulerError(f"Cannot resolve root commit {root_commit!r} for repo-state scan.") from exc
         if not canonical:
             raise SchedulerError(f"Cannot resolve root commit {root_commit!r} for repo-state scan.")
 

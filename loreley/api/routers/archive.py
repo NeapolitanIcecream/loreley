@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
 
 from loreley.api.schemas.archive import ArchiveRecordOut, ArchiveSnapshotMetaOut, IslandStatsOut
 from loreley.api.services.archive import (
@@ -23,13 +23,10 @@ def get_islands() -> list[IslandStatsOut]:
     islands = list_islands()
     out: list[IslandStatsOut] = []
     for island_id in islands:
-        try:
-            stats = describe_island(
-                island_id=island_id,
-                settings=settings,
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        stats = describe_island(
+            island_id=island_id,
+            settings=settings,
+        )
         out.append(IslandStatsOut.model_validate(stats))
     return out
 
@@ -41,11 +38,7 @@ def get_records(
     settings = get_settings()
     effective_island = island_id.strip() or (settings.mapelites_default_island_id or "main")
 
-    try:
-        records = list_records(island_id=effective_island, settings=settings)
-    except Exception as exc:  # pragma: no cover - defensive
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
+    records = list_records(island_id=effective_island, settings=settings)
     return records
 
 

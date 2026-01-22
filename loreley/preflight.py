@@ -404,6 +404,14 @@ def preflight_worker(settings: Settings, *, timeout_seconds: float = 2.0) -> lis
             help_text="required to attach this worker process to a single experiment",
         )
     )
+    results.append(
+        check_non_empty(
+            settings.mapelites_experiment_root_commit,
+            label="mapelites_experiment_root_commit",
+            env_name="MAPELITES_EXPERIMENT_ROOT_COMMIT",
+            help_text="required to validate the instance metadata marker",
+        )
+    )
 
     results.append(
         check_non_empty(
@@ -457,6 +465,22 @@ def preflight_api(settings: Settings, *, timeout_seconds: float = 2.0) -> list[C
     """Preflight checks before starting the read-only UI API."""
     results: list[CheckResult] = []
     results.append(check_database(dsn=settings.database_dsn, timeout_seconds=timeout_seconds))
+    results.append(
+        check_non_empty(
+            str(settings.experiment_id) if settings.experiment_id else None,
+            label="experiment_id",
+            env_name="EXPERIMENT_ID",
+            help_text="required to validate the instance metadata marker",
+        )
+    )
+    results.append(
+        check_non_empty(
+            settings.mapelites_experiment_root_commit,
+            label="mapelites_experiment_root_commit",
+            env_name="MAPELITES_EXPERIMENT_ROOT_COMMIT",
+            help_text="required to validate the instance metadata marker",
+        )
+    )
     results.append(
         check_python_modules(
             ("fastapi", "uvicorn"),

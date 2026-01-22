@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from loreley.api.routers.health import router as health_router
@@ -16,15 +18,20 @@ from loreley.db.base import ensure_database_schema
 API_V1_PREFIX = "/api/v1"
 
 
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    """FastAPI lifespan that validates DB schema/instance marker on startup."""
+    ensure_database_schema()
+    yield
+
+
 def create_app() -> FastAPI:
     """Create the FastAPI application instance."""
-
-    # Ensure DB schema exists before serving requests.
-    ensure_database_schema()
 
     app = FastAPI(
         title="Loreley UI API",
         version="0.1.0",
+        lifespan=_lifespan,
     )
 
     app.include_router(health_router, prefix=API_V1_PREFIX, tags=["health"])
