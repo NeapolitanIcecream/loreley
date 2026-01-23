@@ -373,10 +373,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#repository-normalisation" class="md-nav__link">
+  <a href="#repository-identity" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Repository normalisation
+        Repository identity
       
     </span>
   </a>
@@ -384,21 +384,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#experiment-configuration-snapshots" class="md-nav__link">
+  <a href="#instance-bootstrap" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Experiment configuration snapshots
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#experiment-derivation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Experiment derivation
+        Instance bootstrap
       
     </span>
   </a>
@@ -1751,10 +1740,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#repository-normalisation" class="md-nav__link">
+  <a href="#repository-identity" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Repository normalisation
+        Repository identity
       
     </span>
   </a>
@@ -1762,21 +1751,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#experiment-configuration-snapshots" class="md-nav__link">
+  <a href="#instance-bootstrap" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Experiment configuration snapshots
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#experiment-derivation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Experiment derivation
+        Instance bootstrap
       
     </span>
   </a>
@@ -1812,79 +1790,35 @@
 
 
 <h1 id="loreleycoreexperiments">loreley.core.experiments<a class="headerlink" href="#loreleycoreexperiments" title="Permanent link">&para;</a></h1>
-<p>Helpers for deriving canonical repository and experiment context from the current git worktree and <code>Settings</code>.</p>
+<p>Helpers for resolving repository identity and validating instance metadata in single-tenant databases.</p>
 <h2 id="errors">Errors<a class="headerlink" href="#errors" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>ExperimentError</code></strong>: runtime error raised when the repository or experiment context cannot be resolved.<br />
-  Used for git discovery failures (non‑existent or non‑repository paths) and database errors when reading or writing <code>Repository</code> / <code>Experiment</code> rows.</li>
+<li><strong><code>ExperimentError</code></strong>: runtime error raised when the repository or instance context cannot be resolved.
+  Used for git discovery failures (non‑existent or non‑repository paths) and instance metadata mismatches.</li>
 </ul>
-<h2 id="repository-normalisation">Repository normalisation<a class="headerlink" href="#repository-normalisation" title="Permanent link">&para;</a></h2>
+<h2 id="repository-identity">Repository identity<a class="headerlink" href="#repository-identity" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>canonicalise_repository(*, settings=None, repo_root=None, repo=None)</code></strong>: resolves or creates a <code>Repository</code> row for a given git worktree.  </li>
-<li>Expands and normalises the target path, defaulting to <code>Settings.worker_repo_worktree</code> when <code>repo_root</code> is not provided.  </li>
-<li>Validates that the path is a git repository and extracts the <code>origin</code> remote URL when available.  </li>
-<li>Uses <code>_normalise_remote_url()</code> to strip credentials, support both HTTPS and SSH scp‑style URLs, and produce a canonical <code>remote_url</code> for hashing and storage.  </li>
-<li>Builds a stable <code>slug</code> from either the canonical remote URL or the local path via <code>_build_slug_from_source()</code>.  </li>
-<li>Populates an <code>extra</code> JSON payload with the canonical origin, root path, and all remotes (with URLs normalised for safe storage).  </li>
-<li>Within a DB <code>session_scope()</code>, either:<ul>
-<li>returns an existing <code>Repository</code> with the same <code>slug</code> after best‑effort metadata refresh (remote URL, root path, extra), or  </li>
-<li>creates and persists a new <code>Repository</code> row with the derived slug, remote URL, root path, and extra metadata.  </li>
+<li><strong><code>RepositoryIdentity</code></strong>: frozen dataclass containing <code>slug</code>, <code>canonical_origin</code>, and <code>root_path</code>.</li>
+<li><strong><code>_normalise_remote_url()</code></strong>: strips credentials and normalises HTTPS/SSH remotes into a stable URL string.</li>
+<li><strong><code>_build_slug_from_source()</code></strong>: builds a stable slug from canonical remote URLs or local paths.</li>
+<li><strong><code>_resolve_repository_identity()</code></strong>: extracts <code>origin</code> metadata from a <code>git.Repo</code> and returns a <code>RepositoryIdentity</code>.</li>
 </ul>
-</li>
-<li>Logs concise status messages via <code>rich</code> (for human‑friendly console output) and <code>loguru</code> (for structured logs).</li>
-</ul>
-<h2 id="experiment-configuration-snapshots">Experiment configuration snapshots<a class="headerlink" href="#experiment-configuration-snapshots" title="Permanent link">&para;</a></h2>
+<h2 id="instance-bootstrap">Instance bootstrap<a class="headerlink" href="#instance-bootstrap" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>build_experiment_config_snapshot(settings, *, repo)</code></strong>: extracts just the configuration fields that define an experiment.  </li>
-<li>Starts from <code>settings.model_dump()</code>.  </li>
-<li>Keeps only keys with prefixes <code>mapelites_</code>, <code>worker_evaluator_</code>, <code>worker_evolution_</code>, and <code>worker_planning_trajectory_</code>, so that experiments stay stable across unrelated configuration changes (logging, Redis URLs, etc.).  </li>
-<li>Resolves <code>mapelites_experiment_root_commit</code> to a canonical full hash and persists it in the snapshot.  </li>
-<li>Pins repository-root ignore rules at experiment creation time by persisting <code>mapelites_repo_state_ignore_text</code> and <code>mapelites_repo_state_ignore_sha256</code> (derived from the root commit).  </li>
-<li>Adds <code>experiment_snapshot_schema_version</code> and requires it when loading experiment settings; Loreley does not support forward-compatible snapshot schemas in development (reset DB to upgrade).  </li>
-<li>
-<p>Recursively applies <code>_coerce_json_compatible()</code> so that non‑finite floats (NaN/±inf) are encoded as a reversible JSON sentinel, keeping snapshots safe for PostgreSQL JSONB and avoiding experiment-hash collisions:</p>
-<ul>
-<li><code>-inf</code> → <code>{"__float__":"-inf"}</code></li>
-<li><code>inf</code> → <code>{"__float__":"inf"}</code></li>
-<li><code>nan</code> → <code>{"__float__":"nan"}</code></li>
-</ul>
-</li>
-<li>
-<p><strong><code>hash_experiment_config(snapshot)</code></strong>: computes a stable SHA‑256 hash for a configuration snapshot.  </p>
-</li>
-<li>Serialises the snapshot with <code>json.dumps(..., sort_keys=True, separators=(",", ":"), default=str)</code> so that key ordering does not affect the result.  </li>
-<li>Returns a hex digest used as <code>Experiment.config_hash</code> and as part of the default experiment name.</li>
-</ul>
-<h2 id="experiment-derivation">Experiment derivation<a class="headerlink" href="#experiment-derivation" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong><code>derive_experiment(settings, repository, *, repo)</code></strong>: returns or creates an <code>Experiment</code> row for a given repository and settings.  </li>
-<li>Builds a snapshot via <code>build_experiment_config_snapshot()</code>, hashes it with <code>hash_experiment_config()</code>, and looks for an existing <code>Experiment</code> with the same <code>(repository_id, config_hash)</code>.  </li>
-<li>When found, returns the existing row unchanged.  </li>
-<li>Otherwise creates a new <code>Experiment</code> with:<ul>
-<li><code>name</code> derived from <code>repository.slug</code> plus the first 8 characters of the config hash,  </li>
-<li><code>config_snapshot</code> set to the JSON‑compatible snapshot, and  </li>
-<li><code>status="active"</code>.  </li>
-</ul>
-</li>
-<li>
-<p>Logs both to the console and to the structured logger when creating a new experiment.</p>
-</li>
-<li>
-<p><strong><code>get_or_create_experiment(*, settings=None, repo_root=None)</code></strong>: convenience helper that resolves the <code>Repository</code> / <code>Experiment</code> pair and returns effective experiment-scoped settings.  </p>
-</li>
-<li>Resolves settings via <code>get_settings()</code> when not provided explicitly.  </li>
-<li>Chooses the repository root in this order: explicit <code>repo_root</code>, <code>Settings.scheduler_repo_root</code>, then <code>Settings.worker_repo_worktree</code>.  </li>
-<li>Validates that the chosen root is a git repository, logging and raising <code>ExperimentError</code> when it is not.  </li>
-<li>Reuses the discovered <code>git.Repo</code> instance when calling <code>canonicalise_repository()</code> to avoid redundant discovery work.  </li>
-<li>Calls <code>derive_experiment()</code> to obtain the current experiment and logs the selected <code>(repository.slug, experiment.id, experiment.config_hash)</code> pair.  </li>
-<li>Loads the persisted experiment snapshot from the database and returns an <strong>effective <code>Settings</code></strong> instance that applies experiment-scoped overrides, making the DB snapshot the single source of truth for experiment behaviour.  </li>
-<li>Returns <code>(Repository, Experiment, Settings)</code> so callers can pass the effective settings downstream consistently.</li>
+<li><strong><code>bootstrap_instance(*, settings=None, repo_root=None)</code></strong>:</li>
+<li>Resolves settings via <code>get_settings()</code> when not provided explicitly.</li>
+<li>Chooses the repository root in this order: explicit <code>repo_root</code>, <code>Settings.scheduler_repo_root</code>, then <code>Settings.worker_repo_worktree</code>.</li>
+<li>Validates that the chosen root is a git repository, logging and raising <code>ExperimentError</code> when it is not.</li>
+<li>Resolves the canonical root commit from <code>MAPELITES_EXPERIMENT_ROOT_COMMIT</code> and pins repository‑root ignore rules by reading <code>.gitignore</code> + <code>.loreleyignore</code> from that commit.</li>
+<li>Stores the combined ignore text + SHA256 in <code>Settings</code> for the scheduler process lifetime (env-only settings model).</li>
+<li>Validates the single-row <code>InstanceMetadata</code> marker (schema version, experiment id, root commit) and updates
+    repository fields when available.</li>
+<li>Returns <code>(RepositoryIdentity, Settings)</code> so callers can pass settings downstream consistently.</li>
 </ul>
 <h2 id="logging-and-error-handling">Logging and error handling<a class="headerlink" href="#logging-and-error-handling" title="Permanent link">&para;</a></h2>
 <ul>
-<li>All operations are logged through a <code>loguru</code> logger bound with <code>module="core.experiments"</code> plus a <code>rich</code> console for user‑facing status messages.  </li>
-<li>Git and database failures are wrapped into <code>ExperimentError</code> with concise, user‑oriented messages while preserving the original exception as the cause.  </li>
-<li>Configuration snapshots intentionally focus on experiment behaviour knobs so that operational tweaks (logging verbosity, queue names, etc.) do not fragment experiments in the database.</li>
+<li>All operations are logged through a <code>loguru</code> logger bound with <code>module="core.experiments"</code> plus a <code>rich</code> console.</li>
+<li>Git and metadata failures are wrapped into <code>ExperimentError</code> with concise, user‑oriented messages.</li>
 </ul>
 
 

@@ -1870,6 +1870,8 @@ database and logs configuration.</p>
 <p>Common variables:</p>
 <ul>
 <li><code>DATABASE_URL</code></li>
+<li><code>EXPERIMENT_ID</code> (must match the database marker)</li>
+<li><code>MAPELITES_EXPERIMENT_ROOT_COMMIT</code> (must match the database marker)</li>
 <li><code>LOGS_BASE_DIR</code> (optional; logs are read from <code>&lt;LOGS_BASE_DIR&gt;/logs</code> or <code>&lt;cwd&gt;/logs</code>)</li>
 <li><code>LOG_LEVEL</code></li>
 </ul>
@@ -1883,15 +1885,13 @@ database and logs configuration.</p>
 <h2 id="endpoints-v1">Endpoints (v1)<a class="headerlink" href="#endpoints-v1" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>GET /health</code></li>
-<li><code>GET /repositories</code></li>
-<li><code>GET /repositories/{repository_id}/experiments</code></li>
-<li><code>GET /experiments/{experiment_id}</code></li>
+<li><code>GET /instance</code></li>
 <li><code>GET /jobs</code></li>
 <li><code>GET /jobs/{job_id}</code></li>
 <li><code>GET /jobs/{job_id}/artifacts</code></li>
 <li><code>GET /jobs/{job_id}/artifacts/{artifact_key}</code></li>
 <li><code>GET /commits</code></li>
-<li><code>GET /commits/{commit_hash}</code> (requires <code>experiment_id</code> query parameter)</li>
+<li><code>GET /commits/{commit_hash}</code></li>
 <li><code>GET /archive/islands</code></li>
 <li><code>GET /archive/records</code></li>
 <li><code>GET /archive/snapshot_meta</code></li>

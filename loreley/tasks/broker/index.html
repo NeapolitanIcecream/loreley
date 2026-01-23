@@ -1731,7 +1731,7 @@
 <ul>
 <li>
 <p><strong><code>build_redis_broker(settings: Settings | None = None) -&gt; RedisBroker</code></strong><br />
-  Constructs a <code>RedisBroker</code> instance from the <code>Settings</code> object. It prefers <code>TASKS_REDIS_URL</code> when set and otherwise falls back to the individual <code>TASKS_REDIS_HOST</code>, <code>TASKS_REDIS_PORT</code>, <code>TASKS_REDIS_DB</code>, and <code>TASKS_REDIS_PASSWORD</code> fields, always attaching <code>TASKS_REDIS_NAMESPACE</code> as the Dramatiq namespace.</p>
+  Constructs a <code>RedisBroker</code> instance from the <code>Settings</code> object. It prefers <code>TASKS_REDIS_URL</code> when set and otherwise falls back to the individual <code>TASKS_REDIS_HOST</code>, <code>TASKS_REDIS_PORT</code>, <code>TASKS_REDIS_DB</code>, and <code>TASKS_REDIS_PASSWORD</code> fields. The broker namespace is derived from <code>EXPERIMENT_ID</code> (not configurable) so multiple experiments can share a Redis instance safely.</p>
 </li>
 <li>
 <p><strong><code>setup_broker(settings: Settings | None = None) -&gt; RedisBroker</code></strong><br />
@@ -1739,7 +1739,7 @@
 </li>
 <li>
 <p><strong><code>broker</code></strong><br />
-  A module-level <code>RedisBroker</code> instance created eagerly by calling <code>setup_broker()</code> at import time. Importing <code>loreley.tasks.broker</code> is therefore sufficient to configure the global Dramatiq broker; this side effect is relied on by <code>loreley.tasks.workers</code> when running worker processes.</p>
+  A module-level reference to the most recently configured <code>RedisBroker</code>. It is set when <code>setup_broker()</code> is called; importing <code>loreley.tasks.broker</code> does not configure Dramatiq on its own.</p>
 </li>
 </ul>
 

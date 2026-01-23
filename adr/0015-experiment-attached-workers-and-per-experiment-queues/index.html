@@ -1642,10 +1642,10 @@
 
 <h1 id="adr-0015-experiment-attached-workers-and-per-experiment-task-queues">ADR 0015: Experiment-attached workers and per-experiment task queues<a class="headerlink" href="#adr-0015-experiment-attached-workers-and-per-experiment-task-queues" title="Permanent link">&para;</a></h1>
 <p>Date: 2026-01-13</p>
-<p>Context: Loreley locks experiment-scoped behaviour settings in <code>Experiment.config_snapshot</code>. Sharing one worker process across multiple experiments requires per-job config reloads or mutable runtime state, which is unnecessary complexity for reproducible long-running experiments.</p>
-<p>Decision: Require evolution worker processes to attach to a single experiment UUID at startup (<code>WORKER_EXPERIMENT_ID</code>). The worker loads the experiment snapshot once and builds settings-dependent runtime objects once; they MUST NOT change for the process lifetime.</p>
-<p>Decision: Route evolution jobs via per-experiment Dramatiq queues derived from the configured prefix (<code>TASKS_QUEUE_NAME</code>): <code>"{TASKS_QUEUE_NAME}.{experiment_id.hex}"</code>.</p>
-<p>Consequences: Worker deployments scale by starting workers per experiment queue; mismatched jobs are rejected; experiment behaviour is stable across restarts and environments.</p>
+<p>Status: Superseded by ADR 0025.</p>
+<p>Decision</p>
+<p>Loreley attaches long-running processes to an explicit <code>EXPERIMENT_ID</code> and routes jobs via a per-experiment queue derived from <code>EXPERIMENT_ID</code> (not separately configurable).
+See ADR 0025 for the current attachment model and constraints.</p>
 
 
 

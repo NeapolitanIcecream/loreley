@@ -21,7 +21,7 @@
     
     
       
-        <title>ADR 0012: Pin repo-state ignore rules in the experiment snapshot - Loreley</title>
+        <title>ADR 0012: Pin repo-state ignore rules - Loreley</title>
       
     
     
@@ -62,7 +62,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#adr-0012-pin-repo-state-ignore-rules-in-the-experiment-snapshot" class="md-skip">
+        <a href="#adr-0012-pin-repo-state-ignore-rules" class="md-skip">
           Skip to content
         </a>
       
@@ -98,7 +98,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ADR 0012: Pin repo-state ignore rules in the experiment snapshot
+              ADR 0012: Pin repo-state ignore rules
             
           </span>
         </div>
@@ -1640,12 +1640,14 @@
 
 
 
-<h1 id="adr-0012-pin-repo-state-ignore-rules-in-the-experiment-snapshot">ADR 0012: Pin repo-state ignore rules in the experiment snapshot<a class="headerlink" href="#adr-0012-pin-repo-state-ignore-rules-in-the-experiment-snapshot" title="Permanent link">&para;</a></h1>
+<h1 id="adr-0012-pin-repo-state-ignore-rules">ADR 0012: Pin repo-state ignore rules<a class="headerlink" href="#adr-0012-pin-repo-state-ignore-rules" title="Permanent link">&para;</a></h1>
 <p>Date: 2026-01-09</p>
-<p>Context: Repo-state embeddings run in incremental-only mode after bootstrap. Commit-scoped <code>.gitignore</code> / <code>.loreleyignore</code> changes introduce extra guards and fail-fast edge cases because eligibility can change non-locally.</p>
-<p>Decision: Persist a <strong>pinned root ignore rule set</strong> (<code>mapelites_repo_state_ignore_text</code> + <code>mapelites_repo_state_ignore_sha256</code>) inside <code>Experiment.config_snapshot</code> at experiment creation time, derived from the experiment root commit. All repo-state file selection and incremental diffs use this pinned matcher for the full experiment lifecycle.</p>
-<p>Decision: Introduce <code>experiment_snapshot_schema_version</code> and require it (and the pinned ignore keys) when loading experiment settings. Loreley does not support forward-compatible snapshot schemas; upgrades require resetting the dev database schema.</p>
-<p>Consequences: The embedding pipeline no longer needs “ignore changed =&gt; disable incremental” logic, and experiments avoid dynamic-ignore edge cases that previously caused incremental-only ingestion failures.</p>
+<p>Status: Superseded by ADR 0025.</p>
+<p>Decision</p>
+<p>Loreley pins repo-root ignore rules at scheduler startup (from the configured root
+commit) and stores the ignore text + hash in process-local <code>Settings</code> for the
+lifetime of the scheduler process. The database does not persist ignore rules as
+an experiment settings snapshot.</p>
 
 
 

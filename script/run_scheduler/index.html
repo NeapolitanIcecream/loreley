@@ -1799,6 +1799,7 @@ jobs to the Dramatiq worker queue.</p>
 uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>scheduler<span class="w"> </span>--once<span class="w">       </span><span class="c1"># single tick (cron / smoke tests)</span>
 uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>scheduler<span class="w"> </span>--yes<span class="w"> </span>--once<span class="w"> </span><span class="c1"># non-interactive run</span>
 </code></pre></div>
+<p>This command requires <code>EXPERIMENT_ID</code> and <code>SCHEDULER_MAX_TOTAL_JOBS</code> to be set in the environment (or <code>.env</code>).</p>
 <p>On first start the scheduler performs a repo-state root scan at <code>MAPELITES_EXPERIMENT_ROOT_COMMIT</code>
 and requires operator approval. In non-interactive environments, pass <code>--yes</code> or set
 <code>SCHEDULER_STARTUP_APPROVE=true</code>.</p>
@@ -1813,7 +1814,7 @@ and requires operator approval. In non-interactive environments, pass <code>--ye
 <h2 id="logs">Logs<a class="headerlink" href="#logs" title="Permanent link">&para;</a></h2>
 <p>Logs are written to:</p>
 <ul>
-<li><code>logs/scheduler/scheduler-YYYYMMDD-HHMMSS.log</code></li>
+<li><code>logs/{experiment_namespace}/scheduler/scheduler-YYYYMMDD-HHMMSS.log</code></li>
 </ul>
 <h2 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <ul>

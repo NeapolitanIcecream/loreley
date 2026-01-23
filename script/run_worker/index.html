@@ -1816,24 +1816,25 @@
 the planning/coding/evaluation pipeline for jobs dispatched by the scheduler.</p>
 <h2 id="start">Start<a class="headerlink" href="#start" title="Permanent link">&para;</a></h2>
 <p>Recommended usage with <code>uv</code>:</p>
-<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>worker<span class="w"> </span>--experiment-id<span class="w"> </span>&lt;EXPERIMENT_UUID&gt;
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>worker
 </code></pre></div>
-<p>If <code>WORKER_EXPERIMENT_ID</code> is set, you can omit <code>--experiment-id</code>.</p>
+<p>This command requires <code>EXPERIMENT_ID</code> to be set in the environment (or <code>.env</code>).</p>
 <h2 id="options">Options<a class="headerlink" href="#options" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>--experiment-id</code>: attach this worker process to a single experiment UUID (overrides <code>WORKER_EXPERIMENT_ID</code>).</li>
 <li><code>--no-preflight</code>: skip preflight validation.</li>
 <li><code>--preflight-timeout-seconds</code>: network timeout used for DB/Redis connectivity checks.</li>
 <li><code>--log-level</code>: global option (pass before the subcommand) that overrides <code>LOG_LEVEL</code> for this invocation.</li>
 </ul>
 <h2 id="queue-naming">Queue naming<a class="headerlink" href="#queue-naming" title="Permanent link">&para;</a></h2>
-<p>The worker consumes jobs from an experiment-scoped queue derived from the configured queue
-prefix (<code>TASKS_QUEUE_NAME</code>) and the experiment UUID hex:</p>
-<p><code>"{TASKS_QUEUE_NAME}.{experiment_id.hex}"</code></p>
+<p>The worker consumes jobs from a single experiment-scoped queue derived from <code>EXPERIMENT_ID</code>.
+The queue name is not configurable and is derived as:</p>
+<p><code>"loreley.evolution.{experiment_namespace}"</code></p>
+<p><code>EXPERIMENT_ID</code> can be a UUID or a short slug. Slugs are mapped to a stable UUID (uuid5)
+and the derived <code>experiment_namespace</code> is stable across processes.</p>
 <h2 id="logs">Logs<a class="headerlink" href="#logs" title="Permanent link">&para;</a></h2>
 <p>Logs are written to:</p>
 <ul>
-<li><code>logs/worker/worker-YYYYMMDD-HHMMSS.log</code></li>
+<li><code>logs/{experiment_namespace}/worker/worker-YYYYMMDD-HHMMSS.log</code></li>
 </ul>
 <h2 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <ul>

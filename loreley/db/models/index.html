@@ -1748,7 +1748,7 @@
 
 
 <h1 id="loreleydbmodels">loreley.db.models<a class="headerlink" href="#loreleydbmodels" title="Permanent link">&para;</a></h1>
-<p>ORM models and enums for tracking evolutionary jobs, commits, and associated metrics.</p>
+<p>ORM models and enums for single-tenant experiment databases.</p>
 <h2 id="shared-mixins-and-enums">Shared mixins and enums<a class="headerlink" href="#shared-mixins-and-enums" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong><code>TimestampMixin</code></strong>: adds <code>created_at</code> and <code>updated_at</code> columns that default to <code>now()</code> and automatically update on modification.</li>
@@ -1756,47 +1756,46 @@
 </ul>
 <h2 id="core-models">Core models<a class="headerlink" href="#core-models" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>Repository</code></strong> (<code>repositories</code> table): normalised view of a source code repository.</li>
-<li>Stores a stable <code>slug</code> derived from either the canonical remote URL or local worktree path, the current <code>remote_url</code>, optional <code>root_path</code>, and an <code>extra</code> JSONB payload with additional metadata (canonical origin, remotes, etc.).</li>
-<li>Owns a collection of <code>Experiment</code> rows and is treated as the top-level key when reasoning about experiments in a multi-repository deployment.</li>
-<li><strong><code>Experiment</code></strong> (<code>experiments</code> table): captures a single experiment configuration within a repository.</li>
-<li>References a <code>repository_id</code>, a stable <code>config_hash</code> computed from a subset of <code>Settings</code>, an optional human-readable <code>name</code>, a JSONB <code>config_snapshot</code> of the relevant settings, and a free-form <code>status</code>.</li>
-<li>Relates to <code>EvolutionJob</code>, <code>CommitCard</code>, and <code>MapElitesState</code> so that jobs, commits, and archive state can all be grouped by experiment.</li>
-<li><strong><code>CommitCard</code></strong> (<code>commit_cards</code> table): stores a lightweight, size-bounded commit representation used for inspiration and UI.</li>
+<li><strong><code>InstanceMetadata</code></strong> (<code>instance_metadata</code> table): single-row marker for DB identity.</li>
+<li>Primary key: <code>id=1</code> enforced by a check constraint.</li>
+<li>Stores <code>schema_version</code>, <code>experiment_id_raw</code>, <code>experiment_uuid</code>, and the canonical <code>root_commit_hash</code>.</li>
+<li>Optional <code>repository_slug</code> and <code>repository_canonical_origin</code> fields aid observability.</li>
+<li><strong><code>CommitCard</code></strong> (<code>commit_cards</code> table): lightweight commit metadata used for inspiration and UI.</li>
 <li>Primary key: <code>id</code> (UUID).</li>
-<li>Scoped by <code>experiment_id</code> (required); the <code>(experiment_id, commit_hash)</code> pair is unique so the same git commit hash can appear in multiple experiments with independent metadata.</li>
+<li>Unique constraint on <code>commit_hash</code> per database.</li>
 <li>Tracks commit hash, parent hash, optional island identifier, optional <code>job_id</code>, author, subject, change summary, evaluation summary, tags, key files, and highlights.</li>
-<li>Defines relationships to associated <code>Metric</code> records (via <code>Metric.commit_card_id</code>) and back to the owning <code>Experiment</code>.</li>
+<li>Defines relationships to associated <code>Metric</code> records (via <code>Metric.commit_card_id</code>).</li>
 <li><strong><code>Metric</code></strong> (<code>metrics</code> table): records individual evaluation metrics for a commit.</li>
 <li>Stores metric <code>name</code>, numeric <code>value</code>, optional <code>unit</code>, whether higher values are better, and a JSONB <code>details</code> payload.</li>
 <li>Links back to <code>CommitCard</code> via <code>commit_card_id</code> and maintains uniqueness per <code>(commit_card_id, name)</code>.</li>
 <li><strong><code>EvolutionJob</code></strong> (<code>evolution_jobs</code> table): represents a single evolution iteration scheduled by the system.</li>
-<li>Tracks current <code>status</code>, base commit, island ID, optional <code>experiment_id</code>, inspiration commit hashes, size-bounded job spec fields (<code>goal</code>, <code>constraints</code>, <code>acceptance_criteria</code>, <code>notes</code>, <code>tags</code>, sampling hints), human-readable <code>plan_summary</code>, priority, scheduling/processing timestamps, and last error if any.</li>
+<li>Tracks current <code>status</code>, base commit, island ID, inspiration commit hashes, size-bounded job spec fields (<code>goal</code>, <code>constraints</code>, <code>acceptance_criteria</code>, <code>notes</code>, <code>tags</code>, sampling hints), human-readable <code>plan_summary</code>, priority, scheduling/processing timestamps, and last error if any.</li>
 <li>Stores result/ingestion indexing fields (<code>result_commit_hash</code>, ingestion status/attempts/delta/cell index) without embedding large JSON payloads.</li>
-<li>Relates back to <code>Experiment</code> via <code>experiment_id</code>, enabling efficient per-experiment queries. <code>base_commit_hash</code> is a git commit hash string (not a foreign key).</li>
 <li><strong><code>JobArtifacts</code></strong> (<code>job_artifacts</code> table): filesystem references for cold-path artifacts produced by the worker.</li>
 <li>Stores paths to planning/coding/evaluation prompts, raw outputs, and logs.</li>
-<li><strong><code>MapElitesState</code></strong> (<code>map_elites_states</code> table): persists per-experiment, per-island snapshots of the MAP-Elites archive.</li>
-<li>Uses a composite primary key <code>(experiment_id, island_id)</code> so that multiple experiments can maintain independent archives even when they share island identifiers.</li>
-<li>Stores a JSONB <code>snapshot</code> payload containing <strong>lightweight metadata</strong> (feature bounds, PCA projection payload, schema version, and other knobs).</li>
-<li>For <code>schema_version &gt;= 2</code>, the large <code>archive</code>/<code>history</code> payloads are stored incrementally in separate tables and
-    reconstructed on load by <code>loreley.core.map_elites.snapshot.DatabaseSnapshotBackend</code>.</li>
-<li>For legacy rows (<code>schema_version &lt; 2</code>) that still embed <code>archive</code>/<code>history</code> lists, the loader performs <strong>lazy migration</strong>
-    into the incremental tables on first read and strips the large fields from <code>snapshot</code>.</li>
+<li><strong><code>CommitChunkSummary</code></strong> (<code>commit_chunk_summaries</code> table): cached trajectory summaries for commit chains.</li>
+<li>Primary key: <code>(start_commit_hash, end_commit_hash, block_size)</code>.</li>
+<li>Stores the summarizer model and bounded summary text for rollups.</li>
+<li><strong><code>MapElitesState</code></strong> (<code>map_elites_states</code> table): persists per-island MAP-Elites snapshots.</li>
+<li>Primary key: <code>(island_id)</code>.</li>
+<li>Stores a JSONB <code>snapshot</code> payload containing lightweight metadata (feature bounds, PCA projection payload, last update time).</li>
+<li>Archive cells and PCA history are stored incrementally in separate tables and reconstructed on load by
+    <code>loreley.core.map_elites.snapshot.DatabaseSnapshotStore</code>.</li>
+<li>The <code>snapshot</code> JSON must not embed <code>archive</code> or <code>history</code>. If your local database contains unsupported payloads, reset it: <code>uv run loreley reset-db --yes</code>.</li>
 <li><strong><code>MapElitesArchiveCell</code></strong> (<code>map_elites_archive_cells</code> table): one row per occupied MAP-Elites archive cell.</li>
-<li>Primary key: <code>(experiment_id, island_id, cell_index)</code>.</li>
+<li>Primary key: <code>(island_id, cell_index)</code>.</li>
 <li>Stores the cell's <code>commit_hash</code>, <code>objective</code>, behaviour <code>measures</code>, stored <code>solution</code> vector, and <code>timestamp</code>.</li>
 <li>Enables cheap per-cell upserts when a commit improves a specific cell.</li>
 <li><strong><code>MapElitesPcaHistory</code></strong> (<code>map_elites_pca_history</code> table): incremental PCA history entries used to restore dimensionality reduction state.</li>
-<li>Primary key: <code>(experiment_id, island_id, commit_hash)</code>.</li>
+<li>Primary key: <code>(island_id, commit_hash)</code>.</li>
 <li>Stores the commit embedding <code>vector</code> plus the <code>embedding_model</code> name and a <code>last_seen_at</code> marker used
     to restore ordered, bounded history windows across restarts.</li>
-<li><strong><code>MapElitesFileEmbeddingCache</code></strong> (<code>map_elites_file_embedding_cache</code> table): persistent file-level embedding cache scoped to an experiment.</li>
-<li>Uses a composite primary key <code>(experiment_id, blob_sha)</code>.</li>
+<li><strong><code>MapElitesFileEmbeddingCache</code></strong> (<code>map_elites_file_embedding_cache</code> table): persistent file-level embedding cache.</li>
+<li>Primary key: <code>(blob_sha)</code>.</li>
 <li>Stores a float array <code>vector</code> containing the file embedding, allowing repo-state embeddings to reuse unchanged file vectors across commits.</li>
 <li>Stores <code>embedding_model</code> and <code>dimensions</code> alongside vectors for validation and debugging.</li>
 <li><strong><code>MapElitesRepoStateAggregate</code></strong> (<code>map_elites_repo_state_aggregates</code> table): persistent commit-level aggregates for repo-state embeddings.</li>
-<li>Uses a composite primary key <code>(experiment_id, commit_hash)</code>.</li>
+<li>Primary key: <code>(commit_hash)</code>.</li>
 <li>Stores <code>sum_vector</code> and <code>file_count</code> so the commit embedding can be derived as <code>sum_vector / file_count</code>.</li>
 </ul>
 

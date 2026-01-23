@@ -1826,7 +1826,7 @@
 </ul>
 <h2 id="backend-resolution">Backend resolution<a class="headerlink" href="#backend-resolution" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>load_agent_backend(ref, *, label)</code></strong>: resolves an <code>AgentBackend</code> from a dotted reference (<code>"module:attr"</code> or <code>"module.attr"</code>). The target may be an instance, a class (instantiated with no args), or a factory callable.</li>
+<li><strong><code>load_agent_backend(ref, *, label)</code></strong>: resolves an <code>AgentBackend</code> from a dotted reference (<code>"module:attr"</code> or <code>"module.attr"</code>). The target may be an instance, a class (no-arg constructor), or a no-arg factory callable.</li>
 </ul>
 <h2 id="structured-execution-utilities">Structured execution utilities<a class="headerlink" href="#structured-execution-utilities" title="Permanent link">&para;</a></h2>
 <ul>
@@ -1845,7 +1845,7 @@
 <ul>
 <li><strong><code>CodexCliBackend</code></strong>: <code>loreley.core.worker.agent.backends.codex_cli.CodexCliBackend</code></li>
 <li><strong><code>CursorCliBackend</code></strong>: <code>loreley.core.worker.agent.backends.cursor_cli.CursorCliBackend</code></li>
-<li><strong>Factory helper</strong>: <code>cursor_backend_from_settings()</code></li>
+<li><strong>Factory helper</strong>: <code>cursor_backend()</code></li>
 </ul>
 
 

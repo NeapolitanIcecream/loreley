@@ -1854,7 +1854,7 @@
 <li><strong><code>EvolutionWorkerError</code></strong>: base runtime error used when the worker cannot complete or persist a job due to configuration, database, or repository issues.</li>
 <li><strong><code>JobLockConflict</code></strong>: raised when <code>start_job()</code> fails to obtain a NOWAIT lock on a job row, indicating that another worker is already processing the same job.</li>
 <li><strong><code>JobPreconditionError</code></strong>: raised when a job cannot start because preconditions are not satisfied (missing row, unsupported status, missing <code>base_commit_hash</code>, etc.).</li>
-<li><strong><code>LockedJob</code></strong>: dataclass snapshot of the locked <code>EvolutionJob</code> row containing the <code>job_id</code>, <code>base_commit_hash</code>, optional <code>island_id</code>, optional <code>experiment_id</code> and <code>repository_id</code>, the bounded job spec fields, and the tuple of <code>inspiration_commit_hashes</code>. This is used by <code>EvolutionWorker</code> to build its <code>JobContext</code>.</li>
+<li><strong><code>LockedJob</code></strong>: dataclass snapshot of the locked <code>EvolutionJob</code> row containing the <code>job_id</code>, <code>base_commit_hash</code>, optional <code>island_id</code>, the bounded job spec fields, and the tuple of <code>inspiration_commit_hashes</code>. This is used by <code>EvolutionWorker</code> to build its <code>JobContext</code>.</li>
 </ul>
 <h2 id="artifacts">Artifacts<a class="headerlink" href="#artifacts" title="Permanent link">&para;</a></h2>
 <p>Large, audit/debug oriented payloads (prompts, raw outputs, logs) are written to disk and referenced from the database via <code>JobArtifacts</code> rather than being embedded in primary rows.</p>

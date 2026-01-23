@@ -1782,9 +1782,9 @@
 <ul>
 <li><strong><code>MapElitesManager</code></strong>: orchestrates preprocessing, chunking, embedding, dimensionality reduction, archive updates, and snapshot persistence.</li>
 <li>Configured via <code>Settings</code> map-elites options: preprocessing and repository file filtering, repo-state code embeddings (file cache), dimensionality reduction (PCA with whitening), feature normalisation/truncation (<code>MAPELITES_FEATURE_TRUNCATION_K</code>, <code>MAPELITES_FEATURE_NORMALIZATION_WARMUP_SAMPLES</code>, <code>MAPELITES_FEATURE_CLIP</code>), archive grid, fitness metric, and default island identifiers.</li>
-<li>Accepts an optional <code>experiment_id</code> at construction time; when provided, all persisted <code>MapElitesState</code> rows are scoped by <code>(experiment_id, island_id)</code>, allowing multiple experiments to maintain independent archives even when they share island identifiers. When omitted, archive state is kept purely in-memory and snapshots are not written.</li>
+<li>Uses the single-tenant database as the persistence boundary; all MAP-Elites state is scoped by <code>island_id</code>.</li>
 <li><code>ingest(commit_hash, ...)</code> runs the full pipeline for a commit in <strong>repo-state</strong> embedding mode:<ul>
-<li>enumerates eligible code files at <code>commit_hash</code> using pinned ignore rules from the experiment snapshot (<code>mapelites_repo_state_ignore_text</code>) plus basic filtering,</li>
+<li>enumerates eligible code files at <code>commit_hash</code> using pinned ignore rules from <code>Settings.mapelites_repo_state_ignore_text</code> plus basic filtering,</li>
 <li>reuses a file-level embedding cache keyed by git blob SHA,</li>
 <li>embeds only cache misses (new/changed blobs),</li>
 <li>aggregates all file embeddings into a single commit vector via <strong>uniform averaging</strong>,</li>
@@ -1793,7 +1793,7 @@
 </li>
 <li>Tracks per-island PCA history and projection so that new embeddings are consistent with previous ones, logging detailed progress and warnings with <code>loguru</code>.</li>
 <li>Behaviour descriptors are clipped to <code>[-k, k]</code> (k from <code>MAPELITES_FEATURE_TRUNCATION_K</code>), linearly mapped into <code>[0, 1]^d</code>, and archives are constructed with fixed <code>[0, 1]</code> bounds per dimension to avoid manual per-dimension tuning and boundary crowding.</li>
-<li>Delegates snapshot serialisation and persistence to <code>loreley.core.map_elites.snapshot</code>, which exposes pure helpers for encoding/decoding archive state plus pluggable storage backends (database or no-op).</li>
+<li>Delegates snapshot loading and incremental persistence to <code>loreley.core.map_elites.snapshot.DatabaseSnapshotStore</code>.</li>
 </ul>
 <h2 id="query-helpers">Query helpers<a class="headerlink" href="#query-helpers" title="Permanent link">&para;</a></h2>
 <ul>

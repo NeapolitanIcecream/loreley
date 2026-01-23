@@ -1642,7 +1642,7 @@
 
 <h1 id="adr-0013-remove-filter_signature-and-prompt_signature-from-experiment-scoped-caches">ADR 0013: Remove filter_signature and prompt_signature from experiment-scoped caches<a class="headerlink" href="#adr-0013-remove-filter_signature-and-prompt_signature-from-experiment-scoped-caches" title="Permanent link">&para;</a></h1>
 <p>Date: 2026-01-09</p>
-<p>Context: Loreley locks experiment-scoped behaviour settings in <code>Experiment.config_snapshot</code> to avoid dynamic configuration complexity. Some caches still include extra signature dimensions (<code>filter_signature</code>, <code>prompt_signature</code>) that only exist to support dynamic changes.</p>
+<p>Context: Loreley assumes env-only settings are stable for the lifetime of a database. Some caches still include extra signature dimensions (<code>filter_signature</code>, <code>prompt_signature</code>) that only exist to support dynamic changes.</p>
 <p>Decision: Remove <code>filter_signature</code> from repo-state commit aggregates and key <code>MapElitesRepoStateAggregate</code> only by <code>(experiment_id, commit_hash)</code>.</p>
 <p>Decision: Remove <code>prompt_signature</code> from trajectory chunk summaries and key <code>CommitChunkSummary</code> only by <code>(experiment_id, start_commit_hash, end_commit_hash, block_size)</code>.</p>
 <p>Consequences: Aggregate and summary caches become simpler and aligned with the locked experiment settings model. Upgrading requires resetting the development database schema (Loreley does not ship migrations).</p>

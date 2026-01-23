@@ -1815,6 +1815,7 @@
 <h2 id="start">Start<a class="headerlink" href="#start" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>loreley<span class="w"> </span>api
 </code></pre></div>
+<p>This command requires <code>DATABASE_URL</code> to point at a Loreley database with an instance metadata marker (created by <code>uv run loreley reset-db --yes</code>).</p>
 <h2 id="options">Options<a class="headerlink" href="#options" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>--host</code>: bind host (default: <code>127.0.0.1</code>)</li>
@@ -1825,7 +1826,7 @@
 <h2 id="logs">Logs<a class="headerlink" href="#logs" title="Permanent link">&para;</a></h2>
 <p>Logs are written to:</p>
 <ul>
-<li><code>logs/ui_api/ui_api-YYYYMMDD-HHMMSS.log</code></li>
+<li><code>logs/{experiment_namespace}/ui_api/ui_api-YYYYMMDD-HHMMSS.log</code></li>
 </ul>
 
 

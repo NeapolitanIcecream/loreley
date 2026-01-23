@@ -1774,17 +1774,17 @@
 <h2 id="engine-and-session-factory">Engine and session factory<a class="headerlink" href="#engine-and-session-factory" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong><code>_sanitize_dsn(raw_dsn)</code></strong>: masks the password portion of a database DSN so it can be safely logged.</li>
-<li><strong><code>engine</code></strong>: global SQLAlchemy engine created from <code>Settings.database_dsn</code>, configured with <code>pool_pre_ping</code>, connection pool sizing, timeouts, and optional SQL echoing.</li>
-<li><strong><code>SessionLocal</code></strong>: scoped session factory bound to <code>engine</code>, with <code>autocommit=False</code>, <code>autoflush=False</code>, and <code>expire_on_commit=False</code> to make ORM usage predictable in long-running workers.</li>
+<li><strong><code>get_engine()</code></strong>: cached factory that returns the global SQLAlchemy engine created from <code>Settings.database_dsn</code>, configured with <code>pool_pre_ping</code>, connection pool sizing, timeouts, and optional SQL echoing. The engine is initialised lazily on first use.</li>
 </ul>
 <h2 id="declarative-base-and-context-manager">Declarative base and context manager<a class="headerlink" href="#declarative-base-and-context-manager" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong><code>Base</code></strong>: shared declarative base class used by all ORM models in <code>loreley.db.models</code>.</li>
-<li><strong><code>session_scope()</code></strong>: context manager that yields a <code>Session</code>, commits on success, rolls back on exception, logs failures with <code>loguru</code>, and always disposes of the session via <code>SessionLocal.remove()</code>.</li>
+<li><strong><code>session_scope()</code></strong>: context manager that yields a <code>Session</code>, commits on success, rolls back on exception, logs failures with <code>loguru</code>, and always closes the session.</li>
 </ul>
 <h2 id="schema-helpers">Schema helpers<a class="headerlink" href="#schema-helpers" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>ensure_database_schema()</code></strong>: imports <code>loreley.db.models</code> and calls <code>Base.metadata.create_all(bind=engine)</code> to create any missing tables. This is safe to call multiple times and is used by the UI API at startup.</li>
+<li><strong><code>ensure_database_schema()</code></strong>: imports <code>loreley.db.models</code>, calls <code>Base.metadata.create_all(bind=get_engine())</code> to create any missing tables, then validates the single-row <code>InstanceMetadata</code> marker against the current environment. This is safe to call multiple times and is used by the UI API at startup.</li>
+<li><strong><code>reset_database_schema()</code></strong>: drops and recreates all ORM tables, then seeds <code>InstanceMetadata</code> from the current environment (<code>EXPERIMENT_ID</code> and <code>MAPELITES_EXPERIMENT_ROOT_COMMIT</code>). This is the supported upgrade path for destructive schema changes.</li>
 </ul>
 
 

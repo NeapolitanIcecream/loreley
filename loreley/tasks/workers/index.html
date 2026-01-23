@@ -1370,10 +1370,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#broker-side-effect" class="md-nav__link">
+  <a href="#broker-configuration" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Broker side effect
+        Broker configuration
       
     </span>
   </a>
@@ -1720,10 +1720,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#broker-side-effect" class="md-nav__link">
+  <a href="#broker-configuration" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Broker side effect
+        Broker configuration
       
     </span>
   </a>
@@ -1751,12 +1751,14 @@
 <p>Dramatiq task actor builders that drive the Loreley evolution worker.</p>
 <h2 id="evolution-worker">Evolution worker<a class="headerlink" href="#evolution-worker" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>build_evolution_job_worker_actor(settings: Settings, experiment_id: UUID | str) -&gt; dramatiq.Actor</code></strong><br />
+<li><strong><code>build_evolution_job_worker_actor(settings: Settings) -&gt; dramatiq.Actor</code></strong><br />
   Builds an <strong>experiment-attached</strong> Dramatiq actor that runs a single evolution job via
   <code>loreley.core.worker.evolution.EvolutionWorker</code>. The returned actor is bound to the
-  per-experiment queue derived from <code>TASKS_QUEUE_NAME</code> (prefix) and the experiment UUID hex:
-  <code>"{TASKS_QUEUE_NAME}.{experiment_id.hex}"</code>.</li>
+  per-experiment queue derived from <code>EXPERIMENT_ID</code>:
+  <code>"loreley.evolution.{experiment_namespace}"</code>.</li>
 </ul>
+<p><code>EXPERIMENT_ID</code> can be a UUID or a short slug; slugs are mapped to stable UUIDs (uuid5) and
+  yield a stable <code>experiment_namespace</code> for routing and filesystem naming.</p>
 <p>The actor reuses a single <code>EvolutionWorker</code> instance for the lifetime of the worker process
   (no per-job config reloads / no dynamic rebuilding). On execution, it:</p>
 <ul>
@@ -1774,14 +1776,15 @@
 <p>Logs a “job complete” event including the resulting candidate commit hash on success.</p>
 </li>
 <li>
-<p><strong><code>build_evolution_job_sender_actor(settings: Settings, experiment_id: UUID | str) -&gt; dramatiq.Actor</code></strong><br />
+<p><strong><code>build_evolution_job_sender_actor(settings: Settings) -&gt; dramatiq.Actor</code></strong><br />
   Builds a scheduler-side sender stub used only for enqueueing messages via <code>.send(...)</code>. The
   callable body is not expected to run in the scheduler process.</p>
 </li>
 </ul>
-<h2 id="broker-side-effect">Broker side effect<a class="headerlink" href="#broker-side-effect" title="Permanent link">&para;</a></h2>
-<p>Importing <code>loreley.tasks.workers</code> imports <code>loreley.tasks.broker</code>, which configures the global
-Dramatiq broker using the Redis settings in <code>loreley.config.Settings</code>.</p>
+<h2 id="broker-configuration">Broker configuration<a class="headerlink" href="#broker-configuration" title="Permanent link">&para;</a></h2>
+<p>Both actor builders call <code>setup_broker(settings)</code> to ensure Dramatiq is configured with the
+experiment-scoped Redis namespace before any actors are registered. The broker is no longer
+configured implicitly at import time.</p>
 <p>For usage and operational details, see <code>docs/script/run_worker.md</code>.</p>
 
 

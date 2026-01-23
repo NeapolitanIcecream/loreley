@@ -1644,7 +1644,7 @@
 <p>Date: 2026-01-06</p>
 <p>Context: Users need a way to control which repository files participate in embeddings without changing Git tracking rules.
 Decision: Support a repository-root <code>.loreleyignore</code> file and parse it with gitignore semantics via <code>pathspec.gitignore.GitIgnoreSpec</code>.
-Details: In experiment runs, ignore rules are pinned at experiment creation time from the experiment root commit and persisted in <code>Experiment.config_snapshot</code> as <code>mapelites_repo_state_ignore_text</code> (with <code>mapelites_repo_state_ignore_sha256</code> as a guard). Runtime repo-state embeddings use the pinned matcher and do not consult per-commit or working-tree ignore files.
+Details: In scheduler runs, ignore rules are pinned at process startup from the configured root commit and stored in <code>Settings.mapelites_repo_state_ignore_text</code> for the lifetime of the scheduler process. Runtime repo-state embeddings use the pinned matcher and do not consult per-commit or working-tree ignore files.
 Details: Apply <code>.gitignore</code> rules first, then <code>.loreleyignore</code> rules, so <code>.loreleyignore</code> may override via negation (<code>!pattern</code>).
 Constraints: Matching remains root-only (no nested <code>.gitignore</code> files and no global excludes).
 Consequences: Repo-state eligibility is stable for an experiment, removing dynamic-ignore edge cases from incremental-only ingestion.</p>

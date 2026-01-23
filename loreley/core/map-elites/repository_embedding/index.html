@@ -1902,7 +1902,7 @@ subset of changed files.</p>
 </ul>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
-<p>Ignore filtering uses <code>pathspec.gitignore.GitIgnoreSpec</code> to apply repository-root <code>.gitignore</code> + <code>.loreleyignore</code> rules with gitignore semantics. In experiment runs, the effective ignore rules are <strong>pinned at experiment creation time</strong> and persisted in <code>Experiment.config_snapshot</code> as <code>mapelites_repo_state_ignore_text</code> (derived from the experiment root commit). <code>.loreleyignore</code> rules are applied after <code>.gitignore</code> (so <code>!pattern</code> can re-include). Nested <code>.gitignore</code> files and global excludes are not applied.</p>
+<p>Ignore filtering uses <code>pathspec.gitignore.GitIgnoreSpec</code> to apply repository-root <code>.gitignore</code> + <code>.loreleyignore</code> rules with gitignore semantics. In scheduler runs, Loreley <strong>pins</strong> the ignore rule text once at process startup by reading it from the configured root commit and storing it in <code>Settings.mapelites_repo_state_ignore_text</code> for the lifetime of the scheduler process. <code>.loreleyignore</code> rules are applied after <code>.gitignore</code> (so <code>!pattern</code> can re-include). Nested <code>.gitignore</code> files and global excludes are not applied.</p>
 </div>
 <p>For each eligible file we keep:</p>
 <ul>
@@ -1919,23 +1919,20 @@ subset of changed files.</p>
 </ul>
 <p>Cache key:</p>
 <ul>
-<li><code>experiment_id</code></li>
 <li><code>blob_sha</code></li>
 </ul>
-<p>The embedding model name and output dimensionality are experiment-scoped
-invariants pinned in <code>Experiment.config_snapshot</code>. The database cache stores
-<code>embedding_model</code> and <code>dimensions</code> alongside vectors for validation and debugging.</p>
+<p>The database cache stores <code>embedding_model</code> and <code>dimensions</code> alongside vectors for
+validation and debugging.</p>
 <p>The database-backed cache is <strong>insert-only</strong>: when multiple processes attempt to
 write the same key, the first insert wins and later writes are ignored (no overwrite).</p>
 <p>Backend selection:</p>
 <ul>
 <li><code>MAPELITES_FILE_EMBEDDING_CACHE_BACKEND=db|memory</code> (default: <code>db</code>)</li>
 </ul>
-<p>Note: The database-backed cache is experiment-scoped and requires an <code>experiment_id</code>. Use the <code>memory</code> backend for local runs without an experiment context.</p>
+<p>Note: The database-backed cache is single-tenant. The scheduler requires the <code>db</code> backend for incremental-only repo-state ingestion; reserve the <code>memory</code> backend for tests or local runs that do not use the scheduler.</p>
 <h2 id="repo-state-aggregate-cache-commit-level">Repo-state aggregate cache (commit-level)<a class="headerlink" href="#repo-state-aggregate-cache-commit-level" title="Permanent link">&para;</a></h2>
-<p>When <code>MapElitesManager</code> is constructed with an <code>experiment_id</code> (the scheduler does this),
-repo-state embeddings persist a commit-level aggregate so future ingests can avoid
-re-enumerating the full tree.</p>
+<p>Repo-state embeddings persist a commit-level aggregate so
+future ingests can avoid re-enumerating the full tree.</p>
 <p>Stored in:</p>
 <ul>
 <li>ORM table: <code>loreley.db.models.MapElitesRepoStateAggregate</code></li>

@@ -1840,8 +1840,7 @@ submitted to the Dramatiq worker queue.</p>
 <li><strong>Construction</strong>: created by <code>EvolutionScheduler</code> with:</li>
 <li>a shared <code>Settings</code> instance,</li>
 <li>the interactive <code>rich</code> console,</li>
-<li>the experiment-scoped <code>MapElitesSampler</code>,</li>
-<li>the current <code>experiment_id</code>.</li>
+<li>the <code>MapElitesSampler</code>.</li>
 </ul>
 <h3 id="measuring-unfinished-work">Measuring unfinished work<a class="headerlink" href="#measuring-unfinished-work" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1857,8 +1856,7 @@ submitted to the Dramatiq worker queue.</p>
     <code>PENDING</code>/<code>QUEUED</code>/<code>RUNNING</code> jobs.</li>
 <li>Respects the optional <code>SCHEDULER_MAX_TOTAL_JOBS</code> global cap using the
     <code>total_scheduled_jobs</code> counter maintained by <code>EvolutionScheduler</code>.</li>
-<li>Requests new work from MAP-Elites via
-    <code>MapElitesSampler.schedule_job(experiment_id=experiment_id)</code>.</li>
+<li>Requests new work from MAP-Elites via <code>MapElitesSampler.schedule_job()</code>.</li>
 <li>Immediately transitions any newly created jobs to <code>QUEUED</code> and pushes them
     to Dramatiq using the private <code>_enqueue_jobs(...)</code> helper.</li>
 <li>Returns the number of jobs scheduled during this tick.</li>
