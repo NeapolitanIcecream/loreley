@@ -19,7 +19,7 @@ from loreley.config import Settings, get_settings
 from loreley.core.experiments import ExperimentError, bootstrap_instance
 from loreley.core.map_elites.map_elites import MapElitesManager
 from loreley.core.map_elites.sampler import MapElitesSampler
-from loreley.db.base import engine, ensure_database_schema, session_scope
+from loreley.db.base import ensure_database_schema, get_engine, session_scope
 from loreley.db.locks import (
     AdvisoryLock,
     release_pg_advisory_lock,
@@ -256,7 +256,7 @@ class EvolutionScheduler:
     def _acquire_experiment_lock(self) -> AdvisoryLock:
         experiment_id = resolve_experiment_uuid(self.settings.experiment_id)
         key = uuid_to_pg_bigint_lock_key(experiment_id)
-        lock = try_acquire_pg_advisory_lock(engine=engine, key=key)
+        lock = try_acquire_pg_advisory_lock(engine=get_engine(), key=key)
         if lock is None:
             raise SchedulerLockError(
                 "Another scheduler instance is already running for this experiment. "

@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from functools import lru_cache
 from typing import Iterator
 
 from loguru import logger
 from rich.console import Console
 from sqlalchemy import text
 from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
 from sqlalchemy.engine import URL
 from sqlalchemy.engine.url import make_url
-from sqlalchemy.orm import DeclarativeBase, Session, scoped_session, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from loreley.config import Settings, get_settings
 from loreley.db.instance import seed_instance_marker, validate_instance_marker
@@ -18,7 +20,6 @@ INSTANCE_SCHEMA_VERSION = 3
 
 console = Console()
 log = logger.bind(module="db.base")
-settings = get_settings()
 
 
 def _sanitize_dsn(raw_dsn: str) -> str:
@@ -29,28 +30,34 @@ def _sanitize_dsn(raw_dsn: str) -> str:
     return str(url)
 
 
-engine = create_engine(
-    settings.database_dsn,
-    pool_pre_ping=True,
-    pool_size=settings.db_pool_size,
-    max_overflow=settings.db_max_overflow,
-    pool_timeout=settings.db_pool_timeout,
-    echo=settings.db_echo,
-    future=True,
-)
+@lru_cache
+def get_engine() -> Engine:
+    """Create (and cache) the global SQLAlchemy engine."""
+    settings = get_settings()
+    engine = create_engine(
+        settings.database_dsn,
+        pool_pre_ping=True,
+        pool_size=settings.db_pool_size,
+        max_overflow=settings.db_max_overflow,
+        pool_timeout=settings.db_pool_timeout,
+        echo=settings.db_echo,
+        future=True,
+    )
+    safe_dsn = _sanitize_dsn(settings.database_dsn)
+    console.log(f"[bold cyan]SQLAlchemy engine ready[/] {safe_dsn}")
+    log.info("SQLAlchemy engine initialised for {}", safe_dsn)
+    return engine
 
-safe_dsn = _sanitize_dsn(settings.database_dsn)
-console.log(f"[bold cyan]SQLAlchemy engine ready[/] {safe_dsn}")
-log.info("SQLAlchemy engine initialised for {}", safe_dsn)
 
-SessionLocal = scoped_session(
-    sessionmaker(
+@lru_cache
+def _session_factory() -> sessionmaker[Session]:
+    """Create (and cache) the Session factory bound to the global engine."""
+    return sessionmaker(
         autocommit=False,
         autoflush=False,
-        bind=engine,
+        bind=get_engine(),
         expire_on_commit=False,
-    ),
-)
+    )
 
 
 class Base(DeclarativeBase):
@@ -62,7 +69,7 @@ class Base(DeclarativeBase):
 @contextmanager
 def session_scope() -> Iterator[Session]:
     """Provide a transactional scope for DB operations."""
-    session = SessionLocal()
+    session = _session_factory()()
     try:
         yield session
         session.commit()
@@ -71,7 +78,7 @@ def session_scope() -> Iterator[Session]:
         log.exception("Session rollback triggered")
         raise
     finally:
-        SessionLocal.remove()
+        session.close()
 
 
 def ensure_database_schema(*, validate_marker: bool = True) -> None:
@@ -82,9 +89,11 @@ def ensure_database_schema(*, validate_marker: bool = True) -> None:
     """
 
     try:
+        settings = get_settings()
         # Import models so that all ORM tables are registered on ``Base.metadata``.
         import loreley.db.models  # noqa: F401  # pylint: disable=unused-import
 
+        engine = get_engine()
         Base.metadata.create_all(bind=engine)
         if validate_marker:
             with session_scope() as session:
@@ -122,12 +131,14 @@ def reset_database_schema(*, include_console_log: bool = True) -> None:
     # Import models so that all ORM tables are registered on ``Base.metadata``.
     import loreley.db.models  # noqa: F401  # pylint: disable=unused-import
 
+    settings = get_settings()
     safe_dsn = _sanitize_dsn(settings.database_dsn)
     if include_console_log:
         console.log(f"[bold yellow]Resetting database schema[/] url={safe_dsn}")
     log.warning("Resetting database schema (drop + create) url={}", safe_dsn)
 
     tables = list(Base.metadata.tables.values())
+    engine = get_engine()
     with engine.begin() as conn:
         # Drop in reverse definition order; CASCADE makes the order resilient.
         for table in reversed(tables):
