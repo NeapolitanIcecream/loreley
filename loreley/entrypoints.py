@@ -259,11 +259,11 @@ def run_worker(
     try:
         # Lazily import the broker and worker actors after logging is configured so
         # that any configuration errors are surfaced cleanly to the user.
-        from loreley.tasks import broker as broker_module
+        from loreley.tasks.broker import setup_broker
         from loreley.db.base import ensure_database_schema
         from loreley.tasks.workers import build_evolution_job_worker_actor
 
-        dramatiq_broker = broker_module.broker
+        dramatiq_broker = setup_broker(settings=settings)
         ensure_database_schema()
         # Register the experiment-attached actor bound to the derived queue.
         build_evolution_job_worker_actor(settings=settings)

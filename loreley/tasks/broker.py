@@ -14,6 +14,8 @@ from loreley.naming import tasks_redis_namespace
 console = Console()
 log = logger.bind(module="tasks.broker")
 
+broker: RedisBroker | None = None
+
 __all__ = ["broker", "setup_broker", "build_redis_broker"]
 
 
@@ -59,9 +61,11 @@ def build_redis_broker(settings: Settings | None = None) -> RedisBroker:
 def setup_broker(settings: Settings | None = None) -> RedisBroker:
     """Configure dramatiq to use the Redis broker."""
 
+    global broker
     settings = settings or get_settings()
     redis_broker = build_redis_broker(settings)
     dramatiq.set_broker(redis_broker)
+    broker = redis_broker
 
     connection_repr = _safe_connection_repr(settings)
     console.log(
@@ -74,7 +78,4 @@ def setup_broker(settings: Settings | None = None) -> RedisBroker:
         redis_broker.namespace,
     )
     return redis_broker
-
-
-broker = setup_broker()
 

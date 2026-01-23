@@ -220,6 +220,46 @@ def check_non_empty(value: str | None, *, label: str, env_name: str, help_text: 
     return CheckResult(label, "fail", f"{env_name} is not set ({help_text})")
 
 
+def check_embedding_dimensions(settings: Settings) -> CheckResult:
+    """Check MAPELITES_CODE_EMBEDDING_DIMENSIONS is configured and valid."""
+    raw = getattr(settings, "mapelites_code_embedding_dimensions", None)
+    if raw is None:
+        return CheckResult(
+            "mapelites_code_embedding_dimensions",
+            "fail",
+            "MAPELITES_CODE_EMBEDDING_DIMENSIONS is not set (required for repo-state embeddings).",
+        )
+    try:
+        dims = int(raw)
+    except (TypeError, ValueError):
+        return CheckResult(
+            "mapelites_code_embedding_dimensions",
+            "fail",
+            "MAPELITES_CODE_EMBEDDING_DIMENSIONS must be a positive integer.",
+        )
+    if dims <= 0:
+        return CheckResult(
+            "mapelites_code_embedding_dimensions",
+            "fail",
+            "MAPELITES_CODE_EMBEDDING_DIMENSIONS must be a positive integer.",
+        )
+    return CheckResult("mapelites_code_embedding_dimensions", "ok", "configured")
+
+
+def check_repo_state_cache_backend(settings: Settings) -> CheckResult:
+    """Check the repo-state cache backend is configured for scheduler usage."""
+    raw = str(getattr(settings, "mapelites_file_embedding_cache_backend", "") or "").strip().lower()
+    if not raw:
+        raw = "db"
+    if raw != "db":
+        return CheckResult(
+            "mapelites_file_embedding_cache_backend",
+            "fail",
+            "MAPELITES_FILE_EMBEDDING_CACHE_BACKEND must be 'db' for scheduler ingestion.",
+        )
+    return CheckResult("mapelites_file_embedding_cache_backend", "ok", "db")
+
+
 def check_openai_api_key(value: str | None, *, required: bool) -> CheckResult:
     """Check OPENAI_API_KEY presence.
 
@@ -364,6 +404,8 @@ def preflight_scheduler(settings: Settings, *, timeout_seconds: float = 2.0) -> 
             help_text="required for repo-state startup approval and incremental-only ingestion",
         )
     )
+    results.append(check_embedding_dimensions(settings))
+    results.append(check_repo_state_cache_backend(settings))
 
     goal = (settings.worker_evolution_global_goal or "").strip()
     if goal:

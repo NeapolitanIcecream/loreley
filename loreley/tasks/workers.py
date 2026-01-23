@@ -8,9 +8,7 @@ from loreley.config import Settings
 from loreley.core.worker.evolution import EvolutionWorker, EvolutionWorkerResult
 from loreley.core.worker.job_store import EvolutionWorkerError, JobLockConflict, JobPreconditionError
 from loreley.naming import tasks_queue_name
-
-# Ensure the broker is configured before registering any actors.
-from loreley.tasks.broker import broker  # noqa: F401
+from loreley.tasks.broker import setup_broker
 
 console = Console()
 log = logger.bind(module="tasks.workers")
@@ -35,6 +33,7 @@ def build_evolution_job_sender_actor(
     `.send(...)` can produce correctly-formed Dramatiq messages.
     """
 
+    setup_broker(settings=settings)
     queue = tasks_queue_name(getattr(settings, "experiment_id", None))
     time_limit = _time_limit_ms(settings)
 
@@ -62,6 +61,7 @@ def build_evolution_job_worker_actor(
     single `EvolutionWorker` instance for the full process lifetime.
     """
 
+    setup_broker(settings=settings)
     queue = tasks_queue_name(getattr(settings, "experiment_id", None))
     time_limit = _time_limit_ms(settings)
 

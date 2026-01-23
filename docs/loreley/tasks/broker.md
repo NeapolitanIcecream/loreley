@@ -11,6 +11,6 @@ Helpers for configuring the Dramatiq Redis broker used by Loreley workers.
   Wraps `build_redis_broker()` and calls `dramatiq.set_broker(...)` so that Dramatiq actors use the configured Redis broker. It logs a sanitised representation of the Redis connection (scheme, host, port, and DB index) along with the logical namespace, explicitly avoiding logging any credentials from `TASKS_REDIS_URL` or `TASKS_REDIS_PASSWORD`.
 
 - **`broker`**  
-  A module-level `RedisBroker` instance created eagerly by calling `setup_broker()` at import time. Importing `loreley.tasks.broker` is therefore sufficient to configure the global Dramatiq broker; this side effect is relied on by `loreley.tasks.workers` when running worker processes.
+  A module-level reference to the most recently configured `RedisBroker`. It is set when `setup_broker()` is called; importing `loreley.tasks.broker` does not configure Dramatiq on its own.
 
 

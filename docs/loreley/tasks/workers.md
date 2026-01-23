@@ -30,10 +30,11 @@ Dramatiq task actor builders that drive the Loreley evolution worker.
   Builds a scheduler-side sender stub used only for enqueueing messages via `.send(...)`. The
   callable body is not expected to run in the scheduler process.
 
-## Broker side effect
+## Broker configuration
 
-Importing `loreley.tasks.workers` imports `loreley.tasks.broker`, which configures the global
-Dramatiq broker using the Redis settings in `loreley.config.Settings`.
+Both actor builders call `setup_broker(settings)` to ensure Dramatiq is configured with the
+experiment-scoped Redis namespace before any actors are registered. The broker is no longer
+configured implicitly at import time.
 
 For usage and operational details, see `docs/script/run_worker.md`.
 
