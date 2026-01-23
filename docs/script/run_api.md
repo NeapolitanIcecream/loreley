@@ -14,6 +14,8 @@ uv sync --extra ui
 uv run loreley api
 ```
 
+This command requires `DATABASE_URL` to point at a Loreley database with an instance metadata marker (created by `uv run loreley reset-db --yes`).
+
 ## Options
 
 - `--host`: bind host (default: `127.0.0.1`)
@@ -25,6 +27,6 @@ uv run loreley api
 
 Logs are written to:
 
-- `logs/ui_api/ui_api-YYYYMMDD-HHMMSS.log`
+- `logs/{experiment_namespace}/ui_api/ui_api-YYYYMMDD-HHMMSS.log`
 
 

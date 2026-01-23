@@ -71,6 +71,7 @@ class EvolutionScheduler:
             raise SchedulerError(str(exc)) from exc
         self.settings = effective_settings
         self._root_commit_hash = (self.settings.mapelites_experiment_root_commit or "").strip() or None
+        self._max_total_jobs = self._require_max_total_jobs()
 
         # Enforce single-scheduler-per-experiment using a session-level Postgres advisory lock.
         self._advisory_lock = self._acquire_experiment_lock()
@@ -100,7 +101,6 @@ class EvolutionScheduler:
             manager=self.manager,
         )
         self._stop_requested = False
-        self._total_scheduled_jobs = 0
 
         # Optionally initialise an explicit experiment root commit so that the
         # archive and database both contain a stable starting point before any
@@ -149,18 +149,18 @@ class EvolutionScheduler:
         unfinished = self.job_scheduler.count_unfinished_jobs()
         stats["seed_scheduled"] = self._maybe_schedule_seed_jobs(unfinished_jobs=unfinished)
         effective_unfinished = unfinished + stats["seed_scheduled"]
+        total_jobs = self.job_scheduler.count_total_jobs()
         stats["scheduled"] = self.job_scheduler.schedule_jobs(
             unfinished_jobs=effective_unfinished,
-            total_scheduled_jobs=self._total_scheduled_jobs,
+            total_jobs=total_jobs,
         )
-        self._total_scheduled_jobs += stats["seed_scheduled"] + stats["scheduled"]
         stats["unfinished"] = unfinished + stats["seed_scheduled"] + stats["scheduled"]
+        total_jobs_after = total_jobs + stats["scheduled"]
 
         remaining_total_str = ""
-        max_total = getattr(self.settings, "scheduler_max_total_jobs", None)
-        if max_total is not None and max_total > 0:
-            remaining_total = max(0, max_total - self._total_scheduled_jobs)
-            remaining_total_str = f" remaining_total={remaining_total}/{max_total}"
+        max_total = self._max_total_jobs
+        remaining_total = max(0, max_total - total_jobs_after)
+        remaining_total_str = f" remaining_total={remaining_total}/{max_total}"
 
         self.console.log(
             "[bold magenta]Scheduler tick[/] ingested={ingested} dispatched={dispatched} "
@@ -170,19 +170,18 @@ class EvolutionScheduler:
             ),
         )
 
-        if max_total is not None and max_total > 0:
-            if self._total_scheduled_jobs >= max_total and stats["unfinished"] == 0:
-                self._create_best_fitness_branch_if_possible()
-                self.console.log(
-                    "[bold yellow]Scheduler reached max total jobs and all jobs finished; shutting down[/] "
-                    f"limit={max_total}",
-                )
-                log.info(
-                    "Scheduler stopping after reaching max_total_jobs={} (total_scheduled={})",
-                    max_total,
-                    self._total_scheduled_jobs,
-                )
-                self.stop()
+        if total_jobs_after >= max_total and stats["unfinished"] == 0:
+            self._create_best_fitness_branch_if_possible()
+            self.console.log(
+                "[bold yellow]Scheduler reached max total jobs and all jobs finished; shutting down[/] "
+                f"limit={max_total}",
+            )
+            log.info(
+                "Scheduler stopping after reaching max_total_jobs={} (total_jobs={})",
+                max_total,
+                total_jobs_after,
+            )
+            self.stop()
         return stats
 
     def stop(self) -> None:
@@ -206,6 +205,24 @@ class EvolutionScheduler:
             self._advisory_lock = None
 
     # Internal helpers ------------------------------------------------------
+
+    def _require_max_total_jobs(self) -> int:
+        raw = getattr(self.settings, "scheduler_max_total_jobs", None)
+        if raw is None:
+            raise SchedulerError(
+                "SCHEDULER_MAX_TOTAL_JOBS is required to enforce a bounded scheduler run.",
+            )
+        try:
+            value = int(raw)
+        except (TypeError, ValueError) as exc:
+            raise SchedulerError(
+                "SCHEDULER_MAX_TOTAL_JOBS must be a positive integer.",
+            ) from exc
+        if value <= 0:
+            raise SchedulerError(
+                "SCHEDULER_MAX_TOTAL_JOBS must be a positive integer.",
+            )
+        return value
 
     def _install_signal_handlers(self) -> None:
         signal.signal(signal.SIGINT, self._handle_signal)
@@ -479,17 +496,13 @@ class EvolutionScheduler:
         if capacity <= 0:
             return 0
 
-        max_total = getattr(self.settings, "scheduler_max_total_jobs", None)
-        remaining_total = None
-        if max_total is not None and max_total > 0:
-            remaining_total = max_total - self._total_scheduled_jobs
-            if remaining_total <= 0:
-                return 0
+        remaining_total = self._max_total_jobs - total_jobs
+        if remaining_total <= 0:
+            return 0
 
         remaining_seed = seed_population_size - seed_count
         to_create_candidates = [remaining_seed, capacity]
-        if remaining_total is not None:
-            to_create_candidates.append(remaining_total)
+        to_create_candidates.append(remaining_total)
         to_create = max(0, min(to_create_candidates))
         if to_create <= 0:
             return 0

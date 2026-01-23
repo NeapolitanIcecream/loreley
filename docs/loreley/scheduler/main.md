@@ -12,7 +12,7 @@ Central orchestration loop that keeps the Loreley evolution pipeline moving by c
   3. `--once` CLI flag runs a single tick and exits, useful for cron jobs or tests.
 - **Job scheduling & dispatching**: the scheduler delegates all capacity calculations, MAP-Elites sampling, and Dramatiq job submission to `loreley.scheduler.job_scheduler.JobScheduler`, which:
   - counts unfinished jobs in the database,
-  - enforces `SCHEDULER_MAX_UNFINISHED_JOBS` and the optional `SCHEDULER_MAX_TOTAL_JOBS` cap,
+  - enforces `SCHEDULER_MAX_UNFINISHED_JOBS` and the required `SCHEDULER_MAX_TOTAL_JOBS` cap,
   - calls `MapElitesSampler.schedule_job()` to produce new work, and
   - marks rows as `QUEUED` and sends them to the `run_evolution_job` actor in priority order.
 - **MAP-Elites maintenance**: ingestion of succeeded jobs is handled by `loreley.scheduler.ingestion.MapElitesIngestion`, which:
@@ -29,6 +29,7 @@ The scheduler consumes the following `Settings` fields (all exposed as environme
 - `SCHEDULER_REPO_ROOT`: optional path to a read-only clone of the evolved repository; defaults to `WORKER_REPO_WORKTREE`.
 - `SCHEDULER_POLL_INTERVAL_SECONDS`: delay between scheduler ticks (default: `30` seconds).
 - `SCHEDULER_MAX_UNFINISHED_JOBS`: hard cap on the number of jobs that are not yet finished (`pending`, `queued`, `running`).
+- `SCHEDULER_MAX_TOTAL_JOBS`: **required** cap on the total number of `EvolutionJob` rows in the database. The scheduler stops once the cap is reached and all jobs are finished, then updates the best-fitness branch deliverable.
 - `SCHEDULER_SCHEDULE_BATCH_SIZE`: maximum number of new jobs sampled from MAP-Elites per tick (bounded by the unused capacity).
 - `SCHEDULER_DISPATCH_BATCH_SIZE`: number of pending jobs promoted to `QUEUED` and sent to Dramatiq per tick.
 - `SCHEDULER_INGEST_BATCH_SIZE`: number of newly succeeded jobs ingested into MAP-Elites per tick.

@@ -66,7 +66,7 @@ Backend selection:
 
 - `MAPELITES_FILE_EMBEDDING_CACHE_BACKEND=db|memory` (default: `db`)
 
-Note: The database-backed cache is single-tenant. Use the `memory` backend for local runs without a database.
+Note: The database-backed cache is single-tenant. The scheduler requires the `db` backend for incremental-only repo-state ingestion; reserve the `memory` backend for tests or local runs that do not use the scheduler.
 
 ## Repo-state aggregate cache (commit-level)
 

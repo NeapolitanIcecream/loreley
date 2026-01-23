@@ -260,6 +260,60 @@ def check_repo_state_cache_backend(settings: Settings) -> CheckResult:
     return CheckResult("mapelites_file_embedding_cache_backend", "ok", "db")
 
 
+def check_scheduler_max_total_jobs(settings: Settings) -> CheckResult:
+    """Check that SCHEDULER_MAX_TOTAL_JOBS is configured and positive."""
+    raw = getattr(settings, "scheduler_max_total_jobs", None)
+    if raw is None:
+        return CheckResult(
+            "scheduler_max_total_jobs",
+            "fail",
+            "SCHEDULER_MAX_TOTAL_JOBS is not set (required to enforce a bounded scheduler run).",
+        )
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return CheckResult(
+            "scheduler_max_total_jobs",
+            "fail",
+            "SCHEDULER_MAX_TOTAL_JOBS must be a positive integer.",
+        )
+    if value <= 0:
+        return CheckResult(
+            "scheduler_max_total_jobs",
+            "fail",
+            "SCHEDULER_MAX_TOTAL_JOBS must be a positive integer.",
+        )
+    return CheckResult("scheduler_max_total_jobs", "ok", f"configured: {value}")
+
+
+def check_instance_marker(*, schema_version: int) -> CheckResult:
+    """Check that the instance metadata marker exists and matches schema_version."""
+    try:
+        from loreley.db.base import session_scope
+        from loreley.db.instance import InstanceMetadataError, validate_instance_marker_schema
+    except Exception as exc:
+        return CheckResult(
+            "instance_metadata",
+            "fail",
+            f"failed to import DB helpers ({exc})",
+        )
+    try:
+        with session_scope() as session:
+            validate_instance_marker_schema(
+                session=session,
+                schema_version=schema_version,
+            )
+        return CheckResult("instance_metadata", "ok", "present")
+    except InstanceMetadataError as exc:
+        return CheckResult("instance_metadata", "fail", str(exc))
+    except Exception as exc:
+        return CheckResult(
+            "instance_metadata",
+            "fail",
+            f"failed to validate instance metadata ({exc})",
+        )
+
+
 def check_openai_api_key(value: str | None, *, required: bool) -> CheckResult:
     """Check OPENAI_API_KEY presence.
 
@@ -406,6 +460,7 @@ def preflight_scheduler(settings: Settings, *, timeout_seconds: float = 2.0) -> 
     )
     results.append(check_embedding_dimensions(settings))
     results.append(check_repo_state_cache_backend(settings))
+    results.append(check_scheduler_max_total_jobs(settings))
 
     goal = (settings.worker_evolution_global_goal or "").strip()
     if goal:
@@ -507,22 +562,12 @@ def preflight_api(settings: Settings, *, timeout_seconds: float = 2.0) -> list[C
     """Preflight checks before starting the read-only UI API."""
     results: list[CheckResult] = []
     results.append(check_database(dsn=settings.database_dsn, timeout_seconds=timeout_seconds))
-    results.append(
-        check_non_empty(
-            str(settings.experiment_id) if settings.experiment_id else None,
-            label="experiment_id",
-            env_name="EXPERIMENT_ID",
-            help_text="required to validate the instance metadata marker",
-        )
-    )
-    results.append(
-        check_non_empty(
-            settings.mapelites_experiment_root_commit,
-            label="mapelites_experiment_root_commit",
-            env_name="MAPELITES_EXPERIMENT_ROOT_COMMIT",
-            help_text="required to validate the instance metadata marker",
-        )
-    )
+    try:
+        from loreley.db.base import INSTANCE_SCHEMA_VERSION
+    except Exception as exc:  # pragma: no cover - defensive
+        results.append(CheckResult("instance_metadata", "fail", f"failed to load DB schema version ({exc})"))
+    else:
+        results.append(check_instance_marker(schema_version=INSTANCE_SCHEMA_VERSION))
     results.append(
         check_python_modules(
             ("fastapi", "uvicorn"),

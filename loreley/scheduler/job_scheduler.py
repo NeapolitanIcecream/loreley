@@ -63,18 +63,23 @@ class JobScheduler:
             )
             return int(session.execute(stmt).scalar_one())
 
+    def count_total_jobs(self) -> int:
+        """Return the total number of jobs in the database."""
+        with session_scope() as session:
+            stmt = select(func.count(EvolutionJob.id))
+            return int(session.execute(stmt).scalar_one())
+
     # Scheduling ------------------------------------------------------------
 
-    def schedule_jobs(self, unfinished_jobs: int, *, total_scheduled_jobs: int) -> int:
+    def schedule_jobs(self, unfinished_jobs: int, *, total_jobs: int) -> int:
         """Schedule new jobs from MAP-Elites if there is available capacity.
 
         Parameters
         ----------
         unfinished_jobs:
             Current number of unfinished jobs in the system.
-        total_scheduled_jobs:
-            Cumulative number of jobs that have been scheduled so far in this
-            scheduler process (used to enforce the global job limit).
+        total_jobs:
+            Total number of jobs recorded in the database (used to enforce the global job limit).
         """
 
         max_jobs = max(0, int(self.settings.scheduler_max_unfinished_jobs))
@@ -90,16 +95,16 @@ class JobScheduler:
 
         max_total = getattr(self.settings, "scheduler_max_total_jobs", None)
         if max_total is not None and max_total > 0:
-            remaining_total = max_total - total_scheduled_jobs
+            remaining_total = max_total - int(total_jobs)
             if remaining_total <= 0:
                 self.console.log(
                     "[yellow]Scheduler global job limit reached; no new jobs will be scheduled[/] "
                     f"limit={max_total}",
                 )
                 log.info(
-                    "Global scheduler job limit reached: max_total_jobs={} (total_scheduled={})",
+                    "Global scheduler job limit reached: max_total_jobs={} (total_jobs={})",
                     max_total,
-                    total_scheduled_jobs,
+                    total_jobs,
                 )
                 return 0
             target = min(target, remaining_total)

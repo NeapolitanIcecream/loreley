@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 import uuid
 
 from sqlalchemy.orm import Session
 
 from loreley.config import Settings
 from loreley.naming import resolve_experiment_identity
+
+if TYPE_CHECKING:
+    from loreley.db.models import InstanceMetadata
 
 RESET_DB_HINT = "Reset the database schema with `uv run loreley reset-db --yes`."
 
@@ -48,6 +52,42 @@ def root_commit_matches(stored: str, configured: str) -> bool:
     if not stored or not configured:
         return False
     return stored.startswith(configured) or configured.startswith(stored)
+
+
+def validate_instance_marker_schema(
+    *,
+    session: Session,
+    schema_version: int,
+) -> InstanceMetadata:
+    """Validate that the instance metadata marker exists and matches schema_version."""
+    from loreley.db.models import InstanceMetadata
+
+    meta = session.get(InstanceMetadata, 1)
+    if meta is None:
+        raise InstanceMetadataError(f"Instance metadata is missing. {RESET_DB_HINT}")
+    if int(meta.schema_version or 0) != int(schema_version):
+        raise InstanceMetadataError(
+            f"Instance metadata schema_version mismatch. {RESET_DB_HINT}",
+        )
+    return meta
+
+
+def resolve_instance_namespace_from_marker(
+    *,
+    session: Session,
+    schema_version: int,
+) -> str | None:
+    """Return the experiment namespace derived from the stored instance marker."""
+    from loreley.naming import safe_namespace_or_none
+
+    meta = validate_instance_marker_schema(
+        session=session,
+        schema_version=schema_version,
+    )
+    raw = str(meta.experiment_id_raw or "").strip()
+    if not raw:
+        return None
+    return safe_namespace_or_none(raw)
 
 
 def validate_instance_marker(
@@ -110,7 +150,9 @@ __all__ = [
     "InstanceMetadataError",
     "RESET_DB_HINT",
     "resolve_instance_identity",
+    "resolve_instance_namespace_from_marker",
     "root_commit_matches",
     "seed_instance_marker",
+    "validate_instance_marker_schema",
     "validate_instance_marker",
 ]

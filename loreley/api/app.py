@@ -13,7 +13,8 @@ from loreley.api.routers.jobs import router as jobs_router
 from loreley.api.routers.commits import router as commits_router
 from loreley.api.routers.logs import router as logs_router
 from loreley.api.routers.graphs import router as graphs_router
-from loreley.db.base import ensure_database_schema
+from loreley.db.base import INSTANCE_SCHEMA_VERSION, ensure_database_schema, session_scope
+from loreley.db.instance import validate_instance_marker_schema
 
 API_V1_PREFIX = "/api/v1"
 
@@ -21,7 +22,12 @@ API_V1_PREFIX = "/api/v1"
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     """FastAPI lifespan that validates DB schema/instance marker on startup."""
-    ensure_database_schema()
+    ensure_database_schema(validate_marker=False)
+    with session_scope() as session:
+        validate_instance_marker_schema(
+            session=session,
+            schema_version=INSTANCE_SCHEMA_VERSION,
+        )
     yield
 
 

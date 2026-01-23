@@ -31,6 +31,18 @@ def resolve_logs_root(settings: Settings) -> Path:
     from loreley.naming import safe_namespace_from_settings
 
     exp_ns = safe_namespace_from_settings(settings)
+    if not exp_ns:
+        try:
+            from loreley.db.base import INSTANCE_SCHEMA_VERSION, session_scope
+            from loreley.db.instance import resolve_instance_namespace_from_marker
+
+            with session_scope() as session:
+                exp_ns = resolve_instance_namespace_from_marker(
+                    session=session,
+                    schema_version=INSTANCE_SCHEMA_VERSION,
+                )
+        except Exception:
+            exp_ns = None
     root = (base_dir / "logs" / exp_ns) if exp_ns else (base_dir / "logs")
     return root.resolve()
 
