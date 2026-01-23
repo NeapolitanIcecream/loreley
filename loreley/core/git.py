@@ -140,8 +140,10 @@ def fetch_origin(
     _ensure_remote(repo, remote_name)
 
     fetch_args: list[str] = ["--prune", "--tags"]
-    if fetch_depth:
-        fetch_args.append(f"--depth={int(fetch_depth)}")
+    if fetch_depth is not None:
+        depth = int(fetch_depth)
+        if depth > 0:
+            fetch_args.append(f"--depth={depth}")
     fetch_args.append(remote_name)
     if refspecs:
         fetch_args.extend(str(r) for r in refspecs if str(r).strip())

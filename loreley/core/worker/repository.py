@@ -19,7 +19,7 @@ from git import Repo
 from git.exc import GitCommandError, InvalidGitRepositoryError, NoSuchPathError
 
 from loreley.config import Settings, get_settings
-from loreley.core.git import RepositoryError, require_commit, wrap_git_error
+from loreley.core.git import RepositoryError, fetch_origin, require_commit, wrap_git_error
 from loreley.naming import worker_job_branch_prefix
 
 console = Console()
@@ -531,16 +531,12 @@ class WorkerRepository:
         repo: Repo | None = None,
     ) -> None:
         repo = repo or self._get_repo()
-        fetch_args = ["--prune", "--tags"]
-        if self.fetch_depth:
-            fetch_args.append(f"--depth={self.fetch_depth}")
-        fetch_args.append("origin")
-        if refspecs:
-            fetch_args.extend(refspecs)
-        try:
-            repo.git.fetch(*fetch_args)
-        except GitCommandError as exc:
-            raise self._wrap_git_error(exc, "Failed to fetch from origin") from exc
+        fetch_origin(
+            repo,
+            remote="origin",
+            fetch_depth=self.fetch_depth,
+            refspecs=refspecs,
+        )
 
     def _sync_lfs(self, *, repo: Repo | None = None) -> None:
         repo = repo or self._get_repo()
