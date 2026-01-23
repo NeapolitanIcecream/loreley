@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import os
 import re
-import shlex
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator, Sequence
-from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 import uuid
 
@@ -18,35 +16,16 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from git import Repo
-from git.exc import BadName, GitCommandError, InvalidGitRepositoryError, NoSuchPathError
+from git.exc import GitCommandError, InvalidGitRepositoryError, NoSuchPathError
 
 from loreley.config import Settings, get_settings
+from loreley.core.git import RepositoryError, require_commit, wrap_git_error
 from loreley.naming import worker_job_branch_prefix
 
 console = Console()
 log = logger.bind(module="worker.repository")
 
 __all__ = ["WorkerRepository", "RepositoryError", "CheckoutContext"]
-
-
-class RepositoryError(RuntimeError):
-    """Raised when the worker repository fails to perform a git operation."""
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        cmd: Sequence[str] | None = None,
-        returncode: int | None = None,
-        stdout: str | None = None,
-        stderr: str | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.cmd = tuple(cmd) if cmd else None
-        self.returncode = returncode
-        self.stdout = stdout
-        self.stderr = stderr
-
 
 @dataclass(slots=True, frozen=True)
 class CheckoutContext:
@@ -612,44 +591,7 @@ class WorkerRepository:
         return repo
 
     def _wrap_git_error(self, exc: GitCommandError, context: str) -> RepositoryError:
-        command = self._command_tuple(exc.command)
-        sanitized = self._sanitize_command(command) if command else None
-        suffix = ""
-        if sanitized:
-            suffix = f": {sanitized}"
-        message = f"{context}{suffix} (exit {exc.status})"
-        status = exc.status if isinstance(exc.status, int) else None
-        return RepositoryError(
-            message,
-            cmd=command,
-            returncode=status,
-            stdout=getattr(exc, "stdout", None),
-            stderr=getattr(exc, "stderr", None),
-        )
-
-    @staticmethod
-    def _command_tuple(command: str | Sequence[str] | None) -> tuple[str, ...] | None:
-        if not command:
-            return None
-        if isinstance(command, str):
-            return (command,)
-        return tuple(str(part) for part in command)
-
-    @staticmethod
-    def _sanitize_command(cmd: Sequence[str]) -> str:
-        sanitized = [WorkerRepository._sanitize_value(part) for part in cmd]
-        return shlex.join(sanitized)
-
-    @staticmethod
-    def _sanitize_value(value: str) -> str:
-        parsed = urlsplit(value)
-        if parsed.username or parsed.password:
-            host = parsed.hostname or ""
-            if parsed.port:
-                host = f"{host}:{parsed.port}"
-            netloc = f"***@{host}"
-            return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
-        return value
+        return wrap_git_error(exc, context)
 
     def _ensure_commit_available(
         self,
@@ -658,43 +600,13 @@ class WorkerRepository:
         repo: Repo | None = None,
     ) -> None:
         repo = repo or self._get_repo()
-        if self._has_object(commit_hash, repo=repo):
-            return
-
-        log.info("Commit {} missing locally; refreshing from origin", commit_hash)
-        self._fetch(repo=repo)
-        if self._has_object(commit_hash, repo=repo):
-            return
-
-        if self._is_shallow(repo=repo):
-            log.info("Repository is shallow; unshallowing to retrieve {}", commit_hash)
-            try:
-                repo.git.fetch("--unshallow", "origin")
-            except GitCommandError as exc:
-                raise self._wrap_git_error(exc, "Failed to unshallow repository") from exc
-            else:
-                if self._has_object(commit_hash, repo=repo):
-                    return
-
-        raise RepositoryError(
-            f"Commit {commit_hash} is not available locally after fetching from origin.",
+        require_commit(
+            repo,
+            commit_hash,
+            remote="origin",
+            fetch_depth=self.fetch_depth,
+            console=console,
         )
-
-    def _has_object(self, obj_ref: str, *, repo: Repo | None = None) -> bool:
-        repo = repo or self._get_repo()
-        try:
-            repo.commit(obj_ref)
-        except (BadName, GitCommandError, ValueError):
-            return False
-        return True
-
-    def _is_shallow(self, *, repo: Repo | None = None) -> bool:
-        repo = repo or self._get_repo()
-        try:
-            result = repo.git.rev_parse("--is-shallow-repository")
-        except GitCommandError:
-            return False
-        return result.strip().lower() == "true"
 
     # Worktree leasing / locking ------------------------------------------
 

@@ -6,6 +6,7 @@ import uuid
 import pytest
 
 from loreley.config import Settings
+from loreley.core.git import sanitize_value, wrap_git_error
 from loreley.core.worker.repository import RepositoryError, WorkerRepository
 from loreley.naming import worker_job_branch_prefix
 
@@ -43,11 +44,11 @@ def _make_repo(settings: Settings, tmp_path) -> WorkerRepository:
 
 
 def test_sanitize_value_masks_credentials() -> None:
-    masked = WorkerRepository._sanitize_value("https://user:token@example.com/repo.git")
+    masked = sanitize_value("https://user:token@example.com/repo.git")
     assert "***@" in masked
     assert "token" not in masked
 
-    unchanged = WorkerRepository._sanitize_value("git@github.com:org/repo.git")
+    unchanged = sanitize_value("git@github.com:org/repo.git")
     assert unchanged == "git@github.com:org/repo.git"
 
 
@@ -60,15 +61,14 @@ def test_format_job_branch_applies_prefix_and_sanitises(tmp_path, settings: Sett
     assert "!" not in branch
 
 
-def test_wrap_git_error_sanitises_command(tmp_path, settings: Settings) -> None:
-    repo = _make_repo(settings, tmp_path)
+def test_wrap_git_error_sanitises_command() -> None:
     exc = _DummyGitError(
         ["git", "clone", "https://user:pw@example.com/repo.git"],
         status=128,
         stdout="out",
         stderr="err",
     )
-    wrapped = repo._wrap_git_error(exc, "Clone failed")
+    wrapped = wrap_git_error(exc, "Clone failed")
 
     assert isinstance(wrapped, RepositoryError)
     assert "***@" in str(wrapped)

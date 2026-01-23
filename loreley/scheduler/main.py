@@ -10,13 +10,14 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from git import Repo
-from git.exc import BadName, GitCommandError, InvalidGitRepositoryError, NoSuchPathError
+from git.exc import GitCommandError, InvalidGitRepositoryError, NoSuchPathError
 from loguru import logger
 from rich.console import Console
 from sqlalchemy import select
 
 from loreley.config import Settings, get_settings
 from loreley.core.experiments import ExperimentError, bootstrap_instance
+from loreley.core.git import RepositoryError, require_commit, wrap_git_error
 from loreley.core.map_elites.map_elites import MapElitesManager
 from loreley.core.map_elites.sampler import MapElitesSampler
 from loreley.db.base import ensure_database_schema, get_engine, session_scope
@@ -129,13 +130,7 @@ class EvolutionScheduler:
             self._install_signal_handlers()
             while not self._stop_requested:
                 start = time.perf_counter()
-                try:
-                    self.tick()
-                except Exception as exc:  # pragma: no cover - defensive
-                    self.console.log(
-                        f"[bold red]Scheduler tick crashed[/] reason={exc}",
-                    )
-                    log.exception("Scheduler tick crashed: {}", exc)
+                self.tick()
                 elapsed = time.perf_counter() - start
                 sleep_for = max(0.0, interval - elapsed)
                 # Sleep in small increments so SIGINT/SIGTERM can cut the wait short
@@ -149,20 +144,14 @@ class EvolutionScheduler:
         """Execute a full scheduler cycle."""
 
         stats: dict[str, int] = {}
-        stats["ingested"] = self._run_stage("ingest", self.ingestion.ingest_completed_jobs)
-        stats["dispatched"] = self._run_stage("dispatch", self.job_scheduler.dispatch_pending_jobs)
-        unfinished = self._run_stage("measure", self.job_scheduler.count_unfinished_jobs)
-        stats["seed_scheduled"] = self._run_stage(
-            "seed",
-            lambda: self._maybe_schedule_seed_jobs(unfinished_jobs=unfinished),
-        )
+        stats["ingested"] = self.ingestion.ingest_completed_jobs()
+        stats["dispatched"] = self.job_scheduler.dispatch_pending_jobs()
+        unfinished = self.job_scheduler.count_unfinished_jobs()
+        stats["seed_scheduled"] = self._maybe_schedule_seed_jobs(unfinished_jobs=unfinished)
         effective_unfinished = unfinished + stats["seed_scheduled"]
-        stats["scheduled"] = self._run_stage(
-            "schedule",
-            lambda: self.job_scheduler.schedule_jobs(
-                unfinished_jobs=effective_unfinished,
-                total_scheduled_jobs=self._total_scheduled_jobs,
-            ),
+        stats["scheduled"] = self.job_scheduler.schedule_jobs(
+            unfinished_jobs=effective_unfinished,
+            total_scheduled_jobs=self._total_scheduled_jobs,
         )
         self._total_scheduled_jobs += stats["seed_scheduled"] + stats["scheduled"]
         stats["unfinished"] = unfinished + stats["seed_scheduled"] + stats["scheduled"]
@@ -229,14 +218,6 @@ class EvolutionScheduler:
         log.info("Scheduler received signal {}; stopping", signum)
         self.stop()
 
-    def _run_stage(self, label: str, func: Callable[[], int]) -> int:
-        try:
-            return func()
-        except Exception as exc:  # pragma: no cover - defensive
-            self.console.log(f"[bold red]Stage {label} failed[/] reason={exc}")
-            log.exception("Scheduler stage {} failed: {}", label, exc)
-            return 0
-
     def _sleep_with_stop(self, duration: float) -> None:
         """Sleep up to ``duration`` seconds, waking early when a stop is requested."""
 
@@ -280,11 +261,9 @@ class EvolutionScheduler:
             )
         auto_approve = bool(getattr(self.settings, "scheduler_startup_approve", False))
         try:
-            canonical = str(getattr(self._repo.commit(root_commit), "hexsha", "") or "").strip()
-        except Exception as exc:
-            raise SchedulerError(f"Cannot resolve root commit {root_commit!r} for repo-state scan.") from exc
-        if not canonical:
-            raise SchedulerError(f"Cannot resolve root commit {root_commit!r} for repo-state scan.")
+            canonical = require_commit(self._repo, root_commit, console=self.console)
+        except RepositoryError as exc:
+            raise SchedulerError(f"Cannot resolve root commit {root_commit!r} for repo-state scan: {exc}") from exc
 
         filters = {
             "allowed_extensions": list(self.settings.mapelites_preprocess_allowed_extensions or []),
@@ -346,61 +325,26 @@ class EvolutionScheduler:
             return Repo(self.repo_root)
         except (NoSuchPathError, InvalidGitRepositoryError) as exc:  # pragma: no cover - filesystem
             raise SchedulerError(f"Scheduler repo {self.repo_root} is not a git repository.") from exc
-
-    def _ensure_commit_available(self, commit_hash: str) -> None:
-        try:
-            self._repo.commit(commit_hash)
-            return
-        except BadName:
-            pass
-        self.console.log(f"[yellow]Fetching missing commit[/] {commit_hash}")
-        try:
-            self._repo.git.fetch("--all", "--tags")
-            self._repo.commit(commit_hash)
-        except GitCommandError as exc:
-            raise SchedulerError(f"Cannot fetch commit {commit_hash}: {exc}") from exc
-        except BadName as exc:
-            raise SchedulerError(f"Commit {commit_hash} not found after fetch.") from exc
     # Best-branch helpers ----------------------------------------------------
 
     def _create_best_fitness_branch_if_possible(self) -> None:
-        """Create a git branch for the best-fitness commit when evolution ends.
+        """Create the best-fitness branch deliverable and fail fast on errors."""
 
-        The branch is created only when a best commit can be resolved for the
-        current experiment. Failures are logged but do not prevent shutdown.
-        """
-
-        try:
-            best_commit, meta = self._resolve_best_fitness_commit()
-        except Exception as exc:  # pragma: no cover - defensive
-            self.console.log(
-                f"[bold red]Failed to resolve best-fitness commit[/] reason={exc}",
-            )
-            log.exception("Failed to resolve best-fitness commit: {}", exc)
-            return
-
+        best_commit, meta = self._resolve_best_fitness_commit()
         if not best_commit:
-            self.console.log(
-                "[yellow]No best-fitness commit found for experiment; skipping branch creation[/]",
+            raise SchedulerError(
+                "No best-fitness commit found; cannot create the best-fitness branch deliverable. "
+                "Check MAPELITES_FITNESS_METRIC and ensure at least one commit has metrics."
             )
-            return
 
         root_commit = meta.get("root_commit_hash")
         metric_name = meta.get("fitness_metric") or self.settings.mapelites_fitness_metric
         fitness_value = meta.get("fitness_value")
         island_id = meta.get("island_id")
-
-        try:
-            branch_name = self._create_best_fitness_branch(
-                best_commit_hash=best_commit,
-                root_commit_hash=root_commit,
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            self.console.log(
-                f"[bold red]Failed to create best-fitness branch[/] commit={best_commit} reason={exc}",
-            )
-            log.exception("Failed to create best-fitness branch for commit {}: {}", best_commit, exc)
-            return
+        branch_name = self._create_best_fitness_branch(
+            best_commit_hash=best_commit,
+            root_commit_hash=root_commit,
+        )
 
         # Log a concise, human-friendly summary with the key attributes.
         fitness_str: str
@@ -410,7 +354,7 @@ class EvolutionScheduler:
             fitness_str = str(fitness_value)
 
         self.console.log(
-            "[bold green]Best-fitness branch created[/] "
+            "[bold green]Best-fitness branch updated[/] "
             "branch={} commit={} root_commit={} island={} metric={} fitness={}".format(
                 branch_name,
                 best_commit,
@@ -421,7 +365,7 @@ class EvolutionScheduler:
             ),
         )
         log.info(
-            "Best-fitness branch created "
+            "Best-fitness branch updated "
             "(branch={} commit={} root_commit={} island_id={} metric={} fitness={})",
             branch_name,
             best_commit,
@@ -620,36 +564,26 @@ class EvolutionScheduler:
         best_commit_hash: str,
         root_commit_hash: str | None,
     ) -> str:
-        """Create a git branch pointing at the best-fitness commit.
-
-        The branch name is derived from the experiment identifier and is chosen
-        to avoid clashing with existing local branches.
-        """
-
-        # Ensure the target commit is present locally; this may trigger a fetch.
-        self._ensure_commit_available(best_commit_hash)
+        """Create or update a stable branch pointing at the best-fitness commit."""
 
         try:
-            existing_names = {head.name for head in getattr(self._repo, "heads", [])}
-        except Exception:  # pragma: no cover - defensive
-            existing_names = set()
+            canonical = require_commit(self._repo, best_commit_hash, console=self.console)
+        except RepositoryError as exc:
+            raise SchedulerError(str(exc)) from exc
 
-        prefix = "evolution/best"
         experiment_suffix = resolve_experiment_namespace(self.settings.experiment_id)
-        base_name = f"{prefix}/{experiment_suffix}"
-        branch_name = base_name
-        counter = 1
-
-        while branch_name in existing_names:
-            counter += 1
-            branch_name = f"{base_name}-{counter}"
-
-        self._repo.create_head(branch_name, best_commit_hash)
+        branch_name = f"evolution/best/{experiment_suffix}"
+        try:
+            # Keep the deliverable stable across restarts by force-updating the branch.
+            self._repo.git.branch("-f", branch_name, canonical)
+        except GitCommandError as exc:
+            wrapped = wrap_git_error(exc, f"Failed to update best-fitness branch {branch_name}")
+            raise SchedulerError(str(wrapped)) from exc
 
         log.info(
-            "Created git branch {} for best-fitness commit {} (root_commit={})",
+            "Updated best-fitness branch {} -> {} (root_commit={})",
             branch_name,
-            best_commit_hash,
+            canonical,
             root_commit_hash,
         )
 
@@ -685,11 +619,20 @@ def main(
     if bool(once):
         try:
             scheduler.tick()
+        except Exception as exc:
+            console.log(f"[bold red]Scheduler run failed[/] reason={exc}")
+            log.exception("Scheduler run failed: {}", exc)
+            return 1
         finally:
             scheduler.close()
         return 0
 
-    scheduler.run_forever()
+    try:
+        scheduler.run_forever()
+    except Exception as exc:
+        console.log(f"[bold red]Scheduler crashed[/] reason={exc}")
+        log.exception("Scheduler crashed: {}", exc)
+        return 1
     return 0
 
 

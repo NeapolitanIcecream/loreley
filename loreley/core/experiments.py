@@ -13,6 +13,7 @@ from loguru import logger
 from rich.console import Console
 
 from loreley.config import Settings, get_settings
+from loreley.core.git import RepositoryError, require_commit
 from loreley.core.map_elites.repository_files import ROOT_IGNORE_FILES
 from loreley.db.base import INSTANCE_SCHEMA_VERSION, session_scope
 from loreley.db.instance import InstanceMetadataError, validate_instance_marker
@@ -126,27 +127,6 @@ def _resolve_repository_identity(*, repo: Repo, root: Path) -> RepositoryIdentit
     )
 
 
-def _ensure_commit_available(*, repo: Repo, commit_hash: str) -> str:
-    """Return canonical hash for commit, fetching from remotes when needed."""
-
-    commit = (commit_hash or "").strip()
-    if not commit:
-        raise ExperimentError("MAPELITES_EXPERIMENT_ROOT_COMMIT is required.")
-    try:
-        return str(getattr(repo.commit(commit), "hexsha", "") or "").strip()
-    except BadName:
-        pass
-
-    console.log(f"[yellow]Fetching missing commit[/] {commit}")
-    try:
-        repo.git.fetch("--all", "--tags")
-        return str(getattr(repo.commit(commit), "hexsha", "") or "").strip()
-    except GitCommandError as exc:
-        raise ExperimentError(f"Cannot fetch commit {commit}: {exc}") from exc
-    except BadName as exc:
-        raise ExperimentError(f"Commit {commit} not found after fetch.") from exc
-
-
 def _load_root_ignore_text_from_commit(*, repo: Repo, commit_hash: str) -> str:
     """Return pinned root ignore rules by reading ignore files from a commit."""
 
@@ -227,7 +207,10 @@ def bootstrap_instance(
         raise ExperimentError(
             "MAPELITES_EXPERIMENT_ROOT_COMMIT is required for scheduler startup.",
         )
-    canonical_root = _ensure_commit_available(repo=repo_obj, commit_hash=root_ref)
+    try:
+        canonical_root = require_commit(repo_obj, root_ref, console=console)
+    except RepositoryError as exc:
+        raise ExperimentError(str(exc)) from exc
     ignore_text = _load_root_ignore_text_from_commit(repo=repo_obj, commit_hash=canonical_root)
 
     settings = settings.model_copy(

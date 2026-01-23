@@ -13,12 +13,12 @@ from typing import Any, Sequence
 from uuid import UUID
 
 from git import Repo
-from git.exc import BadName, GitCommandError
 from loguru import logger
 from rich.console import Console
 from sqlalchemy import select
 
 from loreley.config import Settings
+from loreley.core.git import RepositoryError as GitRepositoryError, require_commit
 from loreley.core.map_elites.map_elites import MapElitesManager
 from loreley.core.worker.evaluator import EvaluationContext, EvaluationError, Evaluator
 from loreley.core.worker.repository import RepositoryError, WorkerRepository
@@ -76,7 +76,7 @@ class MapElitesIngestion:
         """
 
         try:
-            self._ensure_commit_available(commit_hash)
+            commit_hash = self._ensure_commit_available(commit_hash)
         except IngestionError as exc:
             self.console.log(
                 f"[bold red]Failed to initialise root commit[/] commit={commit_hash} reason={exc}",
@@ -139,14 +139,14 @@ class MapElitesIngestion:
         if not commit_hash:
             return False
         try:
-            self._ensure_commit_available(commit_hash)
+            commit_hash = self._ensure_commit_available(commit_hash)
         except IngestionError as exc:
             self._record_ingestion_state(
                 snapshot,
                 status="failed",
                 reason=str(exc),
             )
-            return False
+            raise
         metrics_payload: list[dict[str, Any]] = []
         with session_scope() as session:
             commit_row = session.execute(
@@ -182,7 +182,7 @@ class MapElitesIngestion:
                 f"[bold red]MAP-Elites ingest failed[/] job={snapshot.job_id} reason={exc}",
             )
             log.exception("Failed to ingest commit {} for job {}: {}", commit_hash, snapshot.job_id, exc)
-            return False
+            raise
         if insertion.record:
             self.console.log(
                 f"[green]Updated archive[/] job={snapshot.job_id} commit={commit_hash} "
@@ -231,20 +231,11 @@ class MapElitesIngestion:
 
     # Git helpers -----------------------------------------------------------
 
-    def _ensure_commit_available(self, commit_hash: str) -> None:
+    def _ensure_commit_available(self, commit_hash: str) -> str:
         try:
-            self.repo.commit(commit_hash)
-            return
-        except BadName:
-            pass
-        self.console.log(f"[yellow]Fetching missing commit[/] {commit_hash}")
-        try:
-            self.repo.git.fetch("--all", "--tags")
-            self.repo.commit(commit_hash)
-        except GitCommandError as exc:
-            raise IngestionError(f"Cannot fetch commit {commit_hash}: {exc}") from exc
-        except BadName as exc:
-            raise IngestionError(f"Commit {commit_hash} not found after fetch.") from exc
+            return require_commit(self.repo, commit_hash, console=self.console)
+        except GitRepositoryError as exc:
+            raise IngestionError(str(exc)) from exc
 
     # Root commit initialisation --------------------------------------------
 
