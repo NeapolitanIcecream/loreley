@@ -57,8 +57,8 @@ class EvolutionScheduler:
         self.settings = base_settings
         self.console = console
         self._advisory_lock: AdvisoryLock | None = None
-        # Ensure DB schema (including MAP-Elites incremental tables) exists before use.
-        ensure_database_schema()
+        # Ensure DB schema exists before repo-specific bootstrap.
+        ensure_database_schema(validate_marker=False)
         self.repo_root = self._resolve_repo_root()
         self._repo = self._init_repo()
         try:
@@ -292,7 +292,6 @@ class EvolutionScheduler:
             "excluded_globs": list(self.settings.mapelites_preprocess_excluded_globs or []),
             "max_file_size_kb": int(self.settings.mapelites_preprocess_max_file_size_kb),
             "root_ignore_files": [".gitignore", ".loreleyignore"],
-            "root_ignore_pinned_sha256": (self.settings.mapelites_repo_state_ignore_sha256 or "").strip() or None,
         }
 
         scan = scan_repo_state_root(

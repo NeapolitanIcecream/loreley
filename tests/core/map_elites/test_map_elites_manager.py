@@ -40,7 +40,7 @@ def test_manager_lazy_loads_persisted_snapshot_for_stats_and_records(settings: S
         def __init__(self, payload: dict[str, object]) -> None:
             self._payload = payload
 
-        def load(self, island_id: str) -> dict[str, object] | None:
+        def load(self, island_id: str, *, history_limit: int | None = None) -> dict[str, object] | None:
             if island_id != "main":
                 return None
             return dict(self._payload)
@@ -84,7 +84,7 @@ def test_manager_rejects_snapshot_dimensionality_when_settings_mismatch(settings
         def __init__(self, payload: dict[str, object]) -> None:
             self._payload = payload
 
-        def load(self, island_id: str) -> dict[str, object] | None:
+        def load(self, island_id: str, *, history_limit: int | None = None) -> dict[str, object] | None:
             if island_id != "main":
                 return None
             return dict(self._payload)
@@ -124,7 +124,7 @@ def test_ingest_short_circuits_when_no_repo_state_embedding(
         repo_root=Path("."),
     )
     class NullSnapshotStore:
-        def load(self, island_id: str) -> None:
+        def load(self, island_id: str, *, history_limit: int | None = None) -> dict[str, object] | None:
             return None
 
         def apply_update(self, island_id: str, *, update: object) -> None:
@@ -195,7 +195,7 @@ def test_ingest_builds_record_with_stubbed_dependencies(
         repo_root=Path("."),
     )
     class NullSnapshotStore:
-        def load(self, island_id: str) -> None:
+        def load(self, island_id: str, *, history_limit: int | None = None) -> dict[str, object] | None:
             return None
 
         def apply_update(self, island_id: str, *, update: object) -> None:

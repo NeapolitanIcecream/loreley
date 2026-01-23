@@ -19,12 +19,26 @@ __all__ = [
     "PCAProjection",
     "FinalEmbedding",
     "DimensionReducer",
+    "resolve_pca_history_limit",
     "reduce_commit_embeddings",
 ]
 
 Vector = tuple[float, ...]
 
 log = logger.bind(module="map_elites.dimension_reduction")
+
+
+def resolve_pca_history_limit(settings: Settings) -> int:
+    """Return the bounded history window size used by the PCA reducer."""
+    min_fit = max(
+        2,
+        int(settings.mapelites_dimensionality_min_fit_samples),
+        int(settings.mapelites_feature_normalization_warmup_samples),
+    )
+    return max(
+        min_fit,
+        int(settings.mapelites_dimensionality_history_size),
+    )
 
 
 @dataclass(slots=True, frozen=True)
@@ -136,13 +150,10 @@ class DimensionReducer:
         self._target_dims = max(1, self.settings.mapelites_dimensionality_target_dims)
         self._min_fit_samples = max(
             2,
-            self.settings.mapelites_dimensionality_min_fit_samples,
-            self.settings.mapelites_feature_normalization_warmup_samples,
+            int(self.settings.mapelites_dimensionality_min_fit_samples),
+            int(self.settings.mapelites_feature_normalization_warmup_samples),
         )
-        self._history_limit = max(
-            self._min_fit_samples,
-            self.settings.mapelites_dimensionality_history_size,
-        )
+        self._history_limit = resolve_pca_history_limit(self.settings)
         self._refit_interval = max(
             0,
             self.settings.mapelites_dimensionality_refit_interval,
@@ -238,15 +249,16 @@ class DimensionReducer:
         if self._feature_count is None:
             self._feature_count = dimensions
         elif dimensions != self._feature_count:
-            log.warning(
-                "PCA input dimensions changed from {} to {}; resetting PCA state.",
-                self._feature_count,
-                dimensions,
+            raise ValueError(
+                "PCA input dimensions changed from {} to {}. "
+                "Loreley expects MAP-Elites embedding dimensions to remain stable for "
+                "the lifetime of an instance. Check MAPELITES_CODE_EMBEDDING_DIMENSIONS "
+                "and the configured embedding model, then reset the database with "
+                "`uv run loreley reset-db --yes` if needed.".format(
+                    self._feature_count,
+                    dimensions,
+                )
             )
-            self._history.clear()
-            self._projection = None
-            self._feature_count = dimensions
-            self._samples_since_fit = 0
 
         commit_hash = entry.commit_hash
         is_new_entry = commit_hash not in self._history

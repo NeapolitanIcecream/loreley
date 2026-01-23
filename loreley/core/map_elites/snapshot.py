@@ -94,21 +94,11 @@ class SnapshotUpdate:
     cell_upsert: SnapshotCellUpsert | None = None
     clear: bool = False
 
-    # Optional knob to keep history restoration bounded without relying on global settings.
-    history_limit: int | None = None
-
-
-def _coerce_int(value: Any, *, default: int) -> int:
-    try:
-        return int(value)
-    except Exception:
-        return int(default)
-
 
 class DatabaseSnapshotStore:
     """Postgres-backed snapshot store using the incremental MAP-Elites tables."""
 
-    def load(self, island_id: str) -> dict[str, Any] | None:
+    def load(self, island_id: str, *, history_limit: int | None = None) -> dict[str, Any] | None:
         """Load a snapshot payload compatible with `apply_snapshot()`."""
 
         try:
@@ -126,8 +116,6 @@ class DatabaseSnapshotStore:
                 lower = meta.get("lower_bounds")
                 upper = meta.get("upper_bounds")
                 projection_payload = meta.get("projection")
-                history_limit = _coerce_int(meta.get("history_limit"), default=0) or None
-
                 archive_entries = self._load_archive_entries(session, island_id=island_id)
                 history_entries = self._load_history_entries(
                     session,
@@ -182,9 +170,6 @@ class DatabaseSnapshotStore:
                 ensure_supported_snapshot_meta(meta, island_id=island_id)
 
                 meta["last_update_at"] = now
-
-                if update.history_limit is not None:
-                    meta["history_limit"] = int(update.history_limit)
 
                 if update.lower_bounds is not None:
                     meta["lower_bounds"] = [float(v) for v in update.lower_bounds]

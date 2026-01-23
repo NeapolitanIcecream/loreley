@@ -66,7 +66,7 @@ def test_build_history_entry_returns_code_vector(settings: Settings) -> None:
     assert empty is None
 
 
-def test_history_resets_on_dimension_change(settings: Settings) -> None:
+def test_history_raises_on_dimension_change(settings: Settings) -> None:
     settings.mapelites_dimensionality_penultimate_normalize = False
     reducer = DimensionReducer(settings=settings)
 
@@ -76,9 +76,10 @@ def test_history_resets_on_dimension_change(settings: Settings) -> None:
     reducer._record_history(first)  # type: ignore[attr-defined]
     assert len(reducer.history) == 1
 
-    reducer._record_history(second)  # type: ignore[attr-defined]
+    with pytest.raises(ValueError):
+        reducer._record_history(second)  # type: ignore[attr-defined]
     assert len(reducer.history) == 1
-    assert reducer.history[0].commit_hash == "b"
+    assert reducer.history[0].commit_hash == "a"
 
 
 def test_fit_projection_respects_min_samples_and_target_dims(settings: Settings) -> None:

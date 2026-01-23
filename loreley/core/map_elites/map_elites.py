@@ -19,6 +19,7 @@ from .dimension_reduction import (
     PcaHistoryEntry,
     PCAProjection,
     reduce_commit_embeddings,
+    resolve_pca_history_limit,
 )
 from .preprocess import PreprocessedFile
 from .repository_state_embedding import RepoStateEmbeddingStats, embed_repository_state
@@ -230,7 +231,6 @@ class MapElitesManager:
                 projection=state.projection,
                 history_upsert=final_embedding.history_entry if final_embedding else None,
                 history_seen_at=time.time(),
-                history_limit=self._resolve_history_limit(),
             )
 
             artifacts = self._build_artifacts(repo_stats, (), code_embedding, final_embedding)
@@ -374,7 +374,6 @@ class MapElitesManager:
             projection=None,
             clear=True,
             history_seen_at=time.time(),
-            history_limit=self._resolve_history_limit(),
         )
         self._persist_island_state(effective_island, state, update=update)
 
@@ -507,7 +506,10 @@ class MapElitesManager:
         if state:
             return state
 
-        snapshot = self._snapshot_store.load(island_id)
+        snapshot = self._snapshot_store.load(
+            island_id,
+            history_limit=resolve_pca_history_limit(self.settings),
+        )
         snapshot_dims = self._infer_snapshot_target_dims(snapshot) if snapshot else None
         if snapshot_dims and snapshot_dims != self._target_dims:
             raise ValueError(
@@ -681,19 +683,6 @@ class MapElitesManager:
         if update is None:
             return
         self._snapshot_store.apply_update(island_id, update=update)
-
-    def _resolve_history_limit(self) -> int:
-        """Return the bounded history window size used by the PCA reducer."""
-
-        min_fit = max(
-            2,
-            int(self.settings.mapelites_dimensionality_min_fit_samples),
-            int(self.settings.mapelites_feature_normalization_warmup_samples),
-        )
-        return max(
-            min_fit,
-            int(self.settings.mapelites_dimensionality_history_size),
-        )
 
     @staticmethod
     def _maybe_float(value: Any) -> float | None:

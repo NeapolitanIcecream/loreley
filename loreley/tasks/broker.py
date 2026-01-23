@@ -9,7 +9,7 @@ from loguru import logger
 from rich.console import Console
 
 from loreley.config import Settings, get_settings
-from loreley.naming import DEFAULT_TASKS_REDIS_NAMESPACE_PREFIX, safe_namespace_from_settings
+from loreley.naming import tasks_redis_namespace
 
 console = Console()
 log = logger.bind(module="tasks.broker")
@@ -39,12 +39,7 @@ def build_redis_broker(settings: Settings | None = None) -> RedisBroker:
     """Instantiate the Redis broker using application configuration."""
 
     settings = settings or get_settings()
-    exp_ns = safe_namespace_from_settings(settings)
-    namespace = (
-        f"{DEFAULT_TASKS_REDIS_NAMESPACE_PREFIX}.{exp_ns}"
-        if exp_ns
-        else DEFAULT_TASKS_REDIS_NAMESPACE_PREFIX
-    )
+    namespace = tasks_redis_namespace(settings.experiment_id)
     broker_kwargs: dict[str, Any] = {
         "namespace": namespace,
     }

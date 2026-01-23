@@ -3,7 +3,6 @@ from __future__ import annotations
 """Helpers for single-tenant repository and instance bootstrap."""
 
 from dataclasses import dataclass
-import hashlib
 import re
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
@@ -16,7 +15,7 @@ from rich.console import Console
 from loreley.config import Settings, get_settings
 from loreley.core.map_elites.repository_files import ROOT_IGNORE_FILES
 from loreley.db.base import INSTANCE_SCHEMA_VERSION, session_scope
-from loreley.db.models import InstanceMetadata
+from loreley.db.instance import InstanceMetadataError, validate_instance_marker
 
 console = Console()
 log = logger.bind(module="core.experiments")
@@ -163,50 +162,21 @@ def _load_root_ignore_text_from_commit(*, repo: Repo, commit_hash: str) -> str:
     return "\n".join(chunks).strip()
 
 
-def _root_commit_matches(stored: str, configured: str) -> bool:
-    stored = (stored or "").strip()
-    configured = (configured or "").strip()
-    if not stored or not configured:
-        return False
-    return stored.startswith(configured) or configured.startswith(stored)
-
-
-def _validate_instance_metadata(
+def _update_instance_metadata(
     *,
     settings: Settings,
     repository: RepositoryIdentity,
     canonical_root: str,
 ) -> None:
-    from loreley.naming import resolve_experiment_identity
-
-    identity = resolve_experiment_identity(settings.experiment_id)
     with session_scope() as session:
-        meta = session.get(InstanceMetadata, 1)
-        if meta is None:
-            raise ExperimentError(
-                "Instance metadata is missing. "
-                "Reset the database schema with `uv run loreley reset-db --yes`.",
+        try:
+            meta = validate_instance_marker(
+                session=session,
+                settings=settings,
+                schema_version=INSTANCE_SCHEMA_VERSION,
             )
-        if int(meta.schema_version or 0) != INSTANCE_SCHEMA_VERSION:
-            raise ExperimentError(
-                "Instance metadata schema_version mismatch. "
-                "Reset the database schema with `uv run loreley reset-db --yes`.",
-            )
-        if str(meta.experiment_id_raw or "").strip() != identity.raw:
-            raise ExperimentError(
-                "EXPERIMENT_ID does not match the database marker. "
-                "Reset the database schema with `uv run loreley reset-db --yes`.",
-            )
-        if str(meta.experiment_uuid or "") != str(identity.uuid):
-            raise ExperimentError(
-                "EXPERIMENT_ID UUID mapping does not match the database marker. "
-                "Reset the database schema with `uv run loreley reset-db --yes`.",
-            )
-        if not _root_commit_matches(str(meta.root_commit_hash or ""), canonical_root):
-            raise ExperimentError(
-                "MAPELITES_EXPERIMENT_ROOT_COMMIT does not match the database marker. "
-                "Reset the database schema with `uv run loreley reset-db --yes`.",
-            )
+        except InstanceMetadataError as exc:
+            raise ExperimentError(str(exc)) from exc
 
         updated = False
         if str(meta.root_commit_hash or "") != canonical_root:
@@ -219,15 +189,16 @@ def _validate_instance_metadata(
             meta.repository_canonical_origin = repository.canonical_origin
             updated = True
         if updated:
+            experiment_raw = str(meta.experiment_id_raw or "").strip()
             console.log(
                 "[cyan]Updated instance metadata[/] experiment_id={} repo={}".format(
-                    identity.raw,
+                    experiment_raw or settings.experiment_id,
                     repository.slug,
                 ),
             )
             log.info(
                 "Updated instance metadata experiment_id={} repository_slug={}",
-                identity.raw,
+                experiment_raw or settings.experiment_id,
                 repository.slug,
             )
 
@@ -258,17 +229,15 @@ def bootstrap_instance(
         )
     canonical_root = _ensure_commit_available(repo=repo_obj, commit_hash=root_ref)
     ignore_text = _load_root_ignore_text_from_commit(repo=repo_obj, commit_hash=canonical_root)
-    ignore_sha = hashlib.sha256(ignore_text.encode("utf-8")).hexdigest()
 
     settings = settings.model_copy(
         update={
             "mapelites_experiment_root_commit": canonical_root,
             "mapelites_repo_state_ignore_text": ignore_text,
-            "mapelites_repo_state_ignore_sha256": ignore_sha,
         }
     )
 
-    _validate_instance_metadata(
+    _update_instance_metadata(
         settings=settings,
         repository=repository,
         canonical_root=canonical_root,

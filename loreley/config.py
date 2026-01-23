@@ -84,7 +84,7 @@ class Settings(BaseSettings):
     #
     # In the env-only settings model, the scheduler pins these values once at
     # process startup by reading `.gitignore` + `.loreleyignore` from the
-    # configured root commit and storing the combined ignore text + hash in
+    # configured root commit and storing the combined ignore text in
     # Settings for the lifetime of the process.
     #
     # They remain optional at process startup so local tools/tests can construct
@@ -92,10 +92,6 @@ class Settings(BaseSettings):
     mapelites_repo_state_ignore_text: str | None = Field(
         default=None,
         alias="MAPELITES_REPO_STATE_IGNORE_TEXT",
-    )
-    mapelites_repo_state_ignore_sha256: str | None = Field(
-        default=None,
-        alias="MAPELITES_REPO_STATE_IGNORE_SHA256",
     )
     mapelites_file_embedding_cache_backend: Literal["db", "memory"] | None = Field(
         default="db",

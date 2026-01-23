@@ -29,13 +29,7 @@ from .chunk import PreprocessedArtifact, chunk_preprocessed_files
 from .code_embedding import CommitCodeEmbedding, embed_chunked_files
 from .file_embedding_cache import DatabaseFileEmbeddingCache, FileEmbeddingCache, build_file_embedding_cache
 from .preprocess import CodePreprocessor, PreprocessedFile
-from .repository_files import (
-    ROOT_IGNORE_FILES,
-    RepositoryFile,
-    build_pinned_ignore_spec,
-    is_ignored_path,
-    list_repository_files,
-)
+from .repository_files import RepositoryFile, build_pinned_ignore_spec, is_ignored_path, list_repository_files
 
 log = logger.bind(module="map_elites.repository_state_embedding")
 
@@ -482,19 +476,6 @@ class RepositoryStateEmbedder:
             return None
 
         pinned_ignore = str(getattr(self.settings, "mapelites_repo_state_ignore_text", "") or "").strip()
-        # Ignore rules are pinned for the instance lifecycle, so root ignore file changes in the
-        # evolved history do not affect eligibility. We log a warning for observability.
-        ignore_changed = False
-        for filename in ROOT_IGNORE_FILES:
-            if _root_file_blob_sha(repo, parent_hash, filename) != _root_file_blob_sha(repo, commit_hash, filename):
-                ignore_changed = True
-        if ignore_changed and pinned_ignore:
-            log.warning(
-                "Root ignore files changed for commit {} (parent={}) but ignore rules are pinned; "
-                "the changes will not affect repo-state eligibility.",
-                commit_hash[:12],
-                parent_hash[:12],
-            )
 
         raw_sum = tuple(float(v) for v in (parent_agg.sum_vector or ()))
         dims = len(raw_sum)
@@ -829,24 +810,6 @@ def _is_null_sha(sha: str | None) -> bool:
         return True
     value = sha.strip()
     return not value or set(value) == {"0"}
-
-
-def _root_file_blob_sha(repo: Repo, commit_hash: str, path: str) -> str | None:
-    """Return the blob SHA for a root-level file at a commit.
-
-    Args:
-        repo: GitPython repository.
-        commit_hash: Commit-ish to resolve against.
-        path: Root-relative path (e.g. ".gitignore", ".loreleyignore").
-    """
-    raw = str(path or "").strip().lstrip("/")
-    if not raw:
-        return None
-    try:
-        value = repo.git.rev_parse(f"{commit_hash}:{raw}").strip()
-        return value or None
-    except GitCommandError:
-        return None
 
 
 def _resolve_git_prefix(repo: Repo, repo_root: Path) -> str | None:
