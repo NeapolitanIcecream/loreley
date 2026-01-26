@@ -213,6 +213,21 @@ console = Console()
 log = logger.bind(module="examples.evol_circle_packing")
 
 
+def _positive_float(value: str) -> float:
+    """Parse a positive float for argparse arguments."""
+
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError(f"Expected a number, got {value!r}.") from exc
+
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError(
+            "Value must be > 0. Use --no-preflight to skip preflight validation.",
+        )
+    return float(parsed)
+
+
 def _set_env_if_unset(name: str, value: Any | None) -> None:
     """Set an environment variable only when it is not already defined."""
 
@@ -551,8 +566,7 @@ def _run_scheduler(
         argv.append("--yes")
     if no_preflight:
         argv.append("--no-preflight")
-    if preflight_timeout_seconds > 0:
-        argv += ["--preflight-timeout-seconds", str(float(preflight_timeout_seconds))]
+    argv += ["--preflight-timeout-seconds", str(float(preflight_timeout_seconds))]
 
     console.log(
         "[bold green]Starting scheduler[/] once={} …".format("yes" if once else "no"),
@@ -582,8 +596,7 @@ def _run_worker(
     argv.append("worker")
     if no_preflight:
         argv.append("--no-preflight")
-    if preflight_timeout_seconds > 0:
-        argv += ["--preflight-timeout-seconds", str(float(preflight_timeout_seconds))]
+    argv += ["--preflight-timeout-seconds", str(float(preflight_timeout_seconds))]
 
     console.log("[bold green]Starting worker[/] …")
     return int(loreley_main(argv))
@@ -614,8 +627,7 @@ def _run_api(
     argv += ["api", "--host", str(host), "--port", str(int(port))]
     if no_preflight:
         argv.append("--no-preflight")
-    if preflight_timeout_seconds > 0:
-        argv += ["--preflight-timeout-seconds", str(float(preflight_timeout_seconds))]
+    argv += ["--preflight-timeout-seconds", str(float(preflight_timeout_seconds))]
     if reload:
         argv.append("--reload")
 
@@ -661,8 +673,7 @@ def _run_ui(
     ]
     if no_preflight:
         argv.append("--no-preflight")
-    if preflight_timeout_seconds > 0:
-        argv += ["--preflight-timeout-seconds", str(float(preflight_timeout_seconds))]
+    argv += ["--preflight-timeout-seconds", str(float(preflight_timeout_seconds))]
     if headless:
         argv.append("--headless")
 
@@ -712,9 +723,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     scheduler_parser.add_argument(
         "--preflight-timeout-seconds",
-        type=float,
+        type=_positive_float,
         default=2.0,
-        help="Network timeout used for DB/Redis connectivity checks (seconds).",
+        help="Positive network timeout used for DB/Redis connectivity checks (seconds).",
     )
     scheduler_parser.add_argument(
         "--log-level",
@@ -733,9 +744,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     worker_parser.add_argument(
         "--preflight-timeout-seconds",
-        type=float,
+        type=_positive_float,
         default=2.0,
-        help="Network timeout used for DB/Redis connectivity checks (seconds).",
+        help="Positive network timeout used for DB/Redis connectivity checks (seconds).",
     )
     worker_parser.add_argument(
         "--log-level",
@@ -752,7 +763,7 @@ def main(argv: list[str] | None = None) -> int:
     api_parser.add_argument(
         "--log-level",
         dest="log_level",
-        help="Override Settings.log_level.",
+        help="Override LOG_LEVEL for this invocation (pass-through to Loreley CLI).",
     )
     api_parser.add_argument("--reload", action="store_true", help="Enable auto-reload (dev only).")
     api_parser.add_argument(
@@ -762,9 +773,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     api_parser.add_argument(
         "--preflight-timeout-seconds",
-        type=float,
+        type=_positive_float,
         default=2.0,
-        help="Network timeout used for DB connectivity checks (seconds).",
+        help="Positive network timeout used for DB connectivity checks (seconds).",
     )
 
     ui_parser = subparsers.add_parser(
@@ -790,9 +801,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     ui_parser.add_argument(
         "--preflight-timeout-seconds",
-        type=float,
+        type=_positive_float,
         default=2.0,
-        help="Network timeout used for preflight checks (seconds).",
+        help="Positive network timeout used for preflight checks (seconds).",
     )
     ui_parser.add_argument(
         "--log-level",
