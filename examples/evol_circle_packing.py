@@ -16,6 +16,7 @@ Usage (from the Loreley repository root, ideally via uv):
 
     uv run python examples/evol_circle_packing.py scheduler
     uv run python examples/evol_circle_packing.py scheduler --once
+    uv run python examples/evol_circle_packing.py scheduler --yes --once
     uv run python examples/evol_circle_packing.py worker
     uv run python examples/evol_circle_packing.py api --reload
     uv run python examples/evol_circle_packing.py ui
@@ -138,7 +139,7 @@ WORKER_EVALUATOR_PLUGIN: str = "evaluate:plugin"
 
 # --- MAP-Elites tuning ------------------------------------------------------
 
-# Use packing_density (primary objective from the circle-packing evaluator)
+# Use sum_radii (primary objective from the circle-packing evaluator)
 # as the fitness metric for MAP-Elites instead of the generic composite_score.
 MAPELITES_FITNESS_METRIC: str = "sum_radii"
 
@@ -519,7 +520,15 @@ def _reset_database() -> None:
         raise
 
 
-def _run_scheduler(once: bool, init_db: bool) -> int:
+def _run_scheduler(
+    *,
+    once: bool,
+    init_db: bool,
+    yes: bool,
+    log_level: str | None,
+    no_preflight: bool,
+    preflight_timeout_seconds: float,
+) -> int:
     """Run the Loreley evolution scheduler."""
 
     _apply_base_env()
@@ -532,9 +541,18 @@ def _run_scheduler(once: bool, init_db: bool) -> int:
     # for ensuring the database schema exists.
     from loreley.cli import main as loreley_main
 
-    argv: list[str] = ["scheduler"]
+    argv: list[str] = []
+    if log_level:
+        argv += ["--log-level", str(log_level)]
+    argv.append("scheduler")
     if once:
         argv.append("--once")
+    if yes:
+        argv.append("--yes")
+    if no_preflight:
+        argv.append("--no-preflight")
+    if preflight_timeout_seconds > 0:
+        argv += ["--preflight-timeout-seconds", str(float(preflight_timeout_seconds))]
 
     console.log(
         "[bold green]Starting scheduler[/] once={} …".format("yes" if once else "no"),
@@ -542,7 +560,12 @@ def _run_scheduler(once: bool, init_db: bool) -> int:
     return int(loreley_main(argv))
 
 
-def _run_worker() -> int:
+def _run_worker(
+    *,
+    log_level: str | None,
+    no_preflight: bool,
+    preflight_timeout_seconds: float,
+) -> int:
     """Run a single-threaded Loreley evolution worker."""
 
     _apply_base_env(include_worker_repo=True)
@@ -553,11 +576,28 @@ def _run_worker() -> int:
     # takes care of schema initialisation.
     from loreley.cli import main as loreley_main
 
+    argv: list[str] = []
+    if log_level:
+        argv += ["--log-level", str(log_level)]
+    argv.append("worker")
+    if no_preflight:
+        argv.append("--no-preflight")
+    if preflight_timeout_seconds > 0:
+        argv += ["--preflight-timeout-seconds", str(float(preflight_timeout_seconds))]
+
     console.log("[bold green]Starting worker[/] …")
-    return int(loreley_main(["worker"]))
+    return int(loreley_main(argv))
 
 
-def _run_api(*, host: str, port: int, log_level: str | None, reload: bool) -> int:
+def _run_api(
+    *,
+    host: str,
+    port: int,
+    log_level: str | None,
+    reload: bool,
+    no_preflight: bool,
+    preflight_timeout_seconds: float,
+) -> int:
     """Run the Loreley read-only UI API (FastAPI via uvicorn)."""
 
     _apply_base_env()
@@ -572,6 +612,10 @@ def _run_api(*, host: str, port: int, log_level: str | None, reload: bool) -> in
     if log_level:
         argv += ["--log-level", str(log_level)]
     argv += ["api", "--host", str(host), "--port", str(int(port))]
+    if no_preflight:
+        argv.append("--no-preflight")
+    if preflight_timeout_seconds > 0:
+        argv += ["--preflight-timeout-seconds", str(float(preflight_timeout_seconds))]
     if reload:
         argv.append("--reload")
 
@@ -585,7 +629,16 @@ def _run_api(*, host: str, port: int, log_level: str | None, reload: bool) -> in
     return int(loreley_main(argv))
 
 
-def _run_ui(*, host: str, port: int, api_base_url: str, headless: bool) -> int:
+def _run_ui(
+    *,
+    host: str,
+    port: int,
+    api_base_url: str,
+    headless: bool,
+    log_level: str | None,
+    no_preflight: bool,
+    preflight_timeout_seconds: float,
+) -> int:
     """Run the Loreley Streamlit UI."""
 
     _apply_base_env()
@@ -594,7 +647,10 @@ def _run_ui(*, host: str, port: int, api_base_url: str, headless: bool) -> int:
 
     from loreley.cli import main as loreley_main
 
-    argv: list[str] = [
+    argv: list[str] = []
+    if log_level:
+        argv += ["--log-level", str(log_level)]
+    argv += [
         "ui",
         "--api-base-url",
         str(api_base_url),
@@ -603,6 +659,10 @@ def _run_ui(*, host: str, port: int, api_base_url: str, headless: bool) -> int:
         "--port",
         str(int(port)),
     ]
+    if no_preflight:
+        argv.append("--no-preflight")
+    if preflight_timeout_seconds > 0:
+        argv += ["--preflight-timeout-seconds", str(float(preflight_timeout_seconds))]
     if headless:
         argv.append("--headless")
 
@@ -640,10 +700,47 @@ def main(argv: list[str] | None = None) -> int:
         help="Initialise the DATABASE_URL by dropping and recreating all ORM-managed "
         "tables and clearing all Dramatiq Redis task queues before running the scheduler.",
     )
+    scheduler_parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Auto-approve scheduler startup approval (non-interactive runs).",
+    )
+    scheduler_parser.add_argument(
+        "--no-preflight",
+        action="store_true",
+        help="Skip preflight validation.",
+    )
+    scheduler_parser.add_argument(
+        "--preflight-timeout-seconds",
+        type=float,
+        default=2.0,
+        help="Network timeout used for DB/Redis connectivity checks (seconds).",
+    )
+    scheduler_parser.add_argument(
+        "--log-level",
+        dest="log_level",
+        help="Override LOG_LEVEL for this invocation (pass-through to Loreley CLI).",
+    )
 
-    subparsers.add_parser(
+    worker_parser = subparsers.add_parser(
         "worker",
         help="Run a single-threaded evolution worker.",
+    )
+    worker_parser.add_argument(
+        "--no-preflight",
+        action="store_true",
+        help="Skip preflight validation.",
+    )
+    worker_parser.add_argument(
+        "--preflight-timeout-seconds",
+        type=float,
+        default=2.0,
+        help="Network timeout used for DB/Redis connectivity checks (seconds).",
+    )
+    worker_parser.add_argument(
+        "--log-level",
+        dest="log_level",
+        help="Override LOG_LEVEL for this invocation (pass-through to Loreley CLI).",
     )
 
     api_parser = subparsers.add_parser(
@@ -658,6 +755,17 @@ def main(argv: list[str] | None = None) -> int:
         help="Override Settings.log_level.",
     )
     api_parser.add_argument("--reload", action="store_true", help="Enable auto-reload (dev only).")
+    api_parser.add_argument(
+        "--no-preflight",
+        action="store_true",
+        help="Skip preflight validation.",
+    )
+    api_parser.add_argument(
+        "--preflight-timeout-seconds",
+        type=float,
+        default=2.0,
+        help="Network timeout used for DB connectivity checks (seconds).",
+    )
 
     ui_parser = subparsers.add_parser(
         "ui",
@@ -675,19 +783,48 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Run without opening a browser.",
     )
+    ui_parser.add_argument(
+        "--no-preflight",
+        action="store_true",
+        help="Skip preflight validation.",
+    )
+    ui_parser.add_argument(
+        "--preflight-timeout-seconds",
+        type=float,
+        default=2.0,
+        help="Network timeout used for preflight checks (seconds).",
+    )
+    ui_parser.add_argument(
+        "--log-level",
+        dest="log_level",
+        help="Override LOG_LEVEL for this invocation (pass-through to Loreley CLI).",
+    )
 
     args = parser.parse_args(argv)
 
     if args.command == "scheduler":
-        return _run_scheduler(once=bool(args.once), init_db=bool(args.init_db))
+        return _run_scheduler(
+            once=bool(args.once),
+            init_db=bool(args.init_db),
+            yes=bool(args.yes),
+            log_level=(str(args.log_level) if args.log_level else None),
+            no_preflight=bool(args.no_preflight),
+            preflight_timeout_seconds=float(args.preflight_timeout_seconds),
+        )
     if args.command == "worker":
-        return _run_worker()
+        return _run_worker(
+            log_level=(str(args.log_level) if args.log_level else None),
+            no_preflight=bool(args.no_preflight),
+            preflight_timeout_seconds=float(args.preflight_timeout_seconds),
+        )
     if args.command == "api":
         return _run_api(
             host=str(args.host),
             port=int(args.port),
             log_level=(str(args.log_level) if args.log_level else None),
             reload=bool(args.reload),
+            no_preflight=bool(args.no_preflight),
+            preflight_timeout_seconds=float(args.preflight_timeout_seconds),
         )
     if args.command == "ui":
         return _run_ui(
@@ -695,6 +832,9 @@ def main(argv: list[str] | None = None) -> int:
             port=int(args.port),
             api_base_url=str(args.api_base_url),
             headless=bool(args.headless),
+            log_level=(str(args.log_level) if args.log_level else None),
+            no_preflight=bool(args.no_preflight),
+            preflight_timeout_seconds=float(args.preflight_timeout_seconds),
         )
 
     parser.print_help()
