@@ -14,7 +14,7 @@ from sqlalchemy.engine.url import make_url
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from loreley.config import Settings, get_settings
-from loreley.db.instance import seed_instance_marker, validate_instance_marker
+from loreley.db.instance import ensure_instance_marker, seed_instance_marker
 
 INSTANCE_SCHEMA_VERSION = 3
 
@@ -81,7 +81,7 @@ def session_scope() -> Iterator[Session]:
         session.close()
 
 
-def ensure_database_schema(*, validate_marker: bool = True) -> None:
+def ensure_database_schema(*, validate_marker: bool = True, settings: Settings | None = None) -> None:
     """Ensure that all Loreley database tables exist.
 
     This helper imports the ORM models and issues ``CREATE TABLE IF NOT EXISTS``
@@ -89,7 +89,7 @@ def ensure_database_schema(*, validate_marker: bool = True) -> None:
     """
 
     try:
-        settings = get_settings()
+        settings = settings or get_settings()
         # Import models so that all ORM tables are registered on ``Base.metadata``.
         import loreley.db.models  # noqa: F401  # pylint: disable=unused-import
 
@@ -97,7 +97,7 @@ def ensure_database_schema(*, validate_marker: bool = True) -> None:
         Base.metadata.create_all(bind=engine)
         if validate_marker:
             with session_scope() as session:
-                validate_instance_marker(
+                ensure_instance_marker(
                     session=session,
                     settings=settings,
                     schema_version=INSTANCE_SCHEMA_VERSION,

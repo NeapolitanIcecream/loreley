@@ -276,7 +276,7 @@ def run_worker(
         from loreley.tasks.workers import build_evolution_job_worker_actor
 
         dramatiq_broker = setup_broker(settings=settings)
-        ensure_database_schema()
+        ensure_database_schema(settings=settings)
         # Register the experiment-attached actor bound to the derived queue.
         build_evolution_job_worker_actor(settings=settings)
     except Exception as exc:  # pragma: no cover - defensive

@@ -13,6 +13,10 @@ if TYPE_CHECKING:
     from loreley.db.models import InstanceMetadata
 
 RESET_DB_HINT = "Reset the database schema with `uv run loreley reset-db --yes`."
+INIT_DB_HINT = (
+    "Initialise the database by starting a scheduler/worker once, "
+    "or reset the schema with `uv run loreley reset-db --yes` (dev)."
+)
 
 
 class InstanceMetadataError(RuntimeError):
@@ -64,7 +68,7 @@ def validate_instance_marker_schema(
 
     meta = session.get(InstanceMetadata, 1)
     if meta is None:
-        raise InstanceMetadataError(f"Instance metadata is missing. {RESET_DB_HINT}")
+        raise InstanceMetadataError(f"Instance metadata is missing. {INIT_DB_HINT}")
     if int(meta.schema_version or 0) != int(schema_version):
         raise InstanceMetadataError(
             f"Instance metadata schema_version mismatch. {RESET_DB_HINT}",
@@ -103,7 +107,7 @@ def validate_instance_marker(
 
     meta = session.get(InstanceMetadata, 1)
     if meta is None:
-        raise InstanceMetadataError(f"Instance metadata is missing. {RESET_DB_HINT}")
+        raise InstanceMetadataError(f"Instance metadata is missing. {INIT_DB_HINT}")
     if int(meta.schema_version or 0) != int(schema_version):
         raise InstanceMetadataError(
             f"Instance metadata schema_version mismatch. {RESET_DB_HINT}",
@@ -123,6 +127,47 @@ def validate_instance_marker(
             f"{RESET_DB_HINT}",
         )
     return meta
+
+
+def ensure_instance_marker(
+    *,
+    session: Session,
+    settings: Settings,
+    schema_version: int,
+) -> InstanceMetadata:
+    """Ensure the instance metadata marker exists and matches current settings.
+
+    - When the marker is missing (fresh database), seed it.
+    - When the marker exists, validate it and fail fast on mismatches.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    from loreley.db.models import InstanceMetadata
+
+    identity = resolve_instance_identity(settings)
+    meta = session.get(InstanceMetadata, 1)
+    if meta is None:
+        seeded = InstanceMetadata(
+            id=1,
+            schema_version=int(schema_version),
+            experiment_id_raw=identity.experiment_raw,
+            experiment_uuid=identity.experiment_uuid,
+            root_commit_hash=identity.root_commit,
+        )
+        session.add(seeded)
+        try:
+            # Flush early so concurrent processes either see the inserted row
+            # or get a deterministic IntegrityError.
+            session.flush()
+        except IntegrityError:
+            # Another process may have seeded the marker concurrently.
+            session.rollback()
+
+    return validate_instance_marker(
+        session=session,
+        settings=settings,
+        schema_version=schema_version,
+    )
 
 
 def seed_instance_marker(
@@ -148,11 +193,13 @@ def seed_instance_marker(
 __all__ = [
     "InstanceIdentity",
     "InstanceMetadataError",
+    "INIT_DB_HINT",
     "RESET_DB_HINT",
     "resolve_instance_identity",
     "resolve_instance_namespace_from_marker",
     "root_commit_matches",
     "seed_instance_marker",
+    "ensure_instance_marker",
     "validate_instance_marker_schema",
     "validate_instance_marker",
 ]

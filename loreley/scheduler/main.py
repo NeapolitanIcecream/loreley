@@ -58,8 +58,8 @@ class EvolutionScheduler:
         self.settings = base_settings
         self.console = console
         self._advisory_lock: AdvisoryLock | None = None
-        # Ensure DB schema exists before repo-specific bootstrap.
-        ensure_database_schema(validate_marker=False)
+        # Ensure DB schema exists before repo-specific bootstrap (seed/validate marker).
+        ensure_database_schema(settings=base_settings)
         self.repo_root = self._resolve_repo_root()
         self._repo = self._init_repo()
         try:
