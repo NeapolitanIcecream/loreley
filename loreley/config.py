@@ -94,10 +94,6 @@ class Settings(BaseSettings):
         default=None,
         alias="MAPELITES_REPO_STATE_IGNORE_TEXT",
     )
-    mapelites_file_embedding_cache_backend: Literal["db", "memory"] | None = Field(
-        default="db",
-        alias="MAPELITES_FILE_EMBEDDING_CACHE_BACKEND",
-    )
 
     scheduler_repo_root: str | None = Field(
         default=None,

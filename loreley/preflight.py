@@ -246,20 +246,6 @@ def check_embedding_dimensions(settings: Settings) -> CheckResult:
     return CheckResult("mapelites_code_embedding_dimensions", "ok", "configured")
 
 
-def check_repo_state_cache_backend(settings: Settings) -> CheckResult:
-    """Check the repo-state cache backend is configured for scheduler usage."""
-    raw = str(getattr(settings, "mapelites_file_embedding_cache_backend", "") or "").strip().lower()
-    if not raw:
-        raw = "db"
-    if raw != "db":
-        return CheckResult(
-            "mapelites_file_embedding_cache_backend",
-            "fail",
-            "MAPELITES_FILE_EMBEDDING_CACHE_BACKEND must be 'db' for scheduler ingestion.",
-        )
-    return CheckResult("mapelites_file_embedding_cache_backend", "ok", "db")
-
-
 def check_scheduler_max_total_jobs(settings: Settings) -> CheckResult:
     """Check that SCHEDULER_MAX_TOTAL_JOBS is configured and positive."""
     raw = getattr(settings, "scheduler_max_total_jobs", None)
@@ -459,7 +445,6 @@ def preflight_scheduler(settings: Settings, *, timeout_seconds: float = 2.0) -> 
         )
     )
     results.append(check_embedding_dimensions(settings))
-    results.append(check_repo_state_cache_backend(settings))
     results.append(check_scheduler_max_total_jobs(settings))
 
     goal = (settings.worker_evolution_global_goal or "").strip()

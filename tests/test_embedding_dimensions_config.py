@@ -20,6 +20,6 @@ def test_file_embedding_cache_requires_embedding_dimensions(
 
     settings = Settings(mapelites_code_embedding_dimensions=None, _env_file=None)
     with pytest.raises(ValueError):
-        build_file_embedding_cache(settings=settings, backend="memory")
+        build_file_embedding_cache(settings=settings)
 
 

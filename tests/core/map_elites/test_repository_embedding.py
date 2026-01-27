@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 import pytest
 from git import Repo
@@ -82,6 +82,40 @@ def _mean(vectors: list[tuple[float, ...]]) -> tuple[float, ...]:
         for i in range(dims):
             totals[i] += float(vec[i])
     return tuple(value / len(vectors) for value in totals)
+
+
+class _StubFileEmbeddingCache:
+    """Test-only in-memory cache for repo-state embeddings."""
+
+    def __init__(self, *, embedding_model: str, requested_dimensions: int) -> None:
+        self.embedding_model = embedding_model
+        self.requested_dimensions = int(requested_dimensions)
+        self._store: dict[str, tuple[float, ...]] = {}
+
+    def get_many(self, blob_shas: Sequence[str]) -> dict[str, tuple[float, ...]]:
+        found: dict[str, tuple[float, ...]] = {}
+        for sha in blob_shas:
+            key = str(sha).strip()
+            if not key:
+                continue
+            vector = self._store.get(key)
+            if vector:
+                found[key] = vector
+        return found
+
+    def put_many(self, vectors: Mapping[str, tuple[float, ...]]) -> None:
+        for sha, vector in vectors.items():
+            key = str(sha).strip()
+            if not key:
+                continue
+            if not vector:
+                raise ValueError("Cannot cache an empty embedding vector.")
+            if len(vector) != self.requested_dimensions:
+                raise ValueError(
+                    "Embedding dimension mismatch for cache insert "
+                    f"(expected {self.requested_dimensions} got {len(vector)})"
+                )
+            self._store[key] = tuple(float(v) for v in vector)
 
 
 def test_repository_file_catalog_respects_gitignore_and_extension_filter(
@@ -296,9 +330,15 @@ def test_repository_state_embedder_uses_cache_hits_and_misses(
 
     calls = _stub_embed_chunked_files(monkeypatch)
 
-    embedder = RepositoryStateEmbedder(settings=settings, cache_backend="memory", repo=repo)
+    cache = _StubFileEmbeddingCache(
+        embedding_model="stub",
+        requested_dimensions=int(getattr(settings, "mapelites_code_embedding_dimensions", 2) or 2),
+    )
+    embedder = RepositoryStateEmbedder(settings=settings, cache=cache, repo=repo)
+    monkeypatch.setattr(embedder, "_load_aggregate", lambda **_kwargs: None)
+    monkeypatch.setattr(embedder, "_persist_aggregate", lambda **_kwargs: None)
 
-    e1, s1 = embedder.run(commit_hash=c1, repo_root=tmp_path)
+    e1, s1 = embedder.bootstrap_aggregate(commit_hash=c1, repo_root=tmp_path)
     assert e1 is not None
     assert s1.eligible_files == 2
     assert s1.unique_blobs == 2
@@ -307,7 +347,7 @@ def test_repository_state_embedder_uses_cache_hits_and_misses(
     assert calls["count"] == 1
     assert calls["file_counts"][-1] == 2
 
-    e2, s2 = embedder.run(commit_hash=c2, repo_root=tmp_path)
+    e2, s2 = embedder.bootstrap_aggregate(commit_hash=c2, repo_root=tmp_path)
     assert e2 is not None
     assert s2.eligible_files == 3
     assert s2.unique_blobs == 3
@@ -340,9 +380,15 @@ def test_repository_state_embedder_deduplicates_duplicate_blobs(
     c1 = _commit_all(repo, "c1")
 
     calls = _stub_embed_chunked_files(monkeypatch)
-    embedder = RepositoryStateEmbedder(settings=settings, cache_backend="memory", repo=repo)
+    cache = _StubFileEmbeddingCache(
+        embedding_model="stub",
+        requested_dimensions=int(getattr(settings, "mapelites_code_embedding_dimensions", 2) or 2),
+    )
+    embedder = RepositoryStateEmbedder(settings=settings, cache=cache, repo=repo)
+    monkeypatch.setattr(embedder, "_load_aggregate", lambda **_kwargs: None)
+    monkeypatch.setattr(embedder, "_persist_aggregate", lambda **_kwargs: None)
 
-    embedding, stats = embedder.run(commit_hash=c1, repo_root=tmp_path)
+    embedding, stats = embedder.bootstrap_aggregate(commit_hash=c1, repo_root=tmp_path)
     assert embedding is not None
     assert stats.eligible_files == 2
     assert stats.unique_blobs == 1

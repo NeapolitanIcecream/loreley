@@ -22,7 +22,10 @@ from .dimension_reduction import (
     resolve_pca_history_limit,
 )
 from .preprocess import PreprocessedFile
-from .repository_state_embedding import RepoStateEmbeddingStats, embed_repository_state
+from .repository_state_embedding import (
+    RepoStateEmbeddingStats,
+    embed_repository_state_incremental,
+)
 from .snapshot import (
     DatabaseSnapshotStore,
     SnapshotCellUpsert,
@@ -189,19 +192,10 @@ class MapElitesManager:
         update: SnapshotUpdate | None = None
 
         try:
-            effective_cache_backend = (
-                str(self.settings.mapelites_file_embedding_cache_backend or "db").strip().lower() or "db"
-            )
-            repo_state_mode = (
-                "incremental_only" if effective_cache_backend == "db" else "auto"
-            )
-            code_embedding, repo_stats = embed_repository_state(
+            code_embedding, repo_stats = embed_repository_state_incremental(
                 commit_hash=commit_hash,
                 repo_root=working_dir,
                 settings=self.settings,
-                # Prefer the configured backend; default is DB.
-                cache_backend=effective_cache_backend,
-                mode=repo_state_mode,
             )
             if not code_embedding or not code_embedding.vector:
                 artifacts = self._build_artifacts(repo_stats, (), None, None)

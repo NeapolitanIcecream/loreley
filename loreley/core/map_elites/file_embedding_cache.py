@@ -16,16 +16,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Mapping, Protocol, Sequence, TypeVar
 
-from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.exc import SQLAlchemyError
 
 from loreley.config import Settings, get_settings
 from loreley.db.base import session_scope
 from loreley.db.models import MapElitesFileEmbeddingCache
-
-log = logger.bind(module="map_elites.file_embedding_cache")
 
 Vector = tuple[float, ...]
 T = TypeVar("T")
@@ -33,7 +29,6 @@ T = TypeVar("T")
 __all__ = [
     "Vector",
     "FileEmbeddingCache",
-    "InMemoryFileEmbeddingCache",
     "DatabaseFileEmbeddingCache",
     "build_file_embedding_cache",
 ]
@@ -74,54 +69,6 @@ def _resolve_requested_dimensions(settings: Settings) -> int:
 
 
 @dataclass(slots=True)
-class InMemoryFileEmbeddingCache:
-    """Simple in-memory cache used for tests/local runs."""
-
-    embedding_model: str
-    requested_dimensions: int
-
-    _store: dict[str, Vector]
-
-    def __init__(
-        self,
-        *,
-        embedding_model: str,
-        requested_dimensions: int,
-    ) -> None:
-        self.embedding_model = embedding_model
-        self.requested_dimensions = requested_dimensions
-        self._store = {}
-
-    def get_many(self, blob_shas: Sequence[str]) -> dict[str, Vector]:
-        found: dict[str, Vector] = {}
-        for sha in blob_shas:
-            key = str(sha).strip()
-            if not key:
-                continue
-            vector = self._store.get(key)
-            if vector:
-                found[key] = vector
-        return found
-
-    def put_many(self, vectors: Mapping[str, Vector]) -> None:
-        for sha, vector in vectors.items():
-            key = str(sha).strip()
-            if not key:
-                continue
-            self._validate_vector(vector)
-            self._store[key] = tuple(float(v) for v in vector)
-
-    def _validate_vector(self, vector: Vector) -> None:
-        if not vector:
-            raise ValueError("Cannot cache an empty embedding vector.")
-        if len(vector) != int(self.requested_dimensions):
-            raise ValueError(
-                "Embedding dimension mismatch for cache insert "
-                f"(expected {self.requested_dimensions} got {len(vector)})"
-            )
-
-
-@dataclass(slots=True)
 class DatabaseFileEmbeddingCache:
     """Postgres-backed cache using `MapElitesFileEmbeddingCache` table."""
 
@@ -138,49 +85,45 @@ class DatabaseFileEmbeddingCache:
             raise ValueError("Requested embedding dimensions must be a positive integer.")
 
         found: dict[str, Vector] = {}
-        try:
-            with session_scope() as session:
-                for batch in _batched(cleaned, 500):
-                    base_conditions = [
-                        MapElitesFileEmbeddingCache.blob_sha.in_(batch),
-                    ]
+        with session_scope() as session:
+            for batch in _batched(cleaned, 500):
+                base_conditions = [
+                    MapElitesFileEmbeddingCache.blob_sha.in_(batch),
+                ]
 
-                    stmt = select(MapElitesFileEmbeddingCache).where(*base_conditions)
-                    rows = list(session.execute(stmt).scalars())
-                    if not rows:
-                        continue
+                stmt = select(MapElitesFileEmbeddingCache).where(*base_conditions)
+                rows = list(session.execute(stmt).scalars())
+                if not rows:
+                    continue
 
-                    # Validate cached rows against cache invariants.
-                    for row in rows:
-                        if str(getattr(row, "embedding_model", "") or "") != str(self.embedding_model):
-                            raise ValueError(
-                                "File embedding cache entry has an unexpected embedding model; "
-                                "reset the DB (dev). "
-                                f"(blob_sha={row.blob_sha} expected_model={self.embedding_model!r} "
-                                f"got_model={row.embedding_model!r})"
-                            )
-                        if int(getattr(row, "dimensions", 0) or 0) != dims:
-                            raise ValueError(
-                                "File embedding cache entry has unexpected dimensions; "
-                                "reset the DB (dev). "
-                                f"(blob_sha={row.blob_sha} expected_dims={dims} got_dims={row.dimensions!r})"
-                            )
-                        vector = tuple(float(v) for v in (row.vector or []))
-                        if not vector:
-                            raise ValueError(
-                                "File embedding cache contains an empty vector; reset the DB (dev). "
-                                f"(blob_sha={row.blob_sha} dims={dims})"
-                            )
-                        if len(vector) != dims:
-                            raise ValueError(
-                                "File embedding cache vector has unexpected dimensions; "
-                                "reset the DB (dev). "
-                                f"(blob_sha={row.blob_sha} expected_dims={dims} got_dims={len(vector)})"
-                            )
-                        found[str(row.blob_sha)] = vector
-        except SQLAlchemyError as exc:
-            log.error("Failed to read file embedding cache: {}", exc)
-            return {}
+                # Validate cached rows against cache invariants.
+                for row in rows:
+                    if str(getattr(row, "embedding_model", "") or "") != str(self.embedding_model):
+                        raise ValueError(
+                            "File embedding cache entry has an unexpected embedding model; "
+                            "reset the DB (dev). "
+                            f"(blob_sha={row.blob_sha} expected_model={self.embedding_model!r} "
+                            f"got_model={row.embedding_model!r})"
+                        )
+                    if int(getattr(row, "dimensions", 0) or 0) != dims:
+                        raise ValueError(
+                            "File embedding cache entry has unexpected dimensions; "
+                            "reset the DB (dev). "
+                            f"(blob_sha={row.blob_sha} expected_dims={dims} got_dims={row.dimensions!r})"
+                        )
+                    vector = tuple(float(v) for v in (row.vector or []))
+                    if not vector:
+                        raise ValueError(
+                            "File embedding cache contains an empty vector; reset the DB (dev). "
+                            f"(blob_sha={row.blob_sha} dims={dims})"
+                        )
+                    if len(vector) != dims:
+                        raise ValueError(
+                            "File embedding cache vector has unexpected dimensions; "
+                            "reset the DB (dev). "
+                            f"(blob_sha={row.blob_sha} expected_dims={dims} got_dims={len(vector)})"
+                        )
+                    found[str(row.blob_sha)] = vector
 
         return found
 
@@ -217,52 +160,31 @@ class DatabaseFileEmbeddingCache:
         if not values:
             return
 
-        try:
-            with session_scope() as session:
-                for batch in _batched(values, 500):
-                    stmt = pg_insert(MapElitesFileEmbeddingCache).values(batch)
-                    stmt = stmt.on_conflict_do_nothing(
-                        index_elements=[
-                            "blob_sha",
-                        ],
-                    )
-                    session.execute(stmt)
-        except SQLAlchemyError as exc:
-            log.error("Failed to persist file embedding cache: {}", exc)
+        with session_scope() as session:
+            for batch in _batched(values, 500):
+                stmt = pg_insert(MapElitesFileEmbeddingCache).values(batch)
+                stmt = stmt.on_conflict_do_nothing(
+                    index_elements=[
+                        "blob_sha",
+                    ],
+                )
+                session.execute(stmt)
 
 
 def build_file_embedding_cache(
     *,
     settings: Settings | None = None,
-    backend: str | None = None,
 ) -> FileEmbeddingCache:
-    """Factory for selecting an embedding cache backend.
-
-    - If `backend` is provided, it wins.
-    - Else consult `settings.mapelites_file_embedding_cache_backend` when set.
-    - Else default to `db`.
-    """
+    """Factory for constructing the DB-backed embedding cache."""
 
     s = settings or get_settings()
-    chosen = (backend or getattr(s, "mapelites_file_embedding_cache_backend", None) or "").strip()
-    if not chosen:
-        chosen = "db"
-
     embedding_model = str(s.mapelites_code_embedding_model)
     requested_dimensions = _resolve_requested_dimensions(s)
 
-    if chosen == "memory":
-        return InMemoryFileEmbeddingCache(
-            embedding_model=embedding_model,
-            requested_dimensions=requested_dimensions,
-        )
-    if chosen == "db":
-        return DatabaseFileEmbeddingCache(
-            embedding_model=embedding_model,
-            requested_dimensions=requested_dimensions,
-        )
-
-    raise ValueError(f"Unknown file embedding cache backend: {chosen!r}")
+    return DatabaseFileEmbeddingCache(
+        embedding_model=embedding_model,
+        requested_dimensions=requested_dimensions,
+    )
 
 
 def _unique_clean_blob_shas(blob_shas: Sequence[str]) -> list[str]:

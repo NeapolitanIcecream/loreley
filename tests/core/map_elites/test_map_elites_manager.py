@@ -115,7 +115,7 @@ def test_ingest_short_circuits_when_no_repo_state_embedding(
     )
     monkeypatch.setattr(
         map_elites_module,
-        "embed_repository_state",
+        "embed_repository_state_incremental",
         lambda *args, **kwargs: (None, stats),
     )
 
@@ -181,7 +181,7 @@ def test_ingest_builds_record_with_stubbed_dependencies(
 
     monkeypatch.setattr(
         map_elites_module,
-        "embed_repository_state",
+        "embed_repository_state_incremental",
         lambda *args, **kwargs: (code_embedding, stats),
     )
     monkeypatch.setattr(

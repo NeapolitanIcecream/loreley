@@ -51,7 +51,7 @@ def test_repo_state_incremental_only_raises_when_no_cache_hit_and_no_incremental
     monkeypatch.setattr(embedder, "_load_aggregate", lambda **_kwargs: None)
     monkeypatch.setattr(embedder, "_try_incremental_aggregate", lambda **_kwargs: None)
 
-    with pytest.raises(RepoStateEmbeddingError, match="incremental-only"):
-        _ = embedder.run(commit_hash=c1, repo_root=tmp_path, mode="incremental_only")
+    with pytest.raises(RepoStateEmbeddingError, match="no aggregate and no incremental path"):
+        _ = embedder.embed_incremental(commit_hash=c1, repo_root=tmp_path)
 
 

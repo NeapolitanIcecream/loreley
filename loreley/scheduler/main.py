@@ -310,8 +310,6 @@ class EvolutionScheduler:
                 eligible_files=eligible,
                 repo_root=self.repo_root,
                 details={
-                    "cache_backend": str(self.settings.mapelites_file_embedding_cache_backend or "db").strip().lower()
-                    or "db",
                     "embedding_model": str(self.settings.mapelites_code_embedding_model),
                     "embedding_dimensions": getattr(self.settings, "mapelites_code_embedding_dimensions", None),
                     **filters,

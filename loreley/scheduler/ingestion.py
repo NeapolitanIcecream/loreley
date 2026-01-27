@@ -408,23 +408,15 @@ class MapElitesIngestion:
 
     def _ensure_root_commit_repo_state_bootstrap(self, commit_hash: str) -> None:
         """Bootstrap the repo-state aggregate for the experiment baseline commit."""
+        from loreley.core.map_elites.repository_state_embedding import (
+            bootstrap_repository_state_aggregate,
+        )
 
-        backend = str(self.settings.mapelites_file_embedding_cache_backend or "db").strip().lower() or "db"
-        if backend != "db":
-            raise IngestionError(
-                "Repo-state bootstrap requires MAPELITES_FILE_EMBEDDING_CACHE_BACKEND=db "
-                f"(got {backend!r})."
-            )
-
-        from loreley.core.map_elites.repository_state_embedding import RepositoryStateEmbedder, embed_repository_state
-
-        embedding, stats = embed_repository_state(
+        embedding, stats = bootstrap_repository_state_aggregate(
             commit_hash=commit_hash,
             repo_root=self.repo_root,
             settings=self.settings,
-            cache_backend=backend,
             repo=self.repo,
-            mode="auto",
         )
 
         if not embedding or not embedding.vector or stats.files_aggregated <= 0:
@@ -433,21 +425,7 @@ class MapElitesIngestion:
                 f"eligible_files={stats.eligible_files} files_aggregated={stats.files_aggregated} "
                 f"skipped_failed_embedding={stats.skipped_failed_embedding} commit={commit_hash}."
             )
-
-        # Verify the aggregate was persisted; runtime ingestion is incremental-only.
-        embedder = RepositoryStateEmbedder(
-            settings=self.settings,
-            cache_backend=backend,
-            repo=self.repo,
-        )
         canonical = str(getattr(self.repo.commit(commit_hash), "hexsha", "") or "").strip()
-        persisted = embedder.load_aggregate(commit_hash=canonical, repo_root=self.repo_root)
-        if persisted is None:
-            raise IngestionError(
-                "Repo-state bootstrap did not persist an aggregate; "
-                "check DB connectivity or reset the database (dev). "
-                f"(commit={canonical})"
-            )
 
         self.console.log(
             "[green]Bootstrapped repo-state baseline aggregate[/] commit={} eligible_files={} files_aggregated={} dims={}".format(

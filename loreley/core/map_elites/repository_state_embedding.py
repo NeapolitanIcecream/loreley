@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Literal, Sequence, cast
+from typing import Iterable, Sequence, cast
 
 from git import Repo
 from git.exc import GitCommandError
@@ -27,24 +27,24 @@ from loreley.db.base import session_scope
 from loreley.db.models import MapElitesFileEmbeddingCache, MapElitesRepoStateAggregate
 from .chunk import PreprocessedArtifact, chunk_preprocessed_files
 from .code_embedding import CommitCodeEmbedding, embed_chunked_files
-from .file_embedding_cache import DatabaseFileEmbeddingCache, FileEmbeddingCache, build_file_embedding_cache
+from .file_embedding_cache import FileEmbeddingCache, build_file_embedding_cache
 from .preprocess import CodePreprocessor, PreprocessedFile
 from .repository_files import RepositoryFile, build_pinned_ignore_spec, is_ignored_path, list_repository_files
 
 log = logger.bind(module="map_elites.repository_state_embedding")
 
 Vector = tuple[float, ...]
-RepoStateEmbeddingMode = Literal["auto", "incremental_only"]
 
 
 class RepoStateEmbeddingError(RuntimeError):
-    """Raised when repo-state embedding cannot proceed under the requested mode."""
+    """Raised when repo-state embedding cannot proceed."""
 
 __all__ = [
     "RepoStateEmbeddingError",
     "RepoStateEmbeddingStats",
     "RepositoryStateEmbedder",
-    "embed_repository_state",
+    "bootstrap_repository_state_aggregate",
+    "embed_repository_state_incremental",
 ]
 
 
@@ -69,59 +69,98 @@ class RepositoryStateEmbedder:
         *,
         settings: Settings | None = None,
         cache: FileEmbeddingCache | None = None,
-        cache_backend: str | None = None,
         repo: Repo | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         self._repo = repo
         self.cache = cache or build_file_embedding_cache(
             settings=self.settings,
-            backend=cache_backend,
         )
 
-    def run(
+    def embed_incremental(
         self,
         *,
         commit_hash: str,
         repo_root: Path | None = None,
-        mode: RepoStateEmbeddingMode = "auto",
     ) -> tuple[CommitCodeEmbedding | None, RepoStateEmbeddingStats]:
-        """Return a commit-level embedding representing the repo state."""
+        """Return a commit embedding derived from an existing aggregate or incremental diff."""
 
-        requested_commit = str(commit_hash).strip() or None
-        if not requested_commit:
-            stats = RepoStateEmbeddingStats(
-                commit_hash=requested_commit,
-                eligible_files=0,
-                files_embedded=0,
-                files_aggregated=0,
-                unique_blobs=0,
-                cache_hits=0,
-                cache_misses=0,
-                skipped_empty_after_preprocess=0,
-                skipped_failed_embedding=0,
+        canonical, _repo, root = self._resolve_repo_and_commit(commit_hash, repo_root=repo_root)
+
+        aggregate = self._load_aggregate(commit_hash=canonical, repo_root=root)
+        if aggregate is not None:
+            return self._embedding_from_aggregate(commit_hash=canonical, aggregate=aggregate)
+
+        incremental = self._try_incremental_aggregate(commit_hash=canonical, repo_root=root)
+        if incremental is None:
+            raise RepoStateEmbeddingError(
+                "Repo-state embedding requires an aggregate cache hit or a valid incremental derivation; "
+                f"no aggregate and no incremental path for commit {canonical}."
             )
+
+        agg_row, vector = incremental
+        stats = RepoStateEmbeddingStats(
+            commit_hash=canonical,
+            eligible_files=int(agg_row.file_count),
+            files_embedded=0,
+            files_aggregated=int(agg_row.file_count),
+            unique_blobs=0,
+            cache_hits=0,
+            cache_misses=0,
+            skipped_empty_after_preprocess=0,
+            skipped_failed_embedding=0,
+        )
+        if not vector:
             return None, stats
+        embedding = CommitCodeEmbedding(
+            files=(),
+            vector=vector,
+            model=self.cache.embedding_model,
+            dimensions=len(vector),
+        )
+        log.info(
+            "Repo-state aggregate incrementally updated for commit {} (files={} dims={})",
+            canonical,
+            agg_row.file_count,
+            len(vector),
+        )
+        return embedding, stats
+
+    def bootstrap_aggregate(
+        self,
+        *,
+        commit_hash: str,
+        repo_root: Path | None = None,
+    ) -> tuple[CommitCodeEmbedding | None, RepoStateEmbeddingStats]:
+        """Ensure a commit aggregate exists, recomputing fully when missing."""
+
+        canonical, repo, root = self._resolve_repo_and_commit(commit_hash, repo_root=repo_root)
+
+        aggregate = self._load_aggregate(commit_hash=canonical, repo_root=root)
+        if aggregate is not None:
+            return self._embedding_from_aggregate(commit_hash=canonical, aggregate=aggregate)
+
+        return self._full_recompute_and_persist(commit_hash=canonical, repo_root=root, repo=repo)
+
+    def _resolve_repo_and_commit(
+        self,
+        commit_hash: str,
+        *,
+        repo_root: Path | None = None,
+    ) -> tuple[str, Repo, Path]:
+        requested_commit = str(commit_hash).strip()
+        if not requested_commit:
+            raise ValueError("Commit hash must be provided.")
 
         root = Path(repo_root or Path.cwd()).resolve()
-
         repo = self._repo
         if repo is None:
             try:
                 repo = Repo(root, search_parent_directories=True)
-            except Exception:
-                stats = RepoStateEmbeddingStats(
-                    commit_hash=requested_commit,
-                    eligible_files=0,
-                    files_embedded=0,
-                    files_aggregated=0,
-                    unique_blobs=0,
-                    cache_hits=0,
-                    cache_misses=0,
-                    skipped_empty_after_preprocess=0,
-                    skipped_failed_embedding=0,
-                )
-                return None, stats
+            except Exception as exc:
+                raise RepoStateEmbeddingError(
+                    f"Failed to open git repository at {root}."
+                ) from exc
 
         try:
             canonical = str(getattr(repo.commit(requested_commit), "hexsha", "") or "").strip()
@@ -130,93 +169,59 @@ class RepositoryStateEmbedder:
         if not canonical:
             raise ValueError(f"Unknown commit {requested_commit!r}")
 
-        # Fast path: use persisted aggregate when available (requires DB cache backend).
-        aggregate = self._load_aggregate(commit_hash=canonical, repo_root=root)
-        if aggregate is not None:
-            vector = _divide_vector(tuple(float(v) for v in aggregate.sum_vector), int(aggregate.file_count))
-            stats = RepoStateEmbeddingStats(
-                commit_hash=canonical,
-                eligible_files=int(aggregate.file_count),
-                files_embedded=0,
-                files_aggregated=int(aggregate.file_count),
-                unique_blobs=0,
-                cache_hits=0,
-                cache_misses=0,
-                skipped_empty_after_preprocess=0,
-                skipped_failed_embedding=0,
-            )
-            if not vector:
-                return None, stats
-            embedding = CommitCodeEmbedding(
-                files=(),
-                vector=vector,
-                model=self.cache.embedding_model,
-                dimensions=len(vector),
-            )
-            log.info(
-                "Repo-state aggregate cache hit for commit {} (files={} dims={})",
-                canonical,
-                aggregate.file_count,
-                len(vector),
-            )
-            return embedding, stats
+        self._repo = repo
+        return canonical, repo, root
 
-        # Attempt diff-based incremental aggregation when possible.
-        try:
-            incremental = self._try_incremental_aggregate(commit_hash=canonical, repo_root=root)
-        except RepoStateEmbeddingError as exc:
-            if mode == "incremental_only":
-                raise
-            log.warning(
-                "Repo-state incremental aggregation failed for commit {} (falling back to full recompute): {}",
-                canonical[:12],
-                exc,
-            )
-            incremental = None
-        if incremental is not None:
-            agg_row, vector = incremental
-            stats = RepoStateEmbeddingStats(
-                commit_hash=canonical,
-                eligible_files=int(agg_row.file_count),
-                files_embedded=0,
-                files_aggregated=int(agg_row.file_count),
-                unique_blobs=0,
-                cache_hits=0,
-                cache_misses=0,
-                skipped_empty_after_preprocess=0,
-                skipped_failed_embedding=0,
-            )
-            if not vector:
-                return None, stats
-            embedding = CommitCodeEmbedding(
-                files=(),
-                vector=vector,
-                model=self.cache.embedding_model,
-                dimensions=len(vector),
-            )
-            log.info(
-                "Repo-state aggregate incrementally updated for commit {} (files={} dims={})",
-                canonical,
-                agg_row.file_count,
-                len(vector),
-            )
-            return embedding, stats
+    def _embedding_from_aggregate(
+        self,
+        *,
+        commit_hash: str,
+        aggregate: MapElitesRepoStateAggregate,
+    ) -> tuple[CommitCodeEmbedding | None, RepoStateEmbeddingStats]:
+        vector = _divide_vector(tuple(float(v) for v in aggregate.sum_vector), int(aggregate.file_count))
+        stats = RepoStateEmbeddingStats(
+            commit_hash=commit_hash,
+            eligible_files=int(aggregate.file_count),
+            files_embedded=0,
+            files_aggregated=int(aggregate.file_count),
+            unique_blobs=0,
+            cache_hits=0,
+            cache_misses=0,
+            skipped_empty_after_preprocess=0,
+            skipped_failed_embedding=0,
+        )
+        if not vector:
+            return None, stats
+        embedding = CommitCodeEmbedding(
+            files=(),
+            vector=vector,
+            model=self.cache.embedding_model,
+            dimensions=len(vector),
+        )
+        log.info(
+            "Repo-state aggregate cache hit for commit {} (files={} dims={})",
+            commit_hash,
+            aggregate.file_count,
+            len(vector),
+        )
+        return embedding, stats
 
-        if mode == "incremental_only":
-            raise RepoStateEmbeddingError(
-                "Repo-state embedding is running in incremental-only mode; "
-                f"no aggregate cache hit and no valid incremental derivation for commit {canonical}."
-            )
-
+    def _full_recompute_and_persist(
+        self,
+        *,
+        commit_hash: str,
+        repo_root: Path,
+        repo: Repo,
+    ) -> tuple[CommitCodeEmbedding | None, RepoStateEmbeddingStats]:
         repo_files = list_repository_files(
-            repo_root=root,
-            commit_hash=canonical,
+            repo_root=repo_root,
+            commit_hash=commit_hash,
             settings=self.settings,
             repo=repo,
         )
         if not repo_files:
             stats = RepoStateEmbeddingStats(
-                commit_hash=canonical,
+                commit_hash=commit_hash,
                 eligible_files=0,
                 files_embedded=0,
                 files_aggregated=0,
@@ -228,7 +233,6 @@ class RepositoryStateEmbedder:
             )
             return None, stats
 
-        # Cache lookups are keyed by blob SHA; de-duplicate upfront.
         blob_shas = [entry.blob_sha for entry in repo_files if entry.blob_sha]
         unique_blob_shas = sorted(set(blob_shas))
         cached = self.cache.get_many(unique_blob_shas)
@@ -237,8 +241,8 @@ class RepositoryStateEmbedder:
         cache_hits = len(unique_blob_shas) - len(misses)
 
         vectors_for_misses, embedded_count, skipped_empty = self._embed_cache_misses(
-            root=root,
-            commit_hash=canonical,
+            root=repo_root,
+            commit_hash=commit_hash,
             repo_files=repo_files,
             missing_blob_shas=misses,
         )
@@ -246,7 +250,6 @@ class RepositoryStateEmbedder:
             self.cache.put_many(vectors_for_misses)
             cached.update(vectors_for_misses)
 
-        # Aggregate per-file vectors (uniform weight per file path).
         file_vectors: list[Vector] = []
         skipped_failed = 0
         for file in repo_files:
@@ -258,7 +261,7 @@ class RepositoryStateEmbedder:
 
         commit_vector, sum_vector, aggregated_count = _mean_and_sum_vectors(file_vectors)
         stats = RepoStateEmbeddingStats(
-            commit_hash=canonical,
+            commit_hash=commit_hash,
             eligible_files=len(repo_files),
             files_embedded=embedded_count,
             files_aggregated=aggregated_count,
@@ -280,7 +283,7 @@ class RepositoryStateEmbedder:
         )
         log.info(
             "Repo-state embedding for commit {}: files={} blobs={} hits={} misses={} agg_files={} dims={}",
-            canonical,
+            commit_hash,
             stats.eligible_files,
             stats.unique_blobs,
             stats.cache_hits,
@@ -289,10 +292,9 @@ class RepositoryStateEmbedder:
             embedding.dimensions,
         )
 
-        # Persist aggregate for reuse when enabled.
         self._persist_aggregate(
-            commit_hash=canonical,
-            repo_root=root,
+            commit_hash=commit_hash,
+            repo_root=repo_root,
             sum_vector=sum_vector,
             file_count=aggregated_count,
         )
@@ -306,9 +308,9 @@ class RepositoryStateEmbedder:
     ) -> MapElitesRepoStateAggregate | None:
         """Load a persisted repo-state aggregate when available.
 
-        This is a thin wrapper around the internal aggregate lookup, exposed so
-        other modules (e.g. scheduler bootstrap) can verify persistence without
-        reaching into private methods.
+        This is a thin wrapper around the internal aggregate lookup. It is
+        exposed so callers and tests can access the persisted aggregate without
+        relying on private methods.
         """
 
         return self._load_aggregate(commit_hash=commit_hash, repo_root=repo_root)
@@ -319,12 +321,11 @@ class RepositoryStateEmbedder:
         commit_hash: str,
         repo_root: Path,
     ) -> MapElitesRepoStateAggregate | None:
-        if not isinstance(self.cache, DatabaseFileEmbeddingCache):
-            return None
-
         requested_dims = int(getattr(self.cache, "requested_dimensions", 0))
         if requested_dims <= 0:
-            return None
+            raise RepoStateEmbeddingError(
+                "Repo-state embedding requires a positive embedding dimension."
+            )
         try:
             with session_scope() as session:
                 stmt = select(MapElitesRepoStateAggregate).where(
@@ -332,17 +333,25 @@ class RepositoryStateEmbedder:
                 )
                 row = session.execute(stmt).scalar_one_or_none()
         except Exception as exc:  # pragma: no cover - DB failure handling
-            log.warning("Repo-state aggregate read failed for {}: {}", commit_hash, exc)
-            return None
+            raise RepoStateEmbeddingError(
+                f"Repo-state aggregate read failed for {commit_hash}: {exc}"
+            ) from exc
 
         if not row:
             return None
         if int(row.file_count or 0) <= 0:
-            return None
+            raise RepoStateEmbeddingError(
+                f"Repo-state aggregate has an invalid file count (commit={commit_hash})."
+            )
         if not row.sum_vector:
-            return None
+            raise RepoStateEmbeddingError(
+                f"Repo-state aggregate sum vector is missing (commit={commit_hash})."
+            )
         if len(row.sum_vector) != requested_dims:
-            return None
+            raise RepoStateEmbeddingError(
+                "Repo-state aggregate has unexpected dimensions; "
+                f"expected {requested_dims} got {len(row.sum_vector)} (commit={commit_hash})."
+            )
         return row
 
     def _persist_aggregate(
@@ -353,12 +362,20 @@ class RepositoryStateEmbedder:
         sum_vector: Vector,
         file_count: int,
     ) -> None:
-        if not isinstance(self.cache, DatabaseFileEmbeddingCache):
-            return
+        requested_dims = int(getattr(self.cache, "requested_dimensions", 0) or 0)
+        if requested_dims <= 0:
+            raise RepoStateEmbeddingError(
+                "Repo-state embedding requires a positive embedding dimension."
+            )
         if file_count <= 0 or not sum_vector:
-            return
-        if len(sum_vector) != int(getattr(self.cache, "requested_dimensions", 0) or 0):
-            return
+            raise RepoStateEmbeddingError(
+                f"Repo-state aggregate persist requires file_count > 0 (commit={commit_hash})."
+            )
+        if len(sum_vector) != requested_dims:
+            raise RepoStateEmbeddingError(
+                "Repo-state aggregate has unexpected dimensions; "
+                f"expected {requested_dims} got {len(sum_vector)} (commit={commit_hash})."
+            )
         row = MapElitesRepoStateAggregate(
             commit_hash=str(commit_hash),
             file_count=int(file_count),
@@ -369,7 +386,9 @@ class RepositoryStateEmbedder:
             with session_scope() as session:
                 session.merge(row)
         except Exception as exc:  # pragma: no cover - DB failure handling
-            log.warning("Repo-state aggregate persist failed for {}: {}", commit_hash, exc)
+            raise RepoStateEmbeddingError(
+                f"Repo-state aggregate persist failed for {commit_hash}: {exc}"
+            ) from exc
 
     @dataclass(frozen=True, slots=True)
     class _VectorMeta:
@@ -383,11 +402,11 @@ class RepositoryStateEmbedder:
     ) -> dict[str, "RepositoryStateEmbedder._VectorMeta"]:
         if not blob_shas:
             return {}
-        if not isinstance(self.cache, DatabaseFileEmbeddingCache):
-            return {}
         dims = int(dimensions or 0)
         if dims <= 0:
-            return {}
+            raise RepoStateEmbeddingError(
+                "Repo-state file cache metadata requires positive dimensions."
+            )
         cleaned = [str(sha).strip() for sha in blob_shas if str(sha).strip()]
         unique = sorted(set(cleaned))
         if not unique:
@@ -446,9 +465,6 @@ class RepositoryStateEmbedder:
         commit_hash: str,
         repo_root: Path,
     ) -> tuple[MapElitesRepoStateAggregate, Vector] | None:
-        if not isinstance(self.cache, DatabaseFileEmbeddingCache):
-            return None
-
         repo = self._repo
         if repo is None:
             try:
@@ -473,16 +489,24 @@ class RepositoryStateEmbedder:
         if parent_agg is None:
             return None
         if int(parent_agg.file_count or 0) <= 0:
-            return None
+            raise RepoStateEmbeddingError(
+                f"Parent aggregate has an invalid file count (commit={parent_hash})."
+            )
 
         pinned_ignore = str(getattr(self.settings, "mapelites_repo_state_ignore_text", "") or "").strip()
 
         raw_sum = tuple(float(v) for v in (parent_agg.sum_vector or ()))
         dims = len(raw_sum)
         if dims <= 0:
-            return None
+            raise RepoStateEmbeddingError(
+                f"Parent aggregate has no vector data (commit={parent_hash})."
+            )
         if dims != int(getattr(self.cache, "requested_dimensions", 0) or 0):
-            return None
+            raise RepoStateEmbeddingError(
+                "Parent aggregate dimensions do not match the embedding cache; "
+                f"expected {getattr(self.cache, 'requested_dimensions', 0)} got {dims} "
+                f"(commit={parent_hash})."
+            )
         sum_vec: Vector = raw_sum
         file_count = int(parent_agg.file_count)
 
@@ -520,7 +544,9 @@ class RepositoryStateEmbedder:
             )
             persisted = self._load_aggregate(commit_hash=commit_hash, repo_root=repo_root)
             if persisted is None:
-                return None
+                raise RepoStateEmbeddingError(
+                    f"Failed to persist repo-state aggregate for commit {commit_hash}."
+                )
             return persisted, vector
 
         def _selected(path_str: str | None, sha: str | None) -> tuple[bool, Path | None, str | None]:
@@ -625,7 +651,9 @@ class RepositoryStateEmbedder:
         )
         persisted = self._load_aggregate(commit_hash=commit_hash, repo_root=repo_root)
         if persisted is None:
-            return None
+            raise RepoStateEmbeddingError(
+                f"Failed to persist repo-state aggregate for commit {commit_hash}."
+            )
         return persisted, vector
 
     def _embed_cache_misses(
@@ -699,28 +727,45 @@ class RepositoryStateEmbedder:
         return vectors, len(vectors), skipped_empty
 
 
-def embed_repository_state(
+def embed_repository_state_incremental(
     *,
     commit_hash: str,
     repo_root: Path | None = None,
     settings: Settings | None = None,
     cache: FileEmbeddingCache | None = None,
-    cache_backend: str | None = None,
     repo: Repo | None = None,
-    mode: RepoStateEmbeddingMode = "auto",
 ) -> tuple[CommitCodeEmbedding | None, RepoStateEmbeddingStats]:
-    """Functional wrapper around `RepositoryStateEmbedder`."""
+    """Return an incremental-only repo-state embedding for a commit."""
 
     embedder = RepositoryStateEmbedder(
         settings=settings,
         cache=cache,
-        cache_backend=cache_backend,
         repo=repo,
     )
-    return embedder.run(
+    return embedder.embed_incremental(
         commit_hash=commit_hash,
         repo_root=repo_root,
-        mode=mode,
+    )
+
+
+def bootstrap_repository_state_aggregate(
+    *,
+    commit_hash: str,
+    repo_root: Path | None = None,
+    settings: Settings | None = None,
+    cache: FileEmbeddingCache | None = None,
+    repo: Repo | None = None,
+) -> tuple[CommitCodeEmbedding | None, RepoStateEmbeddingStats]:
+    """Ensure the repo-state aggregate exists, recomputing fully when missing."""
+
+    embedder = RepositoryStateEmbedder(
+        settings=settings,
+        cache=cache,
+        repo=repo,
+    )
+    return embedder.bootstrap_aggregate(
+        commit_hash=commit_hash,
+        repo_root=repo_root,
     )
 
 

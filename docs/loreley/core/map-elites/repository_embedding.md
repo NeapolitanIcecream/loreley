@@ -48,7 +48,6 @@ For each eligible file we keep:
 
 Implemented by:
 
-- `loreley.core.map_elites.file_embedding_cache.InMemoryFileEmbeddingCache`
 - `loreley.core.map_elites.file_embedding_cache.DatabaseFileEmbeddingCache`
 - ORM table: `loreley.db.models.MapElitesFileEmbeddingCache`
 
@@ -59,14 +58,9 @@ Cache key:
 The database cache stores `embedding_model` and `dimensions` alongside vectors for
 validation and debugging.
 
-The database-backed cache is **insert-only**: when multiple processes attempt to
+The database cache is **insert-only**: when multiple processes attempt to
 write the same key, the first insert wins and later writes are ignored (no overwrite).
-
-Backend selection:
-
-- `MAPELITES_FILE_EMBEDDING_CACHE_BACKEND=db|memory` (default: `db`)
-
-Note: The database-backed cache is single-tenant. The scheduler requires the `db` backend for incremental-only repo-state ingestion; reserve the `memory` backend for tests or local runs that do not use the scheduler.
+The cache is DB-only and single-tenant; repo-state ingestion expects persisted aggregates.
 
 ## Repo-state aggregate cache (commit-level)
 
