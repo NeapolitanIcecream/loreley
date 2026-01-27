@@ -97,8 +97,8 @@ WORKER_REPO_REMOTE_URL: str = str(REPO_ROOT)
 # Git branch to track on the remote when syncing the worker clone.
 WORKER_REPO_BRANCH: str = "main"
 
-# Local worktree used exclusively by the worker process. Randomisation is now
-# handled inside loreley.config via WORKER_REPO_WORKTREE_RANDOMIZE.
+# Local worktree used exclusively by the worker process.
+# Randomisation is controlled by WORKER_REPO_WORKTREE_RANDOMIZE.
 WORKER_REPO_WORKTREE: Path = REPO_ROOT / ".cache" / "loreley" / "worker-repo"
 WORKER_REPO_WORKTREE_RANDOMIZE: bool = True
 
@@ -114,9 +114,9 @@ SCHEDULER_POLL_INTERVAL_SECONDS: float = 30.0
 # Maximum number of unfinished jobs (pending/queued/running) allowed at once.
 SCHEDULER_MAX_UNFINISHED_JOBS: int = 1
 
-# Optional global limit on total jobs scheduled by this process.
-# Set to None for no global cap.
-SCHEDULER_MAX_TOTAL_JOBS: int | None = 2
+# Required global cap on the total number of jobs scheduled for this experiment.
+# Loreley fails fast if this is missing or not a positive integer.
+SCHEDULER_MAX_TOTAL_JOBS: int = 2
 
 # --- UI API / Streamlit UI configuration ------------------------------------
 
