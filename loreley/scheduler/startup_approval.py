@@ -3,8 +3,10 @@ from __future__ import annotations
 """Scheduler startup guards that are safe to unit-test without a live database."""
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import sys
+import tempfile
 from typing import Mapping
 
 from git import Repo
@@ -20,6 +22,87 @@ from loreley.core.map_elites.repository_files import list_repository_files
 class RepoStateRootScan:
     root_commit: str
     eligible_files: int
+
+
+def _resolve_git_common_dir(git_dir: Path) -> Path:
+    """Resolve the common git directory for worktrees (best-effort).
+
+    For a regular repository, this returns git_dir.
+    For a linked worktree, git_dir points at ".git/worktrees/<name>" and the
+    common directory is resolved via the "commondir" file.
+    """
+
+    commondir_path = git_dir / "commondir"
+    if not commondir_path.is_file():
+        return git_dir
+    try:
+        raw = commondir_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return git_dir
+    if not raw:
+        return git_dir
+    candidate = Path(raw)
+    if not candidate.is_absolute():
+        candidate = (git_dir / candidate).resolve()
+    return candidate.resolve()
+
+
+def _directory_is_writable(path: Path) -> bool:
+    """Return True when a temporary file can be created in path."""
+
+    try:
+        if not path.exists() or not path.is_dir():
+            return False
+        if not os.access(str(path), os.W_OK | os.X_OK):
+            return False
+        with tempfile.NamedTemporaryFile(dir=str(path), prefix=".loreley-writecheck-", delete=True):
+            return True
+    except Exception:
+        return False
+
+
+def require_repo_writable(
+    *,
+    repo_root: Path,
+    repo: Repo,
+    console: Console | None = None,
+) -> None:
+    """Fail fast when the git directory is not writable.
+
+    The scheduler requires write access to the git directory to:
+    - fetch missing commits (object database updates), and
+    - update the best-fitness branch deliverable at the end of a bounded run.
+    """
+
+    c = console or Console()
+    git_dir = Path(getattr(repo, "git_dir", "") or "").expanduser().resolve()
+    if not git_dir:
+        raise ValueError("Cannot determine git_dir for scheduler repository.")
+    common_dir = _resolve_git_common_dir(git_dir)
+
+    targets = [git_dir]
+    if common_dir != git_dir:
+        targets.append(common_dir)
+
+    for target in targets:
+        if _directory_is_writable(target):
+            continue
+        repo_root_resolved = Path(repo_root).expanduser().resolve()
+        message = (
+            "Scheduler repository is not writable. "
+            "Write access is required for git fetch and the best-fitness branch deliverable. "
+            f"(repo_root={repo_root_resolved} git_dir={git_dir} common_dir={common_dir} failing_path={target})"
+        )
+        c.print(f"[bold red]{message}[/]")
+        raise ValueError(message)
+
+    c.log(
+        "[green]Git directory is writable[/] repo_root={} git_dir={} common_dir={}".format(
+            Path(repo_root).expanduser().resolve(),
+            git_dir,
+            common_dir,
+        )
+    )
 
 
 def scan_repo_state_root(

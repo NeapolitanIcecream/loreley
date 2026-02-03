@@ -32,6 +32,7 @@ from loreley.naming import resolve_experiment_namespace, resolve_experiment_uuid
 from loreley.scheduler.ingestion import MapElitesIngestion
 from loreley.scheduler.job_scheduler import JobScheduler
 from loreley.scheduler.startup_approval import (
+    require_repo_writable,
     require_interactive_repo_state_root_approval,
     scan_repo_state_root,
 )
@@ -62,6 +63,10 @@ class EvolutionScheduler:
         ensure_database_schema(settings=base_settings)
         self.repo_root = self._resolve_repo_root()
         self._repo = self._init_repo()
+        try:
+            require_repo_writable(repo_root=self.repo_root, repo=self._repo, console=self.console)
+        except ValueError as exc:
+            raise SchedulerError(str(exc)) from exc
         try:
             self.repository, effective_settings = bootstrap_instance(
                 settings=base_settings,
