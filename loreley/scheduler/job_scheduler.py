@@ -251,7 +251,7 @@ class JobScheduler:
             stmt = (
                 select(EvolutionJob)
                 .where(EvolutionJob.id.in_(job_ids))
-                .with_for_update()
+                .with_for_update(skip_locked=True)
             )
             for job in session.execute(stmt).scalars():
                 if job.status != JobStatus.PENDING:
@@ -279,7 +279,7 @@ class JobScheduler:
                 self._sender_actor.send(str(job_id))  # type: ignore[attr-defined]
                 sent.append(job_id)
                 self.console.log(
-                    f"[bold green]Queued job[/] id={job_id}",
+                    f"[bold green]Enqueued job message[/] id={job_id}",
                 )
             except Exception as exc:  # pragma: no cover - defensive
                 self.console.log(
@@ -288,7 +288,16 @@ class JobScheduler:
                 log.exception("Failed to enqueue scheduled job {}: {}", job_id, exc)
         if not sent:
             return 0
-        self._mark_jobs_queued(sent)
+        marked = self._mark_jobs_queued(sent)
+        if len(marked) != len(sent):
+            marked_set = set(marked)
+            missing = [job_id for job_id in sent if job_id not in marked_set]
+            log.debug(
+                "Enqueued {} job message(s) but marked {} job(s) as QUEUED (missing={})",
+                len(sent),
+                len(marked),
+                [str(job_id) for job_id in missing[:10]],
+            )
         return len(sent)
 
 
