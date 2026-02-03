@@ -7,7 +7,7 @@ can delegate all ingestion responsibilities to this module.
 """
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Sequence
 from uuid import UUID
@@ -15,7 +15,7 @@ from uuid import UUID
 from git import Repo
 from loguru import logger
 from rich.console import Console
-from sqlalchemy import select
+from sqlalchemy import case, select
 
 from loreley.config import Settings
 from loreley.core.git import RepositoryError as GitRepositoryError, require_commit
@@ -23,7 +23,7 @@ from loreley.core.map_elites.map_elites import MapElitesManager
 from loreley.core.worker.evaluator import EvaluationContext, EvaluationError, Evaluator
 from loreley.core.worker.repository import RepositoryError, WorkerRepository
 from loreley.db.base import session_scope
-from loreley.db.models import CommitCard, EvolutionJob, JobStatus, MapElitesState, Metric
+from loreley.db.models import CommitCard, EvolutionJob, JobStatus, Metric
 
 log = logger.bind(module="scheduler.ingestion")
 
@@ -56,7 +56,11 @@ class MapElitesIngestion:
     # Public API ------------------------------------------------------------
 
     def ingest_completed_jobs(self) -> int:
-        """Ingest a batch of newly succeeded jobs into MAP-Elites."""
+        """Ingest a batch of newly succeeded jobs into MAP-Elites.
+
+        This loop is best-effort per job: failures are recorded onto the job row
+        and do not abort the scheduler tick.
+        """
 
         batch = max(0, int(self.settings.scheduler_ingest_batch_size))
         if batch == 0:
@@ -64,8 +68,22 @@ class MapElitesIngestion:
         snapshots = self._jobs_requiring_ingestion(limit=batch)
         ingested = 0
         for snapshot in snapshots:
-            if self._ingest_snapshot(snapshot):
-                ingested += 1
+            try:
+                if self._ingest_snapshot(snapshot):
+                    ingested += 1
+            except Exception as exc:  # pragma: no cover - defensive
+                # If we cannot record the failure, let the error propagate: the
+                # scheduler is unlikely to make progress without database writes.
+                self._record_ingestion_state(snapshot, status="failed", reason=str(exc))
+                self.console.log(
+                    f"[bold red]Unhandled ingestion error[/] job={snapshot.job_id} commit={snapshot.result_commit_hash} reason={exc}",
+                )
+                log.exception(
+                    "Unhandled ingestion error for job {} commit {}: {}",
+                    snapshot.job_id,
+                    snapshot.result_commit_hash,
+                    exc,
+                )
         return ingested
 
     def initialise_root_commit(self, commit_hash: str) -> None:
@@ -104,18 +122,25 @@ class MapElitesIngestion:
     def _jobs_requiring_ingestion(self, *, limit: int) -> list[JobSnapshot]:
         batch_limit = max(limit * 4, 32)
         snapshots: list[JobSnapshot] = []
+        now = datetime.now(timezone.utc)
         with session_scope() as session:
+            # Always prioritise fresh jobs so a backlog of failed ingestions
+            # cannot block the scheduler from ingesting new results.
+            failed_last = case((EvolutionJob.ingestion_status == "failed", 1), else_=0)
             stmt = (
                 select(EvolutionJob)
                 .where(
                     EvolutionJob.status == JobStatus.SUCCEEDED,
                 )
-                .order_by(EvolutionJob.completed_at.asc())
+                .order_by(failed_last.asc(), EvolutionJob.completed_at.asc())
                 .limit(batch_limit)
             )
             rows = list(session.execute(stmt).scalars())
             for job in rows:
-                if (job.ingestion_status or "").strip() in {"succeeded", "skipped"}:
+                status = (job.ingestion_status or "").strip()
+                if status in {"succeeded", "skipped"}:
+                    continue
+                if status == "failed" and self._should_backoff_failed_job(job, now=now):
                     continue
                 commit_hash = (job.result_commit_hash or "").strip()
                 if not commit_hash:
@@ -134,6 +159,29 @@ class MapElitesIngestion:
                     break
         return snapshots
 
+    def _should_backoff_failed_job(self, job: EvolutionJob, *, now: datetime) -> bool:
+        last_attempt = getattr(job, "ingestion_last_attempt_at", None)
+        if not isinstance(last_attempt, datetime):
+            return False
+        attempts = int(getattr(job, "ingestion_attempts", 0) or 0)
+        attempts = max(1, attempts)
+        backoff_seconds = self._retry_backoff_seconds(attempts=attempts)
+
+        last_utc = last_attempt if last_attempt.tzinfo else last_attempt.replace(tzinfo=timezone.utc)
+        try:
+            last_utc = last_utc.astimezone(timezone.utc)
+        except Exception:  # pragma: no cover - defensive
+            last_utc = last_utc.replace(tzinfo=timezone.utc)
+        next_attempt_at = last_utc + timedelta(seconds=backoff_seconds)
+        return next_attempt_at > now
+
+    def _retry_backoff_seconds(self, *, attempts: int) -> float:
+        poll = float(getattr(self.settings, "scheduler_poll_interval_seconds", 30.0))
+        base = max(30.0, poll)
+        cap = max(base, 3600.0)
+        exponent = max(0, int(attempts) - 1)
+        return float(min(cap, base * (2.0**exponent)))
+
     def _ingest_snapshot(self, snapshot: JobSnapshot) -> bool:
         commit_hash = (snapshot.result_commit_hash or "").strip()
         if not commit_hash:
@@ -146,7 +194,16 @@ class MapElitesIngestion:
                 status="failed",
                 reason=str(exc),
             )
-            raise
+            self.console.log(
+                f"[bold red]Commit unavailable for ingestion[/] job={snapshot.job_id} commit={commit_hash} reason={exc}",
+            )
+            log.warning(
+                "Commit unavailable for ingestion job={} commit={} reason={}",
+                snapshot.job_id,
+                commit_hash,
+                exc,
+            )
+            return False
         metrics_payload: list[dict[str, Any]] = []
         with session_scope() as session:
             commit_row = session.execute(
@@ -179,10 +236,10 @@ class MapElitesIngestion:
                 reason=str(exc),
             )
             self.console.log(
-                f"[bold red]MAP-Elites ingest failed[/] job={snapshot.job_id} reason={exc}",
+                f"[bold red]MAP-Elites ingest failed[/] job={snapshot.job_id} commit={commit_hash} reason={exc}",
             )
             log.exception("Failed to ingest commit {} for job {}: {}", commit_hash, snapshot.job_id, exc)
-            raise
+            return False
         if insertion.record:
             self.console.log(
                 f"[green]Updated archive[/] job={snapshot.job_id} commit={commit_hash} "

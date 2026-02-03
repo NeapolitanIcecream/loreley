@@ -30,6 +30,9 @@ from loreley.scheduler.ingestion import MapElitesIngestion
     `SCHEDULER_INGEST_BATCH_SIZE`.
   - Filters out jobs whose ingestion status is already terminal
     (`"succeeded"` or `"skipped"`).
+  - Applies an exponential retry backoff for `"failed"` jobs using
+    `ingestion_attempts` and `ingestion_last_attempt_at` so transient issues do
+    not trigger a tight retry loop.
   - Builds a `JobSnapshot` for each remaining job and forwards it to
     `_ingest_snapshot(...)`.
   - Returns the number of jobs whose commits actually updated the MAP-Elites
@@ -52,8 +55,8 @@ Internally, `_ingest_snapshot(...)`:
    - `cell_index` when the ingest produced a record,
    - retry bookkeeping (`attempts`, `last_attempt_at`, `reason`).
 
-This state allows ingestion to be retried safely and audited later without
-re-running the full evaluation.
+This state allows ingestion to be retried safely (with backoff), audited later,
+and kept isolated per job so individual failures do not abort the scheduler loop.
 
 ### Root commit initialisation
 
