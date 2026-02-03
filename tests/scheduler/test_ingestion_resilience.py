@@ -228,3 +228,48 @@ def test_jobs_requiring_ingestion_skips_backoff_failed_jobs(monkeypatch, tmp_pat
     snapshots = ingestion._jobs_requiring_ingestion(limit=5)
     assert [snap.result_commit_hash for snap in snapshots] == ["fresh"]
 
+
+def test_record_ingestion_state_clamps_long_reason(monkeypatch, tmp_path) -> None:
+    ingestion = _make_ingestion(tmp_path)
+
+    job_id = uuid4()
+    snapshot = JobSnapshot(
+        job_id=job_id,
+        base_commit_hash=None,
+        island_id=None,
+        result_commit_hash="abc123",
+        completed_at=None,
+    )
+    long_reason = "x" * 10000
+
+    class DummyJob:
+        def __init__(self) -> None:
+            self.ingestion_attempts = 0
+            self.ingestion_status = None
+            self.ingestion_last_attempt_at = None
+            self.ingestion_reason = None
+            self.ingestion_delta = None
+            self.ingestion_status_code = None
+            self.ingestion_message = None
+            self.ingestion_cell_index = None
+
+    dummy_job = DummyJob()
+
+    class DummySession:
+        def get(self, _model: Any, key: Any) -> Any:
+            if key == job_id:
+                return dummy_job
+            return None
+
+    @contextmanager
+    def fake_scope():
+        yield DummySession()
+
+    monkeypatch.setattr(ingestion_mod, "session_scope", fake_scope)
+
+    ingestion._record_ingestion_state(snapshot, status="failed", reason=long_reason)
+    assert dummy_job.ingestion_attempts == 1
+    assert dummy_job.ingestion_reason is not None
+    assert dummy_job.ingestion_reason.endswith("…")
+    assert len(dummy_job.ingestion_reason) == 4096
+
