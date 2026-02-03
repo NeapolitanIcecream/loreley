@@ -221,18 +221,7 @@ class JobScheduler:
         pending = self._fetch_pending_job_ids(limit=batch)
         if not pending:
             return 0
-        ready = self._mark_jobs_queued(pending)
-        dispatched = 0
-        for job_id in ready:
-            try:
-                # Use a sender actor so the message targets the experiment queue.
-                self._sender_actor.send(str(job_id))  # type: ignore[attr-defined]
-                dispatched += 1
-            except Exception as exc:  # pragma: no cover - defensive
-                self.console.log(
-                    f"[bold red]Failed to enqueue job[/] id={job_id} reason={exc}",
-                )
-                log.exception("Failed to enqueue job {}: {}", job_id, exc)
+        dispatched = self._enqueue_jobs(pending)
         if dispatched:
             self.console.log(f"[cyan]Dispatched {dispatched} job(s) to Dramatiq[/]")
         return dispatched
@@ -272,13 +261,23 @@ class JobScheduler:
                 ready.append(job.id)
         return ready
 
-    def _enqueue_jobs(self, job_ids: Sequence[UUID]) -> None:
+    def _enqueue_jobs(self, job_ids: Sequence[UUID]) -> int:
         if not job_ids:
-            return
-        queued = self._mark_jobs_queued(job_ids)
-        for job_id in queued:
+            return 0
+
+        # IMPORTANT: Enqueue first, then mark QUEUED.
+        #
+        # If we mark QUEUED before `.send(...)`, a crash or broker failure can leave jobs
+        # stuck in QUEUED without any corresponding message in the broker.
+        #
+        # We allow workers to start jobs that are still PENDING (see EvolutionJobStore),
+        # so "send first" is safe and prevents the stuck-QUEUED state.
+        sent: list[UUID] = []
+        for job_id in job_ids:
             try:
+                # Use a sender actor so the message targets the experiment queue.
                 self._sender_actor.send(str(job_id))  # type: ignore[attr-defined]
+                sent.append(job_id)
                 self.console.log(
                     f"[bold green]Queued job[/] id={job_id}",
                 )
@@ -287,5 +286,9 @@ class JobScheduler:
                     f"[bold red]Failed to enqueue job[/] id={job_id} reason={exc}",
                 )
                 log.exception("Failed to enqueue scheduled job {}: {}", job_id, exc)
+        if not sent:
+            return 0
+        self._mark_jobs_queued(sent)
+        return len(sent)
 
 
