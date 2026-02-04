@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import textwrap
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -331,132 +332,39 @@ class CodingAgent(TruncationMixin):
         steps_block = "\n\n".join(
             self._format_plan_step(idx + 1, step) for idx, step in enumerate(plan.steps)
         )
-        constraints = self._format_bullets(request.constraints)
-        acceptance = self._format_bullets(request.acceptance_criteria)
-        focus_metrics = self._format_bullets(plan.focus_metrics)
-        guardrails = self._format_bullets(plan.guardrails)
-        validation = self._format_bullets(plan.validation)
-        risks = self._format_bullets(plan.risks)
-        notes = self._format_bullets(request.additional_notes)
-        handoff_notes = self._format_bullets(plan.handoff_notes)
-        fallback_plan_text = self._truncate(plan.fallback_plan or "None provided")
-        iteration_hint = request.iteration_hint or "None provided"
-
-        schema_contract_block = ""
-        json_requirements_block = ""
-        if self.validation_mode == "strict":
-            if self.schema_mode in ("prompt", "none"):
-                schema_json = json.dumps(
-                    CODING_OUTPUT_SCHEMA,
-                    ensure_ascii=True,
-                    indent=2,
-                )
-                schema_contract_block = (
-                    "\n\nOutput JSON schema contract:\n"
-                    f"{schema_json}\n"
-                )
-            json_requirements_block = (
-                "- summarise your work using the provided JSON schema\n"
-                "- respond ONLY with a single JSON object following that schema; "
-                "no prose outside JSON\n"
-                "- do NOT wrap the JSON in markdown code fences (no ``` or ```json)"
-            )
-        elif self.validation_mode == "lenient":
-            # In lenient mode, JSON is a best-effort contract rather than a hard requirement.
-            if self.schema_mode in ("prompt", "none"):
-                schema_json = json.dumps(
-                    CODING_OUTPUT_SCHEMA,
-                    ensure_ascii=True,
-                    indent=2,
-                )
-                schema_contract_block = (
-                    "\n\nSuggested JSON schema for structuring your summary (optional):\n"
-                    f"{schema_json}\n"
-                )
-            json_requirements_block = (
-                "- prefer summarising your work using the JSON schema below when convenient "
-                "(without markdown code fences such as ```json)\n"
-                "- it is acceptable to return free-form text if a structured JSON "
-                "object is difficult to produce"
-            )
+        is_freeform_plan = bool(plan.steps) and all(
+            step.step_id.startswith("freeform-") for step in plan.steps
+        )
+        if is_freeform_plan and plan.fallback_plan:
+            plan_block = self._truncate(plan.fallback_plan.strip(), limit=2000)
         else:
-            # In 'none' validation mode there is no expectation about JSON structure.
-            json_requirements_block = (
-                "- provide your summary in clear free-form text; JSON formatting is optional."
-            )
+            plan_block = steps_block
+        plan_block = plan_block.strip() or plan.summary.strip() or "N/A"
 
         prompt = f"""
-You are the coding agent running inside Loreley's autonomous worker.
-Your mission is to modify the repository located at {worktree} so that it
-implements the provided plan starting from base commit {request.base_commit}.
-You may inspect files, run tests, and edit code directly.
+You are the coding agent inside Loreley's evolution worker.
+Apply the plan to the repository at {worktree}, starting from base commit {request.base_commit}.
 
-Global objective:
+Goal:
 {request.goal.strip()}
 
-Plan summary:
-{plan.summary}
+Plan:
+{plan_block}
 
-Plan rationale:
-{plan.rationale}
-
-Focus metrics:
-{focus_metrics}
-
-Guardrails to respect:
-{guardrails}
-
-Validation expectations:
-{validation}
-
-Known risks:
-{risks}
-
-Additional constraints:
-{constraints}
-
-Acceptance criteria / definition of done:
-{acceptance}
-
-Iteration hint:
-{iteration_hint}
-
-Extra worker notes:
-{notes}
-
-Handoff notes from planning agent:
-{handoff_notes}
-
-Fallback plan if things go wrong:
-{fallback_plan_text}
-
-Detailed plan steps:
-{steps_block}
-
-When you finish applying the plan:
-- ensure repository changes are ready for review (lint/tests as needed)
-- keep `implementation_summary` concise (<= 2000 chars), plain text, and free of code fences/JSON dumps
-{json_requirements_block}
-{schema_contract_block}
+When done:
+- Apply the required changes.
+- Provide a short free-form summary of what you changed.
 """
         return textwrap.dedent(prompt).strip()
 
     def _format_plan_step(self, ordinal: int, step: PlanStep) -> str:
         actions = self._format_bullets(step.actions, indent="  ")
         files = self._format_bullets(step.files, indent="  ")
-        dependencies = self._format_bullets(step.dependencies, indent="  ")
-        validation = self._format_bullets(step.validation, indent="  ")
-        risks = self._format_bullets(step.risks, indent="  ")
-        references = self._format_bullets(step.references, indent="  ")
         return (
             f"Step {ordinal} ({step.step_id}) — {step.title}\n"
             f"Intent: {step.intent}\n"
             f"Actions:\n{actions}\n"
-            f"Files:\n{files}\n"
-            f"Dependencies:\n{dependencies}\n"
-            f"Validation:\n{validation}\n"
-            f"Risks:\n{risks}\n"
-            f"References:\n{references}"
+            f"Files:\n{files}"
         )
 
     def _format_bullets(
@@ -543,33 +451,126 @@ When you finish applying the plan:
         request: CodingAgentRequest,
         raw_output: str,
     ) -> CodingPlanExecution:
-        """Build a minimal CodingPlanExecution from free-form agent output under non-strict validation."""
-        summary_source = (raw_output or "").strip()
-        if not summary_source:
-            summary_source = (
-                f"Free-form coding agent output for goal: {self._truncate(request.goal)}"
-            )
+        """Build a best-effort CodingPlanExecution from free-form agent output."""
+        raw_text = (raw_output or "").strip()
 
-        implementation_summary = self._truncate(summary_source)
+        summary_line = ""
+        for line in raw_text.splitlines():
+            cleaned = line.strip()
+            if cleaned:
+                summary_line = cleaned
+                break
+        if not summary_line:
+            summary_line = f"Free-form coding agent output for goal: {self._truncate(request.goal, limit=200)}"
 
-        step = CodingStepReport(
-            step_id="lenient-1",
-            status=StepExecutionStatus.PARTIAL,
-            summary=self._truncate(summary_source),
-            files=tuple(),
-            commands=tuple(),
+        implementation_summary = self._truncate(summary_line, limit=800)
+
+        bullet_re = re.compile(r"^\s*(?:[-*]|•)\s+(?P<item>.+\S)\s*$")
+        numbered_re = re.compile(r"^\s*(?P<num>\d{1,2})[.)]\s*(?P<rest>.*)$")
+        step_re = re.compile(
+            r"^\s*Step\s+(?P<num>\d{1,2})\s*(?::|[.)-])\s*(?P<rest>.*)$",
+            re.I,
         )
 
+        def extract_files(text: str) -> tuple[str, ...]:
+            hits: list[str] = []
+            for match in re.finditer(r"`([^`]+)`", text):
+                token = match.group(1).strip()
+                if not token or len(token) > 256:
+                    continue
+                if "://" in token:
+                    continue
+                if "/" in token or any(
+                    token.endswith(ext)
+                    for ext in (
+                        ".py",
+                        ".md",
+                        ".toml",
+                        ".yaml",
+                        ".yml",
+                        ".json",
+                        ".txt",
+                        ".ini",
+                        ".cfg",
+                    )
+                ):
+                    hits.append(token)
+            seen: set[str] = set()
+            unique: list[str] = []
+            for item in hits:
+                if item in seen:
+                    continue
+                seen.add(item)
+                unique.append(item)
+            return tuple(unique[:20])
+
+        def parse_numbered_steps(text: str) -> list[tuple[str, list[str]]]:
+            steps: list[tuple[str, list[str]]] = []
+            current_title = ""
+            current_lines: list[str] = []
+            started = False
+            for line in text.splitlines():
+                match = numbered_re.match(line) or step_re.match(line)
+                if match:
+                    if started:
+                        steps.append((current_title.strip(), current_lines))
+                    started = True
+                    current_title = (match.group("rest") or "").strip()
+                    current_lines = []
+                    continue
+                if started:
+                    current_lines.append(line.rstrip())
+            if started:
+                steps.append((current_title.strip(), current_lines))
+            return steps
+
+        def summarise_block(title: str, body_lines: list[str]) -> str:
+            bullets = []
+            for line in body_lines:
+                match = bullet_re.match(line)
+                if match:
+                    bullets.append(match.group("item").strip())
+            if bullets:
+                return " / ".join(bullets[:6])
+            parts = [title.strip()] if title.strip() else []
+            parts.extend(line.strip() for line in body_lines if line.strip())
+            return " ".join(parts).strip()
+
+        step_reports: list[CodingStepReport] = []
+        parsed = parse_numbered_steps(raw_text) if raw_text else []
+        for idx, (title, body_lines) in enumerate(parsed[:12]):
+            block_summary = summarise_block(title, body_lines) or title.strip() or summary_line
+            block_text = "\n".join([title.strip()] + [line.rstrip() for line in body_lines]).strip()
+            step_reports.append(
+                CodingStepReport(
+                    step_id=f"freeform-{idx + 1}",
+                    status=StepExecutionStatus.PARTIAL,
+                    summary=self._truncate(block_summary, limit=800),
+                    files=extract_files(block_text),
+                    commands=tuple(),
+                )
+            )
+
+        if not step_reports:
+            step_reports = [
+                CodingStepReport(
+                    step_id="freeform-1",
+                    status=StepExecutionStatus.PARTIAL,
+                    summary=self._truncate(raw_text or summary_line, limit=800),
+                    files=extract_files(raw_text),
+                    commands=tuple(),
+                )
+            ]
+
         notes = (
-            "Coding ran in a non-strict validation mode. The full free-form output is "
-            "available via raw_output; this structured execution summary is a best-effort "
-            "synthesis.",
+            f"Coding used free-form synthesis (validation_mode={self.validation_mode!r}). "
+            "The full backend output is preserved in raw_output.",
         )
 
         return CodingPlanExecution(
             implementation_summary=implementation_summary,
             commit_message=None,
-            step_results=(step,),
+            step_results=tuple(step_reports),
             tests_executed=tuple(),
             tests_recommended=tuple(),
             follow_up_items=tuple(),

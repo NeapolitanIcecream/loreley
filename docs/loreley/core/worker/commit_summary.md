@@ -24,11 +24,10 @@ Commit summarisation utilities used by the evolution worker to derive concise gi
 ### Subject generation
 
 - **`generate(job, plan, coding)`**:
-  - Constructs a detailed prompt that includes:
+  - Constructs a concise prompt that includes:
     - The global job `goal`.
-    - Plan `summary`, `rationale`, focus metrics, guardrails, constraints, acceptance criteria, and notes.
-    - Coding execution summary, per-step outcomes (step IDs, statuses, summaries), and the list of tests executed.
-    - The coding agent's own suggested `commit_message` as a fallback hint.
+    - The coding execution summary.
+    - Up to five per-step outcomes (step IDs, statuses, summaries) when available.
   - Calls the `OpenAI` responses API with the configured model, temperature, and token limit, plus an `instructions` string that asks for a single imperative git subject bounded by `WORKER_EVOLUTION_COMMIT_SUBJECT_MAX_CHARS` (minimum 32; enforced both in the prompt and when normalising the final subject).
   - Retries up to `_max_retries` times on `OpenAIError` or `CommitSummaryError`, waiting for `retry_backoff * attempt` seconds between attempts, regardless of whether Responses or Chat Completions is selected.
   - On success, strips and normalises whitespace, then enforces the subject character limit via `_normalise_subject()`, logging the attempt count via `loguru`.
@@ -43,6 +42,6 @@ Commit summarisation utilities used by the evolution worker to derive concise gi
   - Collapses consecutive whitespace to single spaces and trims leading/trailing spaces.
   - If the cleaned subject exceeds `_subject_limit`, truncates it and appends an ellipsis to signal truncation.
 - **`_build_prompt(job, plan, coding)`** / **`_truncate(text, limit=None)`**:
-  - Internal helpers which format the rich multi-section prompt while bounding long summaries and step descriptions, ensuring that the most relevant context is preserved for the LLM.
+  - Internal helpers which format the compact prompt while bounding long summaries and step descriptions, ensuring the most relevant context is preserved for the LLM.
 
 

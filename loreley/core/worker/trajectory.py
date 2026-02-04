@@ -758,8 +758,8 @@ class _ChunkSummarizer:
                     instructions = (
                         "Summarize the evolution trajectory described by the provided step summaries.\n"
                         f"- Stay under {self._max_chars} characters.\n"
-                        "- Be concrete and faithful to the provided text; do not infer missing details.\n"
-                        "- Output plain text only (no markdown fences)."
+                        "- Be faithful to the provided text; do not add new details.\n"
+                        "- Output plain text only."
                     )
                     if self._api_spec == "responses":
                         response = self._client.responses.create(
@@ -796,10 +796,7 @@ class _ChunkSummarizer:
     def _build_prompt(step_lines: Sequence[str]) -> str:
         bullet_block = "\n".join(f"- {line}" for line in step_lines)
         prompt = f"""
-You are summarizing a fixed-size block of repository evolution steps.
-Each item is a short description of the change from a commit's parent to that commit.
-
-Step summaries (oldest -> newest):
+Summarize this block of repository evolution steps (oldest -> newest):
 {bullet_block}
 
 Return a compact summary describing the overall trajectory across these steps.

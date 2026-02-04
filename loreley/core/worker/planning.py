@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import textwrap
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -420,72 +421,29 @@ class PlanningAgent(TruncationMixin):
         )
         iteration_hint = request.iteration_hint or "None provided"
 
-        schema_contract_block = ""
-        json_requirement_line = ""
-        if self.validation_mode == "strict":
-            if self.schema_mode in ("prompt", "none"):
-                schema_json = json.dumps(
-                    PLANNING_OUTPUT_SCHEMA,
-                    ensure_ascii=True,
-                    indent=2,
-                )
-                schema_contract_block = (
-                    "\n\nOutput JSON schema contract:\n"
-                    f"{schema_json}\n"
-                )
-            json_requirement_line = (
-                "- Respond ONLY with a single JSON object that matches the expected schema. "
-                "Do NOT wrap the JSON in markdown code fences (no ``` or ```json) and do NOT "
-                "include any other text before/after the JSON."
-            )
-        elif self.validation_mode == "lenient":
-            # In lenient mode, JSON is a best-effort contract rather than a hard requirement.
-            if self.schema_mode in ("prompt", "none"):
-                schema_json = json.dumps(
-                    PLANNING_OUTPUT_SCHEMA,
-                    ensure_ascii=True,
-                    indent=2,
-                )
-                schema_contract_block = (
-                    "\n\nSuggested JSON schema (optional, best-effort):\n"
-                    f"{schema_json}\n"
-                )
-            json_requirement_line = (
-                "- Prefer returning a single JSON object that roughly follows the schema "
-                "(without markdown code fences such as ```json). Free-form text is also acceptable."
-            )
-        else:
-            # In 'none' validation mode there is no expectation about JSON structure.
-            json_requirement_line = (
-                "- Provide your answer in clear free-form text; JSON formatting is optional."
-            )
-
         cold_start_block = ""
         if request.cold_start:
             cold_start_block = (
-                "This is a cold-start seed population design run. The MAP-Elites archive\n"
-                "is currently empty. Propose diverse, high-variance initial directions\n"
-                "that all respect the global objective and constraints. Favour\n"
-                "exploration and higher-temperature behaviour.\n\n"
+                "Cold-start seed job: the MAP-Elites archive is empty, so propose diverse\n"
+                "starting directions that respect the goal and constraints.\n\n"
             )
 
         prompt = f"""
-You are the planning agent inside Loreley's autonomous evolution worker.
-Your job is to convert the available commit knowledge into a concrete, multi-step
-implementation plan that a coding agent can execute without further clarification.
+You are the planning agent inside Loreley's evolution worker.
+Produce a concise plan that a coding agent can execute.
 
 {cold_start_block}\
 
-Global objective:
+Goal:
 {request.goal.strip()}
 
-Constraints that must be respected:
+Constraints:
 {constraints}
 
-Acceptance criteria / definition of done:
+Acceptance criteria:
 {acceptance}
 
-Iteration / island hint:
+Iteration hint:
 {iteration_hint}
 
 Base commit context:
@@ -494,12 +452,9 @@ Base commit context:
 Inspiration commits:
 {insp_blocks or "None"}
 
-Deliverable requirements:
-- Produce 3-6 coherent steps with explicit actions and files to touch.
-- Reference evaluation metrics to justify why the plan should work.
-- Call out any risks, guardrails, and validation activities per step.
-{json_requirement_line}
-{schema_contract_block}
+Requested output:
+- A short free-form plan.
+- Prefer 3-6 numbered steps with clear actions and files when possible.
 """
         return textwrap.dedent(prompt).strip()
 
@@ -634,12 +589,23 @@ Deliverable requirements:
         request: PlanningAgentRequest,
         raw_output: str,
     ) -> PlanningPlan:
-        """Build a minimal PlanningPlan from free-form agent output under non-strict validation."""
-        summary_source = (raw_output or "").strip() or request.goal
-        summary = self._truncate(summary_source)
+        """Build a best-effort PlanningPlan from free-form agent output."""
+        raw_text = (raw_output or "").strip()
+        fallback_plan = raw_text or None
+
+        summary_line = ""
+        for line in raw_text.splitlines():
+            cleaned = line.strip()
+            if cleaned:
+                summary_line = cleaned
+                break
+        summary_source = summary_line or request.goal.strip()
+        summary = self._truncate(summary_source, limit=512)
+
         rationale = (
-            "Planning output could not be parsed as structured JSON or validation was disabled; "
-            "this plan was synthesised from free-form text in a non-strict validation mode."
+            "Planning output was handled as free-form text "
+            f"(validation_mode={self.validation_mode!r}); "
+            "this plan was synthesised into structured steps for downstream consumers."
         )
 
         focus_metrics = tuple(metric.name for metric in request.base.metrics)[:3]
@@ -649,25 +615,144 @@ Deliverable requirements:
             "Run the project's tests and ensure there are no regressions.",
         )
 
-        synthetic_step = PlanStep(
-            step_id="lenient-1",
-            title="Apply the free-form planning output",
-            intent="Follow the planning agent's free-form suggestions from the raw output.",
-            actions=(self._truncate(summary_source),),
-            files=tuple(),
-            dependencies=tuple(),
-            validation=validation,
-            risks=risks,
-            references=tuple(),
+        bullet_re = re.compile(r"^\s*(?:[-*]|•)\s+(?P<item>.+\S)\s*$")
+        numbered_re = re.compile(r"^\s*(?P<num>\d{1,2})[.)]\s*(?P<rest>.*)$")
+        step_re = re.compile(
+            r"^\s*Step\s+(?P<num>\d{1,2})\s*(?::|[.)-])\s*(?P<rest>.*)$",
+            re.I,
         )
+
+        def extract_files(text: str) -> tuple[str, ...]:
+            hits: list[str] = []
+            for match in re.finditer(r"`([^`]+)`", text):
+                token = match.group(1).strip()
+                if not token or len(token) > 256:
+                    continue
+                if "://" in token:
+                    continue
+                if "/" in token or any(
+                    token.endswith(ext)
+                    for ext in (
+                        ".py",
+                        ".md",
+                        ".toml",
+                        ".yaml",
+                        ".yml",
+                        ".json",
+                        ".txt",
+                        ".ini",
+                        ".cfg",
+                    )
+                ):
+                    hits.append(token)
+            seen: set[str] = set()
+            unique: list[str] = []
+            for item in hits:
+                if item in seen:
+                    continue
+                seen.add(item)
+                unique.append(item)
+            return tuple(unique[:20])
+
+        def parse_numbered_steps(text: str) -> list[tuple[str, list[str]]]:
+            steps: list[tuple[str, list[str]]] = []
+            current_title = ""
+            current_lines: list[str] = []
+            started = False
+            for line in text.splitlines():
+                match = numbered_re.match(line) or step_re.match(line)
+                if match:
+                    if started:
+                        steps.append((current_title.strip(), current_lines))
+                    started = True
+                    current_title = (match.group("rest") or "").strip()
+                    current_lines = []
+                    continue
+                if started:
+                    current_lines.append(line.rstrip())
+            if started:
+                steps.append((current_title.strip(), current_lines))
+            return steps
+
+        def build_actions(title: str, body_lines: list[str]) -> tuple[str, ...]:
+            bullets = []
+            for line in body_lines:
+                match = bullet_re.match(line)
+                if match:
+                    bullets.append(match.group("item").strip())
+            if bullets:
+                return tuple(self._truncate(item, limit=200) for item in bullets[:12])
+            cleaned_lines = []
+            if title.strip():
+                cleaned_lines.append(title.strip())
+            for line in body_lines:
+                text = line.strip()
+                if not text:
+                    continue
+                match = bullet_re.match(line)
+                if match:
+                    text = match.group("item").strip()
+                cleaned_lines.append(text)
+            cleaned_lines = [item for item in cleaned_lines if item]
+            if not cleaned_lines:
+                return (self._truncate(summary_source, limit=200),)
+            return tuple(self._truncate(item, limit=200) for item in cleaned_lines[:8])
+
+        parsed = parse_numbered_steps(raw_text) if raw_text else []
+        step_objects: list[PlanStep] = []
+        for idx, (title, body_lines) in enumerate(parsed[:6]):
+            title_candidate = title.strip()
+            if not title_candidate:
+                for line in body_lines:
+                    cleaned = line.strip()
+                    if not cleaned:
+                        continue
+                    match = bullet_re.match(cleaned)
+                    if match:
+                        cleaned = match.group("item").strip()
+                    title_candidate = cleaned
+                    break
+            title_candidate = title_candidate or f"Step {idx + 1}"
+            block_text = "\n".join([title.strip()] + [line.rstrip() for line in body_lines]).strip()
+            intent_source = " ".join(
+                part.strip()
+                for part in [title_candidate, block_text]
+                if part and part.strip()
+            )
+            step_objects.append(
+                PlanStep(
+                    step_id=f"freeform-{idx + 1}",
+                    title=self._truncate(title_candidate, limit=120),
+                    intent=self._truncate(intent_source, limit=400),
+                    actions=build_actions(title, body_lines),
+                    files=extract_files(block_text),
+                    dependencies=tuple(),
+                    validation=validation,
+                    risks=risks,
+                    references=tuple(),
+                )
+            )
+
+        if not step_objects:
+            action_text = raw_text or request.goal
+            step_objects = [
+                PlanStep(
+                    step_id="freeform-1",
+                    title="Apply the free-form planning output",
+                    intent="Follow the planning agent's free-form suggestions from the raw output.",
+                    actions=(self._truncate(action_text, limit=200),),
+                    files=extract_files(action_text),
+                    dependencies=tuple(),
+                    validation=validation,
+                    risks=risks,
+                    references=tuple(),
+                )
+            ]
 
         handoff_notes = (
-            "Planning ran in lenient validation mode. The full free-form output is "
-            "available to downstream consumers via raw_output; this structured plan is "
-            "a best-effort synthesis.",
+            f"Planning used free-form synthesis (validation_mode={self.validation_mode!r}). "
+            "Consult fallback_plan for the full text output when available.",
         )
-
-        fallback_plan = (raw_output or "").strip() or None
 
         return PlanningPlan(
             summary=summary,
@@ -676,7 +761,7 @@ Deliverable requirements:
             guardrails=guardrails,
             risks=risks,
             validation=validation,
-            steps=(synthetic_step,),
+            steps=tuple(step_objects),
             handoff_notes=handoff_notes,
             fallback_plan=fallback_plan,
         )

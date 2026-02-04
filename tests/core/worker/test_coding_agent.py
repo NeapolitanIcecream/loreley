@@ -154,7 +154,7 @@ def test_coding_agent_lenient_falls_back_to_freeform_output(tmp_path: Path, sett
     response = agent.implement(request, working_dir=tmp_path)
 
     execution = response.execution
-    assert execution.step_results[0].step_id == "lenient-1"
+    assert execution.step_results[0].step_id == "freeform-1"
     assert execution.step_results[0].status is StepExecutionStatus.PARTIAL
     assert execution.implementation_summary == "freeform output"
     assert execution.notes
@@ -193,3 +193,35 @@ def test_coding_agent_raises_when_no_changes_after_attempts(tmp_path: Path, sett
 
     with pytest.raises(CodingError):
         agent.implement(request, working_dir=tmp_path)
+
+
+def test_coding_default_validation_mode_is_none(settings: Settings) -> None:
+    assert settings.worker_coding_validation_mode == "none"
+
+
+def test_coding_prompt_is_minimal(tmp_path: Path, settings: Settings) -> None:
+    agent = CodingAgent(settings=settings, backend=_DummyBackend("ok"))
+    request = CodingAgentRequest(goal="goal", plan=_make_plan(), base_commit="abc123")
+    prompt = agent._render_prompt(request, worktree=tmp_path)  # type: ignore[attr-defined]
+
+    assert "Plan rationale" not in prompt
+    assert "Focus metrics" not in prompt
+    assert "Guardrails" not in prompt
+    assert "Plan:" in prompt
+
+
+def test_coding_agent_freeform_parses_numbered_steps(tmp_path: Path, settings: Settings, monkeypatch) -> None:
+    settings.worker_coding_validation_mode = "none"
+
+    backend = _DummyBackend("1. Update config defaults\n2. Update docs")
+    agent = CodingAgent(settings=settings, backend=backend)
+
+    states = iter([("clean",), ("dirty",)])
+    monkeypatch.setattr(agent, "_snapshot_worktree_state", lambda _w: next(states, ("dirty",)))
+    monkeypatch.setattr(agent, "_dump_debug_artifact", lambda **kwargs: None)
+
+    request = CodingAgentRequest(goal="goal", plan=_make_plan(), base_commit="abc123")
+    response = agent.implement(request, working_dir=tmp_path)
+
+    assert len(response.execution.step_results) == 2
+    assert response.execution.step_results[0].step_id == "freeform-1"

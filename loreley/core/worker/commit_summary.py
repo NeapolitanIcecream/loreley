@@ -83,7 +83,8 @@ class CommitSummarizer:
                     attempt_number = int(getattr(attempt.retry_state, "attempt_number", 0) or 0)
                     instructions = (
                         "Respond with a single concise git commit subject line "
-                        f"in imperative mood (<= {self._subject_limit} characters)."
+                        f"in imperative mood (<= {self._subject_limit} characters), "
+                        "without surrounding quotes."
                     )
                     if self._api_spec == "responses":
                         response = self._client.responses.create(
@@ -125,60 +126,27 @@ class CommitSummarizer:
         coding: CodingPlanExecution,
     ) -> str:
         goal = job.goal.strip()
-        plan_summary = plan.summary.strip()
-        plan_rationale = plan.rationale.strip()
-        step_lines = "\n".join(
+        coding_summary = coding.implementation_summary.strip()
+        if not coding_summary:
+            coding_summary = "N/A"
+        coding_summary = self._truncate(" ".join(coding_summary.split()))
+        step_items = [
             f"- {step.step_id} ({step.status.value}): {self._truncate(step.summary)}"
             for step in coding.step_results
-        ) or "- No detailed step results."
-        tests = "\n".join(f"- {item}" for item in coding.tests_executed) or "- None"
-        focus_metrics = "\n".join(f"- {metric}" for metric in plan.focus_metrics) or "- None"
-        guardrails = "\n".join(f"- {guardrail}" for guardrail in plan.guardrails) or "- None"
-        constraints = "\n".join(f"- {entry}" for entry in job.constraints) or "- None"
-        acceptance = "\n".join(f"- {entry}" for entry in job.acceptance_criteria) or "- None"
-        notes = "\n".join(f"- {entry}" for entry in job.notes) or "- None"
-        coding_summary = coding.implementation_summary.strip()
-        fallback_commit_message = (coding.commit_message or "").strip() or "N/A"
+        ]
+        step_lines = "\n".join(step_items[:5]) if step_items else "- None"
 
         prompt = f"""
 You generate precise git commit subjects for an autonomous evolution worker.
-Summaries must stay under {self._subject_limit} characters and follow imperative mood.
 
-Global goal:
+Goal:
 {goal}
 
-Plan summary:
-{plan_summary}
-
-Plan rationale:
-{plan_rationale}
-
-Plan focus metrics:
-{focus_metrics}
-
-Plan guardrails:
-{guardrails}
-
-Constraints to respect:
-{constraints}
-
-Acceptance criteria:
-{acceptance}
-
-Worker notes:
-{notes}
-
-Coding execution summary:
+Coding summary:
 {coding_summary}
 
 Step outcomes:
 {step_lines}
-
-Tests executed:
-{tests}
-
-Coding agent suggested commit message:
-{fallback_commit_message}
 
 Respond with a single subject line without surrounding quotes.
 """

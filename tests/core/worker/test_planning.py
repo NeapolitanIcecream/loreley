@@ -144,7 +144,7 @@ def test_coerce_plan_from_invocation_lenient_falls_back_to_freeform(settings: Se
     assert plan.summary == "freeform output that is not json"
     assert plan.guardrails == ("guard",)
     assert plan.validation == ("verify",)
-    assert plan.steps[0].step_id == "lenient-1"
+    assert plan.steps[0].step_id == "freeform-1"
     assert plan.handoff_notes
 
 
@@ -161,3 +161,34 @@ def test_build_plan_from_freeform_uses_goal_when_output_empty(settings: Settings
     assert plan.summary == "Ship the feature"
     assert plan.validation == ("verify",)
     assert plan.guardrails == ("guard",)
+
+
+def test_build_plan_from_freeform_parses_numbered_steps(settings: Settings) -> None:
+    settings.worker_planning_validation_mode = "none"
+    agent = PlanningAgent(settings=settings, backend=_DummyBackend())
+    request = _make_request("Goal")
+    raw = "1. Update defaults\n- Set validation_mode to none\n\n2. Tighten docs\n- Remove JSON schema blocks"
+
+    plan = agent._build_plan_from_freeform_output(  # type: ignore[attr-defined]
+        request=request,
+        raw_output=raw,
+    )
+
+    assert len(plan.steps) == 2
+    assert plan.steps[0].step_id == "freeform-1"
+    assert plan.steps[0].title == "Update defaults"
+    assert "Set validation_mode to none" in plan.steps[0].actions
+
+
+def test_planning_default_validation_mode_is_none(settings: Settings) -> None:
+    assert settings.worker_planning_validation_mode == "none"
+
+
+def test_planning_prompt_is_minimal(settings: Settings) -> None:
+    agent = PlanningAgent(settings=settings, backend=_DummyBackend())
+    request = _make_request("Improve docs")
+    prompt = agent._render_prompt(request)  # type: ignore[attr-defined]
+
+    assert "Output JSON schema" not in prompt
+    assert "Call out any risks" not in prompt
+    assert "Requested output" in prompt
