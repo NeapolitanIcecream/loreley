@@ -12,6 +12,9 @@ class TestSettings(Settings):
     disables `env_file` loading and relies on environment variables only.
     """
 
+    # Prevent pytest from attempting to collect this as a test class.
+    __test__ = False
+
     model_config = SettingsConfigDict(
         env_file=None,
         env_file_encoding="utf-8",
