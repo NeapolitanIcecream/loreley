@@ -3,20 +3,12 @@ from __future__ import annotations
 from loreley.core.worker.agent.contracts import (
     AgentBackend,
     AgentInvocation,
-    SchemaMode,
-    StructuredAgentTask,
-    ValidationMode,
+    AgentTask,
 )
 from loreley.core.worker.agent.loader import load_agent_backend
-from loreley.core.worker.agent.runner import (
-    build_structured_agent_task,
-    coerce_structured_output,
-    run_structured_agent_task,
-)
+from loreley.core.worker.agent.runner import run_agent_task
 from loreley.core.worker.agent.utils import (
     TruncationMixin,
-    materialise_schema_to_temp,
-    resolve_schema_mode,
     resolve_worker_debug_dir,
     truncate_text,
     validate_workdir,
@@ -25,17 +17,11 @@ from loreley.core.worker.agent.utils import (
 __all__ = [
     "AgentBackend",
     "AgentInvocation",
-    "SchemaMode",
-    "StructuredAgentTask",
+    "AgentTask",
     "TruncationMixin",
-    "ValidationMode",
-    "build_structured_agent_task",
-    "coerce_structured_output",
     "load_agent_backend",
-    "materialise_schema_to_temp",
-    "resolve_schema_mode",
     "resolve_worker_debug_dir",
-    "run_structured_agent_task",
+    "run_agent_task",
     "truncate_text",
     "validate_workdir",
 ]

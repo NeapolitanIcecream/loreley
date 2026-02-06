@@ -1,44 +1,13 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
 
 from loreley.config import Settings
 from loreley.core.worker.agent import AgentInvocation
-from loreley.core.worker.coding import (
-    CodingAgent,
-    CodingAgentRequest,
-    CodingError,
-    StepExecutionStatus,
-)
-from loreley.core.worker.planning import PlanStep, PlanningPlan
-
-
-def _make_plan() -> PlanningPlan:
-    step = PlanStep(
-        step_id="s1",
-        title="Implement feature",
-        intent="Do work",
-        actions=("edit files",),
-        files=("file.py",),
-        dependencies=(),
-        validation=("tests pass",),
-        risks=("bug",),
-        references=("link",),
-    )
-    return PlanningPlan(
-        summary="summary",
-        rationale="rationale",
-        focus_metrics=("speed",),
-        guardrails=("guard",),
-        risks=("risk1",),
-        validation=("validate",),
-        steps=(step,),
-        handoff_notes=(),
-        fallback_plan=None,
-    )
+from loreley.core.worker.coding import CodingAgent, CodingAgentRequest, CodingError
+from loreley.core.worker.planning import PlanDocument
 
 
 class _DummyBackend:
@@ -46,7 +15,7 @@ class _DummyBackend:
         self.stdout = stdout
         self.calls: list[tuple[object, Path]] = []
 
-    def run(self, task, working_dir):  # noqa: ANN001
+    def run(self, task, *, working_dir: Path) -> AgentInvocation:  # noqa: ANN001
         self.calls.append((task, working_dir))
         return AgentInvocation(
             command=("dummy",),
@@ -56,138 +25,64 @@ class _DummyBackend:
         )
 
 
-def test_coding_agent_implements_plan_with_strict_validation(tmp_path: Path, settings: Settings, monkeypatch) -> None:
-    settings.worker_coding_validation_mode = "strict"
+def _make_plan() -> PlanDocument:
+    return PlanDocument(
+        summary="plan summary",
+        markdown="""## Summary
+- Do the thing.
 
-    payload = {
-        "implementation_summary": "done",
-        "commit_message": "message",
-        "step_results": [
-            {
-                "step_id": "s1",
-                "status": StepExecutionStatus.COMPLETED.value,
-                "summary": "ok",
-                "files": ["file.py"],
-                "commands": ["cmd"],
-            }
-        ],
-        "tests_executed": ["pytest"],
-        "tests_recommended": ["tox"],
-        "follow_up_items": ["docs"],
-        "notes": ["note"],
-    }
+## Steps
+1. Edit `file.py`
+""",
+        focus_metrics=(),
+        guardrails=("guard",),
+    )
 
-    backend = _DummyBackend(json.dumps(payload))
+
+def test_coding_agent_returns_report_and_extracts_commit_message(
+    tmp_path: Path,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = _DummyBackend(
+        """## Summary
+- Implemented the change.
+
+## Commit message
+Add the change
+
+## Changes
+- Updated `file.py`
+"""
+    )
     agent = CodingAgent(settings=settings, backend=backend)
 
     states = iter([("clean",), ("dirty",)])
-
-    def fake_snapshot(_worktree: Path) -> tuple[str, ...]:
-        try:
-            return next(states)
-        except StopIteration:
-            return ("dirty",)
-
-    monkeypatch.setattr(agent, "_snapshot_worktree_state", fake_snapshot)
-    monkeypatch.setattr(agent, "_dump_debug_artifact", lambda **kwargs: None)
+    monkeypatch.setattr(agent, "_snapshot_worktree_state", lambda _w: next(states, ("dirty",)))
+    monkeypatch.setattr(agent, "_dump_debug_artifact", lambda **_kwargs: None)
 
     request = CodingAgentRequest(goal="goal", plan=_make_plan(), base_commit="abc123")
-
     response = agent.implement(request, working_dir=tmp_path)
 
-    assert response.execution.implementation_summary == "done"
-    assert response.execution.commit_message == "message"
-    assert response.execution.step_results[0].status is StepExecutionStatus.COMPLETED
+    assert response.report.summary.startswith("Implemented")
+    assert response.report.commit_message == "Add the change"
+    assert response.raw_output.strip().startswith("## Summary")
     assert response.command == ("dummy",)
     assert response.attempts == 1
     assert backend.calls
 
 
-def test_coding_agent_strict_strips_markdown_fences(tmp_path: Path, settings: Settings, monkeypatch) -> None:
-    settings.worker_coding_validation_mode = "strict"
-
-    payload = {
-        "implementation_summary": "done",
-        "commit_message": "message",
-        "step_results": [
-            {
-                "step_id": "s1",
-                "status": StepExecutionStatus.COMPLETED.value,
-                "summary": "ok",
-                "files": ["file.py"],
-                "commands": ["cmd"],
-            }
-        ],
-        "tests_executed": ["pytest"],
-        "tests_recommended": ["tox"],
-        "follow_up_items": ["docs"],
-        "notes": ["note"],
-    }
-
-    fenced = f"```json\n{json.dumps(payload)}\n```"
-    backend = _DummyBackend(fenced)
-    agent = CodingAgent(settings=settings, backend=backend)
-
-    states = iter([("clean",), ("dirty",)])
-    monkeypatch.setattr(agent, "_snapshot_worktree_state", lambda _w: next(states, ("dirty",)))
-    monkeypatch.setattr(agent, "_dump_debug_artifact", lambda **kwargs: None)
-
-    request = CodingAgentRequest(goal="goal", plan=_make_plan(), base_commit="abc123")
-    response = agent.implement(request, working_dir=tmp_path)
-
-    assert response.execution.implementation_summary == "done"
-    assert response.execution.commit_message == "message"
-    assert response.execution.step_results[0].status is StepExecutionStatus.COMPLETED
-
-
-def test_coding_agent_lenient_falls_back_to_freeform_output(tmp_path: Path, settings: Settings, monkeypatch) -> None:
-    settings.worker_coding_validation_mode = "lenient"
-
-    backend = _DummyBackend("  freeform output  ")
-    agent = CodingAgent(settings=settings, backend=backend)
-
-    states = iter([("clean",), ("dirty",)])
-    monkeypatch.setattr(agent, "_snapshot_worktree_state", lambda _w: next(states, ("dirty",)))
-    monkeypatch.setattr(agent, "_dump_debug_artifact", lambda **kwargs: None)
-
-    request = CodingAgentRequest(goal="goal", plan=_make_plan(), base_commit="abc123")
-    response = agent.implement(request, working_dir=tmp_path)
-
-    execution = response.execution
-    assert execution.step_results[0].step_id == "freeform-1"
-    assert execution.step_results[0].status is StepExecutionStatus.PARTIAL
-    assert execution.implementation_summary == "freeform output"
-    assert execution.notes
-    assert response.raw_output.strip() == "freeform output"
-
-
-def test_coding_agent_raises_when_no_changes_after_attempts(tmp_path: Path, settings: Settings, monkeypatch) -> None:
-    settings.worker_coding_validation_mode = "strict"
+def test_coding_agent_raises_when_no_changes_after_attempts(
+    tmp_path: Path,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     settings.worker_coding_max_attempts = 2
-
-    payload = {
-        "implementation_summary": "done",
-        "commit_message": None,
-        "step_results": [
-            {
-                "step_id": "s1",
-                "status": StepExecutionStatus.COMPLETED.value,
-                "summary": "ok",
-                "files": [],
-                "commands": [],
-            }
-        ],
-        "tests_executed": [],
-        "tests_recommended": [],
-        "follow_up_items": [],
-        "notes": [],
-    }
-
-    backend = _DummyBackend(json.dumps(payload))
+    backend = _DummyBackend("## Summary\n- Did nothing.\n")
     agent = CodingAgent(settings=settings, backend=backend)
 
     monkeypatch.setattr(agent, "_snapshot_worktree_state", lambda _w: ("same",))
-    monkeypatch.setattr(agent, "_dump_debug_artifact", lambda **kwargs: None)
+    monkeypatch.setattr(agent, "_dump_debug_artifact", lambda **_kwargs: None)
 
     request = CodingAgentRequest(goal="goal", plan=_make_plan(), base_commit="abc123")
 
@@ -195,33 +90,12 @@ def test_coding_agent_raises_when_no_changes_after_attempts(tmp_path: Path, sett
         agent.implement(request, working_dir=tmp_path)
 
 
-def test_coding_default_validation_mode_is_none(settings: Settings) -> None:
-    assert settings.worker_coding_validation_mode == "none"
-
-
-def test_coding_prompt_is_minimal(tmp_path: Path, settings: Settings) -> None:
+def test_coding_prompt_includes_markdown_contract(tmp_path: Path, settings: Settings) -> None:
     agent = CodingAgent(settings=settings, backend=_DummyBackend("ok"))
     request = CodingAgentRequest(goal="goal", plan=_make_plan(), base_commit="abc123")
     prompt = agent._render_prompt(request, worktree=tmp_path)  # type: ignore[attr-defined]
 
-    assert "Plan rationale" not in prompt
-    assert "Focus metrics" not in prompt
-    assert "Guardrails" not in prompt
-    assert "Plan:" in prompt
+    assert "Plan (Markdown):" in prompt
+    assert "Output requirements:" in prompt
+    assert "Commit message" in prompt
 
-
-def test_coding_agent_freeform_parses_numbered_steps(tmp_path: Path, settings: Settings, monkeypatch) -> None:
-    settings.worker_coding_validation_mode = "none"
-
-    backend = _DummyBackend("1. Update config defaults\n2. Update docs")
-    agent = CodingAgent(settings=settings, backend=backend)
-
-    states = iter([("clean",), ("dirty",)])
-    monkeypatch.setattr(agent, "_snapshot_worktree_state", lambda _w: next(states, ("dirty",)))
-    monkeypatch.setattr(agent, "_dump_debug_artifact", lambda **kwargs: None)
-
-    request = CodingAgentRequest(goal="goal", plan=_make_plan(), base_commit="abc123")
-    response = agent.implement(request, working_dir=tmp_path)
-
-    assert len(response.execution.step_results) == 2
-    assert response.execution.step_results[0].step_id == "freeform-1"

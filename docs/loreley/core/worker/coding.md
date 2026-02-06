@@ -4,34 +4,27 @@ Execution engine for Loreley's autonomous worker, responsible for driving the Co
 
 ## Domain types
 
-- **`CodingError`**: custom runtime error raised when the coding agent cannot successfully execute the plan (invalid schema, Codex failures, bad working directory, timeouts, etc.).
-- **`StepExecutionStatus`**: string `Enum` describing how each plan step was handled (`"completed"`, `"partial"`, or `"skipped"`).
-- **`CodingStepReport`**: dataclass capturing the outcome of a single step (`step_id`, `status`, human-readable `summary`, and optional `files` / `commands` touched by that step).
-- **`CodingPlanExecution`**: aggregate result for the whole run, including the overall `implementation_summary`, optional `commit_message`, tuple of `step_results`, `tests_executed`, `tests_recommended`, `follow_up_items`, and `notes`.
-- **`CodingAgentRequest`**: input payload given to the coding agent (`goal`, `plan` from `PlanningPlan`, `base_commit`, optional `constraints`, `acceptance_criteria`, `iteration_hint`, and `additional_notes`); the `goal` is the same global evolution objective that the planning agent sees, resolved by the evolution worker from either explicit job row fields (for example `EvolutionJob.goal`) or `Settings.worker_evolution_global_goal`. All sequence fields are normalised to tuples in `__post_init__`.
-- **`CodingAgentResponse`**: envelope returned from the agent combining the structured `execution`, raw backend `raw_output`, rendered `prompt`, executed backend `command`, captured `stderr`, number of `attempts`, and total `duration_seconds`.
+- **`CodingError`**: custom runtime error raised when the coding agent cannot successfully execute the plan (backend failures, bad working directory, timeouts, etc.).
+- **`ExecutionReport`**: Markdown execution report emitted by the backend (`summary`, full `markdown`, optional `commit_message`).
+- **`CodingAgentRequest`**: input payload given to the coding agent (`goal`, `plan` from `PlanDocument`, `base_commit`, optional `constraints`, `acceptance_criteria`, `iteration_hint`, and `additional_notes`); the `goal` is the same global evolution objective that the planning agent sees, resolved by the evolution worker from either explicit job row fields (for example `EvolutionJob.goal`) or `Settings.worker_evolution_global_goal`. All sequence fields are normalised to tuples in `__post_init__`.
+- **`CodingAgentResponse`**: envelope returned from the agent combining the `report`, raw backend `raw_output`, rendered `prompt`, executed backend `command`, captured `stderr`, number of `attempts`, and total `duration_seconds`.
 
-## JSON schema and validation
+## Markdown contract
 
-- **`CODING_OUTPUT_SCHEMA`**: JSON schema describing the expected coding agent output (top-level `implementation_summary`, optional `commit_message`, array of `step_results`, plus optional `tests_executed`, `tests_recommended`, `follow_up_items`, and `notes`), used to validate the backend response.
-- **`_StepResultModel`** / **`_CodingOutputModel`**: internal frozen `pydantic` models that validate the JSON payload against `CODING_OUTPUT_SCHEMA` and provide a typed bridge into the domain dataclasses.
-- **Agent backend**: coding relies on `loreley.core.worker.agent` for shared backend abstractions (`AgentBackend`, `StructuredAgentTask`, `AgentInvocation`) and shared orchestration utilities; built-in CLI backends live under `loreley.core.worker.agent.backends`. See `loreley.core.worker.agent` for contracts and helpers, and `loreley.core.worker.agent.backends` for built-in backend implementations.
+- Coding relies on `loreley.core.worker.agent` for shared backend abstractions (`AgentBackend`, `AgentTask`, `AgentInvocation`) and a shared retry loop (`run_agent_task()`).
+- Backends return plain-text output (typically Markdown). The worker requests a simple Markdown structure (Summary / Changes / Tests) and extracts a short summary and an optional commit message on a best-effort basis.
 
 ## Coding agent
 
-- **`CodingAgent`**: high-level orchestrator that turns a `CodingAgentRequest` and `PlanningPlan` into a sequence of edits via a configurable backend.
-  - Instantiated with a `Settings` object and an optional `AgentBackend` implementation. When no backend is provided, it uses `CodexCliBackend` configured via `WORKER_CODING_CODEX_BIN`, `WORKER_CODING_CODEX_PROFILE`, `WORKER_CODING_MAX_ATTEMPTS`, `WORKER_CODING_TIMEOUT_SECONDS`, `WORKER_CODING_EXTRA_ENV`, `WORKER_CODING_SCHEMA_PATH`, and `WORKER_CODING_VALIDATION_MODE`. You can override the default by setting `WORKER_CODING_BACKEND` to a dotted Python path (`module:attr` or `module.attr`) that resolves to either an `AgentBackend` instance, a class implementing the `AgentBackend` protocol (constructed with no arguments), or a factory callable that returns such an instance.
-  - **`implement(request, *, working_dir)`**: resolves the git worktree path, renders a concise prompt describing the goal, base commit, and planning summary/steps, builds a `StructuredAgentTask` whose schema usage depends on `WORKER_CODING_VALIDATION_MODE` (via `build_structured_agent_task()`), and asks the backend to execute it using the shared retry loop (`run_structured_agent_task()`) (for `CodexCliBackend` this means `codex exec --full-auto`):
-    - In `"strict"` mode, the coding JSON schema is passed to the backend (using Codex's native schema support when available), and the response must parse cleanly as `_CodingOutputModel` or the agent will retry and eventually fail.
-    - In `"lenient"` mode, the same schema is still provided to the backend, but JSON decoding / validation failures are treated as non-fatal: the agent first attempts to parse the response into `_CodingOutputModel`, and on failure synthesises a minimal `CodingPlanExecution` from the free-form output.
-    - In `"none"` mode (default), no schema is enforced at the backend level and the agent skips JSON parsing entirely, always building a minimal `CodingPlanExecution` directly from the raw free-form output and job context.
-  - Retries the backend invocation up to `max_attempts` times when the process fails or, in strict/lenient modes, when JSON decoding / schema validation errors occur, logging warnings via `loguru` and showing concise progress output with `rich`.
-  - On success, either parses JSON into `_CodingOutputModel` and converts it into a `CodingPlanExecution`, or (for lenient/none modes when parsing is not possible) returns a best-effort synthetic `CodingPlanExecution`; on repeated failure or timeout, raises `CodingError` with a descriptive message.
+- **`CodingAgent`**: high-level orchestrator that turns a `CodingAgentRequest` and a `PlanDocument` into a sequence of edits via a configurable backend.
+  - Instantiated with a `Settings` object and an optional `AgentBackend` implementation. When no backend is provided, it uses `CodexCliBackend` configured via `WORKER_CODING_CODEX_BIN`, `WORKER_CODING_CODEX_PROFILE`, `WORKER_CODING_MAX_ATTEMPTS`, `WORKER_CODING_TIMEOUT_SECONDS`, and `WORKER_CODING_EXTRA_ENV`. You can override the default by setting `WORKER_CODING_BACKEND` to a dotted Python path (`module:attr` or `module.attr`) that resolves to either an `AgentBackend` instance, a class implementing the `AgentBackend` protocol (constructed with no arguments), or a factory callable that returns such an instance.
+  - **`implement(request, *, working_dir)`**: resolves the git worktree path, renders a concise prompt describing the goal, base commit, and plan Markdown, asks the backend to apply the changes, and wraps the output as an `ExecutionReport`.
+  - Retries the backend invocation up to `max_attempts` times when process-level `CodingError` issues occur, logging warnings via `loguru` and showing concise progress output with `rich`.
   - Detects and treats a run that leaves the worktree unchanged as a failure, persisting debug artifacts and retrying until attempts are exhausted.
   - Merges any configured extra environment variables into the backend subprocess environment and enforces bounded prompt and log sizes via `_truncate`.
 
 ## Exceptions and helpers
 
-- **`_parse_output()`**, **`_log_invalid_output()`**, **`_to_domain()`**, **`_format_plan_step()`**, **`_format_bullets()`**, and **`_truncate()`**: utilities that format human-readable prompt sections, enforce length limits, convert the raw JSON model into domain types, and provide rich logging when backend output cannot be validated.
-  Debug artifacts are written under `logs/worker/coding`, including the effective `schema_mode` and `validation_mode` used for each run.
+- **`_extract_summary()`**, **`_extract_commit_message()`**, and **`_truncate()`**: utilities that keep prompts bounded and extract best-effort structured fields from Markdown output.
+  Debug artifacts are written under `logs/<experiment_namespace>/worker/coding` (or `logs/worker/coding` when no experiment namespace is available).
 

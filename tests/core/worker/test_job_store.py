@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -11,9 +12,7 @@ import loreley.core.worker.job_store as job_store
 from loreley.config import Settings
 from loreley.core.worker.coding import (
     CodingAgentResponse,
-    CodingPlanExecution,
-    CodingStepReport,
-    StepExecutionStatus,
+    ExecutionReport,
 )
 from loreley.core.worker.evaluator import EvaluationMetric, EvaluationResult
 from loreley.core.worker.evolution import JobContext
@@ -21,7 +20,7 @@ from loreley.core.worker.job_store import (
     EvolutionJobStore,
     JobPreconditionError,
 )
-from loreley.core.worker.planning import PlanStep, PlanningAgentResponse, PlanningPlan
+from loreley.core.worker.planning import PlanDocument, PlanningAgentResponse
 from loreley.db.models import EvolutionJob, JobStatus
 
 
@@ -209,27 +208,11 @@ def test_persist_success_updates_job_and_records_metadata(
     monkeypatch.setattr(job_store, "session_scope", fake_scope)
     store = EvolutionJobStore(settings=settings)
 
-    plan_step = PlanStep(
-        step_id="s1",
-        title="t",
-        intent="i",
-        actions=("a",),
-        files=(),
-        dependencies=(),
-        validation=("v",),
-        risks=(),
-        references=(),
-    )
-    plan = PlanningPlan(
+    plan = PlanDocument(
         summary="plan",
-        rationale="r",
+        markdown="## Summary\n- plan\n",
         focus_metrics=("f",),
         guardrails=("g",),
-        risks=("r1",),
-        validation=("v",),
-        steps=(plan_step,),
-        handoff_notes=(),
-        fallback_plan=None,
     )
     plan_response = PlanningAgentResponse(
         plan=plan,
@@ -240,24 +223,13 @@ def test_persist_success_updates_job_and_records_metadata(
         attempts=1,
         duration_seconds=1.0,
     )
-    step_report = CodingStepReport(
-        step_id="s1",
-        status=StepExecutionStatus.COMPLETED,
-        summary="ok",
-        files=(),
-        commands=(),
-    )
-    execution = CodingPlanExecution(
-        implementation_summary="impl",
+    report = ExecutionReport(
+        summary="impl",
+        markdown="## Summary\n- impl\n",
         commit_message="msg",
-        step_results=(step_report,),
-        tests_executed=(),
-        tests_recommended=(),
-        follow_up_items=(),
-        notes=(),
     )
     coding_response = CodingAgentResponse(
-        execution=execution,
+        report=report,
         raw_output="raw",
         prompt="p",
         command=("cmd",),
@@ -295,7 +267,7 @@ def test_persist_success_updates_job_and_records_metadata(
         plan=plan_response,
         coding=coding_response,
         evaluation=evaluation,
-        worktree=".",  # dummy path; artifacts/git diff are best-effort in tests
+        worktree=Path("."),  # dummy path; artifacts/git diff are best-effort in tests
         commit_hash="newcommit",
         commit_message="msg",
     )

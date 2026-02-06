@@ -11,8 +11,8 @@ from tenacity import RetryError
 
 from loreley.config import Settings, get_settings
 from loreley.core.openai_retry import openai_retrying, retry_error_details
-from loreley.core.worker.coding import CodingPlanExecution
-from loreley.core.worker.planning import PlanningPlan
+from loreley.core.worker.coding import ExecutionReport
+from loreley.core.worker.planning import PlanDocument
 
 if TYPE_CHECKING:
     from loreley.core.worker.evolution import JobContext
@@ -33,7 +33,7 @@ class CommitSummarizer:
         self,
         *,
         settings: Settings | None = None,
-        client: OpenAI | None = None,
+        client: Any | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         if client is not None:
@@ -65,8 +65,8 @@ class CommitSummarizer:
         self,
         *,
         job: JobContext,
-        plan: PlanningPlan,
-        coding: CodingPlanExecution,
+        plan: PlanDocument,
+        coding: ExecutionReport,
     ) -> str:
         """Return a commit subject line grounded in plan and coding context."""
         prompt = self._build_prompt(job=job, plan=plan, coding=coding)
@@ -122,19 +122,16 @@ class CommitSummarizer:
         self,
         *,
         job: JobContext,
-        plan: PlanningPlan,
-        coding: CodingPlanExecution,
+        plan: PlanDocument,
+        coding: ExecutionReport,
     ) -> str:
         goal = job.goal.strip()
-        coding_summary = coding.implementation_summary.strip()
+        plan_summary = (plan.summary or "").strip() or "N/A"
+        coding_summary = (coding.summary or "").strip()
         if not coding_summary:
             coding_summary = "N/A"
         coding_summary = self._truncate(" ".join(coding_summary.split()))
-        step_items = [
-            f"- {step.step_id} ({step.status.value}): {self._truncate(step.summary)}"
-            for step in coding.step_results
-        ]
-        step_lines = "\n".join(step_items[:5]) if step_items else "- None"
+        report_excerpt = self._truncate(" ".join((coding.markdown or "").split()), limit=1200) or "N/A"
 
         prompt = f"""
 You generate precise git commit subjects for an autonomous evolution worker.
@@ -142,11 +139,14 @@ You generate precise git commit subjects for an autonomous evolution worker.
 Goal:
 {goal}
 
+Plan summary:
+{plan_summary}
+
 Coding summary:
 {coding_summary}
 
-Step outcomes:
-{step_lines}
+Coding report (excerpt):
+{report_excerpt}
 
 Respond with a single subject line without surrounding quotes.
 """

@@ -8,8 +8,8 @@ from time import monotonic
 
 from loguru import logger
 
-from loreley.core.worker.agent.contracts import AgentInvocation, StructuredAgentTask
-from loreley.core.worker.agent.utils import materialise_schema_to_temp, validate_workdir
+from loreley.core.worker.agent.contracts import AgentInvocation, AgentTask
+from loreley.core.worker.agent.utils import validate_workdir
 
 log = logger.bind(module="worker.agent.backends.codex_cli")
 
@@ -22,13 +22,12 @@ class CodexCliBackend:
     profile: str | None
     timeout_seconds: int
     extra_env: dict[str, str]
-    schema_override: str | None
     error_cls: type[RuntimeError]
     full_auto: bool = False
 
     def run(
         self,
-        task: StructuredAgentTask,
+        task: AgentTask,
         *,
         working_dir: Path,
     ) -> AgentInvocation:
@@ -41,30 +40,6 @@ class CodexCliBackend:
         command: list[str] = [self.bin, "exec"]
         if self.full_auto:
             command.append("--full-auto")
-
-        schema_path: Path | None = None
-        cleanup_path: Path | None = None
-
-        if task.schema_mode == "native":
-            if self.schema_override:
-                path = Path(self.schema_override).expanduser().resolve()
-                if not path.exists():
-                    raise self.error_cls(
-                        f"Configured agent schema {path} does not exist.",
-                    )
-                schema_path = path
-            else:
-                if not task.schema:
-                    raise self.error_cls(
-                        "Schema mode 'native' requires an output schema definition.",
-                    )
-                schema_path = materialise_schema_to_temp(
-                    task.schema,
-                    error_cls=self.error_cls,
-                )
-                cleanup_path = schema_path
-
-            command.extend(["--output-schema", str(schema_path)])
 
         if self.profile:
             command.extend(["--profile", self.profile])
@@ -94,9 +69,6 @@ class CodexCliBackend:
             raise self.error_cls(
                 f"codex exec timed out after {self.timeout_seconds}s.",
             ) from exc
-        finally:
-            if cleanup_path is not None:
-                cleanup_path.unlink(missing_ok=True)
 
         duration = monotonic() - start
         stdout = (result.stdout or "").strip()

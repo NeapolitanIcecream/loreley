@@ -189,10 +189,6 @@ class Settings(BaseSettings):
         default_factory=dict,
         alias="WORKER_PLANNING_EXTRA_ENV",
     )
-    worker_planning_schema_path: str | None = Field(
-        default=None,
-        alias="WORKER_PLANNING_SCHEMA_PATH",
-    )
     worker_coding_codex_bin: str = Field(
         default="codex",
         alias="WORKER_CODING_CODEX_BIN",
@@ -213,10 +209,6 @@ class Settings(BaseSettings):
         default_factory=dict,
         alias="WORKER_CODING_EXTRA_ENV",
     )
-    worker_coding_schema_path: str | None = Field(
-        default=None,
-        alias="WORKER_CODING_SCHEMA_PATH",
-    )
     worker_planning_backend: str | None = Field(
         default=None,
         alias="WORKER_PLANNING_BACKEND",
@@ -232,32 +224,6 @@ class Settings(BaseSettings):
     worker_cursor_force: bool = Field(
         default=True,
         alias="WORKER_CURSOR_FORCE",
-    )
-    worker_planning_codex_schema_mode: Literal[
-        "auto",
-        "native",
-        "prompt",
-        "none",
-    ] = Field(
-        default="auto",
-        alias="WORKER_PLANNING_CODEX_SCHEMA_MODE",
-    )
-    worker_planning_validation_mode: Literal["strict", "lenient", "none"] = Field(
-        default="none",
-        alias="WORKER_PLANNING_VALIDATION_MODE",
-    )
-    worker_coding_codex_schema_mode: Literal[
-        "auto",
-        "native",
-        "prompt",
-        "none",
-    ] = Field(
-        default="auto",
-        alias="WORKER_CODING_CODEX_SCHEMA_MODE",
-    )
-    worker_coding_validation_mode: Literal["strict", "lenient", "none"] = Field(
-        default="none",
-        alias="WORKER_CODING_VALIDATION_MODE",
     )
     worker_evaluator_plugin: str | None = Field(
         default=None,

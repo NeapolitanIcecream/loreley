@@ -1,70 +1,21 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from typing import Any, Callable, TypeVar
+from typing import Callable, TypeVar
 
 from loreley.core.worker.agent.contracts import (
     AgentBackend,
     AgentInvocation,
-    SchemaMode,
-    StructuredAgentTask,
-    ValidationMode,
+    AgentTask,
 )
 
 ParsedT = TypeVar("ParsedT")
 
 
-def build_structured_agent_task(
-    *,
-    name: str,
-    prompt: str,
-    schema: dict[str, Any] | None,
-    schema_mode: SchemaMode,
-    validation_mode: ValidationMode,
-) -> StructuredAgentTask:
-    """Build a StructuredAgentTask whose schema enforcement matches the validation mode."""
-    if validation_mode in ("strict", "lenient"):
-        return StructuredAgentTask(
-            name=name,
-            prompt=prompt,
-            schema=schema,
-            schema_mode=schema_mode,
-        )
-    return StructuredAgentTask(
-        name=name,
-        prompt=prompt,
-        schema=None,
-        schema_mode="none",
-    )
-
-
-def coerce_structured_output(
-    *,
-    validation_mode: ValidationMode,
-    stdout: str,
-    parse: Callable[[str], ParsedT],
-    build_from_freeform: Callable[[str], ParsedT],
-    on_parse_error: Callable[[Exception], None] | None = None,
-    parse_exceptions: tuple[type[Exception], ...] = (json.JSONDecodeError,),
-) -> ParsedT:
-    """Coerce backend stdout into a structured value, honouring the validation mode."""
-    if validation_mode == "strict":
-        return parse(stdout)
-    if validation_mode == "lenient":
-        try:
-            return parse(stdout)
-        except parse_exceptions as exc:
-            if on_parse_error is not None:
-                on_parse_error(exc)
-            return build_from_freeform(stdout)
-    return build_from_freeform(stdout)
-
-
-def run_structured_agent_task(
+def run_agent_task(
     *,
     backend: AgentBackend,
-    task: StructuredAgentTask,
+    task: AgentTask,
     working_dir: Path,
     max_attempts: int,
     coerce_result: Callable[[AgentInvocation], ParsedT],
@@ -78,7 +29,7 @@ def run_structured_agent_task(
     on_attempt_retry: Callable[[int, int, Exception], None] | None = None,
     post_check: Callable[[AgentInvocation, ParsedT], Exception | None] | None = None,
 ) -> tuple[ParsedT, AgentInvocation, int]:
-    """Run a structured agent task with retries, optional post-check, and debug hooks."""
+    """Run an agent task with retries, optional post-check, and debug hooks."""
     last_error: Exception | None = None
     attempts = max(1, int(max_attempts))
     for attempt in range(1, attempts + 1):
@@ -118,8 +69,6 @@ def run_structured_agent_task(
 
 
 __all__ = [
-    "build_structured_agent_task",
-    "coerce_structured_output",
-    "run_structured_agent_task",
+    "run_agent_task",
 ]
 

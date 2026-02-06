@@ -9,7 +9,7 @@ from time import monotonic
 from loguru import logger
 
 from loreley.config import get_settings
-from loreley.core.worker.agent.contracts import AgentInvocation, StructuredAgentTask
+from loreley.core.worker.agent.contracts import AgentInvocation, AgentTask
 from loreley.core.worker.agent.utils import validate_workdir
 
 log = logger.bind(module="worker.agent.backends.cursor_cli")
@@ -22,9 +22,7 @@ class CursorCliBackend:
     """AgentBackend implementation that delegates to the Cursor Agent CLI.
 
     This backend runs ``cursor-agent`` in non-interactive mode, forwarding the
-    structured prompt via ``-p`` and capturing plain-text output. It relies on
-    prompt engineering (rather than a native JSON schema API) to obtain
-    structured JSON results.
+    prompt via ``-p`` and capturing plain-text (typically Markdown) output.
     """
 
     bin: str = "cursor-agent"
@@ -37,7 +35,7 @@ class CursorCliBackend:
 
     def run(
         self,
-        task: StructuredAgentTask,
+        task: AgentTask,
         *,
         working_dir: Path,
     ) -> AgentInvocation:

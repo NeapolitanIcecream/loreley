@@ -8,7 +8,6 @@ persist only their paths in the database.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -105,18 +104,7 @@ def write_job_artifacts(
             "base_commit_hash": base_commit_hash,
             "candidate_commit_hash": candidate_commit_hash,
             "commit_message": commit_message,
-            "execution": {
-                "implementation_summary": coding.execution.implementation_summary,
-                "commit_message": coding.execution.commit_message,
-                "step_results": [
-                    asdict(step) | {"status": step.status.value}
-                    for step in coding.execution.step_results
-                ],
-                "tests_executed": list(coding.execution.tests_executed),
-                "tests_recommended": list(coding.execution.tests_recommended),
-                "follow_up_items": list(coding.execution.follow_up_items),
-                "notes": list(coding.execution.notes),
-            },
+            "report": coding.report.as_dict(),
             "backend": {
                 "command": list(coding.command),
                 "stderr": coding.stderr,

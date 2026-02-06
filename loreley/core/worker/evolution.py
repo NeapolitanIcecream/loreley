@@ -31,7 +31,6 @@ from loreley.core.worker.planning import (
     PlanningAgentRequest,
     PlanningAgentResponse,
     PlanningError,
-    PlanningPlan,
 )
 from loreley.core.worker.commit_summary import CommitSummarizer, CommitSummaryError
 from loreley.core.worker.trajectory import build_inspiration_trajectory_rollup
@@ -373,12 +372,12 @@ class EvolutionWorker:
             return self.summarizer.generate(
                 job=job_ctx,
                 plan=plan.plan,
-                coding=coding.execution,
+                coding=coding.report,
             )
         except CommitSummaryError as exc:
             log.warning("Commit summarizer failed; falling back to coding message: {}", exc)
             fallback = (
-                coding.execution.commit_message
+                coding.report.commit_message
                 or plan.plan.summary
                 or f"Evolution job {job_ctx.job_id}"
             )

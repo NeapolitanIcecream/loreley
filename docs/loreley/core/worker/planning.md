@@ -1,14 +1,13 @@
 # loreley.core.worker.planning
 
-Planning utilities for Loreley's autonomous worker, responsible for turning commit history and evaluation results into a structured, multi-step plan that a coding agent can execute.
+Planning utilities for Loreley's autonomous worker, responsible for turning commit history and evaluation results into a Markdown plan document that a coding agent can execute.
 
 ## Domain types
 
 - **`CommitMetric`**: lightweight value object describing a single evaluation metric (`name`, numeric `value`, optional `unit`, `higher_is_better` flag, and human-readable `summary`).
 - **`CommitPlanningContext`**: shared context for one commit, including the `commit_hash`, bounded `subject` and `change_summary`, optional `trajectory` rollup lines (baseline-aligned unique-path summary), optional `trajectory_meta` counters, optional `key_files`, bounded `highlights`, an optional `evaluation_summary`, a sequence of `CommitMetric` instances, and optional MAP-Elites context (`cell_index`, `objective`, `measures`); normalises all collections to tuples on initialisation.
 - **`PlanningAgentRequest`**: input payload for the planning agent containing the `base` commit context, a sequence of `inspirations`, the plain-language global evolution `goal`, optional `constraints` and `acceptance_criteria` bullet lists, an optional `iteration_hint`, and a boolean `cold_start` flag; when `cold_start=True`, the planning agent treats the request as a cold-start seed population design run and adjusts the prompt accordingly. All list-like fields are normalised to tuples.
-- **`PlanStep`**: single actionable step in the generated plan (`step_id`, `title`, `intent`, `actions`, `files`, `dependencies`, `validation`, `risks`, `references`) with an `as_dict()` helper that converts all tuples back to plain lists for serialisation.
-- **`PlanningPlan`**: structured planning output that aggregates the global `summary`, `rationale`, `focus_metrics`, `guardrails`, `risks`, overall `validation` bullets, the ordered `steps`, optional `handoff_notes`, and an optional free-form `fallback_plan`, again with `as_dict()` for JSON-friendly output.
+- **`PlanDocument`**: Markdown plan document emitted by the backend (`summary`, full `markdown`, plus best-effort `focus_metrics` and `guardrails` derived from request context).
 - **`PlanningAgentResponse`**: envelope returned from the planner containing the domain `plan`, raw backend `raw_output`, the rendered `prompt`, executed backend `command`, captured `stderr`, number of `attempts`, and total `duration_seconds`.
 
 ## Inspiration trajectory rollups
@@ -30,26 +29,21 @@ unique path `LCA(base,inspiration) -> inspiration` and rendering a bounded summa
 - Reports a single "Omitted N older unique step(s)" line when the unique path is longer
   than the configured budgets.
 
-## JSON schema and validation
+## Markdown contract
 
-- **`PLANNING_OUTPUT_SCHEMA`**: JSON schema describing the expected shape of the planning output (top-level fields like `plan_summary`, `rationale`, `focus_metrics`, `guardrails`, `risks`, `validation`, `steps`, `handoff_notes`, and `fallback_plan`, plus constraints on each step's fields), used when invoking the external Codex CLI.
-- **`_PlanStepModel`** / **`_PlanModel`**: internal `pydantic` models that validate the Codex JSON payload against the schema and provide a typed bridge from raw JSON into the `PlanStep` / `PlanningPlan` domain objects.
-- **Agent backend**: planning relies on `loreley.core.worker.agent` for shared backend abstractions (`AgentBackend`, `StructuredAgentTask`, `AgentInvocation`) and shared orchestration utilities; built-in CLI backends live under `loreley.core.worker.agent.backends`. See `loreley.core.worker.agent` for contracts and helpers, and `loreley.core.worker.agent.backends` for built-in backend implementations.
+- Planning relies on `loreley.core.worker.agent` for shared backend abstractions (`AgentBackend`, `AgentTask`, `AgentInvocation`) and a shared retry loop (`run_agent_task()`).
+- Backends return plain-text output (typically Markdown). The worker requests a simple Markdown structure (Summary / Steps / Validation) and extracts a short summary on a best-effort basis.
 
 ## Planning agent
 
 - **`PlanningAgent`**: high-level orchestration layer that prepares a structured planning request and delegates execution to a configurable backend.
-  - Instantiated with a `Settings` object and an optional `AgentBackend` implementation. When no backend is provided, it uses `CodexCliBackend` configured via `WORKER_PLANNING_CODEX_BIN`, `WORKER_PLANNING_CODEX_PROFILE`, `WORKER_PLANNING_MAX_ATTEMPTS`, `WORKER_PLANNING_TIMEOUT_SECONDS`, `WORKER_PLANNING_EXTRA_ENV`, `WORKER_PLANNING_SCHEMA_PATH`, and `WORKER_PLANNING_VALIDATION_MODE`. You can override the default by setting `WORKER_PLANNING_BACKEND` to a dotted Python path (`module:attr` or `module.attr`) that resolves to either an `AgentBackend` instance, a class implementing the `AgentBackend` protocol (constructed with no arguments), or a factory callable that returns such an instance.
-  - **`plan(request, *, working_dir)`**: resolves the git worktree path, renders a concise prompt from the request (goal, constraints, acceptance criteria, and base/inspiration context), builds a `StructuredAgentTask` whose schema usage depends on `WORKER_PLANNING_VALIDATION_MODE` (via `build_structured_agent_task()`), and asks the backend to execute it using the shared retry loop (`run_structured_agent_task()`):
-    - In `"strict"` mode, the planning JSON schema is passed to the backend (using Codex's native schema support when available), and the response must parse cleanly as `_PlanModel` or the agent will retry and eventually fail.
-    - In `"lenient"` mode, the same schema is still provided to the backend, but JSON decoding / validation failures are treated as non-fatal: the agent first attempts to parse the response into `_PlanModel`, and on failure synthesises a minimal `PlanningPlan` from the free-form output while keeping as much structure as possible.
-    - In `"none"` mode (default), no schema is enforced at the backend level and the agent skips JSON parsing entirely, always building a minimal `PlanningPlan` directly from the raw free-form output and job context.
-  - Retries the backend invocation up to `max_attempts` times when process-level `PlanningError` / `ValidationError` / JSON decoding issues occur, logging warnings via `loguru` and printing concise progress messages with `rich`.
-  - On success, either parses JSON into `_PlanModel` and converts it into a `PlanningPlan`, or (for lenient/none modes when parsing is not possible) returns a best-effort synthetic `PlanningPlan`; on repeated failure or timeout, raises `PlanningError` with a descriptive message.
-  - Performs basic truncation of long text fields to keep prompts and summaries bounded and writes detailed debug artifacts under `logs/worker/planning`, including the effective `schema_mode` and `validation_mode`.
+  - Instantiated with a `Settings` object and an optional `AgentBackend` implementation. When no backend is provided, it uses `CodexCliBackend` configured via `WORKER_PLANNING_CODEX_BIN`, `WORKER_PLANNING_CODEX_PROFILE`, `WORKER_PLANNING_MAX_ATTEMPTS`, `WORKER_PLANNING_TIMEOUT_SECONDS`, and `WORKER_PLANNING_EXTRA_ENV`. You can override the default by setting `WORKER_PLANNING_BACKEND` to a dotted Python path (`module:attr` or `module.attr`) that resolves to either an `AgentBackend` instance, a class implementing the `AgentBackend` protocol (constructed with no arguments), or a factory callable that returns such an instance.
+  - **`plan(request, *, working_dir)`**: resolves the git worktree path, renders a concise prompt from the request (goal, constraints, acceptance criteria, and base/inspiration context), asks the backend to return a Markdown plan document, and wraps it as a `PlanDocument`.
+  - Retries the backend invocation up to `max_attempts` times when process-level `PlanningError` issues occur, logging warnings via `loguru` and printing concise progress messages with `rich`.
+  - Performs basic truncation of long text fields to keep prompts and summaries bounded and writes detailed debug artifacts under `logs/<experiment_namespace>/worker/planning` (or `logs/worker/planning` when no experiment namespace is available).
 
 ## Exceptions and helpers
 
-- **`PlanningError`**: custom runtime error raised when validation fails, the backend returns an error, the planning schema path is invalid, or the working directory is not a git repository.
+- **`PlanningError`**: custom runtime error raised when the backend returns an error, the working directory is not a git repository, or retries are exhausted.
 - **`_truncate()`**, **`_format_commit_block()`**, and **`_format_metrics()`**: internal utilities that format commit context and metrics into human-readable sections for the prompt while enforcing length limits and providing clear fallbacks when no metrics or highlights are available.
 

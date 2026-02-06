@@ -7,53 +7,26 @@ import pytest
 from openai import OpenAIError
 
 from loreley.config import Settings
-from loreley.core.worker.coding import CodingPlanExecution, CodingStepReport, StepExecutionStatus
+from loreley.core.worker.coding import ExecutionReport
 from loreley.core.worker.commit_summary import CommitSummarizer, CommitSummaryError
 from loreley.core.worker.evolution import JobContext
-from loreley.core.worker.planning import PlanStep, PlanningPlan
+from loreley.core.worker.planning import PlanDocument
 
 
-def _make_plan() -> PlanningPlan:
-    step = PlanStep(
-        step_id="s1",
-        title="Implement",
-        intent="Do work",
-        actions=("edit",),
-        files=(),
-        dependencies=(),
-        validation=("tests",),
-        risks=(),
-        references=(),
-    )
-    return PlanningPlan(
+def _make_plan() -> PlanDocument:
+    return PlanDocument(
         summary="plan summary",
-        rationale="plan rationale",
+        markdown="## Summary\n- plan summary\n",
         focus_metrics=("quality",),
         guardrails=("guard",),
-        risks=("risk1",),
-        validation=("val",),
-        steps=(step,),
-        handoff_notes=(),
-        fallback_plan=None,
     )
 
 
-def _make_coding_execution() -> CodingPlanExecution:
-    step_report = CodingStepReport(
-        step_id="s1",
-        status=StepExecutionStatus.COMPLETED,
-        summary="done",
-        files=("file.py",),
-        commands=(),
-    )
-    return CodingPlanExecution(
-        implementation_summary="implemented feature",
+def _make_coding_execution() -> ExecutionReport:
+    return ExecutionReport(
+        summary="implemented feature",
+        markdown="## Summary\n- implemented feature\n",
         commit_message="fallback commit",
-        step_results=(step_report,),
-        tests_executed=("pytest",),
-        tests_recommended=(),
-        follow_up_items=(),
-        notes=(),
     )
 
 

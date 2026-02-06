@@ -147,7 +147,7 @@ class EvolutionJobStore:
         subject = clamp_text(subject, 72)
 
         change_summary_source = (
-            coding.execution.implementation_summary
+            coding.report.summary
             or plan.plan.summary
             or f"Evolution job {job_ctx.job_id}"
         )

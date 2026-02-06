@@ -2,10 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Protocol
-
-SchemaMode = Literal["native", "prompt", "none"]
-ValidationMode = Literal["strict", "lenient", "none"]
+from typing import Protocol
 
 
 @dataclass(slots=True, frozen=True)
@@ -19,13 +16,11 @@ class AgentInvocation:
 
 
 @dataclass(slots=True)
-class StructuredAgentTask:
-    """Backend-agnostic description of a structured agent call."""
+class AgentTask:
+    """Backend-agnostic description of an agent call."""
 
     name: str
     prompt: str
-    schema: dict[str, Any] | None = None
-    schema_mode: SchemaMode = "native"
 
 
 class AgentBackend(Protocol):
@@ -33,7 +28,7 @@ class AgentBackend(Protocol):
 
     def run(
         self,
-        task: StructuredAgentTask,
+        task: AgentTask,
         *,
         working_dir: Path,
     ) -> AgentInvocation:
@@ -43,8 +38,6 @@ class AgentBackend(Protocol):
 __all__ = [
     "AgentBackend",
     "AgentInvocation",
-    "SchemaMode",
-    "StructuredAgentTask",
-    "ValidationMode",
+    "AgentTask",
 ]
 

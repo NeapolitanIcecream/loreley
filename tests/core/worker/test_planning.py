@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-import json
-
 from loreley.config import Settings
 from loreley.core.worker.agent import AgentInvocation
 from loreley.core.worker.planning import (
+    CommitMetric,
     CommitPlanningContext,
+    PlanDocument,
     PlanningAgent,
     PlanningAgentRequest,
-    PlanningPlan,
 )
 
 
@@ -23,6 +22,10 @@ def _make_request(goal: str) -> PlanningAgentRequest:
         subject="Base subject",
         change_summary="base summary",
         highlights=("Touched files: foo.py",),
+        metrics=(
+            CommitMetric(name="quality", value=1.0),
+            CommitMetric(name="speed", value=2.0),
+        ),
     )
     return PlanningAgentRequest(
         base=base,
@@ -33,36 +36,21 @@ def _make_request(goal: str) -> PlanningAgentRequest:
     )
 
 
-def test_coerce_plan_from_invocation_strict_parses_structured_output(settings: Settings) -> None:
-    settings.worker_planning_validation_mode = "strict"
+def test_coerce_plan_from_invocation_extracts_summary(settings: Settings) -> None:
     agent = PlanningAgent(settings=settings, backend=_DummyBackend())
     request = _make_request("Improve docs")
-    payload = {
-        "plan_summary": "summary",
-        "rationale": "because",
-        "focus_metrics": ["metric"],
-        "guardrails": ["guard"],
-        "risks": ["risk"],
-        "validation": ["run tests"],
-        "steps": [
-            {
-                "id": "s1",
-                "title": "T1",
-                "intent": "Do work",
-                "actions": ["a1"],
-                "files": ["f1"],
-                "validation": ["v1"],
-                "dependencies": ["dep"],
-                "risks": ["r1"],
-                "references": ["ref"],
-            }
-        ],
-        "handoff_notes": ["note"],
-        "fallback_plan": "fallback",
-    }
+    markdown = """# Plan
+
+## Summary
+- Improve docs and defaults.
+
+## Steps
+1. Update config
+2. Update docs
+"""
     invocation = AgentInvocation(
         command=("echo",),
-        stdout=json.dumps(payload),
+        stdout=markdown,
         stderr="",
         duration_seconds=1.0,
     )
@@ -72,123 +60,39 @@ def test_coerce_plan_from_invocation_strict_parses_structured_output(settings: S
         invocation=invocation,
     )
 
-    assert isinstance(plan, PlanningPlan)
-    assert plan.summary == "summary"
+    assert isinstance(plan, PlanDocument)
+    assert plan.summary.startswith("Improve docs")
+    assert plan.markdown.strip() == markdown.strip()
     assert plan.guardrails == ("guard",)
-    assert plan.steps[0].actions == ("a1",)
-    assert plan.handoff_notes == ("note",)
-    assert plan.fallback_plan == "fallback"
+    assert plan.focus_metrics == ("quality", "speed")
 
 
-def test_coerce_plan_from_invocation_strict_strips_markdown_fences(settings: Settings) -> None:
-    settings.worker_planning_validation_mode = "strict"
-    agent = PlanningAgent(settings=settings, backend=_DummyBackend())
-    request = _make_request("Improve docs")
-    payload = {
-        "plan_summary": "summary",
-        "rationale": "because",
-        "focus_metrics": ["metric"],
-        "guardrails": ["guard"],
-        "risks": ["risk"],
-        "validation": ["run tests"],
-        "steps": [
-            {
-                "id": "s1",
-                "title": "T1",
-                "intent": "Do work",
-                "actions": ["a1"],
-                "files": ["f1"],
-                "validation": ["v1"],
-                "dependencies": ["dep"],
-                "risks": ["r1"],
-                "references": ["ref"],
-            }
-        ],
-        "handoff_notes": ["note"],
-        "fallback_plan": "fallback",
-    }
-    fenced = f"```json\n{json.dumps(payload)}\n```"
-    invocation = AgentInvocation(
-        command=("echo",),
-        stdout=fenced,
-        stderr="",
-        duration_seconds=1.0,
-    )
-
-    plan = agent._coerce_plan_from_invocation(  # type: ignore[attr-defined]
-        request=request,
-        invocation=invocation,
-    )
-
-    assert isinstance(plan, PlanningPlan)
-    assert plan.summary == "summary"
-
-
-def test_coerce_plan_from_invocation_lenient_falls_back_to_freeform(settings: Settings) -> None:
-    settings.worker_planning_validation_mode = "lenient"
-    agent = PlanningAgent(settings=settings, backend=_DummyBackend())
-    request = _make_request("Goal text")
-
-    invocation = AgentInvocation(
-        command=("echo",),
-        stdout="freeform output that is not json",
-        stderr="",
-        duration_seconds=0.5,
-    )
-
-    plan = agent._coerce_plan_from_invocation(  # type: ignore[attr-defined]
-        request=request,
-        invocation=invocation,
-    )
-
-    assert plan.summary == "freeform output that is not json"
-    assert plan.guardrails == ("guard",)
-    assert plan.validation == ("verify",)
-    assert plan.steps[0].step_id == "freeform-1"
-    assert plan.handoff_notes
-
-
-def test_build_plan_from_freeform_uses_goal_when_output_empty(settings: Settings) -> None:
-    settings.worker_planning_validation_mode = "none"
+def test_coerce_plan_from_invocation_falls_back_to_goal(settings: Settings) -> None:
     agent = PlanningAgent(settings=settings, backend=_DummyBackend())
     request = _make_request("Ship the feature")
+    invocation = AgentInvocation(
+        command=("echo",),
+        stdout="",
+        stderr="",
+        duration_seconds=1.0,
+    )
 
-    plan = agent._build_plan_from_freeform_output(  # type: ignore[attr-defined]
+    plan = agent._coerce_plan_from_invocation(  # type: ignore[attr-defined]
         request=request,
-        raw_output="",
+        invocation=invocation,
     )
 
     assert plan.summary == "Ship the feature"
-    assert plan.validation == ("verify",)
-    assert plan.guardrails == ("guard",)
+    assert "## Summary" in plan.markdown
 
 
-def test_build_plan_from_freeform_parses_numbered_steps(settings: Settings) -> None:
-    settings.worker_planning_validation_mode = "none"
-    agent = PlanningAgent(settings=settings, backend=_DummyBackend())
-    request = _make_request("Goal")
-    raw = "1. Update defaults\n- Set validation_mode to none\n\n2. Tighten docs\n- Remove JSON schema blocks"
-
-    plan = agent._build_plan_from_freeform_output(  # type: ignore[attr-defined]
-        request=request,
-        raw_output=raw,
-    )
-
-    assert len(plan.steps) == 2
-    assert plan.steps[0].step_id == "freeform-1"
-    assert plan.steps[0].title == "Update defaults"
-    assert "Set validation_mode to none" in plan.steps[0].actions
-
-
-def test_planning_default_validation_mode_is_none(settings: Settings) -> None:
-    assert settings.worker_planning_validation_mode == "none"
-
-
-def test_planning_prompt_is_minimal(settings: Settings) -> None:
+def test_planning_prompt_requests_markdown_deliverable(settings: Settings) -> None:
     agent = PlanningAgent(settings=settings, backend=_DummyBackend())
     request = _make_request("Improve docs")
+
     prompt = agent._render_prompt(request)  # type: ignore[attr-defined]
 
-    assert "Output JSON schema" not in prompt
-    assert "Call out any risks" not in prompt
-    assert "Requested output" in prompt
+    assert "Markdown plan document" in prompt
+    assert "Output requirements" in prompt
+    assert "Use '##' headings" in prompt
+

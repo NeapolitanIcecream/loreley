@@ -8,8 +8,10 @@ Artifacts are large, audit/debug oriented payloads (prompts, raw agent output, e
 
 Artifacts are written under:
 
-- `<LOGS_BASE_DIR>/logs/worker/artifacts/<job_id>/` when `LOGS_BASE_DIR` is set
-- `<cwd>/logs/worker/artifacts/<job_id>/` otherwise
+- `<base>/logs/<experiment_namespace>/worker/artifacts/<job_id>/` when an experiment namespace is available
+- `<base>/logs/worker/artifacts/<job_id>/` otherwise
+
+Where `<base>` is `<LOGS_BASE_DIR>` when set, and `<cwd>` otherwise. The experiment namespace is derived from `EXPERIMENT_ID` when configured.
 
 ## Files written
 

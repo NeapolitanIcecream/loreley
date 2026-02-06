@@ -1,21 +1,8 @@
 from __future__ import annotations
 
-import json
-import tempfile
 import uuid
 from pathlib import Path
-from typing import Any, cast
-
-from loreley.core.worker.agent.contracts import SchemaMode
-
-
-def resolve_schema_mode(configured_mode: str, api_spec: str) -> SchemaMode:
-    """Resolve the effective schema mode from configuration and API spec."""
-    if configured_mode != "auto":
-        return cast(SchemaMode, configured_mode)
-    if api_spec == "chat_completions":
-        return "prompt"
-    return "native"
+from typing import Any
 
 
 def truncate_text(text: str, *, limit: int) -> str:
@@ -78,31 +65,8 @@ def validate_workdir(
     return path
 
 
-def materialise_schema_to_temp(
-    schema: dict[str, Any],
-    *,
-    error_cls: type[RuntimeError],
-) -> Path:
-    """Persist the given JSON schema to a temporary file."""
-    try:
-        tmp = tempfile.NamedTemporaryFile(
-            mode="w",
-            prefix="loreley-agent-schema-",
-            suffix=".json",
-            delete=False,
-            encoding="utf-8",
-        )
-        with tmp:
-            json.dump(schema, tmp, ensure_ascii=True, indent=2)
-        return Path(tmp.name)
-    except Exception as exc:  # pragma: no cover - defensive
-        raise error_cls(f"Failed to materialise agent schema: {exc}") from exc
-
-
 __all__ = [
     "TruncationMixin",
-    "materialise_schema_to_temp",
-    "resolve_schema_mode",
     "resolve_worker_debug_dir",
     "truncate_text",
     "validate_workdir",
