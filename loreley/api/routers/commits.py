@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from loreley.api.artifacts import build_artifact_urls
 from loreley.api.pagination import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT
-from loreley.api.schemas.commits import CommitArtifactsOut, CommitDetailOut, CommitOut
+from loreley.api.schemas.commits import CommitArtifactsOut, CommitDetailOut, CommitOut, MetricOut
 from loreley.api.services.commits import get_commit, list_commits, list_metrics
 from loreley.api.services.jobs import get_job_artifacts
 
@@ -21,7 +21,8 @@ def get_commits(
     limit: int = Query(default=DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
     offset: int = Query(default=0, ge=0),
 ) -> list[CommitOut]:
-    return list_commits(island_id=island_id, limit=limit, offset=offset)
+    rows = list_commits(island_id=island_id, limit=limit, offset=offset)
+    return [CommitOut.model_validate(row) for row in rows]
 
 
 @router.get("/commits/{commit_hash}", response_model=CommitDetailOut)
@@ -31,7 +32,7 @@ def get_commit_detail(
     commit = get_commit(commit_hash=commit_hash)
     if commit is None:
         raise HTTPException(status_code=404, detail="Commit not found.")
-    metrics = list_metrics(commit_card_id=commit.id)
+    metrics = [MetricOut.model_validate(row) for row in list_metrics(commit_card_id=commit.id)]
     artifacts = None
     job_id = commit.job_id
     if isinstance(job_id, UUID):

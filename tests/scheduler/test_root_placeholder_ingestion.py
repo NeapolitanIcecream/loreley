@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from loreley.config import Settings
 from loreley.scheduler import ingestion as ingestion_mod
 from loreley.scheduler.ingestion import MapElitesIngestion
+from tests.support import TestSettings
 
 
 class DummyManager:
@@ -32,13 +32,13 @@ def test_root_initialisation_evaluates_without_ingesting_into_archive(
     archive or rely on placeholder files.
     """
 
-    settings = Settings(mapelites_code_embedding_dimensions=8)
+    settings = TestSettings(MAPELITES_CODE_EMBEDDING_DIMENSIONS=8)
     manager = DummyManager()
     ingestion = MapElitesIngestion(
         settings=settings,
         console=ingestion_mod.Console(),
         repo_root=tmp_path,
-        repo=object(),
+        repo=cast(Any, object()),
         manager=manager,  # type: ignore[arg-type]
     )
 

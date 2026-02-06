@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
 
 from loreley.config import Settings
 from loreley.core.map_elites.chunk import CodeChunker, chunk_preprocessed_files
+from tests.support import TestSettings
+
+
+@dataclass(slots=True)
+class _Artifact:
+    path: Path
+    change_count: int
+    content: str
 
 
 def make_chunker(settings: Settings | None = None) -> CodeChunker:
-    test_settings = settings or Settings(mapelites_code_embedding_dimensions=8)
+    test_settings = settings or TestSettings(MAPELITES_CODE_EMBEDDING_DIMENSIONS=8)
     return CodeChunker(settings=test_settings)
 
 
@@ -32,7 +40,7 @@ def test_chunk_file_single_chunk_no_overlap(settings: Settings) -> None:
     chunker = make_chunker(settings)
 
     content = "\n".join(f"line {i}" for i in range(1, 11))
-    artifact = SimpleNamespace(path=Path("file.py"), change_count=3, content=content)
+    artifact = _Artifact(path=Path("file.py"), change_count=3, content=content)
 
     chunks = chunker._chunk_file(artifact)  # type: ignore[attr-defined]
     assert len(chunks) == 1
@@ -53,7 +61,7 @@ def test_chunk_file_overlap_and_max_chunks(settings: Settings) -> None:
 
     lines = [f"line {i}" for i in range(1, 13)]
     content = "\n".join(lines)
-    artifact = SimpleNamespace(path=Path("file.py"), change_count=1, content=content)
+    artifact = _Artifact(path=Path("file.py"), change_count=1, content=content)
 
     chunks = chunker._chunk_file(artifact)  # type: ignore[attr-defined]
 
@@ -74,8 +82,8 @@ def test_run_and_wrapper_chunk_preprocessed_files(settings: Settings) -> None:
     content1 = "line1\nline2\nline3\nline4\nline5"
     content2 = "a\nb\nc"
     artifacts = [
-        SimpleNamespace(path=Path("a.py"), change_count=2, content=content1),
-        SimpleNamespace(path=Path("b.py"), change_count=1, content=content2),
+        _Artifact(path=Path("a.py"), change_count=2, content=content1),
+        _Artifact(path=Path("b.py"), change_count=1, content=content2),
     ]
 
     chunked = chunk_preprocessed_files(artifacts, settings=settings)

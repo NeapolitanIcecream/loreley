@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, cast
 
-from loreley.config import Settings
 from loreley.scheduler import ingestion as ingestion_mod
 from loreley.scheduler.ingestion import MapElitesIngestion
+from tests.support import TestSettings
 
 
 def test_jobs_requiring_ingestion_does_not_require_experiment_filter(
@@ -14,13 +14,13 @@ def test_jobs_requiring_ingestion_does_not_require_experiment_filter(
 ) -> None:
     """Ensure ingestion does not require experiment scoping."""
 
-    settings = Settings(mapelites_code_embedding_dimensions=8)
+    settings = TestSettings(MAPELITES_CODE_EMBEDDING_DIMENSIONS=8)
     ingestion = MapElitesIngestion(
         settings=settings,
         console=ingestion_mod.Console(),
         repo_root=tmp_path,
-        repo=object(),
-        manager=object(),  # not used by _jobs_requiring_ingestion
+        repo=cast(Any, object()),
+        manager=cast(Any, object()),  # not used by _jobs_requiring_ingestion
     )
 
     class DummyResult:

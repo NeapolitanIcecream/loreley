@@ -252,6 +252,7 @@ class CodeEmbedder:
             if last_exc is not None:
                 raise last_exc
             raise
+        raise RuntimeError("Embedding batch retry loop terminated without a result.")
 
     def _aggregate_file_embeddings(
         self,

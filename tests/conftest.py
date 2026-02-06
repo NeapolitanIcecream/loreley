@@ -16,11 +16,11 @@ if str(ROOT_DIR) not in sys.path:
 # dimensionality is now optional at process startup, so tests should pass explicit
 # settings when they exercise the embedding pipeline.
 
-from loreley.config import Settings
+from tests.support import TestSettings
 
 
 @pytest.fixture
-def settings(monkeypatch: pytest.MonkeyPatch) -> Generator[Settings, None, None]:
+def settings(monkeypatch: pytest.MonkeyPatch) -> Generator[TestSettings, None, None]:
     """Return a fresh Settings instance for each test.
 
     Tests can freely mutate fields on this object without affecting others.
@@ -28,6 +28,6 @@ def settings(monkeypatch: pytest.MonkeyPatch) -> Generator[Settings, None, None]
 
     monkeypatch.setenv("MAPELITES_CODE_EMBEDDING_DIMENSIONS", "8")
     monkeypatch.setenv("EXPERIMENT_ID", "test")
-    yield Settings(_env_file=None)
+    yield TestSettings()
 
 

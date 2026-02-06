@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import uuid
+from typing import Any, cast
 
 import pytest
 
@@ -68,7 +69,7 @@ def test_wrap_git_error_sanitises_command() -> None:
         stdout="out",
         stderr="err",
     )
-    wrapped = wrap_git_error(exc, "Clone failed")
+    wrapped = wrap_git_error(cast(Any, exc), "Clone failed")
 
     assert isinstance(wrapped, RepositoryError)
     assert "***@" in str(wrapped)

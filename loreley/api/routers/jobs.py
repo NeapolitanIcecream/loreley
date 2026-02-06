@@ -29,7 +29,8 @@ def get_jobs(
     limit: int = Query(default=DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
     offset: int = Query(default=0, ge=0),
 ) -> list[JobOut]:
-    return list_jobs(status=status, limit=limit, offset=offset)
+    rows = list_jobs(status=status, limit=limit, offset=offset)
+    return [JobOut.model_validate(row) for row in rows]
 
 
 @router.get("/jobs/{job_id}", response_model=JobDetailOut)

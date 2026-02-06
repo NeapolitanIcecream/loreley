@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from sqlalchemy.dialects import postgresql
@@ -10,7 +11,7 @@ import loreley.core.map_elites.file_embedding_cache as fec
 
 
 class _FakeSession:
-    def __init__(self, calls: list[object]) -> None:
+    def __init__(self, calls: list[Any]) -> None:
         self._calls = calls
 
     def execute(self, stmt):  # type: ignore[no-untyped-def]
@@ -24,7 +25,7 @@ def test_db_file_cache_put_many_is_insert_only(monkeypatch: pytest.MonkeyPatch) 
         requested_dimensions=2,
     )
 
-    calls: list[object] = []
+    calls: list[Any] = []
 
     @contextmanager
     def _fake_session_scope():  # type: ignore[no-untyped-def]

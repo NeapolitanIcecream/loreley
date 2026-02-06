@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from loreley.config import Settings
 from loreley.core.worker.evolution import EvolutionWorker
 
@@ -15,14 +17,17 @@ class _DummyJobStore:
 
 def make_worker(settings: Settings) -> EvolutionWorker:
     settings.worker_repo_remote_url = "https://example.invalid/repo.git"
+    dummy: Any = object()
+    dummy_repo: Any = _DummyRepo()
+    dummy_store: Any = _DummyJobStore()
     return EvolutionWorker(
         settings=settings,
-        repository=_DummyRepo(),
-        planning_agent=object(),
-        coding_agent=object(),
-        evaluator=object(),
-        summarizer=object(),
-        job_store=_DummyJobStore(),
+        repository=dummy_repo,
+        planning_agent=dummy,
+        coding_agent=dummy,
+        evaluator=dummy,
+        summarizer=dummy,
+        job_store=dummy_store,
     )
 
 

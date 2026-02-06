@@ -8,10 +8,11 @@ from loreley.config import Settings
 from loreley.core.map_elites.preprocess import (
     CodePreprocessor,
 )
+from tests.support import TestSettings
 
 
 def make_preprocessor(tmp_path: Path, *, settings: Settings | None = None) -> CodePreprocessor:
-    test_settings = settings or Settings(mapelites_code_embedding_dimensions=8)
+    test_settings = settings or TestSettings(MAPELITES_CODE_EMBEDDING_DIMENSIONS=8)
     return CodePreprocessor(repo_root=tmp_path, settings=test_settings, commit_hash=None)
 
 

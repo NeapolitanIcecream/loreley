@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from typing import cast
 from uuid import UUID
 
 import pytest
+from sqlalchemy.engine import Engine
 
 from loreley.db.locks import AdvisoryLock, release_pg_advisory_lock, try_acquire_pg_advisory_lock, uuid_to_pg_bigint_lock_key
 
@@ -57,7 +59,7 @@ def test_try_acquire_pg_advisory_lock_returns_none_when_unavailable() -> None:
     conn = _FakeConnection(locked=False)
     engine = _FakeEngine(conn)
 
-    lock = try_acquire_pg_advisory_lock(engine=engine, key=123)
+    lock = try_acquire_pg_advisory_lock(engine=cast(Engine, engine), key=123)
     assert lock is None
     assert conn.closed is True
 
@@ -66,7 +68,7 @@ def test_try_acquire_pg_advisory_lock_holds_connection_until_released() -> None:
     conn = _FakeConnection(locked=True)
     engine = _FakeEngine(conn)
 
-    lock = try_acquire_pg_advisory_lock(engine=engine, key=123)
+    lock = try_acquire_pg_advisory_lock(engine=cast(Engine, engine), key=123)
     assert isinstance(lock, AdvisoryLock)
     assert lock.key == 123
     assert conn.closed is False

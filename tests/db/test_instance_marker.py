@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import uuid
+from typing import cast
 
 import pytest
+from sqlalchemy.orm import Session
 
 from loreley.config import Settings
 from loreley.db.base import INSTANCE_SCHEMA_VERSION
@@ -16,6 +18,7 @@ from loreley.db.instance import (
     validate_instance_marker_schema,
 )
 from loreley.naming import resolve_experiment_identity, safe_namespace_or_none
+from tests.support import TestSettings
 
 
 @dataclass
@@ -42,10 +45,9 @@ class FakeSession:
 
 
 def _settings(exp: str = "demo", root: str = "deadbeef") -> Settings:
-    return Settings(
-        _env_file=None,
-        experiment_id=exp,
-        mapelites_experiment_root_commit=root,
+    return TestSettings(
+        EXPERIMENT_ID=exp,
+        MAPELITES_EXPERIMENT_ROOT_COMMIT=root,
     )
 
 
@@ -68,7 +70,7 @@ def test_validate_instance_marker_schema_requires_row() -> None:
     session = FakeSession(meta=None)
     with pytest.raises(InstanceMetadataError, match="Instance metadata is missing"):
         validate_instance_marker_schema(
-            session=session,
+            session=cast(Session, session),
             schema_version=INSTANCE_SCHEMA_VERSION,
         )
 
@@ -78,7 +80,7 @@ def test_validate_instance_marker_schema_requires_version_match() -> None:
     session = FakeSession(meta=meta)
     with pytest.raises(InstanceMetadataError, match="schema_version mismatch"):
         validate_instance_marker_schema(
-            session=session,
+            session=cast(Session, session),
             schema_version=INSTANCE_SCHEMA_VERSION,
         )
 
@@ -89,7 +91,7 @@ def test_validate_instance_marker_rejects_experiment_id_mismatch() -> None:
     session = FakeSession(meta=meta)
     with pytest.raises(InstanceMetadataError, match="EXPERIMENT_ID does not match"):
         validate_instance_marker(
-            session=session,
+            session=cast(Session, session),
             settings=settings,
             schema_version=INSTANCE_SCHEMA_VERSION,
         )
@@ -107,7 +109,7 @@ def test_validate_instance_marker_rejects_uuid_mismatch() -> None:
     session = FakeSession(meta=meta)
     with pytest.raises(InstanceMetadataError, match="UUID mapping does not match"):
         validate_instance_marker(
-            session=session,
+            session=cast(Session, session),
             settings=settings,
             schema_version=INSTANCE_SCHEMA_VERSION,
         )
@@ -119,7 +121,7 @@ def test_validate_instance_marker_rejects_root_commit_mismatch() -> None:
     session = FakeSession(meta=meta)
     with pytest.raises(InstanceMetadataError, match="MAPELITES_EXPERIMENT_ROOT_COMMIT does not match"):
         validate_instance_marker(
-            session=session,
+            session=cast(Session, session),
             settings=settings,
             schema_version=INSTANCE_SCHEMA_VERSION,
         )
@@ -129,7 +131,7 @@ def test_resolve_instance_namespace_from_marker_uses_stored_experiment_id() -> N
     meta = _meta_for("demo-jan21", "deadbeef")
     session = FakeSession(meta=meta)
     namespace = resolve_instance_namespace_from_marker(
-        session=session,
+        session=cast(Session, session),
         schema_version=INSTANCE_SCHEMA_VERSION,
     )
     assert namespace == safe_namespace_or_none("demo-jan21")
@@ -139,7 +141,7 @@ def test_seed_instance_marker_merges_expected_fields() -> None:
     settings = _settings(exp="demo", root="deadbeef")
     session = FakeSession(meta=None)
     seed_instance_marker(
-        session=session,
+        session=cast(Session, session),
         settings=settings,
         schema_version=INSTANCE_SCHEMA_VERSION,
     )

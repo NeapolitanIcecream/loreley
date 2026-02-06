@@ -17,7 +17,7 @@ def get_logs(
 ) -> list[LogFileOut]:
     settings = get_settings()
     try:
-        files = list_log_files(settings, role=role)
+        files = [LogFileOut.model_validate(item) for item in list_log_files(settings, role=role)]
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return files

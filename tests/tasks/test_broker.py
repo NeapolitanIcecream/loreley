@@ -5,7 +5,7 @@ import sys
 
 import dramatiq
 
-from loreley.config import Settings
+from tests.support import TestSettings
 
 
 def test_broker_import_has_no_side_effect(monkeypatch) -> None:
@@ -34,7 +34,7 @@ def test_setup_broker_configures_dramatiq(monkeypatch) -> None:
     sys.modules.pop("loreley.tasks.broker", None)
 
     module = importlib.import_module("loreley.tasks.broker")
-    settings = Settings(_env_file=None)
+    settings = TestSettings()
     broker = module.setup_broker(settings=settings)
 
     assert calls and calls[-1] is broker
