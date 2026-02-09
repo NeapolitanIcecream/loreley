@@ -5,14 +5,14 @@ Execution engine for Loreley's autonomous worker, responsible for driving a conf
 ## Domain types
 
 - **`CodingError`**: custom runtime error raised when the coding agent cannot successfully execute the plan (backend failures, bad working directory, timeouts, etc.).
-- **`ExecutionReport`**: Markdown execution report emitted by the backend (`summary`, full `markdown`, optional `commit_message`).
+- **`ExecutionReport`**: Markdown execution report emitted by the backend (`summary`, full `markdown`).
 - **`CodingAgentRequest`**: input payload given to the coding agent (`goal`, `plan` from `PlanDocument`, `base_commit`, optional `constraints`, `acceptance_criteria`, `iteration_hint`, and `additional_notes`); the `goal` is the same global evolution objective that the planning agent sees, resolved by the evolution worker from either explicit job row fields (for example `EvolutionJob.goal`) or `Settings.worker_evolution_global_goal`. All sequence fields are normalised to tuples in `__post_init__`.
 - **`CodingAgentResponse`**: envelope returned from the agent combining the `report`, raw backend `raw_output`, rendered `prompt`, executed backend `command`, captured `stderr`, number of `attempts`, and total `duration_seconds`.
 
 ## Markdown contract
 
 - Coding relies on `loreley.core.worker.agent` for shared backend abstractions (`AgentBackend`, `AgentTask`, `AgentInvocation`) and a shared retry loop (`run_agent_task()`).
-- Backends return plain-text output (typically Markdown). The worker requests a simple Markdown structure (Summary / Changes / Tests) and extracts a short summary and an optional commit message on a best-effort basis.
+- Backends return plain-text output (typically Markdown). The worker requests a simple Markdown structure (Summary / Changes / Tests) and extracts a short summary on a best-effort basis.
 
 ## Coding agent
 
@@ -25,6 +25,6 @@ Execution engine for Loreley's autonomous worker, responsible for driving a conf
 
 ## Exceptions and helpers
 
-- **`_extract_summary()`**, **`_extract_commit_message()`**, and **`_truncate()`**: utilities that keep prompts bounded and extract best-effort structured fields from Markdown output.
+- **`_extract_summary()`** and **`_truncate()`**: utilities that keep prompts bounded and extract best-effort structured fields from Markdown output.
   Debug artifacts are written under `logs/<experiment_namespace>/worker/coding` (or `logs/worker/coding` when no experiment namespace is available).
 

@@ -226,7 +226,6 @@ def test_persist_success_updates_job_and_records_metadata(
     report = ExecutionReport(
         summary="impl",
         markdown="## Summary\n- impl\n",
-        commit_message="msg",
     )
     coding_response = CodingAgentResponse(
         report=report,

@@ -26,7 +26,6 @@ def _make_coding_execution() -> ExecutionReport:
     return ExecutionReport(
         summary="implemented feature",
         markdown="## Summary\n- implemented feature\n",
-        commit_message="fallback commit",
     )
 
 

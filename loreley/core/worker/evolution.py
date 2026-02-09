@@ -375,9 +375,9 @@ class EvolutionWorker:
                 coding=coding.report,
             )
         except CommitSummaryError as exc:
-            log.warning("Commit summarizer failed; falling back to coding message: {}", exc)
+            log.warning("Commit summarizer failed; falling back to non-LLM subject: {}", exc)
             fallback = (
-                coding.report.commit_message
+                coding.report.summary
                 or plan.plan.summary
                 or f"Evolution job {job_ctx.job_id}"
             )

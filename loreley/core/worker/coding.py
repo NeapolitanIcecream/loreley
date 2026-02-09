@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 import textwrap
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -51,13 +50,11 @@ class ExecutionReport:
 
     summary: str
     markdown: str
-    commit_message: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "summary": self.summary,
             "markdown": self.markdown,
-            "commit_message": self.commit_message,
         }
 
 
@@ -264,8 +261,9 @@ Plan (Markdown):
 
 Output requirements:
 - Apply the required changes.
+- Do not create git commits or push branches; leave the repository in a modified state.
 - Return a single Markdown execution report.
-- Use '##' headings for these sections: Summary, Changes, Tests, Commit message (optional), Follow-ups (optional).
+- Use '##' headings for these sections: Summary, Changes, Tests, Follow-ups (optional).
 - Mention file paths in backticks.
 - Avoid fenced code blocks.
 """
@@ -289,59 +287,17 @@ Output requirements:
         )
         summary = self._truncate(summary, limit=800)
 
-        commit_message = self._extract_commit_message(markdown)
-        if commit_message:
-            commit_message = self._truncate(commit_message, limit=200)
-
         if not markdown:
             markdown = f"## Summary\n- {summary}\n"
 
         return ExecutionReport(
             summary=summary,
             markdown=markdown,
-            commit_message=commit_message,
         )
 
     def _extract_summary(self, markdown: str) -> str:
         """Extract a short summary line from a Markdown document (best-effort)."""
         return extract_markdown_summary(markdown)
-
-    def _extract_commit_message(self, markdown: str) -> str | None:
-        """Extract a suggested commit subject line from a Markdown report (best-effort)."""
-
-        text = (markdown or "").strip()
-        if not text:
-            return None
-
-        inline = re.compile(r"^\s*commit message\s*:\s*(?P<msg>.+\S)\s*$", re.I)
-        for line in text.splitlines():
-            match = inline.match(line)
-            if match:
-                candidate = match.group("msg").strip()
-                candidate = candidate.strip().strip("`").strip("\"").strip("'").strip()
-                return candidate or None
-
-        commit_heading = re.compile(r"^##\s+commit message\s*$", re.I)
-        any_heading = re.compile(r"^##\s+.+$")
-        bullet = re.compile(r"^\s*(?:[-*]|•)\s+(?P<item>.+\S)\s*$")
-
-        in_section = False
-        for line in text.splitlines():
-            stripped = line.strip()
-            if not stripped:
-                continue
-            if commit_heading.match(stripped):
-                in_section = True
-                continue
-            if in_section and any_heading.match(stripped):
-                break
-            if in_section:
-                match = bullet.match(stripped)
-                candidate = match.group("item").strip() if match else stripped
-                candidate = candidate.strip().strip("`").strip("\"").strip("'").strip()
-                return candidate or None
-
-        return None
 
     def _snapshot_worktree_state(self, worktree: Path) -> tuple[str, ...]:
         """Return a stable snapshot of the worktree status for change detection."""

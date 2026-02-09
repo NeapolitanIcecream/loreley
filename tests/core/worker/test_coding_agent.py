@@ -41,7 +41,7 @@ def _make_plan() -> PlanDocument:
     )
 
 
-def test_coding_agent_returns_report_and_extracts_commit_message(
+def test_coding_agent_returns_report_and_extracts_summary(
     tmp_path: Path,
     settings: Settings,
     monkeypatch: pytest.MonkeyPatch,
@@ -49,9 +49,6 @@ def test_coding_agent_returns_report_and_extracts_commit_message(
     backend = _DummyBackend(
         """## Summary
 - Implemented the change.
-
-## Commit message
-Add the change
 
 ## Changes
 - Updated `file.py`
@@ -67,23 +64,20 @@ Add the change
     response = agent.implement(request, working_dir=tmp_path)
 
     assert response.report.summary.startswith("Implemented")
-    assert response.report.commit_message == "Add the change"
+    assert not hasattr(response.report, "commit_message")
     assert response.raw_output.strip().startswith("## Summary")
     assert response.command == ("dummy",)
     assert response.attempts == 1
     assert backend.calls
 
 
-def test_coding_agent_unwraps_json_stdout_and_extracts_commit_message(
+def test_coding_agent_unwraps_json_stdout_and_preserves_markdown(
     tmp_path: Path,
     settings: Settings,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     markdown = """## Summary
 - Implemented the change.
-
-## Commit message
-Add the change
 
 ## Changes
 - Updated `file.py`
@@ -98,7 +92,7 @@ Add the change
     request = CodingAgentRequest(goal="goal", plan=_make_plan(), base_commit="abc123")
     response = agent.implement(request, working_dir=tmp_path)
 
-    assert response.report.commit_message == "Add the change"
+    assert not hasattr(response.report, "commit_message")
     assert response.report.markdown.strip() == markdown.strip()
     assert response.raw_output.strip().startswith("{")
 
@@ -128,7 +122,8 @@ def test_coding_prompt_includes_markdown_contract(tmp_path: Path, settings: Sett
 
     assert "Plan (Markdown):" in prompt
     assert "Output requirements:" in prompt
-    assert "Commit message" in prompt
+    assert "Do not create git commits" in prompt
+    assert "Commit message" not in prompt
 
 
 # ---------------------------------------------------------------------------
