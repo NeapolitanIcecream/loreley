@@ -16,6 +16,7 @@ from loreley.core.worker.agent import (
     AgentInvocation,
     AgentTask,
     TruncationMixin,
+    coerce_agent_stdout_text,
     load_agent_backend,
     resolve_worker_debug_dir,
     run_agent_task,
@@ -373,7 +374,7 @@ Output requirements:
         """Coerce backend stdout into a PlanDocument (best-effort)."""
 
         raw_text = (invocation.stdout or "").strip()
-        markdown = raw_text
+        markdown = coerce_agent_stdout_text(raw_text)
         summary = self._extract_summary(markdown) or (request.goal or "").strip() or "N/A"
         summary = self._truncate(summary, limit=512)
 

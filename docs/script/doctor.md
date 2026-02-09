@@ -10,7 +10,7 @@ This command performs quick preflight checks to reduce onboarding friction befor
 - For workers:
   - `WORKER_REPO_REMOTE_URL` is set.
   - `WORKER_EVALUATOR_PLUGIN` is set and importable (after applying `WORKER_EVALUATOR_PYTHON_PATHS`).
-  - Planning/coding backend binaries are present when using the default Codex CLI backend (`WORKER_PLANNING_CODEX_BIN`, `WORKER_CODING_CODEX_BIN`).
+  - Planning/coding backend binaries are present when using the default Kilocode CLI backend (`WORKER_KILOCODE_BIN`).
   - Warns if `cursor-agent` is missing (only required if you use the Cursor backend).
 - For UI/API:
   - Warns if UI extras (`fastapi`, `uvicorn`, `streamlit`) are not installed.

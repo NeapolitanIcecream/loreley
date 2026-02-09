@@ -210,11 +210,11 @@ class Settings(BaseSettings):
         alias="WORKER_CODING_EXTRA_ENV",
     )
     worker_planning_backend: str | None = Field(
-        default=None,
+        default="loreley.core.worker.agent.backends.kilocode_cli:kilocode_planning_backend",
         alias="WORKER_PLANNING_BACKEND",
     )
     worker_coding_backend: str | None = Field(
-        default=None,
+        default="loreley.core.worker.agent.backends.kilocode_cli:kilocode_coding_backend",
         alias="WORKER_CODING_BACKEND",
     )
     worker_cursor_model: str = Field(

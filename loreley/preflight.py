@@ -369,16 +369,16 @@ def _check_agent_backend(
     results: list[CheckResult] = []
     if kind == "planning":
         backend_ref = (settings.worker_planning_backend or "").strip() or None
-        default_bin = settings.worker_planning_codex_bin
+        default_bin = settings.worker_kilocode_bin
         label = "planning_backend"
     else:
         backend_ref = (settings.worker_coding_backend or "").strip() or None
-        default_bin = settings.worker_coding_codex_bin
+        default_bin = settings.worker_kilocode_bin
         label = "coding_backend"
 
     if not backend_ref:
-        # Default: Codex CLI backend.
-        results.append(check_binary(default_bin, label=f"codex({kind})"))
+        # Default: Kilocode CLI backend.
+        results.append(check_binary(default_bin, label=f"kilocode({kind})"))
         return results
 
     try:

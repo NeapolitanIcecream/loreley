@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 from pathlib import Path
 from typing import Any
@@ -67,8 +68,98 @@ def validate_workdir(
 
 __all__ = [
     "TruncationMixin",
+    "coerce_agent_stdout_text",
     "resolve_worker_debug_dir",
     "truncate_text",
     "validate_workdir",
 ]
+
+
+def coerce_agent_stdout_text(stdout: str) -> str:
+    """Return best-effort plain text payload from agent stdout.
+
+    Some agent CLIs can wrap the human-readable Markdown output in JSON (for example
+    when running in a structured output mode). Loreley treats planning/coding
+    backend output as plain text, so this helper unwraps common JSON shapes and
+    falls back to the raw stdout when no suitable text payload is found.
+    """
+
+    raw = (stdout or "").strip()
+    if not raw:
+        return ""
+    if not raw.startswith(("{", "[")):
+        return raw
+
+    try:
+        payload: Any = json.loads(raw)
+    except Exception:
+        return raw
+
+    def _score(candidate: str) -> int:
+        text = (candidate or "").strip()
+        if not text:
+            return -1
+        score = 0
+        if "##" in text:
+            score += 50
+        if text.lstrip().startswith("#"):
+            score += 30
+        if "\n" in text:
+            score += 10
+        lowered = text.lower()
+        if "## summary" in lowered or "\n## summary" in lowered:
+            score += 15
+        if "- " in text:
+            score += 5
+        score += min(len(text), 4000) // 40
+        return score
+
+    preferred_keys = (
+        "markdown",
+        "output_markdown",
+        "output",
+        "output_text",
+        "text",
+        "content",
+        "message",
+        "result",
+        "response",
+        "final",
+        "answer",
+    )
+
+    def _best_text(value: Any, *, depth: int) -> str:
+        if depth <= 0:
+            return ""
+        if isinstance(value, str):
+            return value
+        if isinstance(value, dict):
+            for key in preferred_keys:
+                if key in value and isinstance(value[key], str) and value[key].strip():
+                    return str(value[key])
+            best = ""
+            best_score = -1
+            for item in value.values():
+                candidate = _best_text(item, depth=depth - 1)
+                score = _score(candidate)
+                if score > best_score:
+                    best = candidate
+                    best_score = score
+            return best
+        if isinstance(value, list):
+            best = ""
+            best_score = -1
+            for item in value:
+                candidate = _best_text(item, depth=depth - 1)
+                score = _score(candidate)
+                if score > best_score:
+                    best = candidate
+                    best_score = score
+            return best
+        return ""
+
+    extracted = _best_text(payload, depth=7).strip()
+    if extracted and _score(extracted) >= 0:
+        return extracted
+    return raw
 

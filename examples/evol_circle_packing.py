@@ -166,8 +166,12 @@ MAPELITES_FEATURE_CLIP: bool = True
 
 # WORKER_PLANNING_BACKEND: str | None = None
 # WORKER_CODING_BACKEND: str | None = None
-WORKER_PLANNING_BACKEND: str = "loreley.core.worker.agent.backends:CursorCliBackend"
-WORKER_CODING_BACKEND: str = "loreley.core.worker.agent.backends:CursorCliBackend"
+WORKER_PLANNING_BACKEND: str = (
+    "loreley.core.worker.agent.backends.kilocode_cli:kilocode_planning_backend"
+)
+WORKER_CODING_BACKEND: str = (
+    "loreley.core.worker.agent.backends.kilocode_cli:kilocode_coding_backend"
+)
 
 # --- Model / LLM configuration (see loreley.config.Settings) ----------------
 

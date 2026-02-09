@@ -8,6 +8,7 @@ from time import monotonic
 
 from loguru import logger
 
+from loreley.config import get_settings
 from loreley.core.worker.agent.contracts import AgentInvocation, AgentTask
 from loreley.core.worker.agent.utils import validate_workdir
 
@@ -102,5 +103,41 @@ class CodexCliBackend:
         )
 
 
-__all__ = ["CodexCliBackend"]
+def codex_planning_backend() -> CodexCliBackend:
+    """Factory to build a Codex backend for the planning agent."""
+
+    from loreley.core.worker.planning import PlanningError
+
+    settings = get_settings()
+    return CodexCliBackend(
+        bin=settings.worker_planning_codex_bin,
+        profile=settings.worker_planning_codex_profile,
+        timeout_seconds=settings.worker_planning_timeout_seconds,
+        extra_env=dict(settings.worker_planning_extra_env or {}),
+        error_cls=PlanningError,
+        full_auto=False,
+    )
+
+
+def codex_coding_backend() -> CodexCliBackend:
+    """Factory to build a Codex backend for the coding agent."""
+
+    from loreley.core.worker.coding import CodingError
+
+    settings = get_settings()
+    return CodexCliBackend(
+        bin=settings.worker_coding_codex_bin,
+        profile=settings.worker_coding_codex_profile,
+        timeout_seconds=settings.worker_coding_timeout_seconds,
+        extra_env=dict(settings.worker_coding_extra_env or {}),
+        error_cls=CodingError,
+        full_auto=True,
+    )
+
+
+__all__ = [
+    "CodexCliBackend",
+    "codex_coding_backend",
+    "codex_planning_backend",
+]
 

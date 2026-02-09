@@ -1,6 +1,6 @@
 # loreley.core.worker.coding
 
-Execution engine for Loreley's autonomous worker, responsible for driving the Codex-based coding agent that applies a planning agent's plan to a real git worktree.
+Execution engine for Loreley's autonomous worker, responsible for driving a configurable coding agent backend that applies a planning agent's plan to a real git worktree.
 
 ## Domain types
 
@@ -17,7 +17,7 @@ Execution engine for Loreley's autonomous worker, responsible for driving the Co
 ## Coding agent
 
 - **`CodingAgent`**: high-level orchestrator that turns a `CodingAgentRequest` and a `PlanDocument` into a sequence of edits via a configurable backend.
-  - Instantiated with a `Settings` object and an optional `AgentBackend` implementation. When no backend is provided, it uses `CodexCliBackend` configured via `WORKER_CODING_CODEX_BIN`, `WORKER_CODING_CODEX_PROFILE`, `WORKER_CODING_MAX_ATTEMPTS`, `WORKER_CODING_TIMEOUT_SECONDS`, and `WORKER_CODING_EXTRA_ENV`. You can override the default by setting `WORKER_CODING_BACKEND` to a dotted Python path (`module:attr` or `module.attr`) that resolves to either an `AgentBackend` instance, a class implementing the `AgentBackend` protocol (constructed with no arguments), or a factory callable that returns such an instance.
+  - Instantiated with a `Settings` object and an optional `AgentBackend` implementation. When no backend is provided, it resolves the backend via `WORKER_CODING_BACKEND` (default: `loreley.core.worker.agent.backends.kilocode_cli:kilocode_coding_backend`). You can override the backend by setting `WORKER_CODING_BACKEND` to a dotted Python path (`module:attr` or `module.attr`) that resolves to either an `AgentBackend` instance, a class implementing the `AgentBackend` protocol (constructed with no arguments), or a factory callable that returns such an instance. To use the Codex CLI explicitly, set `WORKER_CODING_BACKEND` to `loreley.core.worker.agent.backends.codex_cli:codex_coding_backend` and configure `WORKER_CODING_CODEX_*`.
   - **`implement(request, *, working_dir)`**: resolves the git worktree path, renders a concise prompt describing the goal, base commit, and plan Markdown, asks the backend to apply the changes, and wraps the output as an `ExecutionReport`.
   - Retries the backend invocation up to `max_attempts` times when process-level `CodingError` issues occur, logging warnings via `loguru` and showing concise progress output with `rich`.
   - Detects and treats a run that leaves the worktree unchanged as a failure, persisting debug artifacts and retrying until attempts are exhausted.
