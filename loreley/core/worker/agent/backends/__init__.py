@@ -6,11 +6,17 @@ from loreley.core.worker.agent.backends.cursor_cli import (
     DEFAULT_CURSOR_MODEL,
     cursor_backend,
 )
+from loreley.core.worker.agent.backends.kilocode_cli import (
+    KilocodeCliBackend,
+    kilocode_backend,
+)
 
 __all__ = [
     "CodexCliBackend",
     "CursorCliBackend",
     "DEFAULT_CURSOR_MODEL",
+    "KilocodeCliBackend",
     "cursor_backend",
+    "kilocode_backend",
 ]
 

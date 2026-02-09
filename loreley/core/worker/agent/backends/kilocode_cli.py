@@ -12,25 +12,24 @@ from loreley.config import get_settings
 from loreley.core.worker.agent.contracts import AgentInvocation, AgentTask
 from loreley.core.worker.agent.utils import validate_workdir
 
-log = logger.bind(module="worker.agent.backends.cursor_cli")
-
-DEFAULT_CURSOR_MODEL = "gpt-5.2-high"
+log = logger.bind(module="worker.agent.backends.kilocode_cli")
 
 
 @dataclass(slots=True)
-class CursorCliBackend:
-    """AgentBackend implementation that delegates to the Cursor Agent CLI.
+class KilocodeCliBackend:
+    """AgentBackend implementation that delegates to the Kilocode CLI.
 
-    This backend runs ``cursor-agent`` in non-interactive mode, forwarding the
-    prompt via ``-p`` and capturing plain-text (typically Markdown) output.
+    Uses Kilocode's autonomous (non-interactive) mode via the ``--auto`` flag,
+    suitable for automated CI/CD pipelines and headless agent orchestration.
+    The prompt is passed as a positional argument; ``--json`` enables structured
+    output for downstream parsing.
     """
 
-    bin: str = "cursor-agent"
-    model: str | None = DEFAULT_CURSOR_MODEL
+    bin: str = "kilocode"
+    mode: str | None = None
     timeout_seconds: int = 1800
     extra_env: dict[str, str] = field(default_factory=dict)
-    output_format: str = "text"
-    force: bool = True
+    json_output: bool = True
     error_cls: type[RuntimeError] = RuntimeError
 
     def run(
@@ -45,35 +44,23 @@ class CursorCliBackend:
             agent_name=task.name or "Agent",
         )
 
-        command: list[str] = [self.bin]
+        command: list[str] = [self.bin, "--auto"]
 
-        if task.prompt:
-            command.extend(["-p", task.prompt])
+        if self.json_output:
+            command.append("--json")
 
-        if self.model:
-            command.extend(["--model", self.model])
+        if self.mode:
+            command.extend(["--mode", self.mode])
 
-        if self.output_format:
-            command.extend(["--output-format", self.output_format])
-
-        if self.force:
-            command.append("--force")
-
-        command_for_log = command.copy()
-        if task.prompt:
-            try:
-                prompt_index = command_for_log.index("-p")
-                if prompt_index + 1 < len(command_for_log):
-                    command_for_log[prompt_index + 1] = f"<prompt:{len(task.prompt)} chars>"
-            except ValueError:
-                pass
+        command.append(task.prompt)
+        command_for_log = command[:-1] + [f"<prompt:{len(task.prompt)} chars>"]
 
         env = os.environ.copy()
         env.update(self.extra_env or {})
 
         start = monotonic()
         log.debug(
-            "Running Cursor CLI command: {} (cwd={}) for task={}",
+            "Running Kilocode CLI command: {} (cwd={}) for task={}",
             command_for_log,
             worktree,
             task.name,
@@ -90,7 +77,7 @@ class CursorCliBackend:
             )
         except subprocess.TimeoutExpired as exc:
             raise self.error_cls(
-                f"cursor-agent timed out after {self.timeout_seconds}s.",
+                f"kilocode timed out after {self.timeout_seconds}s.",
             ) from exc
 
         duration = monotonic() - start
@@ -98,7 +85,7 @@ class CursorCliBackend:
         stderr = (result.stderr or "").strip()
 
         log.debug(
-            "Cursor CLI finished (exit_code={}, duration={:.2f}s) for task={}",
+            "Kilocode CLI finished (exit_code={}, duration={:.2f}s) for task={}",
             result.returncode,
             duration,
             task.name,
@@ -106,13 +93,13 @@ class CursorCliBackend:
 
         if result.returncode != 0:
             raise self.error_cls(
-                f"cursor-agent failed with exit code {result.returncode}. "
+                f"kilocode failed with exit code {result.returncode}. "
                 f"stderr: {stderr or 'N/A'}",
             )
 
         if not stdout:
             log.warning(
-                "Cursor CLI produced an empty stdout payload for task={} (command={})",
+                "Kilocode CLI produced an empty stdout payload for task={} (command={})",
                 task.name,
                 command_for_log,
             )
@@ -125,17 +112,18 @@ class CursorCliBackend:
         )
 
 
-def cursor_backend() -> CursorCliBackend:
-    """Factory to build a Cursor backend using env-only settings."""
+def kilocode_backend() -> KilocodeCliBackend:
+    """Factory to build a Kilocode backend using env-only settings."""
 
     settings = get_settings()
-    model = getattr(settings, "worker_cursor_model", DEFAULT_CURSOR_MODEL)
-    force = getattr(settings, "worker_cursor_force", True)
-    return CursorCliBackend(
-        model=model or DEFAULT_CURSOR_MODEL,
-        force=bool(force),
+    bin_value = getattr(settings, "worker_kilocode_bin", "kilocode")
+    mode_value = getattr(settings, "worker_kilocode_mode", None)
+    json_output_value = getattr(settings, "worker_kilocode_json_output", True)
+    return KilocodeCliBackend(
+        bin=str(bin_value),
+        mode=str(mode_value) if mode_value else None,
+        json_output=bool(json_output_value),
     )
 
 
-__all__ = ["CursorCliBackend", "DEFAULT_CURSOR_MODEL", "cursor_backend"]
-
+__all__ = ["KilocodeCliBackend", "kilocode_backend"]

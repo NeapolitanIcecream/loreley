@@ -225,6 +225,18 @@ class Settings(BaseSettings):
         default=True,
         alias="WORKER_CURSOR_FORCE",
     )
+    worker_kilocode_bin: str = Field(
+        default="kilocode",
+        alias="WORKER_KILOCODE_BIN",
+    )
+    worker_kilocode_mode: str | None = Field(
+        default=None,
+        alias="WORKER_KILOCODE_MODE",
+    )
+    worker_kilocode_json_output: bool = Field(
+        default=True,
+        alias="WORKER_KILOCODE_JSON_OUTPUT",
+    )
     worker_evaluator_plugin: str | None = Field(
         default=None,
         alias="WORKER_EVALUATOR_PLUGIN",

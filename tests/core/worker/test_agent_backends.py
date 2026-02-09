@@ -20,9 +20,11 @@ from loreley.core.worker.agent.backends import (
     CodexCliBackend,
     CursorCliBackend,
     DEFAULT_CURSOR_MODEL,
+    KilocodeCliBackend,
     cursor_backend,
+    kilocode_backend,
 )
-from loreley.core.worker.agent.backends import codex_cli, cursor_cli
+from loreley.core.worker.agent.backends import codex_cli, cursor_cli, kilocode_cli
 
 
 def test_validate_workdir_requires_git_repo(tmp_path: Path) -> None:
@@ -222,18 +224,23 @@ def test_import_order_is_safe_for_agent_backends_without_reexports() -> None:
         [
             "import loreley.core.worker.agent.backends.codex_cli",
             "import loreley.core.worker.agent.backends.cursor_cli",
+            "import loreley.core.worker.agent.backends.kilocode_cli",
             "import loreley.core.worker.agent.backends as backends",
             "from loreley.core.worker.agent.backends import (",
             "    CodexCliBackend,",
             "    CursorCliBackend,",
             "    DEFAULT_CURSOR_MODEL,",
+            "    KilocodeCliBackend,",
             "    cursor_backend,",
+            "    kilocode_backend,",
             ")",
             "import loreley.core.worker.agent as agent",
             "assert CodexCliBackend is backends.CodexCliBackend",
             "assert CursorCliBackend is backends.CursorCliBackend",
+            "assert KilocodeCliBackend is backends.KilocodeCliBackend",
             "assert isinstance(DEFAULT_CURSOR_MODEL, str) and DEFAULT_CURSOR_MODEL",
             "assert callable(cursor_backend)",
+            "assert callable(kilocode_backend)",
             "assert hasattr(agent, 'load_agent_backend')",
             "assert hasattr(agent, 'run_agent_task')",
             "assert hasattr(agent, 'AgentTask')",
@@ -248,6 +255,165 @@ def test_import_order_is_safe_for_agent_backends_without_reexports() -> None:
         text=True,
     )
     assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_kilocode_cli_backend_builds_auto_command(tmp_path: Path, monkeypatch) -> None:
+    """KilocodeCliBackend constructs ``kilocode --auto`` with prompt as positional arg."""
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+
+    captured: dict[str, Any] = {}
+
+    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+        captured.update({"command": command, "cwd": cwd, "env": env, "timeout": timeout})
+        return types.SimpleNamespace(stdout="done", stderr="", returncode=0)
+
+    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+
+    backend = KilocodeCliBackend(
+        bin="kilocode",
+        mode="code",
+        timeout_seconds=60,
+        extra_env={"KEY": "val"},
+        json_output=True,
+        error_cls=RuntimeError,
+    )
+
+    task = AgentTask(name="coding", prompt="implement feature X")
+    invocation = backend.run(task, working_dir=repo_dir)
+
+    command_list = list(invocation.command)
+    assert command_list[0] == "kilocode"
+    assert "--auto" in command_list
+    assert "--json" in command_list
+    assert "--mode" in command_list and "code" in command_list
+    assert "implement feature X" in command_list
+    assert captured["cwd"] == str(repo_dir.resolve())
+    assert captured["env"] and captured["env"]["KEY"] == "val"
+    assert invocation.stdout == "done"
+
+
+def test_kilocode_cli_backend_omits_optional_flags_when_disabled(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Omits --json and --mode when not configured."""
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+
+    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+        return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
+
+    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+
+    backend = KilocodeCliBackend(
+        bin="kilocode",
+        mode=None,
+        timeout_seconds=60,
+        extra_env={},
+        json_output=False,
+        error_cls=RuntimeError,
+    )
+
+    task = AgentTask(name="planning", prompt="plan something")
+    invocation = backend.run(task, working_dir=repo_dir)
+
+    command_list = list(invocation.command)
+    assert "--json" not in command_list
+    assert "--mode" not in command_list
+    assert "--auto" in command_list
+    assert "plan something" in command_list
+
+
+def test_kilocode_cli_backend_raises_on_nonzero_exit(tmp_path: Path, monkeypatch) -> None:
+    """Non-zero exit code from kilocode produces an error with stderr context."""
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+
+    def fake_run(*_args, **_kwargs):  # noqa: ANN001, ANN002
+        return types.SimpleNamespace(stdout="", stderr="connection failed", returncode=1)
+
+    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+
+    backend = KilocodeCliBackend(
+        bin="kilocode",
+        timeout_seconds=10,
+        extra_env={},
+        error_cls=RuntimeError,
+    )
+
+    task = AgentTask(name="coding", prompt="run")
+
+    with pytest.raises(RuntimeError, match="exit code 1"):
+        backend.run(task, working_dir=repo_dir)
+
+
+def test_kilocode_cli_backend_raises_on_timeout(tmp_path: Path, monkeypatch) -> None:
+    """Subprocess timeout is surfaced via the configured error class."""
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+
+    def fake_run(*_args, **_kwargs):  # noqa: ANN001, ANN002
+        raise subprocess.TimeoutExpired(cmd="kilocode", timeout=5)
+
+    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+
+    backend = KilocodeCliBackend(
+        bin="kilocode",
+        timeout_seconds=5,
+        extra_env={},
+        error_cls=RuntimeError,
+    )
+
+    task = AgentTask(name="coding", prompt="slow task")
+
+    with pytest.raises(RuntimeError, match="timed out"):
+        backend.run(task, working_dir=repo_dir)
+
+
+def test_kilocode_cli_backend_warns_on_empty_stdout(
+    tmp_path: Path, monkeypatch, captured_logs
+) -> None:
+    """Empty stdout emits a warning log with module binding."""
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+
+    def fake_run(*_args, **_kwargs):  # noqa: ANN001, ANN002
+        return types.SimpleNamespace(stdout="", stderr="", returncode=0)
+
+    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+
+    backend = KilocodeCliBackend(
+        bin="kilocode",
+        timeout_seconds=10,
+        extra_env={},
+        error_cls=RuntimeError,
+    )
+
+    task = AgentTask(name="test", prompt="empty output")
+    backend.run(task, working_dir=repo_dir)
+
+    warning_msgs = [r for r in captured_logs if r["level"] == "WARNING"]
+    assert any("empty stdout" in r["message"].lower() for r in warning_msgs)
+
+
+def test_kilocode_backend_factory_uses_env_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Factory reads WORKER_KILOCODE_* env vars via Settings."""
+    from loreley.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("WORKER_KILOCODE_BIN", "/usr/local/bin/kilo")
+    monkeypatch.setenv("WORKER_KILOCODE_MODE", "architect")
+    monkeypatch.setenv("WORKER_KILOCODE_JSON_OUTPUT", "false")
+    get_settings.cache_clear()
+
+    backend = kilocode_backend()
+
+    assert isinstance(backend, KilocodeCliBackend)
+    assert backend.bin == "/usr/local/bin/kilo"
+    assert backend.mode == "architect"
+    assert backend.json_output is False
+
+    get_settings.cache_clear()
 
 
 def test_run_agent_task_retries_on_post_check(tmp_path: Path) -> None:
