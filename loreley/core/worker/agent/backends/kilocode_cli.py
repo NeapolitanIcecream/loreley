@@ -126,4 +126,51 @@ def kilocode_backend() -> KilocodeCliBackend:
     )
 
 
-__all__ = ["KilocodeCliBackend", "kilocode_backend"]
+def kilocode_planning_backend() -> KilocodeCliBackend:
+    """Factory to build a Kilocode backend for the planning agent.
+
+    Uses the planning agent's error type so the shared retry loop can capture
+    failures, emit debug artifacts, and retry when appropriate.
+    """
+
+    from loreley.core.worker.planning import PlanningError
+
+    settings = get_settings()
+    bin_value = getattr(settings, "worker_kilocode_bin", "kilocode")
+    mode_value = getattr(settings, "worker_kilocode_mode", None)
+    json_output_value = getattr(settings, "worker_kilocode_json_output", True)
+    return KilocodeCliBackend(
+        bin=str(bin_value),
+        mode=str(mode_value) if mode_value else None,
+        json_output=bool(json_output_value),
+        error_cls=PlanningError,
+    )
+
+
+def kilocode_coding_backend() -> KilocodeCliBackend:
+    """Factory to build a Kilocode backend for the coding agent.
+
+    Uses the coding agent's error type so the shared retry loop can capture
+    failures, emit debug artifacts, and retry when appropriate.
+    """
+
+    from loreley.core.worker.coding import CodingError
+
+    settings = get_settings()
+    bin_value = getattr(settings, "worker_kilocode_bin", "kilocode")
+    mode_value = getattr(settings, "worker_kilocode_mode", None)
+    json_output_value = getattr(settings, "worker_kilocode_json_output", True)
+    return KilocodeCliBackend(
+        bin=str(bin_value),
+        mode=str(mode_value) if mode_value else None,
+        json_output=bool(json_output_value),
+        error_cls=CodingError,
+    )
+
+
+__all__ = [
+    "KilocodeCliBackend",
+    "kilocode_backend",
+    "kilocode_coding_backend",
+    "kilocode_planning_backend",
+]

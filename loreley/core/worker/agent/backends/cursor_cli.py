@@ -137,5 +137,49 @@ def cursor_backend() -> CursorCliBackend:
     )
 
 
-__all__ = ["CursorCliBackend", "DEFAULT_CURSOR_MODEL", "cursor_backend"]
+def cursor_planning_backend() -> CursorCliBackend:
+    """Factory to build a Cursor backend for the planning agent.
+
+    Uses the planning agent's error type so the shared retry loop can capture
+    failures, emit debug artifacts, and retry when appropriate.
+    """
+
+    from loreley.core.worker.planning import PlanningError
+
+    settings = get_settings()
+    model = getattr(settings, "worker_cursor_model", DEFAULT_CURSOR_MODEL)
+    force = getattr(settings, "worker_cursor_force", True)
+    return CursorCliBackend(
+        model=model or DEFAULT_CURSOR_MODEL,
+        force=bool(force),
+        error_cls=PlanningError,
+    )
+
+
+def cursor_coding_backend() -> CursorCliBackend:
+    """Factory to build a Cursor backend for the coding agent.
+
+    Uses the coding agent's error type so the shared retry loop can capture
+    failures, emit debug artifacts, and retry when appropriate.
+    """
+
+    from loreley.core.worker.coding import CodingError
+
+    settings = get_settings()
+    model = getattr(settings, "worker_cursor_model", DEFAULT_CURSOR_MODEL)
+    force = getattr(settings, "worker_cursor_force", True)
+    return CursorCliBackend(
+        model=model or DEFAULT_CURSOR_MODEL,
+        force=bool(force),
+        error_cls=CodingError,
+    )
+
+
+__all__ = [
+    "CursorCliBackend",
+    "DEFAULT_CURSOR_MODEL",
+    "cursor_backend",
+    "cursor_coding_backend",
+    "cursor_planning_backend",
+]
 

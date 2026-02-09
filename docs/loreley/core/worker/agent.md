@@ -28,5 +28,7 @@ Built-in CLI backends live under `loreley.core.worker.agent.backends` and depend
 
 - **`CodexCliBackend`**: `loreley.core.worker.agent.backends.codex_cli.CodexCliBackend`
 - **`CursorCliBackend`**: `loreley.core.worker.agent.backends.cursor_cli.CursorCliBackend`
-  - **Factory helper**: `cursor_backend()`
+  - **Factory helpers**: `cursor_backend()`, `cursor_planning_backend()`, `cursor_coding_backend()`
+- **`KilocodeCliBackend`**: `loreley.core.worker.agent.backends.kilocode_cli.KilocodeCliBackend`
+  - **Factory helpers**: `kilocode_backend()`, `kilocode_planning_backend()`, `kilocode_coding_backend()`
 

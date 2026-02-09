@@ -219,6 +219,102 @@ def test_cursor_backend_uses_env_settings(monkeypatch: pytest.MonkeyPatch) -> No
     get_settings.cache_clear()
 
 
+def test_cursor_coding_backend_is_retryable_in_worker_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Worker retry loop should treat Cursor CLI failures as CodingError."""
+    from loreley.core.worker.coding import CodingError
+
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+
+    calls = {"count": 0}
+
+    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+        calls["count"] += 1
+        return types.SimpleNamespace(stdout="", stderr="boom", returncode=1)
+
+    monkeypatch.setattr(cursor_cli.subprocess, "run", fake_run)
+
+    backend = cursor_cli.cursor_coding_backend()
+    task = AgentTask(name="coding", prompt="do it")
+
+    debug_events: list[tuple[int, str]] = []
+
+    def debug_hook(
+        attempt: int,
+        _invocation: AgentInvocation | None,
+        _result: Any | None,
+        error: Exception | None,
+    ) -> None:
+        debug_events.append((attempt, type(error).__name__ if error else "None"))
+
+    with pytest.raises(CodingError) as exc_info:
+        run_agent_task(
+            backend=backend,
+            task=task,
+            working_dir=repo_dir,
+            max_attempts=2,
+            coerce_result=lambda inv: inv.stdout,
+            retryable_exceptions=(CodingError,),
+            error_cls=CodingError,
+            error_message="cursor backend should be retryable for coding",
+            debug_hook=debug_hook,
+        )
+
+    assert calls["count"] == 2
+    assert debug_events == [(1, "CodingError"), (2, "CodingError")]
+    assert isinstance(exc_info.value.__cause__, CodingError)
+
+
+def test_kilocode_planning_backend_is_retryable_in_worker_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Worker retry loop should treat Kilocode CLI failures as PlanningError."""
+    from loreley.core.worker.planning import PlanningError
+
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+
+    calls = {"count": 0}
+
+    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+        calls["count"] += 1
+        return types.SimpleNamespace(stdout="", stderr="connection failed", returncode=1)
+
+    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+
+    backend = kilocode_cli.kilocode_planning_backend()
+    task = AgentTask(name="planning", prompt="plan")
+
+    debug_events: list[tuple[int, str]] = []
+
+    def debug_hook(
+        attempt: int,
+        _invocation: AgentInvocation | None,
+        _result: Any | None,
+        error: Exception | None,
+    ) -> None:
+        debug_events.append((attempt, type(error).__name__ if error else "None"))
+
+    with pytest.raises(PlanningError) as exc_info:
+        run_agent_task(
+            backend=backend,
+            task=task,
+            working_dir=repo_dir,
+            max_attempts=2,
+            coerce_result=lambda inv: inv.stdout,
+            retryable_exceptions=(PlanningError,),
+            error_cls=PlanningError,
+            error_message="kilocode backend should be retryable for planning",
+            debug_hook=debug_hook,
+        )
+
+    assert calls["count"] == 2
+    assert debug_events == [(1, "PlanningError"), (2, "PlanningError")]
+    assert isinstance(exc_info.value.__cause__, PlanningError)
+
+
 def test_import_order_is_safe_for_agent_backends_without_reexports() -> None:
     code = "\n".join(
         [
