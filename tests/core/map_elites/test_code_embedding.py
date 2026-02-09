@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -124,3 +125,50 @@ def test_embed_batch_aligns_vectors_by_response_index(settings: Settings) -> Non
         (1.0,) * dims,
         (2.0,) * dims,
     ]
+
+
+# ---------------------------------------------------------------------------
+# Observability: failure signal tests
+# ---------------------------------------------------------------------------
+
+
+def test_embedder_returns_none_and_logs_info_when_no_files_supplied(
+    settings: Settings,
+    captured_logs: list[dict[str, Any]],
+) -> None:
+    """Observability: embedder logs INFO when invoked with an empty file list."""
+    embedder = CodeEmbedder(settings=settings, client=None)
+
+    result = embedder.run([])
+
+    assert result is None
+    info_logs = [
+        r
+        for r in captured_logs
+        if r["module"] == "map_elites.code_embedding" and r["level"] == "INFO"
+    ]
+    assert any("No chunked files" in str(r["message"]) for r in info_logs)
+
+
+def test_embedder_logs_warning_when_chunk_embedding_produces_no_results(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+    captured_logs: list[dict[str, Any]],
+) -> None:
+    """Observability: WARNING is emitted when the embedding step yields no vectors."""
+    chunked = _make_chunked_file(chunk_count=2, change_count=3)
+    embedder = CodeEmbedder(settings=settings, client=None)
+
+    # Patch _embed_chunks (not _embed_batch) to return empty, simulating a
+    # scenario where the embedding API returns nothing actionable.
+    monkeypatch.setattr(embedder, "_embed_chunks", lambda _chunks: [])
+
+    result = embedder.run([chunked])
+
+    assert result is None
+    warn_logs = [
+        r
+        for r in captured_logs
+        if r["level"] == "WARNING" and r["module"] == "map_elites.code_embedding"
+    ]
+    assert any("no results" in str(r["message"]).lower() for r in warn_logs)

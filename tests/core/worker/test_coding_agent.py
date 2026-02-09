@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -98,4 +100,69 @@ def test_coding_prompt_includes_markdown_contract(tmp_path: Path, settings: Sett
     assert "Plan (Markdown):" in prompt
     assert "Output requirements:" in prompt
     assert "Commit message" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Observability: failure signal tests
+# ---------------------------------------------------------------------------
+
+
+def test_coding_agent_logs_warning_when_no_changes_produced(
+    tmp_path: Path,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    captured_logs: list[dict[str, Any]],
+) -> None:
+    """Observability: a WARNING log is emitted when coding attempt yields no repo changes."""
+    settings.worker_coding_max_attempts = 2
+    backend = _DummyBackend("## Summary\n- Did nothing.\n")
+    agent = CodingAgent(settings=settings, backend=backend)
+
+    # Worktree snapshot never changes → triggers "no repository changes" path.
+    monkeypatch.setattr(agent, "_snapshot_worktree_state", lambda _w: ("same",))
+    monkeypatch.setattr(agent, "_dump_debug_artifact", lambda **_kwargs: None)
+
+    request = CodingAgentRequest(goal="goal", plan=_make_plan(), base_commit="abc123")
+
+    with pytest.raises(CodingError):
+        agent.implement(request, working_dir=tmp_path)
+
+    # Assert the expected diagnostic signal was emitted.
+    warn_logs = [
+        r
+        for r in captured_logs
+        if r["level"] == "WARNING" and r["module"] == "worker.coding"
+    ]
+    assert any("no repository changes" in str(r["message"]).lower() for r in warn_logs)
+
+
+def test_coding_agent_creates_debug_artifact_on_attempt(
+    tmp_path: Path,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Observability: a JSON debug artifact is written for each coding attempt."""
+    debug_dir = tmp_path / "debug"
+    debug_dir.mkdir()
+
+    backend = _DummyBackend("## Summary\n- Done.\n")
+    agent = CodingAgent(settings=settings, backend=backend)
+    agent._debug_dir = debug_dir
+
+    states = iter([("clean",), ("dirty",)])
+    monkeypatch.setattr(agent, "_snapshot_worktree_state", lambda _w: next(states, ("dirty",)))
+
+    request = CodingAgentRequest(goal="goal", plan=_make_plan(), base_commit="abc123")
+    agent.implement(request, working_dir=tmp_path)
+
+    # At least one debug artifact should be present.
+    artifacts = list(debug_dir.glob("coding-*.json"))
+    assert len(artifacts) >= 1
+
+    with artifacts[0].open() as f:
+        payload = json.load(f)
+
+    assert payload["goal"] == "goal"
+    assert payload["base_commit"] == "abc123"
+    assert payload["status"] == "ok"
 

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Generator
+from typing import Any, Generator
 
 import pytest
+from loguru import logger
 
 import sys
 
@@ -29,5 +30,31 @@ def settings(monkeypatch: pytest.MonkeyPatch) -> Generator[TestSettings, None, N
     monkeypatch.setenv("MAPELITES_CODE_EMBEDDING_DIMENSIONS", "8")
     monkeypatch.setenv("EXPERIMENT_ID", "test")
     yield TestSettings()
+
+
+@pytest.fixture
+def captured_logs() -> Generator[list[dict[str, Any]], None, None]:
+    """In-memory loguru sink for asserting diagnostic signals in tests.
+
+    Each captured record is a dict with ``level``, ``message`` and ``module``
+    keys.  ``module`` comes from the ``logger.bind(module=...)`` convention
+    used across the codebase (see observability SKILL).
+    """
+
+    records: list[dict[str, Any]] = []
+
+    def _sink(message: Any) -> None:
+        record = message.record
+        records.append(
+            {
+                "level": record["level"].name,
+                "message": record["message"],
+                "module": record["extra"].get("module"),
+            }
+        )
+
+    handler_id = logger.add(_sink, level="DEBUG")
+    yield records
+    logger.remove(handler_id)
 
 
