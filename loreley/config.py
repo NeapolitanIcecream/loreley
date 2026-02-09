@@ -237,6 +237,10 @@ class Settings(BaseSettings):
         default=True,
         alias="WORKER_KILOCODE_JSON_OUTPUT",
     )
+    worker_kilocode_openai_api_spec: Literal["responses", "chat_completions"] | None = Field(
+        default=None,
+        alias="WORKER_KILOCODE_OPENAI_API_SPEC",
+    )
     worker_kilocode_openai_base_url: str | None = Field(
         default=None,
         alias="WORKER_KILOCODE_OPENAI_BASE_URL",

@@ -115,12 +115,17 @@ class KilocodeCliBackend:
 def _build_kilocode_openai_env(settings) -> dict[str, str]:
     """Translate WORKER_KILOCODE_OPENAI_* settings into Kilo Code CLI env config.
 
-    Kilo Code CLI supports env-only provider configuration. For the OpenAI
-    provider, use:
-    - ``KILO_PROVIDER_TYPE=openai``
+    Kilo Code CLI supports env-only provider configuration. For OpenAI-compatible
+    endpoints, use:
+    - ``KILO_PROVIDER_TYPE=openai`` (Chat Completions)
+    - ``KILO_PROVIDER_TYPE=openai-responses`` (Responses)
     - ``KILO_OPENAI_API_KEY``
     - ``KILO_OPENAI_BASE_URL`` (optional; required for OpenAI-compatible gateways)
     - ``KILO_OPENAI_MODEL_ID``
+
+    Loreley maps ``WORKER_KILOCODE_OPENAI_API_SPEC`` to the provider type:
+    - ``chat_completions`` -> ``openai``
+    - ``responses`` -> ``openai-responses``
 
     Reference: ``cli/docs/ENVIRONMENT_VARIABLES.md`` in the upstream Kilocode repo.
     """
@@ -128,10 +133,19 @@ def _build_kilocode_openai_env(settings) -> dict[str, str]:
     api_key = (getattr(settings, "worker_kilocode_openai_api_key", None) or "").strip()
     base_url = (getattr(settings, "worker_kilocode_openai_base_url", None) or "").strip()
     model = (getattr(settings, "worker_kilocode_openai_model", None) or "").strip()
+    api_spec = getattr(settings, "worker_kilocode_openai_api_spec", None)
 
     env: dict[str, str] = {}
-    if api_key or base_url or model:
-        env["KILO_PROVIDER_TYPE"] = "openai"
+    provider_type: str | None = None
+    if api_spec == "responses":
+        provider_type = "openai-responses"
+    elif api_spec == "chat_completions":
+        provider_type = "openai"
+    elif api_key or base_url or model:
+        provider_type = "openai"
+
+    if provider_type:
+        env["KILO_PROVIDER_TYPE"] = provider_type
 
     if api_key:
         env["KILO_OPENAI_API_KEY"] = api_key

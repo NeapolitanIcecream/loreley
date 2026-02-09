@@ -519,6 +519,32 @@ def test_kilocode_backend_factory_uses_env_settings(monkeypatch: pytest.MonkeyPa
     get_settings.cache_clear()
 
 
+@pytest.mark.parametrize(
+    ("api_spec", "expected_provider_type"),
+    [
+        ("chat_completions", "openai"),
+        ("responses", "openai-responses"),
+    ],
+)
+def test_kilocode_backend_factory_maps_openai_api_spec_to_provider_type(
+    monkeypatch: pytest.MonkeyPatch,
+    api_spec: str,
+    expected_provider_type: str,
+) -> None:
+    """Kilo provider type follows WORKER_KILOCODE_OPENAI_API_SPEC."""
+    from loreley.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("WORKER_KILOCODE_OPENAI_API_SPEC", api_spec)
+    get_settings.cache_clear()
+
+    backend = kilocode_backend()
+
+    assert backend.extra_env["KILO_PROVIDER_TYPE"] == expected_provider_type
+
+    get_settings.cache_clear()
+
+
 def test_run_agent_task_retries_on_post_check(tmp_path: Path) -> None:
     class DummyBackend:
         def __init__(self) -> None:
