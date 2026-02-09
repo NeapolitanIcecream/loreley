@@ -500,6 +500,9 @@ def test_kilocode_backend_factory_uses_env_settings(monkeypatch: pytest.MonkeyPa
     monkeypatch.setenv("WORKER_KILOCODE_BIN", "/usr/local/bin/kilo")
     monkeypatch.setenv("WORKER_KILOCODE_MODE", "architect")
     monkeypatch.setenv("WORKER_KILOCODE_JSON_OUTPUT", "false")
+    monkeypatch.setenv("WORKER_KILOCODE_OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("WORKER_KILOCODE_OPENAI_BASE_URL", "https://example.invalid/v1")
+    monkeypatch.setenv("WORKER_KILOCODE_OPENAI_MODEL", "gpt-4o-mini")
     get_settings.cache_clear()
 
     backend = kilocode_backend()
@@ -508,6 +511,10 @@ def test_kilocode_backend_factory_uses_env_settings(monkeypatch: pytest.MonkeyPa
     assert backend.bin == "/usr/local/bin/kilo"
     assert backend.mode == "architect"
     assert backend.json_output is False
+    assert backend.extra_env["KILO_PROVIDER_TYPE"] == "openai"
+    assert backend.extra_env["KILO_OPENAI_API_KEY"] == "sk-test"
+    assert backend.extra_env["KILO_OPENAI_BASE_URL"] == "https://example.invalid/v1"
+    assert backend.extra_env["KILO_OPENAI_MODEL_ID"] == "gpt-4o-mini"
 
     get_settings.cache_clear()
 

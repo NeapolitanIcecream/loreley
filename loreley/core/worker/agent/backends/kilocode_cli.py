@@ -112,6 +112,36 @@ class KilocodeCliBackend:
         )
 
 
+def _build_kilocode_openai_env(settings) -> dict[str, str]:
+    """Translate WORKER_KILOCODE_OPENAI_* settings into Kilo Code CLI env config.
+
+    Kilo Code CLI supports env-only provider configuration. For the OpenAI
+    provider, use:
+    - ``KILO_PROVIDER_TYPE=openai``
+    - ``KILO_OPENAI_API_KEY``
+    - ``KILO_OPENAI_BASE_URL`` (optional; required for OpenAI-compatible gateways)
+    - ``KILO_OPENAI_MODEL_ID``
+
+    Reference: ``cli/docs/ENVIRONMENT_VARIABLES.md`` in the upstream Kilocode repo.
+    """
+
+    api_key = (getattr(settings, "worker_kilocode_openai_api_key", None) or "").strip()
+    base_url = (getattr(settings, "worker_kilocode_openai_base_url", None) or "").strip()
+    model = (getattr(settings, "worker_kilocode_openai_model", None) or "").strip()
+
+    env: dict[str, str] = {}
+    if api_key or base_url or model:
+        env["KILO_PROVIDER_TYPE"] = "openai"
+
+    if api_key:
+        env["KILO_OPENAI_API_KEY"] = api_key
+    if base_url:
+        env["KILO_OPENAI_BASE_URL"] = base_url
+    if model:
+        env["KILO_OPENAI_MODEL_ID"] = model
+    return env
+
+
 def kilocode_backend() -> KilocodeCliBackend:
     """Factory to build a Kilocode backend using env-only settings."""
 
@@ -119,10 +149,12 @@ def kilocode_backend() -> KilocodeCliBackend:
     bin_value = getattr(settings, "worker_kilocode_bin", "kilocode")
     mode_value = getattr(settings, "worker_kilocode_mode", None)
     json_output_value = getattr(settings, "worker_kilocode_json_output", True)
+    extra_env = _build_kilocode_openai_env(settings)
     return KilocodeCliBackend(
         bin=str(bin_value),
         mode=str(mode_value) if mode_value else None,
         json_output=bool(json_output_value),
+        extra_env=extra_env,
     )
 
 
@@ -139,10 +171,12 @@ def kilocode_planning_backend() -> KilocodeCliBackend:
     bin_value = getattr(settings, "worker_kilocode_bin", "kilocode")
     mode_value = getattr(settings, "worker_kilocode_mode", None)
     json_output_value = getattr(settings, "worker_kilocode_json_output", True)
+    extra_env = _build_kilocode_openai_env(settings)
     return KilocodeCliBackend(
         bin=str(bin_value),
         mode=str(mode_value) if mode_value else None,
         json_output=bool(json_output_value),
+        extra_env=extra_env,
         error_cls=PlanningError,
     )
 
@@ -160,10 +194,12 @@ def kilocode_coding_backend() -> KilocodeCliBackend:
     bin_value = getattr(settings, "worker_kilocode_bin", "kilocode")
     mode_value = getattr(settings, "worker_kilocode_mode", None)
     json_output_value = getattr(settings, "worker_kilocode_json_output", True)
+    extra_env = _build_kilocode_openai_env(settings)
     return KilocodeCliBackend(
         bin=str(bin_value),
         mode=str(mode_value) if mode_value else None,
         json_output=bool(json_output_value),
+        extra_env=extra_env,
         error_cls=CodingError,
     )
 

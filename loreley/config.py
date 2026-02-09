@@ -237,6 +237,18 @@ class Settings(BaseSettings):
         default=True,
         alias="WORKER_KILOCODE_JSON_OUTPUT",
     )
+    worker_kilocode_openai_base_url: str | None = Field(
+        default=None,
+        alias="WORKER_KILOCODE_OPENAI_BASE_URL",
+    )
+    worker_kilocode_openai_api_key: str | None = Field(
+        default=None,
+        alias="WORKER_KILOCODE_OPENAI_API_KEY",
+    )
+    worker_kilocode_openai_model: str | None = Field(
+        default=None,
+        alias="WORKER_KILOCODE_OPENAI_MODEL",
+    )
     worker_evaluator_plugin: str | None = Field(
         default=None,
         alias="WORKER_EVALUATOR_PLUGIN",
