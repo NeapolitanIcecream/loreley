@@ -13,7 +13,7 @@ from git import Repo
 from git.exc import GitCommandError, InvalidGitRepositoryError, NoSuchPathError
 from loguru import logger
 from rich.console import Console
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 
 from loreley.config import Settings, get_settings
 from loreley.core.experiments import ExperimentError, bootstrap_instance
@@ -476,14 +476,16 @@ class EvolutionScheduler:
         from loreley.db.models import EvolutionJob  # Local import to avoid cycles.
 
         with session_scope() as session:
-            total_jobs = int(session.execute(select(func.count(EvolutionJob.id))).scalar_one())
-            seed_count = int(
-                session.execute(
-                    select(func.count(EvolutionJob.id)).where(
-                        EvolutionJob.is_seed_job.is_(True),
-                    )
-                ).scalar_one()
+            stmt = select(
+                func.count(EvolutionJob.id),
+                func.coalesce(
+                    func.sum(case((EvolutionJob.is_seed_job.is_(True), 1), else_=0)),
+                    0,
+                ),
             )
+            total_jobs, seed_count = session.execute(stmt).one()
+            total_jobs = int(total_jobs)
+            seed_count = int(seed_count)
         non_seed_jobs_exist = total_jobs > seed_count
 
         if non_seed_jobs_exist:

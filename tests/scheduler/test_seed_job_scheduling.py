@@ -14,11 +14,11 @@ from loreley.scheduler.main import EvolutionScheduler
 
 
 class _FakeResult:
-    def __init__(self, value: object) -> None:
-        self._value = value
+    def __init__(self, row: tuple[object, object]) -> None:
+        self._row = row
 
-    def scalar_one(self) -> object:
-        return self._value
+    def one(self) -> tuple[object, object]:
+        return self._row
 
 
 @dataclass
@@ -27,7 +27,7 @@ class _FakeSession:
     seed_count: int
     executed: list[object]
 
-    def execute(self, stmt: Any) -> _FakeResult:  # type: ignore[no-untyped-def]
+    def execute(self, stmt: Any) -> _FakeResult:
         self.executed.append(stmt)
 
         # Guardrail: the scheduler must not load ORM rows for this check.
@@ -35,10 +35,7 @@ class _FakeSession:
         if any(d.get("expr") is EvolutionJob or d.get("type") is EvolutionJob for d in descriptions):
             raise AssertionError("seed scheduling must not execute select(EvolutionJob)")
 
-        where_criteria = list(getattr(stmt, "_where_criteria", ()))
-        if not where_criteria:
-            return _FakeResult(self.total_jobs)
-        return _FakeResult(self.seed_count)
+        return _FakeResult((self.total_jobs, self.seed_count))
 
 
 @dataclass
@@ -166,5 +163,5 @@ def test_seed_scheduling_creates_limited_jobs_without_loading_rows(
             "island_id": "main",
         }
     ]
-    assert len(executed) == 2
+    assert len(executed) == 1
 
