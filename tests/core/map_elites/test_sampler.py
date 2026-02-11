@@ -15,18 +15,14 @@ from loreley.core.map_elites.sampler import MapElitesSampler
 class FakeRecord:
     commit_hash: str
     cell_index: int
-    fitness: float = 1.0
-    measures: Sequence[float] = ()
-    solution: Sequence[float] = ()
-    timestamp: float = 0.0
 
 
 class FakeManager:
     def __init__(self, records: Sequence[FakeRecord]) -> None:
         self._records = tuple(records)
 
-    def get_records(self, island_id: str | None = None) -> tuple[FakeRecord, ...]:
-        return self._records
+    def get_cell_commits(self, island_id: str | None = None) -> Mapping[int, str]:  # noqa: ARG002
+        return {record.cell_index: record.commit_hash for record in self._records}
 
 
 def make_sampler(settings: Settings, records: Sequence[FakeRecord]) -> MapElitesSampler:
@@ -38,8 +34,6 @@ def make_sampler(settings: Settings, records: Sequence[FakeRecord]) -> MapElites
     settings.mapelites_sampler_fallback_sample_size = 4
 
     manager = FakeManager(records)
-    rng = np.random.default_rng(1234)
-    # MapElitesSampler accepts random.Random; we use a simple wrapper here
     import random
 
     python_rng = random.Random(1234)
@@ -69,12 +63,16 @@ def test_select_inspirations_respects_inspiration_count(settings: Settings) -> N
     records = [FakeRecord(commit_hash=f"c{i}", cell_index=i) for i in range(9)]
     sampler = make_sampler(settings, records=records)
     base = records[4]
-    records_by_cell = {record.cell_index: record for record in records}
+    cell_commits = {record.cell_index: record.commit_hash for record in records}
 
-    inspirations, stats = sampler._select_inspirations(base, records_by_cell)  # type: ignore[attr-defined]
+    inspirations, stats = sampler._select_inspirations(  # type: ignore[attr-defined]
+        base_cell_index=base.cell_index,
+        base_commit_hash=base.commit_hash,
+        cell_commits=cell_commits,
+    )
 
     assert len(inspirations) <= settings.mapelites_sampler_inspiration_count
-    assert base.commit_hash not in {rec.commit_hash for rec in inspirations}
+    assert base.commit_hash not in set(inspirations)
     assert stats["radius_used"] <= settings.mapelites_sampler_neighbor_max_radius
 
 
@@ -112,16 +110,20 @@ def test_select_inspirations_does_not_call_neighbor_indices(monkeypatch, setting
         settings=settings,
         rng=random.Random(1234),
     )
-    records_by_cell: Mapping[int, FakeRecord] = {record.cell_index: record for record in records}
+    cell_commits = {record.cell_index: record.commit_hash for record in records}
 
     def explode(self, center_index: int, radius: int) -> list[int]:  # noqa: ARG001
         raise RuntimeError("_neighbor_indices should not be used by _select_inspirations")
 
     monkeypatch.setattr(MapElitesSampler, "_neighbor_indices", explode)
 
-    inspirations, stats = sampler._select_inspirations(records_by_cell[base_index], records_by_cell)  # type: ignore[attr-defined]
+    inspirations, stats = sampler._select_inspirations(  # type: ignore[attr-defined]
+        base_cell_index=base_index,
+        base_commit_hash="base",
+        cell_commits=cell_commits,
+    )
     assert len(inspirations) == 2
-    assert {rec.commit_hash for rec in inspirations} == {"n1", "n2"}
+    assert set(inspirations) == {"n1", "n2"}
     assert stats["radius_used"] == settings.mapelites_sampler_neighbor_radius
     assert stats["radius_used"] <= settings.mapelites_sampler_neighbor_max_radius
 
@@ -140,8 +142,8 @@ def test_schedule_job_with_and_without_records(monkeypatch, settings: Settings) 
         self,
         *,
         island_id,
-        base,
-        inspirations,
+        base_commit_hash,
+        inspiration_commit_hashes,
         selection_stats,
         iteration_hint,
         priority,
@@ -149,8 +151,8 @@ def test_schedule_job_with_and_without_records(monkeypatch, settings: Settings) 
         captured_calls.append(
             {
                 "island_id": island_id,
-                "base": base,
-                "inspirations": inspirations,
+                "base_commit_hash": base_commit_hash,
+                "inspiration_commit_hashes": inspiration_commit_hashes,
                 "selection_stats": selection_stats,
                 "iteration_hint": iteration_hint,
                 "priority": priority,
@@ -166,5 +168,3 @@ def test_schedule_job_with_and_without_records(monkeypatch, settings: Settings) 
     assert job.job_id is not None
     assert job.base_commit_hash in {record.commit_hash for record in records}
     assert captured_calls
-
-

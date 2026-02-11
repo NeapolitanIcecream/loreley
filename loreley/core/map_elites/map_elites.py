@@ -6,7 +6,7 @@ import math
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Mapping, Sequence, cast
+from typing import Any, Mapping, Sequence, cast
 
 import numpy as np
 from loguru import logger
@@ -33,9 +33,6 @@ from .snapshot import (
     apply_snapshot,
     to_list,
 )
-
-if TYPE_CHECKING:  # pragma: no cover
-    from .sampler import SupportsMapElitesRecord
 
 log = logger.bind(module="map_elites.manager")
 
@@ -317,7 +314,7 @@ class MapElitesManager:
     def get_records(
         self,
         island_id: str | None = None,
-    ) -> tuple["SupportsMapElitesRecord", ...]:
+    ) -> tuple["MapElitesRecord", ...]:
         """Return all elites for a given island."""
         effective_island = island_id or self._default_island
         # Lazily initialise and restore snapshots so that callers (UI, scheduler)
@@ -330,6 +327,36 @@ class MapElitesManager:
             cast(Mapping[str, Any], data),
             effective_island,
         )
+
+    def get_cell_commits(self, island_id: str | None = None) -> dict[int, str]:
+        """Return a lightweight mapping of occupied cell indices to commit hashes.
+
+        This method is intended for hot paths (e.g. scheduling) that only need to
+        sample occupied archive cells without materializing full archive records.
+        """
+
+        effective_island = island_id or self._default_island
+        state = self._ensure_island(effective_island)
+        if state.archive.empty:
+            return {}
+
+        cell_commits: dict[int, str] = {}
+        for cell_index, commit_hash in state.index_to_commit.items():
+            commit = str(commit_hash or "").strip()
+            if not commit:
+                continue
+            try:
+                idx = int(cell_index)
+            except (TypeError, ValueError):
+                continue
+            cell_commits[idx] = commit
+        if not cell_commits:
+            message = (
+                "MAP-Elites archive is non-empty but cell->commit bookkeeping is missing."
+            )
+            log.error("{} island={}", message, effective_island)
+            raise RuntimeError(f"{message} island={effective_island}")
+        return dict(cell_commits)
 
     def sample_records(
         self,

@@ -7,7 +7,8 @@ from datetime import datetime, timezone
 from itertools import product
 from math import prod
 import random
-from typing import Any, Mapping, Protocol, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any, Protocol
 from uuid import UUID
 
 import numpy as np
@@ -25,39 +26,11 @@ log = logger.bind(module="map_elites.sampler")
 __all__ = ["ScheduledSamplerJob", "MapElitesSampler"]
 
 
-class SupportsMapElitesRecord(Protocol):
-    """Protocol describing the record surface the sampler consumes.
-
-    All attributes are treated as read-only from the sampler's perspective.
-    """
-
-    @property
-    def commit_hash(self) -> str: ...
-
-    @property
-    def cell_index(self) -> int: ...
-
-    @property
-    def fitness(self) -> float: ...
-
-    @property
-    def measures(self) -> Sequence[float]: ...
-
-    @property
-    def solution(self) -> Sequence[float]: ...
-
-    @property
-    def timestamp(self) -> float: ...
-
-
 class SupportsMapElitesManager(Protocol):
     """Protocol describing the manager interface required by the sampler."""
 
-    def get_records(
-        self,
-        island_id: str | None = None,
-    ) -> tuple[SupportsMapElitesRecord, ...]:
-        """Return archive records for an island."""
+    def get_cell_commits(self, island_id: str | None = None) -> Mapping[int, str]:
+        """Return occupied cell indices mapped to commit hashes."""
         ...
 
 
@@ -67,16 +40,8 @@ class ScheduledSamplerJob:
 
     job_id: UUID
     island_id: str
-    base: SupportsMapElitesRecord
-    inspirations: tuple[SupportsMapElitesRecord, ...]
-
-    @property
-    def base_commit_hash(self) -> str:
-        return self.base.commit_hash
-
-    @property
-    def inspiration_commit_hashes(self) -> tuple[str, ...]:
-        return tuple(record.commit_hash for record in self.inspirations)
+    base_commit_hash: str
+    inspiration_commit_hashes: tuple[str, ...]
 
 
 class MapElitesSampler:
@@ -121,14 +86,19 @@ class MapElitesSampler:
     ) -> ScheduledSamplerJob | None:
         """Select base/inspiration commits and persist an EvolutionJob."""
         effective_island = island_id or self._default_island
-        records = list(self.manager.get_records(effective_island))
-        if not records:
+        cell_commits = self.manager.get_cell_commits(effective_island)
+        if not cell_commits:
             log.warning("Cannot schedule job; island {} archive is empty", effective_island)
             return None
 
-        base_record = self._rng.choice(records)
-        records_by_cell = {record.cell_index: record for record in records}
-        inspirations, selection_stats = self._select_inspirations(base_record, records_by_cell)
+        items = tuple(cell_commits.items())
+        base_cell_index, base_commit_hash = self._rng.choice(items)
+
+        inspirations, selection_stats = self._select_inspirations(
+            base_cell_index=base_cell_index,
+            base_commit_hash=base_commit_hash,
+            cell_commits=cell_commits,
+        )
         iteration_hint = None
         radius_used = selection_stats.get("radius_used")
         initial_radius = selection_stats.get("initial_radius")
@@ -137,8 +107,8 @@ class MapElitesSampler:
 
         job = self._persist_job(
             island_id=effective_island,
-            base=base_record,
-            inspirations=inspirations,
+            base_commit_hash=base_commit_hash,
+            inspiration_commit_hashes=inspirations,
             selection_stats=selection_stats,
             iteration_hint=iteration_hint,
             priority=priority,
@@ -148,21 +118,23 @@ class MapElitesSampler:
 
         console.log(
             f"[bold green]Queued evolution job[/] island={effective_island} "
-            f"base={base_record.commit_hash} inspirations={len(inspirations)}",
+            f"base={base_commit_hash} inspirations={len(inspirations)}",
         )
 
         return ScheduledSamplerJob(
             job_id=job.id,
             island_id=effective_island,
-            base=base_record,
-            inspirations=inspirations,
+            base_commit_hash=base_commit_hash,
+            inspiration_commit_hashes=tuple(inspirations),
         )
 
     def _select_inspirations(
         self,
-        base: SupportsMapElitesRecord,
-        records_by_cell: Mapping[int, SupportsMapElitesRecord],
-    ) -> tuple[tuple[SupportsMapElitesRecord, ...], dict[str, Any]]:
+        *,
+        base_cell_index: int,
+        base_commit_hash: str,
+        cell_commits: Mapping[int, str],
+    ) -> tuple[tuple[str, ...], dict[str, Any]]:
         if self._inspiration_count <= 0:
             return tuple(), {
                 "initial_radius": self._neighbor_radius,
@@ -170,17 +142,17 @@ class MapElitesSampler:
                 "fallback_inspirations": 0,
             }
 
-        selected: list[SupportsMapElitesRecord] = []
-        selected_commits = {base.commit_hash}
+        selected: list[str] = []
+        selected_commits = {base_commit_hash}
         radius_used = 0
         min_radius = max(0, self._neighbor_radius)
         max_radius = max(min_radius, self._max_neighbor_radius)
         radius = max(1, min_radius) if max_radius > 0 else 1
 
-        if records_by_cell and max_radius > 0:
+        if cell_commits and max_radius > 0:
             try:
                 base_coords = np.asarray(
-                    np.unravel_index(base.cell_index, self._grid_shape),
+                    np.unravel_index(base_cell_index, self._grid_shape),
                     dtype=np.int64,
                 )
             except ValueError:
@@ -191,9 +163,9 @@ class MapElitesSampler:
                 # Chebyshev ball in d dimensions is (2r+1)^d and quickly becomes
                 # intractable; instead we compute Chebyshev distances to occupied
                 # cells in a single vectorized pass (O(N * d)).
-                items = tuple(records_by_cell.items())
+                items = tuple(cell_commits.items())
                 cell_indices = np.asarray([idx for idx, _ in items], dtype=np.int64)
-                records = [record for _, record in items]
+                commits = [commit for _, commit in items]
                 max_index = prod(self._grid_shape) - 1
                 if max_index >= 0:
                     valid_mask = cell_indices >= 0
@@ -206,7 +178,7 @@ class MapElitesSampler:
                     if not np.all(valid_mask):
                         mask_list = valid_mask.tolist()
                         cell_indices = cell_indices[valid_mask]
-                        records = [rec for rec, keep in zip(records, mask_list) if keep]
+                        commits = [commit for commit, keep in zip(commits, mask_list) if keep]
                 if cell_indices.size > 0:
                     try:
                         coords = np.asarray(
@@ -234,11 +206,11 @@ class MapElitesSampler:
                             self._rng.shuffle(positions)
                             added_this_radius = False
                             for pos in positions:
-                                record = records[pos]
-                                if record.commit_hash in selected_commits:
+                                commit_hash = commits[pos]
+                                if not commit_hash or commit_hash in selected_commits:
                                     continue
-                                selected.append(record)
-                                selected_commits.add(record.commit_hash)
+                                selected.append(commit_hash)
+                                selected_commits.add(commit_hash)
                                 added_this_radius = True
                                 if len(selected) >= self._inspiration_count:
                                     break
@@ -250,9 +222,11 @@ class MapElitesSampler:
         if len(selected) < self._inspiration_count and self._fallback_sample_size > 0:
             needed = self._inspiration_count - len(selected)
             fallback_candidates = [
-                record
-                for record in records_by_cell.values()
-                if record.commit_hash not in selected_commits
+                commit_hash
+                for cell_index, commit_hash in cell_commits.items()
+                if cell_index != base_cell_index
+                and commit_hash
+                and commit_hash not in selected_commits
             ]
             if fallback_candidates:
                 self._rng.shuffle(fallback_candidates)
@@ -302,8 +276,8 @@ class MapElitesSampler:
         self,
         *,
         island_id: str,
-        base: SupportsMapElitesRecord,
-        inspirations: Sequence[SupportsMapElitesRecord],
+        base_commit_hash: str,
+        inspiration_commit_hashes: Sequence[str],
         selection_stats: Mapping[str, Any],
         iteration_hint: str | None,
         priority: int | None,
@@ -315,9 +289,9 @@ class MapElitesSampler:
             return None
         job = EvolutionJob(
             status=JobStatus.PENDING,
-            base_commit_hash=base.commit_hash,
+            base_commit_hash=base_commit_hash,
             island_id=island_id,
-            inspiration_commit_hashes=[record.commit_hash for record in inspirations],
+            inspiration_commit_hashes=list(inspiration_commit_hashes),
             goal=goal,
             constraints=[],
             acceptance_criteria=[],
