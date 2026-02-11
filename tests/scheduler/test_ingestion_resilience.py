@@ -157,6 +157,58 @@ def test_ingest_completed_jobs_reuses_single_snapshot_transaction(monkeypatch, t
     assert seen_sessions == [created_sessions[0], created_sessions[0]]
 
 
+def test_ingest_completed_jobs_does_not_abort_when_snapshot_batch_commit_fails(
+    monkeypatch, tmp_path
+) -> None:
+    ingestion = _make_ingestion(tmp_path)
+    snapshots = [
+        JobSnapshot(
+            job_id=uuid4(),
+            base_commit_hash=None,
+            island_id=None,
+            result_commit_hash="c1",
+            completed_at=None,
+        ),
+        JobSnapshot(
+            job_id=uuid4(),
+            base_commit_hash=None,
+            island_id=None,
+            result_commit_hash="c2",
+            completed_at=None,
+        ),
+    ]
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_jobs_requiring_ingestion",
+        lambda _self, *, limit: snapshots,
+    )
+
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_record_ingestion_state",
+        lambda *_args, **_kwargs: None,
+    )
+
+    @contextmanager
+    def fake_scope():
+        yield object()
+        raise RuntimeError("commit failed")
+
+    monkeypatch.setattr(ingestion_mod, "session_scope", fake_scope)
+
+    def fake_ingest_snapshot(
+        _self,
+        _snapshot: JobSnapshot,
+        *,
+        snapshot_session: Any | None = None,
+    ) -> bool:
+        return True
+
+    monkeypatch.setattr(ingestion_mod.MapElitesIngestion, "_ingest_snapshot", fake_ingest_snapshot)
+
+    assert ingestion.ingest_completed_jobs() == 2
+
+
 def test_ingest_snapshot_records_failed_when_manager_raises(monkeypatch, tmp_path) -> None:
     ingestion = _make_ingestion(tmp_path)
 

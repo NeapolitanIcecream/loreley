@@ -72,28 +72,41 @@ class MapElitesIngestion:
             return 0
         snapshots = self._jobs_requiring_ingestion(limit=batch)
         ingested = 0
-        with session_scope() as snapshot_session:
-            for snapshot in snapshots:
-                try:
-                    if self._ingest_snapshot(snapshot, snapshot_session=snapshot_session):
-                        ingested += 1
-                except Exception as exc:
-                    raw_reason = normalize_single_line(str(exc))
-                    reason = clamp_text(raw_reason, _INGESTION_REASON_MAX_CHARS) or None
-                    reason_display = reason or raw_reason or exc.__class__.__name__
-                    self.console.log(
-                        f"[bold red]Unhandled ingestion error[/] job={snapshot.job_id} commit={snapshot.result_commit_hash} reason={reason_display}",
-                    )
-                    log.exception(
-                        "Unhandled ingestion error for job {} commit {}: {}",
-                        snapshot.job_id,
-                        snapshot.result_commit_hash,
-                        reason_display,
-                    )
-                    # Log first so failures remain visible even if DB writes are down.
-                    # If we cannot record the failure, let the error propagate: the
-                    # scheduler is unlikely to make progress without database writes.
-                    self._record_ingestion_state(snapshot, status="failed", reason=reason_display)
+        completed_loop = False
+        try:
+            with session_scope() as snapshot_session:
+                for snapshot in snapshots:
+                    try:
+                        if self._ingest_snapshot(snapshot, snapshot_session=snapshot_session):
+                            ingested += 1
+                    except Exception as exc:
+                        raw_reason = normalize_single_line(str(exc))
+                        reason = clamp_text(raw_reason, _INGESTION_REASON_MAX_CHARS) or None
+                        reason_display = reason or raw_reason or exc.__class__.__name__
+                        self.console.log(
+                            f"[bold red]Unhandled ingestion error[/] job={snapshot.job_id} commit={snapshot.result_commit_hash} reason={reason_display}",
+                        )
+                        log.exception(
+                            "Unhandled ingestion error for job {} commit {}: {}",
+                            snapshot.job_id,
+                            snapshot.result_commit_hash,
+                            reason_display,
+                        )
+                        # Log first so failures remain visible even if DB writes are down.
+                        # If we cannot record the failure, let the error propagate: the
+                        # scheduler is unlikely to make progress without database writes.
+                        self._record_ingestion_state(snapshot, status="failed", reason=reason_display)
+                completed_loop = True
+        except Exception as exc:
+            if not completed_loop:
+                raise
+            raw_reason = normalize_single_line(str(exc))
+            reason = clamp_text(raw_reason, _INGESTION_REASON_MAX_CHARS) or None
+            reason_display = reason or raw_reason or exc.__class__.__name__
+            self.console.log(
+                f"[bold red]Snapshot batch commit failed[/] reason={reason_display}",
+            )
+            log.exception("Snapshot batch commit failed: {}", reason_display)
         return ingested
 
     def initialise_root_commit(self, commit_hash: str) -> None:
