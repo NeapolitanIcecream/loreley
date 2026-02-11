@@ -10,6 +10,7 @@ from loguru import logger
 from openai import OpenAI
 from rich.console import Console
 from sqlalchemy import select
+from sqlalchemy.exc import MultipleResultsFound
 
 from loreley.config import Settings, get_settings
 from loreley.core.worker.coding import (
@@ -201,6 +202,17 @@ class EvolutionWorker:
             job_id,
         )
 
+        base_commit_hash = (locked_job.base_commit_hash or "").strip()
+        if not base_commit_hash:
+            raise EvolutionWorkerError(
+                f"Evolution job {locked_job.job_id} has no base commit hash configured."
+            )
+        inspiration_commit_hashes = tuple(
+            commit_hash.strip()
+            for commit_hash in (locked_job.inspiration_commit_hashes or ())
+            if (commit_hash or "").strip()
+        )
+
         goal = (locked_job.goal or "").strip()
         if not goal:
             goal = (self.settings.worker_evolution_global_goal or "").strip()
@@ -222,8 +234,8 @@ class EvolutionWorker:
             root_hash = (self.settings.mapelites_experiment_root_commit or "").strip()
             is_seed_job = bool(
                 root_hash
-                and locked_job.base_commit_hash == root_hash
-                and not locked_job.inspiration_commit_hashes
+                and base_commit_hash == root_hash
+                and not inspiration_commit_hashes
             )
         if is_seed_job and iteration_hint:
             iteration_hint = (
@@ -236,9 +248,9 @@ class EvolutionWorker:
 
         return JobContext(
             job_id=locked_job.job_id,
-            base_commit_hash=locked_job.base_commit_hash,
+            base_commit_hash=base_commit_hash,
             island_id=locked_job.island_id,
-            inspiration_commit_hashes=tuple(locked_job.inspiration_commit_hashes or ()),
+            inspiration_commit_hashes=inspiration_commit_hashes,
             goal=goal,
             constraints=tuple(locked_job.constraints or ()),
             acceptance_criteria=tuple(locked_job.acceptance_criteria or ()),
@@ -257,17 +269,14 @@ class EvolutionWorker:
         job_ctx: JobContext,
         checkout: CheckoutContext,
     ) -> PlanningAgentResponse:
-        base_context = self._load_commit_planning_context(
-            commit_hash=job_ctx.base_commit_hash,
+        planning_contexts = self._load_commit_planning_contexts(
+            commit_hashes=(job_ctx.base_commit_hash, *job_ctx.inspiration_commit_hashes),
             island_id=job_ctx.island_id,
         )
-        inspiration_contexts = [
-            self._load_commit_planning_context(
-                commit_hash=commit_hash,
-                island_id=job_ctx.island_id,
-            )
-            for commit_hash in job_ctx.inspiration_commit_hashes
-        ]
+        if not planning_contexts:
+            raise EvolutionWorkerError("Planning context loading returned no commit contexts.")
+        base_context = planning_contexts[0]
+        inspiration_contexts = list(planning_contexts[1:])
         if inspiration_contexts:
             shared_client: OpenAI | None = None
             if int(self.settings.worker_planning_trajectory_max_chunks or 0) > 0:
@@ -482,27 +491,85 @@ class EvolutionWorker:
         commit_hash: str,
         island_id: str | None,
     ) -> CommitPlanningContext:
-        card: CommitCard | None = None
-        metric_rows: Sequence[Metric] = ()
-        cell: MapElitesArchiveCell | None = None
+        contexts = self._load_commit_planning_contexts(
+            commit_hashes=(commit_hash,),
+            island_id=island_id,
+        )
+        if contexts:
+            return contexts[0]
+        return self._build_commit_planning_context(
+            commit_hash=commit_hash,
+            card=None,
+            metric_rows=(),
+            cell=None,
+        )
+
+    def _load_commit_planning_contexts(
+        self,
+        *,
+        commit_hashes: Sequence[str],
+        island_id: str | None,
+    ) -> tuple[CommitPlanningContext, ...]:
+        ordered_hashes = tuple(commit_hash for commit_hash in commit_hashes if commit_hash)
+        if not ordered_hashes:
+            return ()
+        unique_hashes = tuple(dict.fromkeys(ordered_hashes))
+
+        cards_by_hash: dict[str, CommitCard] = {}
+        metrics_by_card_id: dict[UUID, list[Metric]] = {}
+        cells_by_hash: dict[str, MapElitesArchiveCell] = {}
         with session_scope() as session:
-            card = session.execute(
-                select(CommitCard).where(CommitCard.commit_hash == commit_hash)
-            ).scalar_one_or_none()
-            if card is not None:
+            cards = session.scalars(
+                select(CommitCard).where(CommitCard.commit_hash.in_(unique_hashes))
+            ).all()
+            cards_by_hash = {card.commit_hash: card for card in cards}
+            card_ids = tuple(card.id for card in cards)
+            if card_ids:
                 metric_rows = session.scalars(
-                    select(Metric).where(Metric.commit_card_id == card.id)
+                    select(Metric).where(Metric.commit_card_id.in_(card_ids))
                 ).all()
-            else:
-                metric_rows = ()
+                for row in metric_rows:
+                    metrics_by_card_id.setdefault(row.commit_card_id, []).append(row)
             if island_id:
-                cell = session.execute(
+                cells = session.scalars(
                     select(MapElitesArchiveCell).where(
                         MapElitesArchiveCell.island_id == island_id,
-                        MapElitesArchiveCell.commit_hash == commit_hash,
+                        MapElitesArchiveCell.commit_hash.in_(unique_hashes),
                     )
-                ).scalar_one_or_none()
+                ).all()
+                for cell in cells:
+                    existing = cells_by_hash.get(cell.commit_hash)
+                    if existing is not None:
+                        raise MultipleResultsFound(
+                            "Multiple map-elites archive cells found for one commit hash "
+                            f"(island={island_id}, commit={cell.commit_hash})."
+                        )
+                    cells_by_hash[cell.commit_hash] = cell
 
+        contexts: list[CommitPlanningContext] = []
+        for commit_hash in ordered_hashes:
+            card = cards_by_hash.get(commit_hash)
+            metric_rows_for_card: Sequence[Metric] = ()
+            if card is not None:
+                metric_rows_for_card = tuple(metrics_by_card_id.get(card.id, ()))
+            contexts.append(
+                self._build_commit_planning_context(
+                    commit_hash=commit_hash,
+                    card=card,
+                    metric_rows=metric_rows_for_card,
+                    cell=cells_by_hash.get(commit_hash),
+                )
+            )
+        return tuple(contexts)
+
+    def _build_commit_planning_context(
+        self,
+        *,
+        commit_hash: str,
+        card: CommitCard | None,
+        metric_rows: Sequence[Metric],
+        cell: MapElitesArchiveCell | None,
+    ) -> CommitPlanningContext:
         subject = (getattr(card, "subject", None) or "").strip() or f"Commit {commit_hash}"
         change_summary = (getattr(card, "change_summary", None) or "").strip() or "N/A"
         key_files = tuple(getattr(card, "key_files", None) or ())

@@ -35,7 +35,7 @@ Autonomous evolution worker that orchestrates planning, coding, evaluation, repo
 - **`_start_job(job_id)`**: uses `EvolutionJobStore.start_job()` to lock the job row, validates its status, and constructs a `JobContext` by:
   - Reading the size-bounded job spec fields directly from the `EvolutionJob` row (no catch-all payload parsing).
   - Falling back to `Settings.worker_evolution_global_goal` only when the per-job `goal` is missing.
-- **`_run_planning(job_ctx, checkout)`**: builds a `PlanningAgentRequest` from commit snapshots and job fields, invokes `PlanningAgent.plan()`, and wraps `PlanningError` into `EvolutionWorkerError`. For seed jobs, `_run_planning` clears metrics, highlights, and evaluation details from the base planning context, drops all inspirations, and passes `cold_start=True` so that the planning agent treats the request as a cold-start seed population design run.
+- **`_run_planning(job_ctx, checkout)`**: batch-loads planning context for base + inspirations, builds a `PlanningAgentRequest` from those commit snapshots and job fields, invokes `PlanningAgent.plan()`, and wraps `PlanningError` into `EvolutionWorkerError`. For seed jobs, `_run_planning` clears metrics, highlights, and evaluation details from the base planning context, drops all inspirations, and passes `cold_start=True` so that the planning agent treats the request as a cold-start seed population design run.
 - **`_run_coding(job_ctx, plan, checkout)`**: builds a `CodingAgentRequest` from the plan and job context, runs `CodingAgent.implement()`, and wraps `CodingError` into `EvolutionWorkerError`.
 - **`_prepare_commit_message(job_ctx, plan, coding)`**: delegates to `CommitSummarizer.generate()` to generate an LLM-backed git subject line; if summarisation fails, falls back to the coding report `summary`, plan `summary`, or a generic `"Evolution job <id>"` string.
 - **`_create_commit(checkout, commit_message)`**: ensures the checkout is on a branch and that the job worktree contains changes, stages everything, creates a commit, and pushes the per-job branch using `force-with-lease`.
@@ -45,6 +45,7 @@ Autonomous evolution worker that orchestrates planning, coding, evaluation, repo
 
 ## Data extraction and normalisation
 
-- **`_load_commit_planning_context(commit_hash, ...)`**: pulls `CommitCard` and `Metric` rows for a given commit hash via `session_scope()` and returns a bounded `CommitPlanningContext` with `subject`, `change_summary`, `key_files`, `highlights`, `evaluation_summary`, and a small set of metrics.
+- **`_load_commit_planning_contexts(commit_hashes, ...)`**: fetches `CommitCard`, `Metric`, and optional `MapElitesArchiveCell` rows in batch for all requested commit hashes, then rebuilds bounded `CommitPlanningContext` instances in input order.
+- **`_load_commit_planning_context(commit_hash, ...)`**: compatibility wrapper for single-commit call sites, delegating to the batch loader.
 
 
