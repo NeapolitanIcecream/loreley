@@ -337,7 +337,9 @@ class MapElitesManager:
 
         effective_island = island_id or self._default_island
         state = self._ensure_island(effective_island)
-        if state.archive.empty:
+        stats = state.archive.stats
+        occupied = int(getattr(stats, "num_elites", 0))
+        if occupied <= 0:
             return {}
 
         cell_commits: dict[int, str] = {}
@@ -350,12 +352,21 @@ class MapElitesManager:
             except (TypeError, ValueError):
                 continue
             cell_commits[idx] = commit
-        if not cell_commits:
+        if len(cell_commits) != occupied:
             message = (
-                "MAP-Elites archive is non-empty but cell->commit bookkeeping is missing."
+                "MAP-Elites archive bookkeeping mismatch between occupied cells "
+                "and cell->commit mappings."
             )
-            log.error("{} island={}", message, effective_island)
-            raise RuntimeError(f"{message} island={effective_island}")
+            log.error(
+                "{} island={} occupied={} mapped={}",
+                message,
+                effective_island,
+                occupied,
+                len(cell_commits),
+            )
+            raise RuntimeError(
+                f"{message} island={effective_island} occupied={occupied} mapped={len(cell_commits)}"
+            )
         return dict(cell_commits)
 
     def sample_records(

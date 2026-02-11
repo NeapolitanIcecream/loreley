@@ -56,6 +56,53 @@ def test_manager_lazy_loads_persisted_snapshot_for_stats_and_records(settings: S
     records = manager.get_records("main")
     assert len(records) == 1
     assert records[0].commit_hash == "c1"
+    assert manager.get_cell_commits("main") == {0: "c1"}
+
+
+def test_get_cell_commits_fails_when_bookkeeping_is_incomplete(settings: Settings) -> None:
+    settings.mapelites_dimensionality_target_dims = 2
+    settings.mapelites_archive_cells_per_dim = 4
+
+    snapshot = {
+        "island_id": "main",
+        "lower_bounds": [0.0, 0.0],
+        "upper_bounds": [1.0, 1.0],
+        "history": [],
+        "projection": None,
+        "archive": [
+            {
+                "index": 0,
+                "objective": 1.23,
+                "measures": [0.1, 0.1],
+                "solution": [0.1, 0.1],
+                "commit_hash": "c1",
+                "timestamp": 42.0,
+            },
+            {
+                "index": 1,
+                "objective": 0.5,
+                "measures": [0.1, 0.3],
+                "solution": [0.1, 0.3],
+                "commit_hash": "",
+                "timestamp": 43.0,
+            },
+        ],
+    }
+
+    class DummySnapshotBackend:
+        def __init__(self, payload: dict[str, object]) -> None:
+            self._payload = payload
+
+        def load(self, island_id: str, *, history_limit: int | None = None) -> dict[str, object] | None:
+            if island_id != "main":
+                return None
+            return dict(self._payload)
+
+    manager = MapElitesManager(settings=settings, repo_root=Path("."))
+    manager._snapshot_store = DummySnapshotBackend(snapshot)  # type: ignore[attr-defined]
+
+    with pytest.raises(RuntimeError, match="bookkeeping mismatch"):
+        _ = manager.get_cell_commits("main")
 
 
 def test_manager_rejects_snapshot_dimensionality_when_settings_mismatch(settings: Settings) -> None:
