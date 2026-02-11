@@ -174,7 +174,7 @@ def test_ingest_short_circuits_when_no_repo_state_embedding(
         def load(self, island_id: str, *, history_limit: int | None = None) -> dict[str, object] | None:
             return None
 
-        def apply_update(self, island_id: str, *, update: object) -> None:
+        def apply_update(self, island_id: str, *, update: object, session: object | None = None) -> None:
             return None
 
     manager._snapshot_store = NullSnapshotStore()  # type: ignore[attr-defined]
@@ -245,7 +245,7 @@ def test_ingest_builds_record_with_stubbed_dependencies(
         def load(self, island_id: str, *, history_limit: int | None = None) -> dict[str, object] | None:
             return None
 
-        def apply_update(self, island_id: str, *, update: object) -> None:
+        def apply_update(self, island_id: str, *, update: object, session: object | None = None) -> None:
             return None
 
     manager._snapshot_store = NullSnapshotStore()  # type: ignore[attr-defined]
@@ -289,3 +289,94 @@ def test_ingest_builds_record_with_stubbed_dependencies(
     assert result.record.commit_hash == "abc"
     assert result.artifacts.code_embedding is code_embedding
     assert result.artifacts.final_embedding is final_embedding
+
+
+def test_ingest_passes_external_snapshot_session(
+    monkeypatch: pytest.MonkeyPatch, settings: Settings
+) -> None:
+    settings.mapelites_dimensionality_target_dims = 2
+    settings.mapelites_fitness_metric = "score"
+    code_embedding = CommitCodeEmbedding(
+        files=(),
+        vector=(0.5, -0.5),
+        model="code",
+        dimensions=2,
+    )
+    stats = RepoStateEmbeddingStats(
+        commit_hash="abc",
+        eligible_files=2,
+        files_embedded=1,
+        files_aggregated=2,
+        unique_blobs=2,
+        cache_hits=1,
+        cache_misses=1,
+        skipped_empty_after_preprocess=0,
+        skipped_failed_embedding=0,
+    )
+    entry = PcaHistoryEntry(
+        commit_hash="abc",
+        vector=(0.5, -0.5),
+        embedding_model="code",
+    )
+    final_embedding = FinalEmbedding(
+        commit_hash="abc",
+        vector=(0.2, 0.8),
+        dimensions=2,
+        history_entry=entry,
+        projection=None,
+    )
+
+    monkeypatch.setattr(
+        map_elites_module,
+        "embed_repository_state_incremental",
+        lambda *args, **kwargs: (code_embedding, stats),
+    )
+    monkeypatch.setattr(
+        map_elites_module,
+        "reduce_commit_embeddings",
+        lambda **kwargs: (final_embedding, (entry,), None),
+    )
+
+    class SnapshotStoreRecorder:
+        def __init__(self) -> None:
+            self.last_session: object | None = None
+
+        def load(self, island_id: str, *, history_limit: int | None = None) -> dict[str, object] | None:
+            return None
+
+        def apply_update(self, island_id: str, *, update: object, session: object | None = None) -> None:
+            self.last_session = session
+
+    manager = MapElitesManager(
+        settings=settings,
+        repo_root=Path("."),
+    )
+    recorder = SnapshotStoreRecorder()
+    manager._snapshot_store = recorder  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(
+        manager,
+        "_add_to_archive",
+        lambda **kwargs: (
+            1,
+            0.1,
+            MapElitesRecord(
+                commit_hash="abc",
+                island_id="default",
+                cell_index=0,
+                fitness=1.0,
+                measures=(0.2, 0.8),
+                solution=(0.2, 0.8),
+                timestamp=123.0,
+            ),
+        ),
+    )
+
+    session_marker = object()
+    _ = manager.ingest(
+        commit_hash="abc",
+        metrics={"score": 1.0},
+        snapshot_session=session_marker,  # type: ignore[arg-type]
+    )
+
+    assert recorder.last_session is session_marker

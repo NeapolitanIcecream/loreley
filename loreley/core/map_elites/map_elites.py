@@ -11,6 +11,7 @@ from typing import Any, Mapping, Sequence, cast
 import numpy as np
 from loguru import logger
 from ribs.archives import GridArchive
+from sqlalchemy.orm import Session
 
 from loreley.config import Settings, get_settings
 from .code_embedding import CommitCodeEmbedding
@@ -174,6 +175,7 @@ class MapElitesManager:
         island_id: str | None = None,
         repo_root: Path | None = None,
         fitness_override: float | None = None,
+        snapshot_session: Session | None = None,
     ) -> MapElitesInsertionResult:
         """Process a commit and attempt to insert it into the archive."""
         effective_island = island_id or self._default_island
@@ -309,7 +311,12 @@ class MapElitesManager:
                 message=None if status else "Commit not inserted; objective below cell threshold.",
             )
         finally:
-            self._persist_island_state(effective_island, state, update=update)
+            self._persist_island_state(
+                effective_island,
+                state,
+                update=update,
+                session=snapshot_session,
+            )
 
     def get_records(
         self,
@@ -707,6 +714,7 @@ class MapElitesManager:
         state: IslandState | None,
         *,
         update: SnapshotUpdate | None,
+        session: Session | None = None,
     ) -> None:
         """Persist incremental snapshot updates for an island when enabled."""
 
@@ -714,7 +722,7 @@ class MapElitesManager:
             return
         if update is None:
             return
-        self._snapshot_store.apply_update(island_id, update=update)
+        self._snapshot_store.apply_update(island_id, update=update, session=session)
 
     @staticmethod
     def _maybe_float(value: Any) -> float | None:

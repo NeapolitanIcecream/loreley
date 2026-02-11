@@ -22,6 +22,7 @@ from ribs.archives import GridArchive
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from loreley.db.base import session_scope
 from loreley.db.models import MapElitesArchiveCell, MapElitesPcaHistory, MapElitesState
@@ -154,103 +155,29 @@ class DatabaseSnapshotStore:
         island_id: str,
         *,
         update: SnapshotUpdate,
+        session: Session | None = None,
     ) -> None:
         """Persist an incremental update into per-cell/history tables + lightweight metadata."""
 
         now = float(update.history_seen_at) if update.history_seen_at is not None else time.time()
 
+        if session is not None:
+            self._apply_update_within_savepoint(
+                session,
+                island_id=island_id,
+                update=update,
+                now=now,
+            )
+            return
+
         try:
-            with session_scope() as session:
-                stmt = select(MapElitesState).where(
-                    MapElitesState.island_id == island_id,
+            with session_scope() as owned_session:
+                self._apply_update_in_session(
+                    owned_session,
+                    island_id=island_id,
+                    update=update,
+                    now=now,
                 )
-                existing = session.execute(stmt).scalar_one_or_none()
-                meta: dict[str, Any] = dict(existing.snapshot or {}) if existing else {}
-
-                ensure_supported_snapshot_meta(meta, island_id=island_id)
-
-                meta["last_update_at"] = now
-
-                if update.lower_bounds is not None:
-                    meta["lower_bounds"] = [float(v) for v in update.lower_bounds]
-                if update.upper_bounds is not None:
-                    meta["upper_bounds"] = [float(v) for v in update.upper_bounds]
-
-                # Projection updates are frequent but small; keep them in metadata JSON.
-                meta["projection"] = serialize_projection(update.projection)
-
-                if existing:
-                    existing.snapshot = meta
-                else:
-                    session.add(
-                        MapElitesState(
-                            island_id=island_id,
-                            snapshot=meta,
-                        )
-                    )
-
-                if update.clear:
-                    session.execute(
-                        delete(MapElitesArchiveCell).where(
-                            MapElitesArchiveCell.island_id == island_id,
-                        )
-                    )
-                    session.execute(
-                        delete(MapElitesPcaHistory).where(
-                            MapElitesPcaHistory.island_id == island_id,
-                        )
-                    )
-                    return
-
-                if update.cell_upsert is not None:
-                    cell = update.cell_upsert
-                    values = {
-                        "island_id": island_id,
-                        "cell_index": int(cell.cell_index),
-                        "commit_hash": str(cell.commit_hash),
-                        "objective": float(cell.objective),
-                        "measures": [float(v) for v in cell.measures],
-                        "solution": [float(v) for v in cell.solution],
-                        "timestamp": float(cell.timestamp),
-                    }
-                    stmt = pg_insert(MapElitesArchiveCell).values(**values)
-                    stmt = stmt.on_conflict_do_update(
-                        index_elements=[
-                            MapElitesArchiveCell.__table__.c.island_id,
-                            MapElitesArchiveCell.__table__.c.cell_index,
-                        ],
-                        set_={
-                            "commit_hash": stmt.excluded.commit_hash,
-                            "objective": stmt.excluded.objective,
-                            "measures": stmt.excluded.measures,
-                            "solution": stmt.excluded.solution,
-                            "timestamp": stmt.excluded.timestamp,
-                        },
-                    )
-                    session.execute(stmt)
-
-                if update.history_upsert is not None:
-                    entry = update.history_upsert
-                    values = {
-                        "island_id": island_id,
-                        "commit_hash": str(entry.commit_hash),
-                        "vector": [float(v) for v in entry.vector],
-                        "embedding_model": str(entry.embedding_model),
-                        "last_seen_at": float(now),
-                    }
-                    stmt = pg_insert(MapElitesPcaHistory).values(**values)
-                    stmt = stmt.on_conflict_do_update(
-                        index_elements=[
-                            MapElitesPcaHistory.island_id,
-                            MapElitesPcaHistory.commit_hash,
-                        ],
-                        set_={
-                            "vector": stmt.excluded.vector,
-                            "embedding_model": stmt.excluded.embedding_model,
-                            "last_seen_at": stmt.excluded.last_seen_at,
-                        },
-                    )
-                    session.execute(stmt)
         except ValueError:
             raise
         except SQLAlchemyError as exc:
@@ -265,6 +192,138 @@ class DatabaseSnapshotStore:
                 island_id,
                 exc,
             )
+
+    def _apply_update_within_savepoint(
+        self,
+        session: Session,
+        *,
+        island_id: str,
+        update: SnapshotUpdate,
+        now: float,
+    ) -> None:
+        """Apply one update inside a savepoint so batch ingestion can continue."""
+
+        try:
+            with session.begin_nested():
+                self._apply_update_in_session(
+                    session,
+                    island_id=island_id,
+                    update=update,
+                    now=now,
+                )
+        except ValueError:
+            raise
+        except SQLAlchemyError as exc:
+            log.error(
+                "Failed to persist MAP-Elites snapshot for island {}: {}",
+                island_id,
+                exc,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            log.error(
+                "Unexpected error while persisting snapshot for island {}: {}",
+                island_id,
+                exc,
+            )
+
+    def _apply_update_in_session(
+        self,
+        session: Session,
+        *,
+        island_id: str,
+        update: SnapshotUpdate,
+        now: float,
+    ) -> None:
+        stmt = select(MapElitesState).where(
+            MapElitesState.island_id == island_id,
+        )
+        existing = session.execute(stmt).scalar_one_or_none()
+        meta: dict[str, Any] = dict(existing.snapshot or {}) if existing else {}
+
+        ensure_supported_snapshot_meta(meta, island_id=island_id)
+
+        meta["last_update_at"] = now
+
+        if update.lower_bounds is not None:
+            meta["lower_bounds"] = [float(v) for v in update.lower_bounds]
+        if update.upper_bounds is not None:
+            meta["upper_bounds"] = [float(v) for v in update.upper_bounds]
+
+        # Projection updates are frequent but small; keep them in metadata JSON.
+        meta["projection"] = serialize_projection(update.projection)
+
+        if existing:
+            existing.snapshot = meta
+        else:
+            session.add(
+                MapElitesState(
+                    island_id=island_id,
+                    snapshot=meta,
+                )
+            )
+
+        if update.clear:
+            session.execute(
+                delete(MapElitesArchiveCell).where(
+                    MapElitesArchiveCell.island_id == island_id,
+                )
+            )
+            session.execute(
+                delete(MapElitesPcaHistory).where(
+                    MapElitesPcaHistory.island_id == island_id,
+                )
+            )
+            return
+
+        if update.cell_upsert is not None:
+            cell = update.cell_upsert
+            values = {
+                "island_id": island_id,
+                "cell_index": int(cell.cell_index),
+                "commit_hash": str(cell.commit_hash),
+                "objective": float(cell.objective),
+                "measures": [float(v) for v in cell.measures],
+                "solution": [float(v) for v in cell.solution],
+                "timestamp": float(cell.timestamp),
+            }
+            stmt = pg_insert(MapElitesArchiveCell).values(**values)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[
+                    MapElitesArchiveCell.__table__.c.island_id,
+                    MapElitesArchiveCell.__table__.c.cell_index,
+                ],
+                set_={
+                    "commit_hash": stmt.excluded.commit_hash,
+                    "objective": stmt.excluded.objective,
+                    "measures": stmt.excluded.measures,
+                    "solution": stmt.excluded.solution,
+                    "timestamp": stmt.excluded.timestamp,
+                },
+            )
+            session.execute(stmt)
+
+        if update.history_upsert is not None:
+            entry = update.history_upsert
+            values = {
+                "island_id": island_id,
+                "commit_hash": str(entry.commit_hash),
+                "vector": [float(v) for v in entry.vector],
+                "embedding_model": str(entry.embedding_model),
+                "last_seen_at": float(now),
+            }
+            stmt = pg_insert(MapElitesPcaHistory).values(**values)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[
+                    MapElitesPcaHistory.island_id,
+                    MapElitesPcaHistory.commit_hash,
+                ],
+                set_={
+                    "vector": stmt.excluded.vector,
+                    "embedding_model": stmt.excluded.embedding_model,
+                    "last_seen_at": stmt.excluded.last_seen_at,
+                },
+            )
+            session.execute(stmt)
 
     def _load_archive_entries(self, session, *, island_id: str) -> list[dict[str, Any]]:
         rows = list(

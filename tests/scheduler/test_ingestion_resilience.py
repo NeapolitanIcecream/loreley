@@ -55,7 +55,18 @@ def test_ingest_completed_jobs_continues_after_snapshot_error(monkeypatch, tmp_p
         lambda _self, _snapshot, *, status, reason=None, **_kwargs: recorded.append((status, reason)),
     )
 
-    def fake_ingest_snapshot(_self, snapshot: JobSnapshot) -> bool:
+    @contextmanager
+    def fake_scope():
+        yield object()
+
+    monkeypatch.setattr(ingestion_mod, "session_scope", fake_scope)
+
+    def fake_ingest_snapshot(
+        _self,
+        snapshot: JobSnapshot,
+        *,
+        snapshot_session: Any | None = None,
+    ) -> bool:
         if snapshot.result_commit_hash == "bad":
             raise RuntimeError("boom")
         return True
@@ -92,6 +103,58 @@ def test_ingest_snapshot_records_failed_when_commit_unavailable(monkeypatch, tmp
 
     assert ingestion._ingest_snapshot(snapshot) is False
     assert recorded == [("failed", "missing commit")]
+
+
+def test_ingest_completed_jobs_reuses_single_snapshot_transaction(monkeypatch, tmp_path) -> None:
+    ingestion = _make_ingestion(tmp_path)
+    snapshots = [
+        JobSnapshot(
+            job_id=uuid4(),
+            base_commit_hash=None,
+            island_id=None,
+            result_commit_hash="c1",
+            completed_at=None,
+        ),
+        JobSnapshot(
+            job_id=uuid4(),
+            base_commit_hash=None,
+            island_id=None,
+            result_commit_hash="c2",
+            completed_at=None,
+        ),
+    ]
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_jobs_requiring_ingestion",
+        lambda _self, *, limit: snapshots,
+    )
+
+    created_sessions: list[object] = []
+
+    @contextmanager
+    def fake_scope():
+        marker = object()
+        created_sessions.append(marker)
+        yield marker
+
+    monkeypatch.setattr(ingestion_mod, "session_scope", fake_scope)
+
+    seen_sessions: list[object | None] = []
+
+    def fake_ingest_snapshot(
+        _self,
+        snapshot: JobSnapshot,
+        *,
+        snapshot_session: Any | None = None,
+    ) -> bool:
+        seen_sessions.append(snapshot_session)
+        return True
+
+    monkeypatch.setattr(ingestion_mod.MapElitesIngestion, "_ingest_snapshot", fake_ingest_snapshot)
+
+    assert ingestion.ingest_completed_jobs() == 2
+    assert len(created_sessions) == 1
+    assert seen_sessions == [created_sessions[0], created_sessions[0]]
 
 
 def test_ingest_snapshot_records_failed_when_manager_raises(monkeypatch, tmp_path) -> None:
