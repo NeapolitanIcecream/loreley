@@ -9,5 +9,5 @@ Decision
 - Treat the PCA projection as an epoch-scoped coordinate system for MAP-Elites behaviour measures.
 - When PCA refits (epoch increments), rebuild the island archive by reprojecting existing elites into the new coordinates and replacing persisted `map_elites_archive_cells` rows.
 - Persist `samples_since_fit` in `map_elites_states.snapshot` so `MAPELITES_DIMENSION_REDUCTION_REFIT_INTERVAL` works across one-shot reductions.
-- Align successive projections with an orthogonal Procrustes rotation on elite anchors (when available) to reduce axis flips/rotations between epochs.
+- Align successive projections with orthogonal Procrustes alignment on elite anchors (when available) to reduce coordinate jitter between epochs. The resulting orthogonal matrix may include a reflection when PCA axes flip.
 

@@ -69,8 +69,9 @@ class PCAProjection:
     epoch: int
     fitted_at: float
     whiten: bool
-    # Optional orthogonal rotation applied after PCA (and whitening, when enabled).
-    # This is used to align successive PCA refits and reduce coordinate jitter.
+    # Optional orthogonal alignment matrix applied after PCA (and whitening, when
+    # enabled). Computed with orthogonal Procrustes to align successive PCA refits
+    # and reduce coordinate jitter. This matrix may include a reflection.
     rotation: tuple[Vector, ...] | None = None
 
     @property
@@ -157,7 +158,7 @@ def align_pca_projection(
 ) -> PCAProjection:
     """Align `projection` outputs to `reference` using orthogonal Procrustes.
 
-    This helper computes an orthogonal rotation R that minimises:
+    This helper computes an orthogonal matrix R (may include a reflection) that minimises:
 
         || Z_new R - Z_ref ||_F
 

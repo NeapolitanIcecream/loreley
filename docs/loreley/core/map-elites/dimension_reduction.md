@@ -5,7 +5,7 @@ PCA-based dimensionality reduction of commit embeddings before they are fed into
 ## Data structures
 
 - **`PcaHistoryEntry`**: commit-level embedding recorded in PCA history. It stores the raw commit vector plus the embedding model name used to produce it.
-- **`PCAProjection`**: serialisable wrapper around a fitted `sklearn.decomposition.PCA` model, capturing the mean vector, components, explained variance, explained variance ratio, whiten flag, and sample metadata. Each projection also carries an `epoch` counter and may include an optional orthogonal `rotation` used to align successive refits (reducing coordinate jitter). `transform()` projects new vectors, applies whitening when enabled, and then applies the optional rotation.
+- **`PCAProjection`**: serialisable wrapper around a fitted `sklearn.decomposition.PCA` model, capturing the mean vector, components, explained variance, explained variance ratio, whiten flag, and sample metadata. Each projection also carries an `epoch` counter and may include an optional orthogonal `rotation` matrix computed via orthogonal Procrustes alignment to reduce coordinate jitter between refits (it may include a reflection when PCA axes flip). `transform()` projects new vectors, applies whitening when enabled, and then applies the optional alignment.
 - **`FinalEmbedding`**: low-dimensional vector that sits on the MAP-Elites grid for a commit, along with the originating `PcaHistoryEntry` and optional `PCAProjection` used.
 
 ## Reducer

@@ -195,187 +195,196 @@ class MapElitesManager:
         )
 
         update: SnapshotUpdate | None = None
+        result: MapElitesInsertionResult | None = None
+        archive_replace_needed = False
 
         try:
-            code_embedding, repo_stats = embed_repository_state_incremental(
-                commit_hash=commit_hash,
-                repo_root=working_dir,
-                settings=self.settings,
-            )
-            if not code_embedding or not code_embedding.vector:
-                artifacts = self._build_artifacts(repo_stats, (), None, None)
-                message = "No eligible repository files produced an embedding."
-                log.warning("{} {}", message, commit_hash)
-                return MapElitesInsertionResult(
-                    status=0,
-                    delta=0.0,
-                    record=None,
-                    artifacts=artifacts,
-                    message=message,
+            while True:
+                code_embedding, repo_stats = embed_repository_state_incremental(
+                    commit_hash=commit_hash,
+                    repo_root=working_dir,
+                    settings=self.settings,
                 )
-            old_projection = state.projection
-            final_embedding, history, projection, samples_since_fit = reduce_commit_embeddings(
-                commit_hash=commit_hash,
-                code_embedding=code_embedding,
-                history=state.history,
-                projection=state.projection,
-                samples_since_fit=state.samples_since_fit,
-                settings=self.settings,
-            )
-            state.history = history
-            state.projection = projection
-            state.samples_since_fit = samples_since_fit
+                if not code_embedding or not code_embedding.vector:
+                    artifacts = self._build_artifacts(repo_stats, (), None, None)
+                    message = "No eligible repository files produced an embedding."
+                    log.warning("{} {}", message, commit_hash)
+                    result = MapElitesInsertionResult(
+                        status=0,
+                        delta=0.0,
+                        record=None,
+                        artifacts=artifacts,
+                        message=message,
+                    )
+                    break
 
-            did_initial_fit = old_projection is None and state.projection is not None
-            did_refit = (
-                old_projection is not None
-                and state.projection is not None
-                and state.projection.epoch != old_projection.epoch
-            )
-            if (
-                did_refit
-                and final_embedding is not None
-                and old_projection is not None
-                and state.projection is not None
-            ):
-                final_embedding = self._rebuild_after_projection_refit(
-                    state=state,
-                    island_id=effective_island,
-                    current=final_embedding,
-                    old_projection=old_projection,
-                    new_projection=state.projection,
-                    snapshot_session=snapshot_session,
-                )
-
-            # Persist PCA state incrementally even when the archive does not change.
-            update = SnapshotUpdate(
-                lower_bounds=state.lower_bounds.tolist(),
-                upper_bounds=state.upper_bounds.tolist(),
-                projection=state.projection,
-                history_upsert=final_embedding.history_entry if final_embedding else None,
-                history_seen_at=time.time(),
-                samples_since_fit=state.samples_since_fit,
-            )
-
-            artifacts = self._build_artifacts(repo_stats, (), code_embedding, final_embedding)
-
-            if not final_embedding:
-                message = "Unable to derive final embedding."
-                log.warning("{} {}", message, commit_hash)
-                return MapElitesInsertionResult(
-                    status=0,
-                    delta=0.0,
-                    record=None,
-                    artifacts=artifacts,
-                    message=message,
-                )
-
-            if did_initial_fit and state.projection is not None:
-                self._seed_archive_after_initial_fit(
-                    state=state,
-                    island_id=effective_island,
+                old_projection = state.projection
+                final_embedding, history, projection, samples_since_fit = reduce_commit_embeddings(
+                    commit_hash=commit_hash,
+                    code_embedding=code_embedding,
+                    history=state.history,
                     projection=state.projection,
-                    skip_commit_hash=commit_hash,
-                    snapshot_session=snapshot_session,
+                    samples_since_fit=state.samples_since_fit,
+                    settings=self.settings,
+                )
+                state.history = history
+                state.projection = projection
+                state.samples_since_fit = samples_since_fit
+
+                did_initial_fit = old_projection is None and state.projection is not None
+                did_refit = (
+                    old_projection is not None
+                    and state.projection is not None
+                    and state.projection.epoch != old_projection.epoch
+                )
+                if (
+                    did_refit
+                    and final_embedding is not None
+                    and old_projection is not None
+                    and state.projection is not None
+                ):
+                    final_embedding = self._rebuild_after_projection_refit(
+                        state=state,
+                        island_id=effective_island,
+                        current=final_embedding,
+                        old_projection=old_projection,
+                        new_projection=state.projection,
+                        snapshot_session=snapshot_session,
+                    )
+
+                # Persist PCA state incrementally even when the archive does not change.
+                update = SnapshotUpdate(
+                    lower_bounds=state.lower_bounds.tolist(),
+                    upper_bounds=state.upper_bounds.tolist(),
+                    projection=state.projection,
+                    history_upsert=final_embedding.history_entry if final_embedding else None,
+                    history_seen_at=time.time(),
+                    samples_since_fit=state.samples_since_fit,
                 )
 
-            # Plan A: keep the archive empty until PCA is available so we never store elites
-            # in a pre-projection coordinate system.
-            if state.projection is None:
-                message = "PCA warmup: projection is not ready; skipping archive update."
-                log.info("{} island={} commit={}", message, effective_island, commit_hash)
-                return MapElitesInsertionResult(
-                    status=0,
-                    delta=0.0,
-                    record=None,
-                    artifacts=artifacts,
-                    message=message,
-                )
+                artifacts = self._build_artifacts(repo_stats, (), code_embedding, final_embedding)
 
-            archive_replace_needed = did_refit or did_initial_fit
-            if update is not None and archive_replace_needed:
-                update.archive_replace = self._build_archive_replace_payload(
+                if not final_embedding:
+                    message = "Unable to derive final embedding."
+                    log.warning("{} {}", message, commit_hash)
+                    result = MapElitesInsertionResult(
+                        status=0,
+                        delta=0.0,
+                        record=None,
+                        artifacts=artifacts,
+                        message=message,
+                    )
+                    break
+
+                if did_initial_fit and state.projection is not None:
+                    self._seed_archive_after_initial_fit(
+                        state=state,
+                        island_id=effective_island,
+                        projection=state.projection,
+                        skip_commit_hash=commit_hash,
+                        snapshot_session=snapshot_session,
+                    )
+
+                # Keep the archive empty until PCA is available so we never store elites
+                # in a pre-projection coordinate system.
+                if state.projection is None:
+                    message = "PCA warmup: projection is not ready; skipping archive update."
+                    log.info("{} island={} commit={}", message, effective_island, commit_hash)
+                    result = MapElitesInsertionResult(
+                        status=0,
+                        delta=0.0,
+                        record=None,
+                        artifacts=artifacts,
+                        message=message,
+                    )
+                    break
+
+                archive_replace_needed = bool(did_refit or did_initial_fit)
+
+                metrics_map = self._coerce_metrics(metrics)
+                fitness = self._resolve_fitness(metrics_map, fitness_override)
+                if fitness is None or not math.isfinite(fitness):
+                    message = "Fitness value is undefined; skipping archive update."
+                    log.warning("{} {}", message, commit_hash)
+                    result = MapElitesInsertionResult(
+                        status=0,
+                        delta=0.0,
+                        record=None,
+                        artifacts=artifacts,
+                        message=message,
+                    )
+                    break
+
+                vector = self._clip_vector(final_embedding.vector, state)
+                if vector.shape[0] != self._target_dims:
+                    message = (
+                        "Final embedding dimensions mismatch with archive "
+                        f"(expected {self._target_dims} got {vector.shape[0]})."
+                    )
+                    log.error("{} {}", message, commit_hash)
+                    result = MapElitesInsertionResult(
+                        status=0,
+                        delta=0.0,
+                        record=None,
+                        artifacts=artifacts,
+                        message=message,
+                    )
+                    break
+
+                status, delta, record = self._add_to_archive(
                     state=state,
                     island_id=effective_island,
+                    commit_hash=commit_hash,
+                    fitness=fitness,
+                    measures=vector,
                 )
 
-            metrics_map = self._coerce_metrics(metrics)
-            fitness = self._resolve_fitness(metrics_map, fitness_override)
-            if fitness is None or not math.isfinite(fitness):
-                message = "Fitness value is undefined; skipping archive update."
-                log.warning("{} {}", message, commit_hash)
-                return MapElitesInsertionResult(
-                    status=0,
-                    delta=0.0,
-                    record=None,
+                if update is not None and record is not None and not archive_replace_needed:
+                    update.cell_upsert = SnapshotCellUpsert(
+                        cell_index=int(record.cell_index),
+                        objective=float(record.fitness),
+                        measures=tuple(float(v) for v in record.measures),
+                        solution=tuple(float(v) for v in record.solution),
+                        commit_hash=str(record.commit_hash),
+                        timestamp=float(record.timestamp),
+                    )
+
+                if record:
+                    log.info(
+                        "Inserted commit {} into island {} (cell={} status={} Δ={:.4f})",
+                        commit_hash,
+                        effective_island,
+                        record.cell_index,
+                        status,
+                        delta,
+                    )
+                else:
+                    log.info(
+                        "Commit {} did not improve island {} (status={} Δ={:.4f})",
+                        commit_hash,
+                        effective_island,
+                        status,
+                        delta,
+                    )
+
+                result = MapElitesInsertionResult(
+                    status=status,
+                    delta=delta,
+                    record=record,
                     artifacts=artifacts,
-                    message=message,
+                    message=None if status else "Commit not inserted; objective below cell threshold.",
                 )
+                break
 
-            vector = self._clip_vector(final_embedding.vector, state)
-            if vector.shape[0] != self._target_dims:
-                message = (
-                    "Final embedding dimensions mismatch with archive "
-                    f"(expected {self._target_dims} got {vector.shape[0]})."
-                )
-                log.error("{} {}", message, commit_hash)
-                return MapElitesInsertionResult(
-                    status=0,
-                    delta=0.0,
-                    record=None,
-                    artifacts=artifacts,
-                    message=message,
-                )
-
-            status, delta, record = self._add_to_archive(
-                state=state,
-                island_id=effective_island,
-                commit_hash=commit_hash,
-                fitness=fitness,
-                measures=vector,
-            )
-
-            if update is not None and record is not None:
-                update.cell_upsert = SnapshotCellUpsert(
-                    cell_index=int(record.cell_index),
-                    objective=float(record.fitness),
-                    measures=tuple(float(v) for v in record.measures),
-                    solution=tuple(float(v) for v in record.solution),
-                    commit_hash=str(record.commit_hash),
-                    timestamp=float(record.timestamp),
-                )
-            if archive_replace_needed and update is not None:
-                update.archive_replace = self._build_archive_replace_payload(
-                    state=state,
-                    island_id=effective_island,
-                )
-
-            if record:
-                log.info(
-                    "Inserted commit {} into island {} (cell={} status={} Δ={:.4f})",
-                    commit_hash,
-                    effective_island,
-                    record.cell_index,
-                    status,
-                    delta,
-                )
-            else:
-                log.info(
-                    "Commit {} did not improve island {} (status={} Δ={:.4f})",
-                    commit_hash,
-                    effective_island,
-                    status,
-                    delta,
-                )
-
-            return MapElitesInsertionResult(
-                status=status,
-                delta=delta,
-                record=record,
-                artifacts=artifacts,
-                message=None if status else "Commit not inserted; objective below cell threshold.",
-            )
+            if result is None:  # pragma: no cover - defensive
+                raise RuntimeError("MAP-Elites ingest completed without producing a result.")
+            return result
         finally:
+            if update is not None and archive_replace_needed and update.archive_replace is None:
+                update.archive_replace = self._build_archive_replace_payload(
+                    state=state,
+                    island_id=effective_island,
+                )
             self._persist_island_state(
                 effective_island,
                 state,
