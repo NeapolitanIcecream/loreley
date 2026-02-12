@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from loreley.config import Settings, get_settings
 from loreley.db.base import session_scope
-from loreley.db.models import MapElitesPcaHistory, MapElitesRepoStateAggregate
+from loreley.db.models import CommitCard, MapElitesPcaHistory, MapElitesRepoStateAggregate, Metric
 from .code_embedding import CommitCodeEmbedding
 from .dimension_reduction import (
     FinalEmbedding,
@@ -226,6 +226,7 @@ class MapElitesManager:
             state.projection = projection
             state.samples_since_fit = samples_since_fit
 
+            did_initial_fit = old_projection is None and state.projection is not None
             did_refit = (
                 old_projection is not None
                 and state.projection is not None
@@ -267,6 +268,35 @@ class MapElitesManager:
                     record=None,
                     artifacts=artifacts,
                     message=message,
+                )
+
+            if did_initial_fit and state.projection is not None:
+                self._seed_archive_after_initial_fit(
+                    state=state,
+                    island_id=effective_island,
+                    projection=state.projection,
+                    skip_commit_hash=commit_hash,
+                    snapshot_session=snapshot_session,
+                )
+
+            # Plan A: keep the archive empty until PCA is available so we never store elites
+            # in a pre-projection coordinate system.
+            if state.projection is None:
+                message = "PCA warmup: projection is not ready; skipping archive update."
+                log.info("{} island={} commit={}", message, effective_island, commit_hash)
+                return MapElitesInsertionResult(
+                    status=0,
+                    delta=0.0,
+                    record=None,
+                    artifacts=artifacts,
+                    message=message,
+                )
+
+            archive_replace_needed = did_refit or did_initial_fit
+            if update is not None and archive_replace_needed:
+                update.archive_replace = self._build_archive_replace_payload(
+                    state=state,
+                    island_id=effective_island,
                 )
 
             metrics_map = self._coerce_metrics(metrics)
@@ -314,7 +344,7 @@ class MapElitesManager:
                     commit_hash=str(record.commit_hash),
                     timestamp=float(record.timestamp),
                 )
-            if did_refit and update is not None:
+            if archive_replace_needed and update is not None:
                 update.archive_replace = self._build_archive_replace_payload(
                     state=state,
                     island_id=effective_island,
@@ -524,6 +554,101 @@ class MapElitesManager:
 
         return status, delta, record
 
+    def _seed_archive_after_initial_fit(
+        self,
+        *,
+        state: IslandState,
+        island_id: str,
+        projection: PCAProjection,
+        skip_commit_hash: str,
+        snapshot_session: Session | None,
+    ) -> None:
+        """Populate the archive once the first PCA projection becomes available.
+
+        During cold-start warmup, Loreley persists PCA history entries but keeps the
+        MAP-Elites archive empty. Once PCA is fitted (epoch 0), we project the
+        warmup commits into the new coordinate system and insert them into a fresh
+        archive so downstream sampling never observes a mixed coordinate system.
+        """
+
+        skip = str(skip_commit_hash or "").strip()
+        candidates = [
+            entry
+            for entry in state.history
+            if str(entry.commit_hash or "").strip()
+            and str(entry.commit_hash or "").strip() != skip
+        ]
+        if not candidates:
+            return
+
+        commit_hashes = [str(entry.commit_hash).strip() for entry in candidates]
+        fitnesses = self._load_commit_fitnesses(
+            commit_hashes=commit_hashes,
+            snapshot_session=snapshot_session,
+        )
+
+        purge_island_commit_mappings(self._commit_to_island, island_id)
+        state.archive = self._build_archive()
+        state.index_to_commit.clear()
+        state.commit_to_index.clear()
+
+        inserted = 0
+        skipped = 0
+        timestamp = time.time()
+
+        def _fitness_key(entry: PcaHistoryEntry) -> float:
+            commit = str(entry.commit_hash or "").strip()
+            value = fitnesses.get(commit)
+            if value is None:
+                value = float(self.settings.mapelites_fitness_floor)
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return float(self.settings.mapelites_fitness_floor)
+
+        for entry in sorted(candidates, key=_fitness_key, reverse=True):
+            commit = str(entry.commit_hash or "").strip()
+            if not commit:
+                continue
+
+            fitness = fitnesses.get(commit)
+            if fitness is None:
+                fitness = float(self.settings.mapelites_fitness_floor)
+            try:
+                fitness_value = float(fitness)
+            except (TypeError, ValueError):
+                skipped += 1
+                continue
+            if not math.isfinite(fitness_value):
+                skipped += 1
+                continue
+
+            try:
+                reduced = self._pad_or_trim(projection.transform(entry.vector))
+            except ValueError:
+                skipped += 1
+                continue
+
+            measures = self._clip_vector(reduced, state)
+            status, _delta, _record = self._add_to_archive(
+                state=state,
+                island_id=island_id,
+                commit_hash=commit,
+                fitness=fitness_value,
+                measures=measures,
+                timestamp=timestamp,
+            )
+            if status > 0:
+                inserted += 1
+
+        log.info(
+            "Seeded MAP-Elites archive after initial PCA fit (island={} inserted={} candidates={} skipped={})",
+            island_id,
+            inserted,
+            len(candidates),
+            skipped,
+        )
+
     def _rebuild_after_projection_refit(
         self,
         *,
@@ -697,6 +822,47 @@ class MapElitesManager:
                 _fill_from_aggregates(owned)
 
         return vectors
+
+    def _load_commit_fitnesses(
+        self,
+        *,
+        commit_hashes: Sequence[str],
+        snapshot_session: Session | None,
+    ) -> dict[str, float]:
+        metric_name = (self.settings.mapelites_fitness_metric or "").strip()
+        if not metric_name:
+            return {}
+
+        needed = sorted({str(commit).strip() for commit in commit_hashes if str(commit).strip()})
+        if not needed:
+            return {}
+
+        direction = 1.0 if self.settings.mapelites_fitness_higher_is_better else -1.0
+        fitnesses: dict[str, float] = {}
+
+        def _fill(session: Session) -> None:
+            stmt = (
+                select(CommitCard.commit_hash, Metric.value)
+                .join(Metric, Metric.commit_card_id == CommitCard.id)
+                .where(CommitCard.commit_hash.in_(needed))
+                .where(Metric.name == metric_name)
+            )
+            for commit_hash, value in session.execute(stmt).all():
+                commit = str(commit_hash or "").strip()
+                if not commit:
+                    continue
+                try:
+                    fitnesses[commit] = float(value) * direction
+                except (TypeError, ValueError):
+                    continue
+
+        if snapshot_session is not None:
+            _fill(snapshot_session)
+        else:
+            with session_scope() as session:
+                _fill(session)
+
+        return fitnesses
 
     def _build_archive_replace_payload(
         self,

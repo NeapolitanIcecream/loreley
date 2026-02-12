@@ -491,7 +491,17 @@ class EvolutionScheduler:
         if non_seed_jobs_exist:
             return 0
 
-        seed_population_size = max(0, int(getattr(self.settings, "mapelites_seed_population_size", 0)))
+        configured_seed_population = max(
+            0,
+            int(getattr(self.settings, "mapelites_seed_population_size", 0)),
+        )
+        if configured_seed_population <= 0:
+            return 0
+        warmup_required = max(
+            0,
+            int(getattr(self.settings, "mapelites_feature_normalization_warmup_samples", 0) or 0),
+        )
+        seed_population_size = max(configured_seed_population, warmup_required)
         if seed_population_size <= 0 or seed_count >= seed_population_size:
             return 0
 

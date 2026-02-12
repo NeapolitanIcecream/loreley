@@ -280,8 +280,8 @@ class DatabaseSnapshotStore:
             return
 
         if update.archive_replace is not None:
-            # Replacing the archive is rare (only on PCA refits). Purge rows first
-            # so stale cell indices do not linger.
+            # Replacing the archive is rare (initial PCA fit or later PCA refits).
+            # Purge rows first so stale cell indices do not linger.
             session.execute(
                 delete(MapElitesArchiveCell).where(
                     MapElitesArchiveCell.island_id == island_id,

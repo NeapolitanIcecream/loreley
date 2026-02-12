@@ -590,6 +590,18 @@ class Settings(BaseSettings):
             randomized = base.parent / f"{base.name}-{suffix}"
             object.__setattr__(self, "worker_repo_worktree", str(randomized))
 
+        if (
+            "mapelites_dimensionality_min_fit_samples" not in self.model_fields_set
+            and getattr(self, "mapelites_seed_population_size", 0) is not None
+        ):
+            seed_population = int(getattr(self, "mapelites_seed_population_size", 0) or 0)
+            if seed_population > 0:
+                object.__setattr__(
+                    self,
+                    "mapelites_dimensionality_min_fit_samples",
+                    max(2, seed_population),
+                )
+
         min_fit = int(self.mapelites_dimensionality_min_fit_samples)
         warmup = int(self.mapelites_feature_normalization_warmup_samples or 0)
         if warmup <= 0:

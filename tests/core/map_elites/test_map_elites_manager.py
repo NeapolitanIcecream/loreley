@@ -218,12 +218,24 @@ def test_ingest_builds_record_with_stubbed_dependencies(
         vector=(0.5, -0.5),
         embedding_model="code",
     )
+    projection = PCAProjection(
+        feature_count=2,
+        components=((1.0, 0.0), (0.0, 1.0)),
+        mean=(0.0, 0.0),
+        explained_variance=(1.0, 1.0),
+        explained_variance_ratio=(0.5, 0.5),
+        sample_count=1,
+        epoch=0,
+        fitted_at=0.0,
+        whiten=False,
+        rotation=None,
+    )
     final_embedding = FinalEmbedding(
         commit_hash="abc",
         vector=(0.2, 0.8),
         dimensions=2,
         history_entry=entry,
-        projection=None,
+        projection=projection,
     )
 
     monkeypatch.setattr(
@@ -234,7 +246,7 @@ def test_ingest_builds_record_with_stubbed_dependencies(
     monkeypatch.setattr(
         map_elites_module,
         "reduce_commit_embeddings",
-        lambda **kwargs: (final_embedding, (entry,), None, 0),
+        lambda **kwargs: (final_embedding, (entry,), projection, 0),
     )
 
     manager = MapElitesManager(
@@ -380,6 +392,118 @@ def test_ingest_passes_external_snapshot_session(
     )
 
     assert recorder.last_session is session_marker
+
+
+def test_ingest_seeds_archive_after_initial_pca_fit(
+    monkeypatch: pytest.MonkeyPatch, settings: Settings
+) -> None:
+    """Regression: warmup commits must populate the archive once PCA is fitted."""
+
+    settings.mapelites_default_island_id = "main"
+    settings.mapelites_dimensionality_target_dims = 2
+    settings.mapelites_archive_cells_per_dim = 4
+    settings.mapelites_feature_clip = True
+    settings.mapelites_feature_truncation_k = 1.0
+    settings.mapelites_fitness_metric = "score"
+
+    projection = PCAProjection(
+        feature_count=3,
+        components=((1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
+        mean=(0.0, 0.0, 0.0),
+        explained_variance=(1.0, 1.0),
+        explained_variance_ratio=(0.5, 0.5),
+        sample_count=2,
+        epoch=0,
+        fitted_at=10.0,
+        whiten=False,
+        rotation=None,
+    )
+
+    entry_c1 = PcaHistoryEntry(
+        commit_hash="c1",
+        vector=(0.0, 1.0, 0.0),
+        embedding_model="code",
+    )
+    entry_c2 = PcaHistoryEntry(
+        commit_hash="c2",
+        vector=(1.0, 0.0, 1.0),
+        embedding_model="code",
+    )
+
+    final_c1 = FinalEmbedding(
+        commit_hash="c1",
+        vector=(0.9, 0.1),  # Warmup fallback that must not be stored in the archive.
+        dimensions=2,
+        history_entry=entry_c1,
+        projection=None,
+    )
+    final_c2 = FinalEmbedding(
+        commit_hash="c2",
+        vector=(1.0, 1.0),
+        dimensions=2,
+        history_entry=entry_c2,
+        projection=projection,
+    )
+
+    code_embedding = CommitCodeEmbedding(
+        files=(),
+        vector=(0.0, 0.0, 0.0),
+        model="code",
+        dimensions=3,
+    )
+    stats = RepoStateEmbeddingStats(
+        commit_hash="c1",
+        eligible_files=1,
+        files_embedded=1,
+        files_aggregated=1,
+        unique_blobs=1,
+        cache_hits=0,
+        cache_misses=1,
+        skipped_empty_after_preprocess=0,
+        skipped_failed_embedding=0,
+    )
+    monkeypatch.setattr(
+        map_elites_module,
+        "embed_repository_state_incremental",
+        lambda *args, **kwargs: (code_embedding, stats),
+    )
+
+    def _fake_reduce_commit_embeddings(**kwargs: object):
+        commit = kwargs.get("commit_hash")
+        if commit == "c1":
+            return final_c1, (entry_c1,), None, 0
+        if commit == "c2":
+            return final_c2, (entry_c1, entry_c2), projection, 0
+        raise AssertionError(f"Unexpected commit {commit!r}")
+
+    monkeypatch.setattr(map_elites_module, "reduce_commit_embeddings", _fake_reduce_commit_embeddings)
+
+    manager = MapElitesManager(settings=settings, repo_root=Path("."))
+
+    class NullSnapshotStore:
+        def load(self, island_id: str, *, history_limit: int | None = None) -> dict[str, object] | None:
+            return None
+
+        def apply_update(self, island_id: str, *, update: object, session: object | None = None) -> None:
+            return None
+
+    manager._snapshot_store = NullSnapshotStore()  # type: ignore[attr-defined]
+    monkeypatch.setattr(manager, "_persist_island_state", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        manager,
+        "_load_commit_fitnesses",
+        lambda *, commit_hashes, snapshot_session: {"c1": 1.0, "c2": 0.5},
+    )
+
+    first = manager.ingest(commit_hash="c1", metrics={"score": 1.0})
+    assert first.inserted is False
+    assert manager.get_records("main") == ()
+
+    _ = manager.ingest(commit_hash="c2", metrics={"score": 0.5})
+    records = {rec.commit_hash: rec.measures for rec in manager.get_records("main")}
+
+    assert records["c1"] == pytest.approx((0.5, 0.5))
+    assert records["c2"] == pytest.approx((1.0, 1.0))
 
 
 def test_ingest_rebuilds_archive_when_pca_projection_refits(

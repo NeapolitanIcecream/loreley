@@ -19,8 +19,8 @@ High-level manager that runs the MAP-Elites pipeline on git commits and maintain
     - reuses a file-level embedding cache keyed by git blob SHA,
     - embeds only cache misses (new/changed blobs),
     - aggregates all file embeddings into a single commit vector via **uniform averaging**,
-    - reduces it to the behaviour space (PCA), resolves fitness, and updates the island's `GridArchive`.
-  - Tracks per-island PCA history, refit counters, and the active PCA projection. When PCA refits, the manager aligns the new projection to the previous epoch (orthogonal Procrustes, when enough anchors are available) and **rebuilds the archive cells** so all elites live in a single, consistent coordinate system.
+    - reduces it to the behaviour space (PCA), persists PCA history/projection state, and updates the island's `GridArchive` once PCA is available. During warmup (no projection yet) the archive is kept empty; when the first projection is fitted (epoch 0) the manager seeds a fresh archive from warmup commits.
+  - Tracks per-island PCA history, refit counters, and the active PCA projection. When PCA is first fitted, the manager seeds the archive from warmup commits; when PCA refits, it aligns the new projection to the previous epoch (orthogonal Procrustes, when enough anchors are available) and **rebuilds the archive cells** so all elites live in a single, consistent coordinate system.
   - Behaviour descriptors are clipped to `[-k, k]` (k from `MAPELITES_FEATURE_TRUNCATION_K`), linearly mapped into `[0, 1]^d`, and archives are constructed with fixed `[0, 1]` bounds per dimension to avoid manual per-dimension tuning and boundary crowding.
   - Delegates snapshot loading and incremental persistence to `loreley.core.map_elites.snapshot.DatabaseSnapshotStore`.
 
