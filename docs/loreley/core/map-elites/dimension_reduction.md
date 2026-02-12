@@ -5,7 +5,7 @@ PCA-based dimensionality reduction of commit embeddings before they are fed into
 ## Data structures
 
 - **`PcaHistoryEntry`**: commit-level embedding recorded in PCA history. It stores the raw commit vector plus the embedding model name used to produce it.
-- **`PCAProjection`**: serialisable wrapper around a fitted `sklearn.decomposition.PCA` model, capturing the mean vector, components, explained variance, explained variance ratio, whiten flag, and sample metadata, plus a `transform()` helper that projects (and when whitening is enabled, scales) new vectors.
+- **`PCAProjection`**: serialisable wrapper around a fitted `sklearn.decomposition.PCA` model, capturing the mean vector, components, explained variance, explained variance ratio, whiten flag, and sample metadata. Each projection also carries an `epoch` counter and may include an optional orthogonal `rotation` used to align successive refits (reducing coordinate jitter). `transform()` projects new vectors, applies whitening when enabled, and then applies the optional rotation.
 - **`FinalEmbedding`**: low-dimensional vector that sits on the MAP-Elites grid for a commit, along with the originating `PcaHistoryEntry` and optional `PCAProjection` used.
 
 ## Reducer
@@ -17,4 +17,4 @@ PCA-based dimensionality reduction of commit embeddings before they are fed into
 
 ## Convenience API
 
-- **`reduce_commit_embeddings(...)`**: one-shot helper that constructs a `DimensionReducer`, builds a PCA history entry from a commit's code embedding, and returns the `FinalEmbedding` together with the updated history and projection so callers can persist state.
+- **`reduce_commit_embeddings(...)`**: one-shot helper that constructs a `DimensionReducer`, builds a PCA history entry from a commit's code embedding, and returns the `FinalEmbedding` together with the updated history, updated projection, and the updated `samples_since_fit` counter. Callers must persist `samples_since_fit` alongside history/projection so `MAPELITES_DIMENSION_REDUCTION_REFIT_INTERVAL` works across repeated one-shot calls.

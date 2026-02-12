@@ -31,8 +31,10 @@ def test_pca_projection_transform_basic() -> None:
         explained_variance=(1.0, 1.0),
         explained_variance_ratio=(1.0, 1.0),
         sample_count=10,
+        epoch=0,
         fitted_at=123.0,
         whiten=False,
+        rotation=None,
     )
 
     result = projection.transform((2.0, 4.0))
@@ -114,7 +116,7 @@ def test_reduce_commit_embeddings_end_to_end(settings: Settings) -> None:
         dimensions=2,
     )
 
-    final, history, projection = reduce_commit_embeddings(
+    final, history, projection, samples_since_fit = reduce_commit_embeddings(
         commit_hash="abc",
         code_embedding=code_embedding,
         history=None,
@@ -127,5 +129,78 @@ def test_reduce_commit_embeddings_end_to_end(settings: Settings) -> None:
     assert len(final.vector) == settings.mapelites_dimensionality_target_dims
     assert final.history_entry.embedding_model == "code-model"
     assert len(history) >= 1
+    assert samples_since_fit >= 0
+
+
+def test_reduce_commit_embeddings_refits_after_interval_across_calls(
+    settings: Settings,
+) -> None:
+    """Regression: refit_interval must count across repeated one-shot calls."""
+
+    settings.mapelites_dimensionality_target_dims = 2
+    settings.mapelites_dimensionality_min_fit_samples = 2
+    settings.mapelites_feature_normalization_warmup_samples = 2
+    settings.mapelites_dimensionality_history_size = 16
+    settings.mapelites_dimensionality_refit_interval = 2
+    settings.mapelites_dimensionality_penultimate_normalize = False
+
+    history = None
+    projection = None
+    samples_since_fit = 0
+
+    def _embed(commit: str, vector: Sequence[float]) -> CommitCodeEmbedding:
+        return CommitCodeEmbedding(
+            files=(),
+            vector=tuple(float(v) for v in vector),
+            model="code-model",
+            dimensions=len(vector),
+        )
+
+    # Seed fit after two samples.
+    _, history, projection, samples_since_fit = reduce_commit_embeddings(
+        commit_hash="a",
+        code_embedding=_embed("a", (1.0, 0.0, 0.0)),
+        history=history,
+        projection=projection,
+        samples_since_fit=samples_since_fit,
+        settings=settings,
+    )
+    assert projection is None
+
+    _, history, projection, samples_since_fit = reduce_commit_embeddings(
+        commit_hash="b",
+        code_embedding=_embed("b", (0.0, 1.0, 0.0)),
+        history=history,
+        projection=projection,
+        samples_since_fit=samples_since_fit,
+        settings=settings,
+    )
+    assert projection is not None
+    first_epoch = projection.epoch
+
+    # Accumulate two new samples since the last fit; the second should refit.
+    _, history, projection, samples_since_fit = reduce_commit_embeddings(
+        commit_hash="c",
+        code_embedding=_embed("c", (0.0, 0.0, 1.0)),
+        history=history,
+        projection=projection,
+        samples_since_fit=samples_since_fit,
+        settings=settings,
+    )
+    assert projection is not None
+    assert projection.epoch == first_epoch
+    assert samples_since_fit == 1
+
+    _, history, projection, samples_since_fit = reduce_commit_embeddings(
+        commit_hash="d",
+        code_embedding=_embed("d", (1.0, 1.0, 0.0)),
+        history=history,
+        projection=projection,
+        samples_since_fit=samples_since_fit,
+        settings=settings,
+    )
+    assert projection is not None
+    assert projection.epoch == first_epoch + 1
+    assert samples_since_fit == 0
 
 

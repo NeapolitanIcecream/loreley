@@ -6,7 +6,7 @@ Helpers for applying and persisting MAP-Elites island state.
 
 Loreley stores MAP-Elites state incrementally:
 
-- `map_elites_states` (`MapElitesState.snapshot`): per-island metadata (feature bounds, PCA projection payload, knobs).
+- `map_elites_states` (`MapElitesState.snapshot`): per-island metadata (feature bounds, PCA projection payload, refit counters, and other lightweight knobs).
 - `map_elites_archive_cells` (`MapElitesArchiveCell`): one row per occupied archive cell.
 - `map_elites_pca_history` (`MapElitesPcaHistory`): PCA history entries used to restore dimensionality reduction state.
 

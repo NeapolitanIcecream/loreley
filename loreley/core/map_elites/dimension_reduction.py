@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 import time
 from typing import Sequence
 
 from loguru import logger
+import numpy as np
 from sklearn.decomposition import PCA
 
 from loreley.config import Settings, get_settings
@@ -17,6 +18,7 @@ from .code_embedding import CommitCodeEmbedding
 __all__ = [
     "PcaHistoryEntry",
     "PCAProjection",
+    "align_pca_projection",
     "FinalEmbedding",
     "DimensionReducer",
     "resolve_pca_history_limit",
@@ -64,8 +66,12 @@ class PCAProjection:
     explained_variance: tuple[float, ...]
     explained_variance_ratio: tuple[float, ...]
     sample_count: int
+    epoch: int
     fitted_at: float
     whiten: bool
+    # Optional orthogonal rotation applied after PCA (and whitening, when enabled).
+    # This is used to align successive PCA refits and reduce coordinate jitter.
+    rotation: tuple[Vector, ...] | None = None
 
     @property
     def dimensions(self) -> int:
@@ -91,6 +97,20 @@ class PCAProjection:
                 value / math.sqrt(variance) if variance > 0.0 else value
                 for value, variance in zip(transformed, variances)
             ]
+        if self.rotation:
+            rotation = self.rotation
+            dims = len(transformed)
+            if len(rotation) != dims or any(len(row) != dims for row in rotation):
+                raise ValueError(
+                    "PCA rotation matrix must be square with the same dimensionality "
+                    f"as the projection (dims={dims})."
+                )
+            rotated: list[float] = []
+            for col in range(dims):
+                rotated.append(
+                    sum(transformed[row] * rotation[row][col] for row in range(dims))
+                )
+            transformed = rotated
         return tuple(transformed)
 
     @classmethod
@@ -98,6 +118,8 @@ class PCAProjection:
         cls,
         model: PCA,
         sample_count: int,
+        *,
+        epoch: int = 0,
         fitted_at: float | None = None,
     ) -> "PCAProjection":
         if not hasattr(model, "components_") or not hasattr(model, "mean_"):
@@ -120,9 +142,72 @@ class PCAProjection:
             explained_variance=explained_variance,
             explained_variance_ratio=explained,
             sample_count=sample_count,
+            epoch=max(0, int(epoch)),
             fitted_at=fitted_at or time.time(),
             whiten=bool(getattr(model, "whiten", False)),
+            rotation=None,
         )
+
+
+def align_pca_projection(
+    *,
+    projection: PCAProjection,
+    reference: PCAProjection,
+    anchors: Sequence[Sequence[float]],
+) -> PCAProjection:
+    """Align `projection` outputs to `reference` using orthogonal Procrustes.
+
+    This helper computes an orthogonal rotation R that minimises:
+
+        || Z_new R - Z_ref ||_F
+
+    on the provided anchor vectors, where Z_new is produced by `projection` and
+    Z_ref is produced by `reference`. The returned projection applies R after
+    PCA (and whitening, when enabled).
+    """
+
+    if not anchors:
+        return projection
+    dims = projection.dimensions
+    if dims <= 0:
+        return projection
+    if reference.dimensions != dims:
+        log.debug(
+            "Skipping PCA alignment due to dimensionality mismatch (ref={} new={})",
+            reference.dimensions,
+            dims,
+        )
+        return projection
+
+    ref_rows: list[list[float]] = []
+    new_rows: list[list[float]] = []
+    for anchor in anchors:
+        try:
+            ref_rows.append(list(reference.transform(anchor)))
+            new_rows.append(list(projection.transform(anchor)))
+        except ValueError:
+            continue
+
+    if not ref_rows or len(ref_rows) != len(new_rows):
+        return projection
+    if len(ref_rows) < 2:
+        return projection
+
+    z_ref = np.asarray(ref_rows, dtype=np.float64)
+    z_new = np.asarray(new_rows, dtype=np.float64)
+    if z_ref.shape[1] != dims or z_new.shape[1] != dims:
+        return projection
+
+    try:
+        m = z_new.T @ z_ref
+        u, _s, vt = np.linalg.svd(m)
+        r = u @ vt
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        log.debug("Unable to align PCA projections: {}", exc)
+        return projection
+
+    rotation = tuple(tuple(float(v) for v in row) for row in r.tolist())
+    return replace(projection, rotation=rotation)
 
 
 @dataclass(slots=True, frozen=True)
@@ -145,6 +230,7 @@ class DimensionReducer:
         settings: Settings | None = None,
         history: Sequence[PcaHistoryEntry] | None = None,
         projection: PCAProjection | None = None,
+        samples_since_fit: int = 0,
     ) -> None:
         self.settings = settings or get_settings()
         self._target_dims = max(1, self.settings.mapelites_dimensionality_target_dims)
@@ -165,7 +251,7 @@ class DimensionReducer:
         self._feature_count: int | None = (
             projection.feature_count if projection else None
         )
-        self._samples_since_fit = 0
+        self._samples_since_fit = max(0, int(samples_since_fit or 0))
 
         if history:
             for entry in history:
@@ -180,6 +266,11 @@ class DimensionReducer:
     def projection(self) -> PCAProjection | None:
         """Return the currently active PCA projection."""
         return self._projection
+
+    @property
+    def samples_since_fit(self) -> int:
+        """Return the number of new samples recorded since the last PCA fit."""
+        return int(self._samples_since_fit)
 
     def build_history_entry(
         self,
@@ -325,7 +416,12 @@ class DimensionReducer:
             log.error("Unable to fit PCA: {}", exc)
             return None
 
-        projection = PCAProjection.from_model(model, len(samples))
+        previous_epoch = self._projection.epoch if self._projection else -1
+        projection = PCAProjection.from_model(
+            model,
+            len(samples),
+            epoch=previous_epoch + 1,
+        )
         self._projection = projection
         self._samples_since_fit = 0
         log.info(
@@ -378,28 +474,31 @@ def reduce_commit_embeddings(
     history: Sequence[PcaHistoryEntry] | None = None,
     projection: PCAProjection | None = None,
     settings: Settings | None = None,
+    samples_since_fit: int = 0,
 ) -> tuple[
     FinalEmbedding | None,
     tuple[PcaHistoryEntry, ...],
     PCAProjection | None,
+    int,
 ]:
     """Convenience helper that runs the full reduction pipeline once.
 
-    Returns a tuple of (final_embedding, updated_history, updated_projection).
+    Returns a tuple of (final_embedding, updated_history, updated_projection, samples_since_fit).
     """
 
     reducer = DimensionReducer(
         settings=settings,
         history=history,
         projection=projection,
+        samples_since_fit=samples_since_fit,
     )
     entry = reducer.build_history_entry(
         commit_hash=commit_hash,
         code_embedding=code_embedding,
     )
     if not entry:
-        return None, reducer.history, reducer.projection
+        return None, reducer.history, reducer.projection, reducer.samples_since_fit
 
     reduced = reducer.reduce(entry)
-    return reduced, reducer.history, reducer.projection
+    return reduced, reducer.history, reducer.projection, reducer.samples_since_fit
 

@@ -11,14 +11,18 @@ from typing import Any, Mapping, Sequence, cast
 import numpy as np
 from loguru import logger
 from ribs.archives import GridArchive
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from loreley.config import Settings, get_settings
+from loreley.db.base import session_scope
+from loreley.db.models import MapElitesPcaHistory, MapElitesRepoStateAggregate
 from .code_embedding import CommitCodeEmbedding
 from .dimension_reduction import (
     FinalEmbedding,
     PcaHistoryEntry,
     PCAProjection,
+    align_pca_projection,
     reduce_commit_embeddings,
     resolve_pca_history_limit,
 )
@@ -32,6 +36,7 @@ from .snapshot import (
     SnapshotCellUpsert,
     SnapshotUpdate,
     apply_snapshot,
+    purge_island_commit_mappings,
     to_list,
 )
 
@@ -109,6 +114,7 @@ class IslandState:
     upper_bounds: np.ndarray
     history: tuple[PcaHistoryEntry, ...] = field(default_factory=tuple)
     projection: PCAProjection | None = None
+    samples_since_fit: int = 0
     commit_to_index: dict[str, int] = field(default_factory=dict)
     index_to_commit: dict[int, str] = field(default_factory=dict)
 
@@ -207,15 +213,38 @@ class MapElitesManager:
                     artifacts=artifacts,
                     message=message,
                 )
-            final_embedding, history, projection = reduce_commit_embeddings(
+            old_projection = state.projection
+            final_embedding, history, projection, samples_since_fit = reduce_commit_embeddings(
                 commit_hash=commit_hash,
                 code_embedding=code_embedding,
                 history=state.history,
                 projection=state.projection,
+                samples_since_fit=state.samples_since_fit,
                 settings=self.settings,
             )
             state.history = history
             state.projection = projection
+            state.samples_since_fit = samples_since_fit
+
+            did_refit = (
+                old_projection is not None
+                and state.projection is not None
+                and state.projection.epoch != old_projection.epoch
+            )
+            if (
+                did_refit
+                and final_embedding is not None
+                and old_projection is not None
+                and state.projection is not None
+            ):
+                final_embedding = self._rebuild_after_projection_refit(
+                    state=state,
+                    island_id=effective_island,
+                    current=final_embedding,
+                    old_projection=old_projection,
+                    new_projection=state.projection,
+                    snapshot_session=snapshot_session,
+                )
 
             # Persist PCA state incrementally even when the archive does not change.
             update = SnapshotUpdate(
@@ -224,6 +253,7 @@ class MapElitesManager:
                 projection=state.projection,
                 history_upsert=final_embedding.history_entry if final_embedding else None,
                 history_seen_at=time.time(),
+                samples_since_fit=state.samples_since_fit,
             )
 
             artifacts = self._build_artifacts(repo_stats, (), code_embedding, final_embedding)
@@ -283,6 +313,11 @@ class MapElitesManager:
                     solution=tuple(float(v) for v in record.solution),
                     commit_hash=str(record.commit_hash),
                     timestamp=float(record.timestamp),
+                )
+            if did_refit and update is not None:
+                update.archive_replace = self._build_archive_replace_payload(
+                    state=state,
+                    island_id=effective_island,
                 )
 
             if record:
@@ -441,12 +476,14 @@ class MapElitesManager:
         commit_hash: str,
         fitness: float,
         measures: np.ndarray,
+        timestamp: float | None = None,
     ) -> tuple[int, float, MapElitesRecord | None]:
         archive = state.archive
         measures_batch = measures.reshape(1, -1)
         solution = measures_batch  # Store embedding itself as the solution payload.
         objective = np.asarray([fitness], dtype=np.float64)
-        timestamp = np.asarray([time.time()], dtype=np.float64)
+        ts_value = time.time() if timestamp is None else float(timestamp)
+        timestamp_batch = np.asarray([ts_value], dtype=np.float64)
         commit_field = np.asarray([commit_hash], dtype=object)
 
         cell_index = int(np.asarray(archive.index_of(measures_batch)).item())
@@ -457,7 +494,7 @@ class MapElitesManager:
             objective,
             measures_batch,
             commit_hash=commit_field,
-            timestamp=timestamp,
+            timestamp=timestamp_batch,
         )
         status = int(add_info["status"][0])
         delta = float(add_info["value"][0])
@@ -486,6 +523,208 @@ class MapElitesManager:
             self._commit_to_island.pop(previous_commit, None)
 
         return status, delta, record
+
+    def _rebuild_after_projection_refit(
+        self,
+        *,
+        state: IslandState,
+        island_id: str,
+        current: FinalEmbedding,
+        old_projection: PCAProjection,
+        new_projection: PCAProjection,
+        snapshot_session: Session | None,
+    ) -> FinalEmbedding:
+        """Align the new PCA projection and rebuild the archive in the new coordinates."""
+
+        previous_records = self.get_records(island_id)
+        if not previous_records:
+            return self._recompute_final_embedding(current, new_projection)
+
+        commit_hashes = tuple(
+            str(record.commit_hash or "").strip()
+            for record in previous_records
+            if str(record.commit_hash or "").strip()
+        )
+        vectors = self._load_commit_vectors(
+            island_id=island_id,
+            commit_hashes=commit_hashes,
+            state=state,
+            snapshot_session=snapshot_session,
+        )
+        anchors = [vectors[h] for h in commit_hashes if h in vectors]
+        aligned = align_pca_projection(
+            projection=new_projection,
+            reference=old_projection,
+            anchors=anchors,
+        )
+        state.projection = aligned
+
+        # Clear archive + bookkeeping and reinsert previous elites using the new projection.
+        purge_island_commit_mappings(self._commit_to_island, island_id)
+        state.archive = self._build_archive()
+        state.index_to_commit.clear()
+        state.commit_to_index.clear()
+
+        inserted = 0
+        missing = 0
+        for record in sorted(previous_records, key=lambda item: float(item.fitness), reverse=True):
+            commit = str(record.commit_hash or "").strip()
+            if not commit:
+                continue
+            vec = vectors.get(commit)
+            if not vec:
+                missing += 1
+                continue
+            reduced = self._pad_or_trim(aligned.transform(vec))
+            measures = self._clip_vector(reduced, state)
+            status, _delta, _ = self._add_to_archive(
+                state=state,
+                island_id=island_id,
+                commit_hash=commit,
+                fitness=float(record.fitness),
+                measures=measures,
+                timestamp=float(record.timestamp),
+            )
+            if status > 0:
+                inserted += 1
+
+        log.info(
+            "Rebuilt MAP-Elites archive after PCA refit (island={} kept={} missing_vectors={})",
+            island_id,
+            inserted,
+            missing,
+        )
+        return self._recompute_final_embedding(current, aligned)
+
+    def _recompute_final_embedding(
+        self,
+        current: FinalEmbedding,
+        projection: PCAProjection | None,
+    ) -> FinalEmbedding:
+        if projection is None:
+            return current
+        reduced = self._pad_or_trim(projection.transform(current.history_entry.vector))
+        return FinalEmbedding(
+            commit_hash=current.commit_hash,
+            vector=reduced,
+            dimensions=len(reduced),
+            history_entry=current.history_entry,
+            projection=projection,
+        )
+
+    def _pad_or_trim(self, vector: Sequence[float]) -> tuple[float, ...]:
+        if not vector:
+            return tuple(0.0 for _ in range(self._target_dims))
+        if len(vector) >= self._target_dims:
+            return tuple(float(v) for v in vector[: self._target_dims])
+        padded = [float(v) for v in vector]
+        padded.extend(0.0 for _ in range(self._target_dims - len(padded)))
+        return tuple(padded)
+
+    def _load_commit_vectors(
+        self,
+        *,
+        island_id: str,
+        commit_hashes: Sequence[str],
+        state: IslandState,
+        snapshot_session: Session | None,
+    ) -> dict[str, tuple[float, ...]]:
+        needed = {str(commit).strip() for commit in commit_hashes if str(commit).strip()}
+        if not needed:
+            return {}
+
+        vectors: dict[str, tuple[float, ...]] = {}
+        for entry in state.history:
+            commit = str(entry.commit_hash or "").strip()
+            if commit and commit in needed:
+                vectors[commit] = tuple(float(v) for v in entry.vector)
+        missing = sorted(needed.difference(vectors.keys()))
+        if not missing:
+            return vectors
+
+        def _fill_from_db(session: Session) -> None:
+            stmt = (
+                select(MapElitesPcaHistory)
+                .where(MapElitesPcaHistory.island_id == island_id)
+                .where(MapElitesPcaHistory.commit_hash.in_(missing))
+            )
+            rows = list(session.execute(stmt).scalars().all())
+            for row in rows:
+                commit = str(row.commit_hash or "").strip()
+                if not commit or commit in vectors:
+                    continue
+                vec = tuple(float(v) for v in (row.vector or []))
+                if vec:
+                    vectors[commit] = vec
+
+        if snapshot_session is not None:
+            _fill_from_db(snapshot_session)
+        else:
+            with session_scope() as owned:
+                _fill_from_db(owned)
+
+        still_missing = sorted(needed.difference(vectors.keys()))
+        if not still_missing:
+            return vectors
+
+        normalize = bool(self.settings.mapelites_dimensionality_penultimate_normalize)
+
+        def _fill_from_aggregates(session: Session) -> None:
+            stmt = select(MapElitesRepoStateAggregate).where(
+                MapElitesRepoStateAggregate.commit_hash.in_(still_missing)
+            )
+            rows = list(session.execute(stmt).scalars().all())
+            for row in rows:
+                commit = str(row.commit_hash or "").strip()
+                if not commit or commit in vectors:
+                    continue
+                file_count = int(row.file_count or 0)
+                if file_count <= 0:
+                    continue
+                raw = [float(v) / float(file_count) for v in (row.sum_vector or [])]
+                vec = tuple(raw)
+                if normalize and vec:
+                    magnitude = math.sqrt(sum(value * value for value in vec))
+                    if magnitude > 0.0:
+                        vec = tuple(value / magnitude for value in vec)
+                if vec:
+                    vectors[commit] = vec
+
+        if snapshot_session is not None:
+            _fill_from_aggregates(snapshot_session)
+        else:
+            with session_scope() as owned:
+                _fill_from_aggregates(owned)
+
+        return vectors
+
+    def _build_archive_replace_payload(
+        self,
+        *,
+        state: IslandState,
+        island_id: str,
+    ) -> tuple[SnapshotCellUpsert, ...]:
+        if state.archive.empty:
+            return tuple()
+        data = state.archive.data()
+        records = self._records_from_store_data(
+            cast(Mapping[str, Any], data),
+            island_id,
+        )
+        payload = [
+            SnapshotCellUpsert(
+                cell_index=int(record.cell_index),
+                objective=float(record.fitness),
+                measures=tuple(float(v) for v in record.measures),
+                solution=tuple(float(v) for v in record.solution),
+                commit_hash=str(record.commit_hash),
+                timestamp=float(record.timestamp),
+            )
+            for record in records
+            if record.commit_hash
+        ]
+        payload.sort(key=lambda item: int(item.cell_index))
+        return tuple(payload)
 
     def _records_from_store_data(
         self,

@@ -9,7 +9,7 @@ import pytest
 import loreley.core.map_elites.map_elites as map_elites_module
 from loreley.config import Settings
 from loreley.core.map_elites.code_embedding import CommitCodeEmbedding
-from loreley.core.map_elites.dimension_reduction import FinalEmbedding, PcaHistoryEntry
+from loreley.core.map_elites.dimension_reduction import FinalEmbedding, PCAProjection, PcaHistoryEntry
 from loreley.core.map_elites.map_elites import MapElitesManager, MapElitesRecord
 from loreley.core.map_elites.repository_state_embedding import RepoStateEmbeddingStats
 
@@ -234,7 +234,7 @@ def test_ingest_builds_record_with_stubbed_dependencies(
     monkeypatch.setattr(
         map_elites_module,
         "reduce_commit_embeddings",
-        lambda **kwargs: (final_embedding, (entry,), None),
+        lambda **kwargs: (final_embedding, (entry,), None, 0),
     )
 
     manager = MapElitesManager(
@@ -334,7 +334,7 @@ def test_ingest_passes_external_snapshot_session(
     monkeypatch.setattr(
         map_elites_module,
         "reduce_commit_embeddings",
-        lambda **kwargs: (final_embedding, (entry,), None),
+        lambda **kwargs: (final_embedding, (entry,), None, 0),
     )
 
     class SnapshotStoreRecorder:
@@ -380,3 +380,126 @@ def test_ingest_passes_external_snapshot_session(
     )
 
     assert recorder.last_session is session_marker
+
+
+def test_ingest_rebuilds_archive_when_pca_projection_refits(
+    monkeypatch: pytest.MonkeyPatch, settings: Settings
+) -> None:
+    """Regression: PCA refits must rebuild existing archive cells."""
+
+    settings.mapelites_default_island_id = "main"
+    settings.mapelites_dimensionality_target_dims = 2
+    settings.mapelites_archive_cells_per_dim = 4
+    settings.mapelites_feature_clip = True
+    settings.mapelites_feature_truncation_k = 1.0
+    settings.mapelites_fitness_metric = "score"
+
+    # Two fake projections over 3D vectors. The refit changes the 2nd component
+    # from dimension-2 to dimension-3, so existing commits must be reprojected.
+    old_projection = PCAProjection(
+        feature_count=3,
+        components=((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+        mean=(0.0, 0.0, 0.0),
+        explained_variance=(1.0, 1.0),
+        explained_variance_ratio=(0.5, 0.5),
+        sample_count=2,
+        epoch=0,
+        fitted_at=10.0,
+        whiten=False,
+        rotation=None,
+    )
+    new_projection = PCAProjection(
+        feature_count=3,
+        components=((1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
+        mean=(0.0, 0.0, 0.0),
+        explained_variance=(1.0, 1.0),
+        explained_variance_ratio=(0.5, 0.5),
+        sample_count=3,
+        epoch=1,
+        fitted_at=20.0,
+        whiten=False,
+        rotation=None,
+    )
+
+    entry_c1 = PcaHistoryEntry(
+        commit_hash="c1",
+        vector=(0.0, 1.0, 0.0),
+        embedding_model="code",
+    )
+    entry_c2 = PcaHistoryEntry(
+        commit_hash="c2",
+        vector=(1.0, 0.0, 1.0),
+        embedding_model="code",
+    )
+
+    final_c1 = FinalEmbedding(
+        commit_hash="c1",
+        vector=(0.0, 1.0),
+        dimensions=2,
+        history_entry=entry_c1,
+        projection=old_projection,
+    )
+    final_c2 = FinalEmbedding(
+        commit_hash="c2",
+        vector=(0.0, 0.0),
+        dimensions=2,
+        history_entry=entry_c2,
+        projection=new_projection,
+    )
+
+    code_embedding = CommitCodeEmbedding(
+        files=(),
+        vector=(0.0, 0.0, 0.0),
+        model="code",
+        dimensions=3,
+    )
+    stats = RepoStateEmbeddingStats(
+        commit_hash="c1",
+        eligible_files=1,
+        files_embedded=1,
+        files_aggregated=1,
+        unique_blobs=1,
+        cache_hits=0,
+        cache_misses=1,
+        skipped_empty_after_preprocess=0,
+        skipped_failed_embedding=0,
+    )
+    monkeypatch.setattr(
+        map_elites_module,
+        "embed_repository_state_incremental",
+        lambda *args, **kwargs: (code_embedding, stats),
+    )
+
+    def _fake_reduce_commit_embeddings(**kwargs: object):
+        commit = kwargs.get("commit_hash")
+        if commit == "c1":
+            return final_c1, (entry_c1,), old_projection, 0
+        if commit == "c2":
+            # Return both vectors so the rebuild can load c1 without a DB query.
+            return final_c2, (entry_c1, entry_c2), new_projection, 0
+        raise AssertionError(f"Unexpected commit {commit!r}")
+
+    monkeypatch.setattr(map_elites_module, "reduce_commit_embeddings", _fake_reduce_commit_embeddings)
+
+    manager = MapElitesManager(settings=settings, repo_root=Path("."))
+
+    class NullSnapshotStore:
+        def load(self, island_id: str, *, history_limit: int | None = None) -> dict[str, object] | None:
+            return None
+
+        def apply_update(self, island_id: str, *, update: object, session: object | None = None) -> None:
+            return None
+
+    manager._snapshot_store = NullSnapshotStore()  # type: ignore[attr-defined]
+    monkeypatch.setattr(manager, "_persist_island_state", lambda *args, **kwargs: None)
+
+    _ = manager.ingest(commit_hash="c1", metrics={"score": 1.0})
+    before = {rec.commit_hash: rec.measures for rec in manager.get_records("main")}
+    assert before["c1"] == pytest.approx((0.5, 1.0))
+
+    _ = manager.ingest(commit_hash="c2", metrics={"score": 0.5})
+    after = {rec.commit_hash: rec.measures for rec in manager.get_records("main")}
+
+    # Under the refit projection, c1 loses its second component (it becomes 0),
+    # so the y measure must move from 1.0 to 0.5 after rebuild.
+    assert after["c1"] == pytest.approx((0.5, 0.5))

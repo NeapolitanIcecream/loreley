@@ -88,11 +88,13 @@ class SnapshotUpdate:
     lower_bounds: Sequence[float] | None = None
     upper_bounds: Sequence[float] | None = None
     projection: PCAProjection | None = None
+    samples_since_fit: int | None = None
 
     history_upsert: PcaHistoryEntry | None = None
     history_seen_at: float | None = None
 
     cell_upsert: SnapshotCellUpsert | None = None
+    archive_replace: Sequence[SnapshotCellUpsert] | None = None
     clear: bool = False
 
 
@@ -248,6 +250,8 @@ class DatabaseSnapshotStore:
             meta["lower_bounds"] = [float(v) for v in update.lower_bounds]
         if update.upper_bounds is not None:
             meta["upper_bounds"] = [float(v) for v in update.upper_bounds]
+        if update.samples_since_fit is not None:
+            meta["samples_since_fit"] = max(0, int(update.samples_since_fit))
 
         # Projection updates are frequent but small; keep them in metadata JSON.
         meta["projection"] = serialize_projection(update.projection)
@@ -275,7 +279,30 @@ class DatabaseSnapshotStore:
             )
             return
 
-        if update.cell_upsert is not None:
+        if update.archive_replace is not None:
+            # Replacing the archive is rare (only on PCA refits). Purge rows first
+            # so stale cell indices do not linger.
+            session.execute(
+                delete(MapElitesArchiveCell).where(
+                    MapElitesArchiveCell.island_id == island_id,
+                )
+            )
+            cells = list(update.archive_replace)
+            if cells:
+                values = [
+                    {
+                        "island_id": island_id,
+                        "cell_index": int(cell.cell_index),
+                        "commit_hash": str(cell.commit_hash),
+                        "objective": float(cell.objective),
+                        "measures": [float(v) for v in cell.measures],
+                        "solution": [float(v) for v in cell.solution],
+                        "timestamp": float(cell.timestamp),
+                    }
+                    for cell in cells
+                ]
+                session.execute(pg_insert(MapElitesArchiveCell), values)
+        elif update.cell_upsert is not None:
             cell = update.cell_upsert
             values = {
                 "island_id": island_id,
@@ -402,6 +429,13 @@ def apply_snapshot(
     if isinstance(upper_bounds, Sequence):
         state.upper_bounds = np.asarray(upper_bounds, dtype=np.float64)
 
+    samples_since_fit = snapshot.get("samples_since_fit")
+    if samples_since_fit is not None and hasattr(state, "samples_since_fit"):
+        try:
+            state.samples_since_fit = max(0, int(samples_since_fit))
+        except (TypeError, ValueError):
+            state.samples_since_fit = 0
+
     history_payload = snapshot.get("history") or []
     if history_payload:
         state.history = deserialize_history(history_payload)
@@ -441,6 +475,9 @@ def serialize_projection(projection: PCAProjection | None) -> dict[str, Any] | N
 
     if not projection:
         return None
+    rotation = None
+    if projection.rotation:
+        rotation = [[float(value) for value in row] for row in projection.rotation]
     return {
         "feature_count": projection.feature_count,
         "components": [[float(value) for value in row] for row in projection.components],
@@ -450,8 +487,10 @@ def serialize_projection(projection: PCAProjection | None) -> dict[str, Any] | N
             float(value) for value in projection.explained_variance_ratio
         ],
         "sample_count": projection.sample_count,
+        "epoch": int(getattr(projection, "epoch", 0) or 0),
         "fitted_at": projection.fitted_at,
         "whiten": projection.whiten,
+        "rotation": rotation,
     }
 
 
@@ -468,6 +507,21 @@ def deserialize_projection(payload: Mapping[str, Any] | None) -> PCAProjection |
     explained_variance = tuple(float(value) for value in explained_variance_raw)
     explained_raw = payload.get("explained_variance_ratio") or []
     explained = tuple(float(value) for value in explained_raw)
+    epoch = int(payload.get("epoch", 0) or 0)
+    rotation_payload = payload.get("rotation")
+    rotation: tuple[Vector, ...] | None = None
+    if isinstance(rotation_payload, (list, tuple)):
+        try:
+            rotation_rows = []
+            for row in rotation_payload:
+                if not isinstance(row, (list, tuple)):
+                    rotation_rows = []
+                    break
+                rotation_rows.append(tuple(float(value) for value in row))
+            if rotation_rows:
+                rotation = tuple(rotation_rows)
+        except Exception:
+            rotation = None
     return PCAProjection(
         feature_count=int(payload.get("feature_count", len(mean))),
         components=components,
@@ -475,8 +529,10 @@ def deserialize_projection(payload: Mapping[str, Any] | None) -> PCAProjection |
         explained_variance=explained_variance,
         explained_variance_ratio=explained,
         sample_count=int(payload.get("sample_count", 0)),
+        epoch=max(0, epoch),
         fitted_at=float(payload.get("fitted_at", 0.0)),
         whiten=bool(payload.get("whiten", False)),
+        rotation=rotation,
     )
 
 
