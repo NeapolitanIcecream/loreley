@@ -16,7 +16,10 @@ pairs to drive a file-level embedding cache.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
+import subprocess
+import time
 from typing import cast
 
 from git import Repo
@@ -128,6 +131,123 @@ class RepositoryFileCatalog:
         if not self._repo:
             return []
 
+        # Prefer a fast git-plumbing path to avoid creating Python blob objects
+        # for large repositories. Fall back to GitPython tree traversal on any
+        # unexpected failure to preserve behavior.
+        started = time.monotonic()
+        try:
+            results = self._list_files_via_ls_tree()
+        except ValueError:
+            raise
+        except Exception as exc:  # pragma: no cover - best-effort fast path
+            log.debug(
+                "Falling back to GitPython tree traversal for commit {} (reason={})",
+                self.commit_hash,
+                exc,
+            )
+            results = self._list_files_via_tree_traversal()
+
+        results.sort(key=lambda entry: entry.path.as_posix())
+        log.info(
+            "Enumerated {} eligible repository files at commit {} (repo_root={}) elapsed_ms={}",
+            len(results),
+            self.commit_hash,
+            self.repo_root,
+            int((time.monotonic() - started) * 1000),
+        )
+        return results
+
+    def _list_files_via_ls_tree(self) -> list[RepositoryFile]:
+        """Enumerate eligible files via `git ls-tree` (fast path)."""
+        if not self.commit_hash:
+            raise ValueError("RepositoryFileCatalog requires commit_hash for git-tree enumeration.")
+        if not self._git_root:
+            raise RuntimeError("Cannot use ls-tree without a resolved git root.")
+
+        prefix = self._git_prefix
+        prefix_str = prefix.as_posix().rstrip("/") if prefix else ""
+
+        cmd: list[str] = ["git", "ls-tree", "-r", "-l", "-z", str(self.commit_hash).strip()]
+        if prefix_str:
+            cmd.extend(["--", prefix_str])
+
+        try:
+            proc = subprocess.run(
+                cmd,
+                cwd=str(self._git_root),
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or b"").decode("utf-8", "replace")
+            # Match the failure mode GitPython would raise as BadName.
+            if "Not a valid object name" in stderr or "bad object" in stderr:
+                raise ValueError(f"Unknown commit {self.commit_hash!r}") from exc
+            raise RuntimeError(f"git ls-tree failed: {stderr.strip()}") from exc
+
+        ignore_spec = self._ignore_spec
+        results: list[RepositoryFile] = []
+
+        # Output is NUL-delimited entries:
+        #   "<mode> <type> <sha> <size>\\t<path>\\0"
+        for raw in (proc.stdout or b"").split(b"\0"):
+            if not raw:
+                continue
+            try:
+                header, raw_path = raw.split(b"\t", 1)
+            except ValueError:
+                continue
+
+            header_parts = header.decode("utf-8", "replace").split()
+            if len(header_parts) < 3:
+                continue
+
+            obj_type = header_parts[1]
+            if obj_type != "blob":
+                continue
+
+            sha = header_parts[2].strip()
+            size_str = header_parts[3].strip() if len(header_parts) >= 4 else ""
+            if not sha:
+                continue
+
+            try:
+                size = int(size_str) if size_str.isdigit() else 0
+            except ValueError:
+                size = 0
+            if size <= 0 or size > self._max_file_size_bytes:
+                continue
+
+            path_text = os.fsdecode(raw_path).replace("\\", "/").lstrip("/")
+            if not path_text:
+                continue
+            git_rel = Path(path_text)
+
+            # Apply root ignore filtering relative to git root.
+            if ignore_spec and is_ignored_path(ignore_spec, git_rel):
+                continue
+
+            repo_rel = self._to_repo_relative(git_rel)
+            if repo_rel is None:
+                continue
+
+            # Apply preprocessing file filters (extension allowlist + excluded globs).
+            if self._preprocess_filter.is_excluded(repo_rel):
+                continue
+            if not self._preprocess_filter.is_code_file(repo_rel):
+                continue
+
+            results.append(RepositoryFile(path=repo_rel, blob_sha=sha, size_bytes=size))
+
+        return results
+
+    def _list_files_via_tree_traversal(self) -> list[RepositoryFile]:
+        """Enumerate eligible files via GitPython tree traversal (fallback path)."""
+        if not self._repo:
+            return []
+        if not self.commit_hash:
+            raise ValueError("RepositoryFileCatalog requires commit_hash for git-tree enumeration.")
         try:
             tree = self._repo.tree(self.commit_hash)
         except BadName as exc:
@@ -182,13 +302,6 @@ class RepositoryFileCatalog:
                 )
             )
 
-        results.sort(key=lambda entry: entry.path.as_posix())
-        log.info(
-            "Enumerated {} eligible repository files at commit {} (repo_root={})",
-            len(results),
-            self.commit_hash,
-            self.repo_root,
-        )
         return results
 
     # Internals -------------------------------------------------------------
