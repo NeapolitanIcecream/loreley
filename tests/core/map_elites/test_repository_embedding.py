@@ -399,3 +399,41 @@ def test_repository_state_embedder_deduplicates_duplicate_blobs(
     assert calls["file_counts"][-1] == 1  # embedded once for the shared blob
 
 
+def test_repository_state_embedder_weights_duplicate_blobs_by_file_count(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    settings: Settings,
+) -> None:
+    repo = _init_repo(tmp_path)
+    settings.mapelites_preprocess_allowed_extensions = [".py"]
+    settings.mapelites_preprocess_allowed_filenames = []
+    settings.mapelites_preprocess_excluded_globs = []
+    settings.mapelites_preprocess_max_file_size_kb = 64
+
+    (tmp_path / "a.py").write_text("print('same')\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("print('same')\n", encoding="utf-8")
+    (tmp_path / "c.py").write_text("print('different')\n", encoding="utf-8")
+    c1 = _commit_all(repo, "c1")
+
+    calls = _stub_embed_chunked_files(monkeypatch)
+    cache = _StubFileEmbeddingCache(
+        embedding_model="stub",
+        requested_dimensions=int(getattr(settings, "mapelites_code_embedding_dimensions", 2) or 2),
+    )
+    embedder = RepositoryStateEmbedder(settings=settings, cache=cache, repo=repo)
+    monkeypatch.setattr(embedder, "_load_aggregate", lambda **_kwargs: None)
+    monkeypatch.setattr(embedder, "_persist_aggregate", lambda **_kwargs: None)
+
+    embedding, stats = embedder.bootstrap_aggregate(commit_hash=c1, repo_root=tmp_path)
+    assert embedding is not None
+    assert stats.eligible_files == 3
+    assert stats.unique_blobs == 2
+    assert stats.files_aggregated == 3
+    assert calls["count"] == 1
+    assert calls["file_counts"][-1] == 2  # one embedding per unique blob
+
+    repo_files = list_repository_files(repo_root=tmp_path, commit_hash=c1, settings=settings, repo=repo)
+    cached = embedder.cache.get_many(sorted({f.blob_sha for f in repo_files}))
+    expected = _mean([cached[f.blob_sha] for f in repo_files])
+    assert embedding.vector == pytest.approx(expected)
+

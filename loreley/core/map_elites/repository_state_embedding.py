@@ -13,6 +13,7 @@ This module implements the repo-state embedding design:
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence, cast
@@ -234,7 +235,8 @@ class RepositoryStateEmbedder:
             return None, stats
 
         blob_shas = [entry.blob_sha for entry in repo_files if entry.blob_sha]
-        unique_blob_shas = sorted(set(blob_shas))
+        blob_weights = Counter(blob_shas)
+        unique_blob_shas = sorted(blob_weights.keys())
         cached = self.cache.get_many(unique_blob_shas)
 
         misses = [sha for sha in unique_blob_shas if sha not in cached]
@@ -250,16 +252,39 @@ class RepositoryStateEmbedder:
             self.cache.put_many(vectors_for_misses)
             cached.update(vectors_for_misses)
 
-        file_vectors: list[Vector] = []
-        skipped_failed = 0
-        for file in repo_files:
-            vec = cached.get(file.blob_sha)
-            if not vec:
-                skipped_failed += 1
+        sum_totals: list[float] | None = None
+        aggregated_count = 0
+        skipped_failed = len(repo_files) - len(blob_shas)
+        dims = 0
+        for blob_sha in unique_blob_shas:
+            weight = int(blob_weights.get(blob_sha, 0) or 0)
+            if weight <= 0:
                 continue
-            file_vectors.append(vec)
 
-        commit_vector, sum_vector, aggregated_count = _mean_and_sum_vectors(file_vectors)
+            vec = cached.get(blob_sha)
+            if not vec:
+                skipped_failed += weight
+                continue
+
+            if sum_totals is None:
+                dims = len(vec)
+                if dims <= 0:
+                    skipped_failed += weight
+                    continue
+                sum_totals = [0.0] * dims
+
+            if len(vec) != dims:
+                raise ValueError("Embedding dimension mismatch during repo-state aggregation.")
+
+            for i in range(dims):
+                sum_totals[i] += float(vec[i]) * float(weight)
+            aggregated_count += weight
+
+        if aggregated_count <= 0 or not sum_totals:
+            commit_vector, sum_vector = (), ()
+        else:
+            sum_vector = tuple(sum_totals)
+            commit_vector = _divide_vector(sum_vector, aggregated_count)
         stats = RepoStateEmbeddingStats(
             commit_hash=commit_hash,
             eligible_files=len(repo_files),
@@ -767,27 +792,6 @@ def bootstrap_repository_state_aggregate(
         commit_hash=commit_hash,
         repo_root=repo_root,
     )
-
-
-def _mean_and_sum_vectors(vectors: Sequence[Vector]) -> tuple[Vector, Vector, int]:
-    """Return (mean_vector, sum_vector, count)."""
-    if not vectors:
-        return (), (), 0
-    dims = len(vectors[0])
-    if dims == 0:
-        return (), (), 0
-    totals = [0.0] * dims
-    count = 0
-    for vec in vectors:
-        if len(vec) != dims:
-            raise ValueError("Embedding dimension mismatch during repo-state aggregation.")
-        for i in range(dims):
-            totals[i] += float(vec[i])
-        count += 1
-    if count <= 0:
-        return (), (), 0
-    mean = tuple(value / float(count) for value in totals)
-    return mean, tuple(totals), count
 
 
 def _divide_vector(vector: Vector, count: int) -> Vector:
