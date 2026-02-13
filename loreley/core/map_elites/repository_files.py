@@ -15,11 +15,11 @@ pairs to drive a file-level embedding cache.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
-from pathlib import Path
 import subprocess
 import time
+from dataclasses import dataclass
+from pathlib import Path
 from typing import cast
 
 from git import Repo
@@ -40,6 +40,13 @@ __all__ = [
 ]
 
 ROOT_IGNORE_FILES: tuple[str, ...] = (".gitignore", ".loreleyignore")
+UNKNOWN_COMMIT_ERROR_MARKERS: tuple[str, ...] = (
+    "not a valid object name",
+    "bad object",
+    "unknown revision or path not in the working tree",
+    "ambiguous argument",
+    "needed a single revision",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,7 +155,7 @@ class RepositoryFileCatalog:
             results = self._list_files_via_tree_traversal()
 
         results.sort(key=lambda entry: entry.path.as_posix())
-        log.info(
+        log.debug(
             "Enumerated {} eligible repository files at commit {} (repo_root={}) elapsed_ms={}",
             len(results),
             self.commit_hash,
@@ -182,7 +189,7 @@ class RepositoryFileCatalog:
         except subprocess.CalledProcessError as exc:
             stderr = (exc.stderr or b"").decode("utf-8", "replace")
             # Match the failure mode GitPython would raise as BadName.
-            if "Not a valid object name" in stderr or "bad object" in stderr:
+            if self._is_unknown_commit_error(stderr):
                 raise ValueError(f"Unknown commit {self.commit_hash!r}") from exc
             raise RuntimeError(f"git ls-tree failed: {stderr.strip()}") from exc
 
@@ -209,36 +216,26 @@ class RepositoryFileCatalog:
 
             sha = header_parts[2].strip()
             size_str = header_parts[3].strip() if len(header_parts) >= 4 else ""
-            if not sha:
-                continue
 
             try:
                 size = int(size_str) if size_str.isdigit() else 0
             except ValueError:
                 size = 0
-            if size <= 0 or size > self._max_file_size_bytes:
-                continue
 
             path_text = os.fsdecode(raw_path).replace("\\", "/").lstrip("/")
             if not path_text:
                 continue
             git_rel = Path(path_text)
 
-            # Apply root ignore filtering relative to git root.
-            if ignore_spec and is_ignored_path(ignore_spec, git_rel):
+            entry = self._build_entry(
+                git_rel=git_rel,
+                blob_sha=sha,
+                size_bytes=size,
+                ignore_spec=ignore_spec,
+            )
+            if entry is None:
                 continue
-
-            repo_rel = self._to_repo_relative(git_rel)
-            if repo_rel is None:
-                continue
-
-            # Apply preprocessing file filters (extension allowlist + excluded globs).
-            if self._preprocess_filter.is_excluded(repo_rel):
-                continue
-            if not self._preprocess_filter.is_code_file(repo_rel):
-                continue
-
-            results.append(RepositoryFile(path=repo_rel, blob_sha=sha, size_bytes=size))
+            results.append(entry)
 
         return results
 
@@ -253,9 +250,6 @@ class RepositoryFileCatalog:
         except BadName as exc:
             raise ValueError(f"Unknown commit {self.commit_hash!r}") from exc
 
-        prefix = self._git_prefix
-        prefix_str = prefix.as_posix().rstrip("/") if prefix else ""
-
         results: list[RepositoryFile] = []
         for blob in tree.traverse():
             if getattr(blob, "type", None) != "blob":
@@ -265,46 +259,52 @@ class RepositoryFileCatalog:
             if not git_rel.as_posix():
                 continue
 
-            if prefix_str:
-                # Only include files under repo_root when repo_root is a subdir.
-                try:
-                    git_rel.relative_to(prefix_str)
-                except ValueError:
-                    continue
-
-            # Apply root ignore filtering relative to git root.
-            if self._ignore_spec and is_ignored_path(self._ignore_spec, git_rel):
-                continue
-
-            repo_rel = self._to_repo_relative(git_rel)
-            if repo_rel is None:
-                continue
-
-            # Apply preprocessing file filters (extension allowlist + excluded globs).
-            if self._preprocess_filter.is_excluded(repo_rel):
-                continue
-            if not self._preprocess_filter.is_code_file(repo_rel):
-                continue
-
             size = int(getattr(blob, "size", 0) or 0)
-            if size <= 0 or size > self._max_file_size_bytes:
-                continue
 
             sha = str(getattr(blob, "hexsha", "") or "")
-            if not sha:
-                continue
 
-            results.append(
-                RepositoryFile(
-                    path=repo_rel,
-                    blob_sha=sha,
-                    size_bytes=size,
-                )
+            entry = self._build_entry(
+                git_rel=git_rel,
+                blob_sha=sha,
+                size_bytes=size,
+                ignore_spec=self._ignore_spec,
             )
+            if entry is None:
+                continue
+            results.append(entry)
 
         return results
 
     # Internals -------------------------------------------------------------
+
+    @staticmethod
+    def _is_unknown_commit_error(stderr: str) -> bool:
+        lowered = stderr.lower()
+        return any(marker in lowered for marker in UNKNOWN_COMMIT_ERROR_MARKERS)
+
+    def _build_entry(
+        self,
+        *,
+        git_rel: Path,
+        blob_sha: str,
+        size_bytes: int,
+        ignore_spec: GitIgnoreSpec | None,
+    ) -> RepositoryFile | None:
+        if not blob_sha:
+            return None
+        if size_bytes <= 0 or size_bytes > self._max_file_size_bytes:
+            return None
+        if ignore_spec and is_ignored_path(ignore_spec, git_rel):
+            return None
+
+        repo_rel = self._to_repo_relative(git_rel)
+        if repo_rel is None:
+            return None
+        if self._preprocess_filter.is_excluded(repo_rel):
+            return None
+        if not self._preprocess_filter.is_code_file(repo_rel):
+            return None
+        return RepositoryFile(path=repo_rel, blob_sha=blob_sha, size_bytes=size_bytes)
 
     def _init_repo(self) -> Repo | None:
         try:
