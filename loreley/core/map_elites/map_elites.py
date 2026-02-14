@@ -198,6 +198,16 @@ class MapElitesManager:
         update: SnapshotUpdate | None = None
         result: MapElitesInsertionResult | None = None
         archive_replace_needed = False
+        ingest_started_at = time.perf_counter()
+        aggregate_hit_count = 0
+        incremental_count = 0
+        embedding_cache_miss_count = 0
+        pca_fit_ms = 0.0
+        pca_refit_ms = 0.0
+        archive_add_ms = 0.0
+        snapshot_apply_ms = 0.0
+        did_initial_fit = False
+        did_refit = False
 
         try:
             while True:
@@ -206,6 +216,18 @@ class MapElitesManager:
                     repo_root=working_dir,
                     settings=self.settings,
                 )
+                source = str(getattr(repo_stats, "source", "unknown") or "unknown").strip()
+                if source == "aggregate_hit":
+                    aggregate_hit_count += 1
+                elif source == "incremental":
+                    incremental_count += 1
+                cache_misses = int(getattr(repo_stats, "cache_misses", 0) or 0)
+                if cache_misses < 0:
+                    raise ValueError(
+                        "Repo-state embedding reported a negative cache_misses value "
+                        f"(commit={commit_hash} cache_misses={cache_misses})."
+                    )
+                embedding_cache_miss_count += cache_misses
                 if not code_embedding or not code_embedding.vector:
                     artifacts = self._build_artifacts(repo_stats, (), None, None)
                     message = "No eligible repository files produced an embedding."
@@ -220,6 +242,7 @@ class MapElitesManager:
                     break
 
                 old_projection = state.projection
+                pca_fit_started_at = time.perf_counter()
                 final_embedding, history, projection, samples_since_fit = reduce_commit_embeddings(
                     commit_hash=commit_hash,
                     code_embedding=code_embedding,
@@ -228,6 +251,7 @@ class MapElitesManager:
                     samples_since_fit=state.samples_since_fit,
                     settings=self.settings,
                 )
+                pca_fit_ms += (time.perf_counter() - pca_fit_started_at) * 1000.0
                 state.history = history
                 state.projection = projection
                 state.samples_since_fit = samples_since_fit
@@ -244,6 +268,7 @@ class MapElitesManager:
                     and old_projection is not None
                     and state.projection is not None
                 ):
+                    pca_refit_started_at = time.perf_counter()
                     final_embedding = self._rebuild_after_projection_refit(
                         state=state,
                         island_id=effective_island,
@@ -252,6 +277,7 @@ class MapElitesManager:
                         new_projection=state.projection,
                         snapshot_session=snapshot_session,
                     )
+                    pca_refit_ms += (time.perf_counter() - pca_refit_started_at) * 1000.0
 
                 # Persist PCA state incrementally even when the archive does not change.
                 update = SnapshotUpdate(
@@ -332,6 +358,7 @@ class MapElitesManager:
                     )
                     break
 
+                archive_add_started_at = time.perf_counter()
                 status, delta, record = self._add_to_archive(
                     state=state,
                     island_id=effective_island,
@@ -339,6 +366,7 @@ class MapElitesManager:
                     fitness=fitness,
                     measures=vector,
                 )
+                archive_add_ms += (time.perf_counter() - archive_add_started_at) * 1000.0
 
                 if update is not None and record is not None and not archive_replace_needed:
                     update.cell_upsert = SnapshotCellUpsert(
@@ -381,17 +409,36 @@ class MapElitesManager:
                 raise RuntimeError("MAP-Elites ingest completed without producing a result.")
             return result
         finally:
-            if update is not None and archive_replace_needed and update.archive_replace is None:
-                update.archive_replace = self._build_archive_replace_payload(
-                    state=state,
-                    island_id=effective_island,
+            snapshot_apply_started_at = time.perf_counter()
+            try:
+                if update is not None and archive_replace_needed and update.archive_replace is None:
+                    update.archive_replace = self._build_archive_replace_payload(
+                        state=state,
+                        island_id=effective_island,
+                    )
+                self._persist_island_state(
+                    effective_island,
+                    state,
+                    update=update,
+                    session=snapshot_session,
                 )
-            self._persist_island_state(
-                effective_island,
-                state,
-                update=update,
-                session=snapshot_session,
-            )
+            finally:
+                snapshot_apply_ms += (time.perf_counter() - snapshot_apply_started_at) * 1000.0
+                log.bind(
+                    commit_hash=commit_hash,
+                    island_id=effective_island,
+                    aggregate_hit_count=aggregate_hit_count,
+                    incremental_count=incremental_count,
+                    embedding_cache_miss_count=embedding_cache_miss_count,
+                    pca_fit_ms=round(pca_fit_ms, 3),
+                    pca_refit_ms=round(pca_refit_ms, 3),
+                    archive_add_ms=round(archive_add_ms, 3),
+                    snapshot_apply_ms=round(snapshot_apply_ms, 3),
+                    ingest_total_ms=round((time.perf_counter() - ingest_started_at) * 1000.0, 3),
+                    did_initial_fit=did_initial_fit,
+                    did_refit=did_refit,
+                    status_code=result.status if result is not None else None,
+                ).info("MAP-Elites ingest stage metrics")
 
     def get_records(
         self,

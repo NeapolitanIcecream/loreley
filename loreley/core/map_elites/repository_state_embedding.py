@@ -60,6 +60,19 @@ class RepoStateEmbeddingStats:
     cache_misses: int
     skipped_empty_after_preprocess: int
     skipped_failed_embedding: int
+    source: str = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class _IncrementalAggregateResult:
+    aggregate: MapElitesRepoStateAggregate
+    vector: Vector
+    unique_blobs: int
+    cache_hits: int
+    cache_misses: int
+    files_embedded: int
+    skipped_empty_after_preprocess: int
+    skipped_failed_embedding: int
 
 
 class RepositoryStateEmbedder:
@@ -99,17 +112,19 @@ class RepositoryStateEmbedder:
                 f"no aggregate and no incremental path for commit {canonical}."
             )
 
-        agg_row, vector = incremental
+        agg_row = incremental.aggregate
+        vector = incremental.vector
         stats = RepoStateEmbeddingStats(
             commit_hash=canonical,
             eligible_files=int(agg_row.file_count),
-            files_embedded=0,
+            files_embedded=int(incremental.files_embedded),
             files_aggregated=int(agg_row.file_count),
-            unique_blobs=0,
-            cache_hits=0,
-            cache_misses=0,
-            skipped_empty_after_preprocess=0,
-            skipped_failed_embedding=0,
+            unique_blobs=int(incremental.unique_blobs),
+            cache_hits=int(incremental.cache_hits),
+            cache_misses=int(incremental.cache_misses),
+            skipped_empty_after_preprocess=int(incremental.skipped_empty_after_preprocess),
+            skipped_failed_embedding=int(incremental.skipped_failed_embedding),
+            source="incremental",
         )
         if not vector:
             return None, stats
@@ -190,6 +205,7 @@ class RepositoryStateEmbedder:
             cache_misses=0,
             skipped_empty_after_preprocess=0,
             skipped_failed_embedding=0,
+            source="aggregate_hit",
         )
         if not vector:
             return None, stats
@@ -231,6 +247,7 @@ class RepositoryStateEmbedder:
                 cache_misses=0,
                 skipped_empty_after_preprocess=0,
                 skipped_failed_embedding=0,
+                source="full_recompute",
             )
             return None, stats
 
@@ -295,6 +312,7 @@ class RepositoryStateEmbedder:
             cache_misses=len(misses),
             skipped_empty_after_preprocess=skipped_empty,
             skipped_failed_embedding=skipped_failed,
+            source="full_recompute",
         )
 
         if not commit_vector:
@@ -489,7 +507,7 @@ class RepositoryStateEmbedder:
         *,
         commit_hash: str,
         repo_root: Path,
-    ) -> tuple[MapElitesRepoStateAggregate, Vector] | None:
+    ) -> _IncrementalAggregateResult | None:
         repo = self._repo
         if repo is None:
             try:
@@ -573,7 +591,16 @@ class RepositoryStateEmbedder:
                 raise RepoStateEmbeddingError(
                     f"Failed to persist repo-state aggregate for commit {commit_hash}."
                 )
-            return persisted, vector
+            return _IncrementalAggregateResult(
+                aggregate=persisted,
+                vector=vector,
+                unique_blobs=0,
+                cache_hits=0,
+                cache_misses=0,
+                files_embedded=0,
+                skipped_empty_after_preprocess=0,
+                skipped_failed_embedding=0,
+            )
 
         def _selected(path_str: str | None, sha: str | None) -> tuple[bool, Path | None, str | None]:
             if not path_str or _is_null_sha(sha):
@@ -616,19 +643,31 @@ class RepositoryStateEmbedder:
         metadata = self._load_file_cache_metadata(blob_shas=candidates, dimensions=dims)
 
         # Embed cache misses for the *new* side only.
-        missing_new = [sha for sha in sorted(set(new_shas)) if sha not in metadata]
+        unique_new_shas = sorted(set(new_shas))
+        missing_new = [sha for sha in unique_new_shas if sha not in metadata]
+        files_embedded = 0
+        skipped_empty_after_preprocess = 0
         if missing_new:
-            vectors_for_misses, _embedded_count, _skipped_empty = self._embed_cache_misses(
+            vectors_for_misses, embedded_count, skipped_empty = self._embed_cache_misses(
                 root=repo_root,
                 commit_hash=commit_hash,
                 repo_files=repo_files_for_new_misses,
                 missing_blob_shas=missing_new,
             )
+            files_embedded = int(embedded_count)
+            skipped_empty_after_preprocess = int(skipped_empty)
             if vectors_for_misses:
                 self.cache.put_many(vectors_for_misses)
                 for sha, vec in vectors_for_misses.items():
                     if vec and len(vec) == dims:
                         metadata[sha] = RepositoryStateEmbedder._VectorMeta(vector=vec)
+
+        cache_misses = len(missing_new)
+        cache_hits = max(len(unique_new_shas) - cache_misses, 0)
+        skipped_failed_embedding = max(
+            cache_misses - files_embedded - skipped_empty_after_preprocess,
+            0,
+        )
 
         # Second pass: apply delta updates using "included" semantics.
         for entry in diffs:
@@ -681,7 +720,16 @@ class RepositoryStateEmbedder:
             raise RepoStateEmbeddingError(
                 f"Failed to persist repo-state aggregate for commit {commit_hash}."
             )
-        return persisted, vector
+        return _IncrementalAggregateResult(
+            aggregate=persisted,
+            vector=vector,
+            unique_blobs=len(unique_new_shas),
+            cache_hits=cache_hits,
+            cache_misses=cache_misses,
+            files_embedded=files_embedded,
+            skipped_empty_after_preprocess=skipped_empty_after_preprocess,
+            skipped_failed_embedding=skipped_failed_embedding,
+        )
 
     def _embed_cache_misses(
         self,

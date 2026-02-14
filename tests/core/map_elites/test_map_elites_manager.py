@@ -148,7 +148,7 @@ def test_manager_rejects_snapshot_dimensionality_when_settings_mismatch(settings
 
 
 def test_ingest_short_circuits_when_no_repo_state_embedding(
-    monkeypatch: pytest.MonkeyPatch, settings: Settings
+    monkeypatch: pytest.MonkeyPatch, settings: Settings, captured_logs: list[dict[str, object]]
 ) -> None:
     stats = RepoStateEmbeddingStats(
         commit_hash="abc",
@@ -187,6 +187,19 @@ def test_ingest_short_circuits_when_no_repo_state_embedding(
     assert result.record is None
     assert result.artifacts.preprocessed_files == ()
     assert "No eligible repository files" in (result.message or "")
+    stage_logs = [
+        record
+        for record in captured_logs
+        if record.get("module") == "map_elites.manager"
+        and record.get("message") == "MAP-Elites ingest stage metrics"
+    ]
+    assert stage_logs
+    stage_extra = stage_logs[-1].get("extra")
+    assert isinstance(stage_extra, dict)
+    assert stage_extra.get("aggregate_hit_count") == 0
+    assert stage_extra.get("incremental_count") == 0
+    assert stage_extra.get("embedding_cache_miss_count") == 0
+    assert stage_extra.get("status_code") == 0
 
 
 def test_ingest_builds_record_with_stubbed_dependencies(

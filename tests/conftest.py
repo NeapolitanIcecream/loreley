@@ -45,11 +45,13 @@ def captured_logs() -> Generator[list[dict[str, Any]], None, None]:
 
     def _sink(message: Any) -> None:
         record = message.record
+        extra = dict(record["extra"])
         records.append(
             {
                 "level": record["level"].name,
                 "message": record["message"],
-                "module": record["extra"].get("module"),
+                "module": extra.get("module"),
+                "extra": extra,
             }
         )
 
