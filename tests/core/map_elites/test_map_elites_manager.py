@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Mapping
 
 import numpy as np
@@ -693,3 +694,73 @@ def test_add_batch_to_archive_uses_status_value_to_update_mappings(settings: Set
     assert state.index_to_commit == {0: "c2"}
     assert state.commit_to_index == {"c2": 0}
     assert manager._commit_to_island == {"c2": "main"}
+
+
+def test_load_commit_vectors_batches_long_in_queries(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: long vector lookups must batch IN clauses for both lookup stages."""
+
+    settings.mapelites_dimensionality_penultimate_normalize = False
+    manager = MapElitesManager(settings=settings, repo_root=Path("."))
+    monkeypatch.setattr(map_elites_module, "_IN_QUERY_BATCH_SIZE", 2)
+
+    state = map_elites_module.IslandState(
+        archive=object(),  # type: ignore[arg-type]
+        lower_bounds=np.asarray([0.0], dtype=np.float64),
+        upper_bounds=np.asarray([1.0], dtype=np.float64),
+        history=(),
+    )
+    commits = [f"c{i}" for i in range(5)]
+
+    class _ScalarResult:
+        def __init__(self, rows: list[SimpleNamespace]) -> None:
+            self._rows = rows
+
+        def all(self) -> list[SimpleNamespace]:
+            return list(self._rows)
+
+    class _ExecResult:
+        def __init__(self, rows: list[SimpleNamespace]) -> None:
+            self._rows = rows
+
+        def scalars(self) -> _ScalarResult:
+            return _ScalarResult(self._rows)
+
+    class _FakeSession:
+        def __init__(self) -> None:
+            self.pca_batches: list[int] = []
+            self.aggregate_batches: list[int] = []
+
+        def execute(self, stmt: object) -> _ExecResult:
+            compiled = stmt.compile()  # type: ignore[attr-defined]
+            batch: list[str] | None = None
+            for value in compiled.params.values():
+                if isinstance(value, list):
+                    batch = [str(v) for v in value]
+                    break
+            assert batch is not None
+            sql = str(stmt)
+            if "map_elites_pca_history" in sql:
+                self.pca_batches.append(len(batch))
+                return _ExecResult([])
+            if "map_elites_repo_state_aggregate" in sql:
+                self.aggregate_batches.append(len(batch))
+                rows = [
+                    SimpleNamespace(commit_hash=commit, file_count=2, sum_vector=[2.0, 4.0])
+                    for commit in batch
+                ]
+                return _ExecResult(rows)
+            raise AssertionError(f"Unexpected statement: {sql}")
+
+    fake_session = _FakeSession()
+    vectors = manager._load_commit_vectors(
+        island_id="main",
+        commit_hashes=commits,
+        state=state,
+        snapshot_session=fake_session,  # type: ignore[arg-type]
+    )
+
+    assert fake_session.pca_batches == [2, 2, 1]
+    assert fake_session.aggregate_batches == [2, 2, 1]
+    assert set(vectors.keys()) == set(commits)
+    for vector in vectors.values():
+        assert vector == pytest.approx((1.0, 2.0))

@@ -6,7 +6,7 @@ import math
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, Sequence, cast
+from typing import Any, Iterator, Mapping, Sequence, cast
 
 import numpy as np
 from loguru import logger
@@ -50,6 +50,7 @@ __all__ = [
 ]
 
 Vector = tuple[float, ...]
+_IN_QUERY_BATCH_SIZE = 500
 
 
 @dataclass(slots=True, frozen=True)
@@ -861,6 +862,13 @@ class MapElitesManager:
         padded.extend(0.0 for _ in range(self._target_dims - len(padded)))
         return tuple(padded)
 
+    @staticmethod
+    def _iter_query_batches(values: Sequence[str], *, batch_size: int) -> Iterator[Sequence[str]]:
+        if batch_size <= 0:
+            raise ValueError(f"Batch size must be positive, got {batch_size}.")
+        for idx in range(0, len(values), batch_size):
+            yield values[idx : idx + batch_size]
+
     def _load_commit_vectors(
         self,
         *,
@@ -883,19 +891,20 @@ class MapElitesManager:
             return vectors
 
         def _fill_from_db(session: Session) -> None:
-            stmt = (
-                select(MapElitesPcaHistory)
-                .where(MapElitesPcaHistory.island_id == island_id)
-                .where(MapElitesPcaHistory.commit_hash.in_(missing))
-            )
-            rows = list(session.execute(stmt).scalars().all())
-            for row in rows:
-                commit = str(row.commit_hash or "").strip()
-                if not commit or commit in vectors:
-                    continue
-                vec = tuple(float(v) for v in (row.vector or []))
-                if vec:
-                    vectors[commit] = vec
+            for commit_batch in self._iter_query_batches(missing, batch_size=_IN_QUERY_BATCH_SIZE):
+                stmt = (
+                    select(MapElitesPcaHistory)
+                    .where(MapElitesPcaHistory.island_id == island_id)
+                    .where(MapElitesPcaHistory.commit_hash.in_(commit_batch))
+                )
+                rows = list(session.execute(stmt).scalars().all())
+                for row in rows:
+                    commit = str(row.commit_hash or "").strip()
+                    if not commit or commit in vectors:
+                        continue
+                    vec = tuple(float(v) for v in (row.vector or []))
+                    if vec:
+                        vectors[commit] = vec
 
         if snapshot_session is not None:
             _fill_from_db(snapshot_session)
@@ -910,25 +919,26 @@ class MapElitesManager:
         normalize = bool(self.settings.mapelites_dimensionality_penultimate_normalize)
 
         def _fill_from_aggregates(session: Session) -> None:
-            stmt = select(MapElitesRepoStateAggregate).where(
-                MapElitesRepoStateAggregate.commit_hash.in_(still_missing)
-            )
-            rows = list(session.execute(stmt).scalars().all())
-            for row in rows:
-                commit = str(row.commit_hash or "").strip()
-                if not commit or commit in vectors:
-                    continue
-                file_count = int(row.file_count or 0)
-                if file_count <= 0:
-                    continue
-                raw = [float(v) / float(file_count) for v in (row.sum_vector or [])]
-                vec = tuple(raw)
-                if normalize and vec:
-                    magnitude = math.sqrt(sum(value * value for value in vec))
-                    if magnitude > 0.0:
-                        vec = tuple(value / magnitude for value in vec)
-                if vec:
-                    vectors[commit] = vec
+            for commit_batch in self._iter_query_batches(still_missing, batch_size=_IN_QUERY_BATCH_SIZE):
+                stmt = select(MapElitesRepoStateAggregate).where(
+                    MapElitesRepoStateAggregate.commit_hash.in_(commit_batch)
+                )
+                rows = list(session.execute(stmt).scalars().all())
+                for row in rows:
+                    commit = str(row.commit_hash or "").strip()
+                    if not commit or commit in vectors:
+                        continue
+                    file_count = int(row.file_count or 0)
+                    if file_count <= 0:
+                        continue
+                    raw = [float(v) / float(file_count) for v in (row.sum_vector or [])]
+                    vec = tuple(raw)
+                    if normalize and vec:
+                        magnitude = math.sqrt(sum(value * value for value in vec))
+                        if magnitude > 0.0:
+                            vec = tuple(value / magnitude for value in vec)
+                    if vec:
+                        vectors[commit] = vec
 
         if snapshot_session is not None:
             _fill_from_aggregates(snapshot_session)
