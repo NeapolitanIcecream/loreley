@@ -627,3 +627,69 @@ def test_ingest_rebuilds_archive_when_pca_projection_refits(
     # Under the refit projection, c1 loses its second component (it becomes 0),
     # so the y measure must move from 1.0 to 0.5 after rebuild.
     assert after["c1"] == pytest.approx((0.5, 0.5))
+
+
+def test_add_batch_to_archive_uses_status_value_to_update_mappings(settings: Settings) -> None:
+    settings.mapelites_dimensionality_target_dims = 2
+    manager = MapElitesManager(settings=settings, repo_root=Path("."))
+
+    class DummyArchive:
+        def __init__(self) -> None:
+            self.add_calls: list[dict[str, np.ndarray]] = []
+
+        def index_of(self, measures: np.ndarray) -> np.ndarray:
+            batch = np.asarray(measures, dtype=np.float64)
+            assert batch.shape[0] == 3
+            return np.asarray([0, 0, 1], dtype=np.int64)
+
+        def add(
+            self,
+            solution: np.ndarray,
+            objective: np.ndarray,
+            measures: np.ndarray,
+            *,
+            commit_hash: np.ndarray,
+            timestamp: np.ndarray,
+        ) -> Mapping[str, np.ndarray]:
+            self.add_calls.append(
+                {
+                    "solution": np.asarray(solution),
+                    "objective": np.asarray(objective),
+                    "measures": np.asarray(measures),
+                    "commit_hash": np.asarray(commit_hash),
+                    "timestamp": np.asarray(timestamp),
+                }
+            )
+            # Same cell for c1/c2 with equal status: value decides winner (c2).
+            return {
+                "status": np.asarray([1, 1, 0], dtype=np.int64),
+                "value": np.asarray([0.1, 0.4, -0.2], dtype=np.float64),
+            }
+
+    state = map_elites_module.IslandState(
+        archive=DummyArchive(),  # type: ignore[arg-type]
+        lower_bounds=np.asarray([0.0, 0.0], dtype=np.float64),
+        upper_bounds=np.asarray([1.0, 1.0], dtype=np.float64),
+    )
+    state.index_to_commit[0] = "old"
+    state.commit_to_index["old"] = 0
+    manager._commit_to_island["old"] = "main"
+
+    statuses, values = manager._add_batch_to_archive(
+        state=state,
+        island_id="main",
+        commit_hashes=["c1", "c2", "c3"],
+        objectives=[1.0, 2.0, 3.0],
+        measures=[
+            np.asarray([0.1, 0.1], dtype=np.float64),
+            np.asarray([0.1, 0.1], dtype=np.float64),
+            np.asarray([0.9, 0.9], dtype=np.float64),
+        ],
+        timestamps=[10.0, 11.0, 12.0],
+    )
+
+    assert statuses.tolist() == [1, 1, 0]
+    assert values.tolist() == pytest.approx([0.1, 0.4, -0.2])
+    assert state.index_to_commit == {0: "c2"}
+    assert state.commit_to_index == {"c2": 0}
+    assert manager._commit_to_island == {"c2": "main"}

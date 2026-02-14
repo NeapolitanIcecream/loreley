@@ -563,6 +563,94 @@ class MapElitesManager:
 
         return status, delta, record
 
+    def _add_batch_to_archive(
+        self,
+        *,
+        state: IslandState,
+        island_id: str,
+        commit_hashes: Sequence[str],
+        objectives: Sequence[float],
+        measures: Sequence[np.ndarray],
+        timestamps: Sequence[float],
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Insert a batch of elites and update commit mappings from add feedback."""
+
+        batch_size = len(commit_hashes)
+        if batch_size == 0:
+            return (
+                np.asarray([], dtype=np.int64),
+                np.asarray([], dtype=np.float64),
+            )
+        if len(objectives) != batch_size or len(measures) != batch_size or len(timestamps) != batch_size:
+            raise ValueError(
+                "Batch archive insertion payload length mismatch "
+                f"(commits={batch_size} objectives={len(objectives)} "
+                f"measures={len(measures)} timestamps={len(timestamps)})."
+            )
+
+        archive = state.archive
+        measures_batch = np.asarray(measures, dtype=np.float64)
+        if measures_batch.ndim != 2 or measures_batch.shape[0] != batch_size:
+            raise ValueError(
+                "Batch archive insertion measures shape mismatch "
+                f"(expected=({batch_size}, dims) got={measures_batch.shape})."
+            )
+        objective_batch = np.asarray(objectives, dtype=np.float64).reshape(-1)
+        timestamp_batch = np.asarray(timestamps, dtype=np.float64).reshape(-1)
+        if objective_batch.shape[0] != batch_size or timestamp_batch.shape[0] != batch_size:
+            raise ValueError(
+                "Batch archive insertion objective/timestamp shape mismatch "
+                f"(expected={batch_size} got_objective={objective_batch.shape[0]} "
+                f"got_timestamp={timestamp_batch.shape[0]})."
+            )
+
+        commit_batch = np.asarray([str(commit or "").strip() for commit in commit_hashes], dtype=object)
+        cell_indices = np.asarray(archive.index_of(measures_batch), dtype=np.int64).reshape(-1)
+        if cell_indices.shape[0] != batch_size:
+            raise RuntimeError(
+                "GridArchive.index_of() returned unexpected index shape "
+                f"(expected={batch_size} got={cell_indices.shape[0]})."
+            )
+
+        add_info = archive.add(
+            measures_batch,
+            objective_batch,
+            measures_batch,
+            commit_hash=commit_batch,
+            timestamp=timestamp_batch,
+        )
+        statuses = np.asarray(add_info.get("status", ()), dtype=np.int64).reshape(-1)
+        values = np.asarray(add_info.get("value", ()), dtype=np.float64).reshape(-1)
+        if statuses.shape[0] != batch_size or values.shape[0] != batch_size:
+            raise RuntimeError(
+                "GridArchive.add() returned unexpected add_info shape "
+                f"(expected={batch_size} got_status={statuses.shape[0]} got_value={values.shape[0]})."
+            )
+
+        winners_by_cell: dict[int, tuple[int, float, int]] = {}
+        for idx, status_raw in enumerate(statuses):
+            status = int(status_raw)
+            if status <= 0:
+                continue
+            cell_index = int(cell_indices[idx])
+            rank = (status, float(values[idx]), idx)
+            previous = winners_by_cell.get(cell_index)
+            if previous is None or (rank[0], rank[1]) > (previous[0], previous[1]):
+                winners_by_cell[cell_index] = rank
+
+        for cell_index, (_status, _value, idx) in winners_by_cell.items():
+            commit_hash = str(commit_batch[idx] or "").strip()
+            previous_commit = state.index_to_commit.get(cell_index)
+            state.index_to_commit[cell_index] = commit_hash
+            if commit_hash:
+                state.commit_to_index[commit_hash] = cell_index
+                self._commit_to_island[commit_hash] = island_id
+            if previous_commit and previous_commit != commit_hash:
+                state.commit_to_index.pop(previous_commit, None)
+                self._commit_to_island.pop(previous_commit, None)
+
+        return statuses, values
+
     def _seed_archive_after_initial_fit(
         self,
         *,
@@ -604,6 +692,10 @@ class MapElitesManager:
         inserted = 0
         skipped = 0
         timestamp = time.time()
+        candidate_commits: list[str] = []
+        candidate_fitnesses: list[float] = []
+        candidate_measures: list[np.ndarray] = []
+        candidate_timestamps: list[float] = []
 
         def _fitness_key(entry: PcaHistoryEntry) -> float:
             commit = str(entry.commit_hash or "").strip()
@@ -639,16 +731,21 @@ class MapElitesManager:
                 continue
 
             measures = self._clip_vector(reduced, state)
-            status, _delta, _record = self._add_to_archive(
+            candidate_commits.append(commit)
+            candidate_fitnesses.append(fitness_value)
+            candidate_measures.append(measures)
+            candidate_timestamps.append(timestamp)
+
+        if candidate_commits:
+            statuses = self._add_batch_to_archive(
                 state=state,
                 island_id=island_id,
-                commit_hash=commit,
-                fitness=fitness_value,
-                measures=measures,
-                timestamp=timestamp,
-            )
-            if status > 0:
-                inserted += 1
+                commit_hashes=candidate_commits,
+                objectives=candidate_fitnesses,
+                measures=candidate_measures,
+                timestamps=candidate_timestamps,
+            )[0]
+            inserted = int(np.count_nonzero(statuses > 0))
 
         log.info(
             "Seeded MAP-Elites archive after initial PCA fit (island={} inserted={} candidates={} skipped={})",
@@ -701,6 +798,10 @@ class MapElitesManager:
 
         inserted = 0
         missing = 0
+        candidate_commits: list[str] = []
+        candidate_fitnesses: list[float] = []
+        candidate_measures: list[np.ndarray] = []
+        candidate_timestamps: list[float] = []
         for record in sorted(previous_records, key=lambda item: float(item.fitness), reverse=True):
             commit = str(record.commit_hash or "").strip()
             if not commit:
@@ -711,16 +812,21 @@ class MapElitesManager:
                 continue
             reduced = self._pad_or_trim(aligned.transform(vec))
             measures = self._clip_vector(reduced, state)
-            status, _delta, _ = self._add_to_archive(
+            candidate_commits.append(commit)
+            candidate_fitnesses.append(float(record.fitness))
+            candidate_measures.append(measures)
+            candidate_timestamps.append(float(record.timestamp))
+
+        if candidate_commits:
+            statuses = self._add_batch_to_archive(
                 state=state,
                 island_id=island_id,
-                commit_hash=commit,
-                fitness=float(record.fitness),
-                measures=measures,
-                timestamp=float(record.timestamp),
-            )
-            if status > 0:
-                inserted += 1
+                commit_hashes=candidate_commits,
+                objectives=candidate_fitnesses,
+                measures=candidate_measures,
+                timestamps=candidate_timestamps,
+            )[0]
+            inserted = int(np.count_nonzero(statuses > 0))
 
         log.info(
             "Rebuilt MAP-Elites archive after PCA refit (island={} kept={} missing_vectors={})",

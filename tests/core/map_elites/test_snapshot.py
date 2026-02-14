@@ -15,9 +15,19 @@ from loreley.core.map_elites.snapshot import (
 class DummyArchive:
     """Minimal archive stub used to test snapshot serialisation logic."""
 
-    def __init__(self, data: Mapping[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        data: Mapping[str, Any] | None = None,
+        *,
+        add_status: np.ndarray | None = None,
+        add_value: np.ndarray | None = None,
+    ) -> None:
         self._data = data or {}
         self.empty = not bool(self._data)
+        self.solution_dim = 2
+        self.dims = (4, 4)
+        self._add_status = add_status
+        self._add_value = add_value
         self.add_calls: list[dict[str, Any]] = []
 
     def data(self) -> Mapping[str, Any]:
@@ -31,7 +41,7 @@ class DummyArchive:
         *,
         commit_hash: np.ndarray,
         timestamp: np.ndarray,
-    ) -> None:
+    ) -> Mapping[str, np.ndarray]:
         # Capture arguments so tests can assert that entries were restored.
         self.add_calls.append(
             {
@@ -42,6 +52,29 @@ class DummyArchive:
                 "timestamp": timestamp,
             }
         )
+        batch_size = int(np.asarray(objective).reshape(-1).shape[0])
+        status = (
+            np.asarray(self._add_status, dtype=np.int64).reshape(-1)
+            if self._add_status is not None
+            else np.ones(batch_size, dtype=np.int64)
+        )
+        value = (
+            np.asarray(self._add_value, dtype=np.float64).reshape(-1)
+            if self._add_value is not None
+            else np.asarray(objective, dtype=np.float64).reshape(-1)
+        )
+        if status.shape[0] != batch_size or value.shape[0] != batch_size:
+            raise AssertionError("DummyArchive add_info shape mismatch")
+        return {
+            "status": status,
+            "value": value,
+        }
+
+    def index_of(self, measures: np.ndarray) -> np.ndarray:
+        batch = np.asarray(measures, dtype=np.float64)
+        if batch.ndim == 1:
+            batch = batch.reshape(1, -1)
+        return np.zeros(batch.shape[0], dtype=np.int64)
 
 
 @dataclass
@@ -143,6 +176,54 @@ def test_build_and_apply_snapshot_round_trip_basic() -> None:
     assert restored_state.projection.feature_count == original_state.projection.feature_count  # type: ignore[union-attr]
 
     # Archive entries and commit mappings are restored.
+    assert restored_state.index_to_commit == {0: "c1"}
+    assert restored_state.commit_to_index == {"c1": 0}
+    assert commit_to_island == {"c1": "main"}
+    assert len(restored_state.archive.add_calls) == 1
+
+
+def test_apply_snapshot_only_maps_entries_with_positive_add_status() -> None:
+    snapshot = {
+        "island_id": "main",
+        "lower_bounds": [-1.0, -1.0],
+        "upper_bounds": [1.0, 1.0],
+        "history": [],
+        "projection": None,
+        "archive": [
+            {
+                "index": 0,
+                "objective": 1.0,
+                "measures": [0.1, 0.2],
+                "solution": [0.1, 0.2],
+                "commit_hash": "c1",
+                "timestamp": 10.0,
+            },
+            {
+                "index": 1,
+                "objective": 0.5,
+                "measures": [0.3, 0.4],
+                "solution": [0.3, 0.4],
+                "commit_hash": "c2",
+                "timestamp": 11.0,
+            },
+        ],
+    }
+
+    restored_state = DummyState(
+        archive=DummyArchive(
+            add_status=np.asarray([2, 0], dtype=np.int64),
+            add_value=np.asarray([1.0, -0.5], dtype=np.float64),
+        )
+    )
+    commit_to_island: dict[str, str] = {}
+
+    apply_snapshot(
+        state=restored_state,
+        snapshot=snapshot,
+        island_id="main",
+        commit_to_island=commit_to_island,
+    )
+
     assert restored_state.index_to_commit == {0: "c1"}
     assert restored_state.commit_to_index == {"c1": 0}
     assert commit_to_island == {"c1": "main"}

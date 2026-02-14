@@ -554,6 +554,13 @@ def restore_archive_entries(
         except Exception:  # pragma: no cover - defensive
             expected_cell_count = None
 
+    solution_rows: list[np.ndarray] = []
+    objective_rows: list[float] = []
+    measures_rows: list[np.ndarray] = []
+    commit_rows: list[str] = []
+    timestamp_rows: list[float] = []
+    stored_indices: list[int | None] = []
+
     for entry in entries:
         solution_values = array_to_list(entry.get("solution"))
         measures_values = array_to_list(entry.get("measures"))
@@ -562,66 +569,111 @@ def restore_archive_entries(
 
         solution = np.asarray(solution_values, dtype=np.float64)
         measures = np.asarray(measures_values, dtype=np.float64)
-        solution_batch = solution.reshape(1, -1)
-        measures_batch = measures.reshape(1, -1)
-
-        if expected_solution_dim is not None and solution_batch.shape[1] != int(expected_solution_dim):
+        if expected_solution_dim is not None and solution.shape[0] != int(expected_solution_dim):
             log.warning(
                 "Skipping snapshot archive entry due to incompatible solution_dim (island={} expected={} got={})",
                 island_id,
                 int(expected_solution_dim),
-                int(solution_batch.shape[1]),
+                int(solution.shape[0]),
             )
             continue
-        if expected_measures_dim is not None and measures_batch.shape[1] != int(expected_measures_dim):
+        if expected_measures_dim is not None and measures.shape[0] != int(expected_measures_dim):
             log.warning(
                 "Skipping snapshot archive entry due to incompatible measures dimensionality (island={} expected={} got={})",
                 island_id,
                 int(expected_measures_dim),
-                int(measures_batch.shape[1]),
+                int(measures.shape[0]),
             )
             continue
 
-        objective = np.asarray(
-            [float(entry.get("objective", 0.0))],
-            dtype=np.float64,
-        )
+        objective = float(entry.get("objective", 0.0))
         commit_hash = str(entry.get("commit_hash", ""))
         timestamp_value = float(entry.get("timestamp", 0.0))
 
-        try:
-            archive.add(
-                solution_batch,
-                objective,
-                measures_batch,
-                commit_hash=np.asarray([commit_hash], dtype=object),
-                timestamp=np.asarray([timestamp_value], dtype=np.float64),
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            log.warning(
-                "Failed to restore snapshot entry into GridArchive (island={} commit_hash={}): {}",
-                island_id,
-                commit_hash,
-                exc,
-            )
-            continue
-
         stored_index = entry.get("index")
+        parsed_index: int | None = None
         if stored_index is not None:
             try:
-                cell_index = int(stored_index)
+                parsed_index = int(stored_index)
             except (TypeError, ValueError):
-                cell_index = int(np.asarray(archive.index_of(measures_batch)).item())
-        else:
-            cell_index = int(np.asarray(archive.index_of(measures_batch)).item())
-        if expected_cell_count is not None and (cell_index < 0 or cell_index >= expected_cell_count):
-            cell_index = int(np.asarray(archive.index_of(measures_batch)).item())
+                parsed_index = None
 
+        solution_rows.append(solution)
+        objective_rows.append(objective)
+        measures_rows.append(measures)
+        commit_rows.append(commit_hash)
+        timestamp_rows.append(timestamp_value)
+        stored_indices.append(parsed_index)
+
+    if not solution_rows:
+        return
+
+    solution_batch = np.asarray(solution_rows, dtype=np.float64)
+    objective_batch = np.asarray(objective_rows, dtype=np.float64)
+    measures_batch = np.asarray(measures_rows, dtype=np.float64)
+    commit_batch = np.asarray(commit_rows, dtype=object)
+    timestamp_batch = np.asarray(timestamp_rows, dtype=np.float64)
+
+    try:
+        add_info = archive.add(
+            solution_batch,
+            objective_batch,
+            measures_batch,
+            commit_hash=commit_batch,
+            timestamp=timestamp_batch,
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        log.warning(
+            "Failed to restore snapshot batch into GridArchive (island={} entries={}): {}",
+            island_id,
+            len(solution_rows),
+            exc,
+        )
+        return
+
+    statuses = np.asarray(add_info.get("status", ()), dtype=np.int64).reshape(-1)
+    values = np.asarray(add_info.get("value", ()), dtype=np.float64).reshape(-1)
+    if statuses.shape[0] != len(solution_rows) or values.shape[0] != len(solution_rows):
+        raise RuntimeError(
+            "GridArchive.add() returned unexpected add_info shape while restoring snapshot "
+            f"(island={island_id} expected={len(solution_rows)} got_status={statuses.shape[0]} got_value={values.shape[0]})."
+        )
+
+    archive_indices = np.asarray(archive.index_of(measures_batch), dtype=np.int64).reshape(-1)
+    if archive_indices.shape[0] != len(solution_rows):
+        raise RuntimeError(
+            "GridArchive.index_of() returned unexpected index shape while restoring snapshot "
+            f"(island={island_id} expected={len(solution_rows)} got={archive_indices.shape[0]})."
+        )
+
+    winners_by_cell: dict[int, tuple[int, float, int]] = {}
+    for idx, status_raw in enumerate(statuses):
+        status = int(status_raw)
+        if status <= 0:
+            continue
+
+        cell_index = int(archive_indices[idx])
+        stored_index = stored_indices[idx]
+        if stored_index is not None:
+            cell_index = int(stored_index)
+        if expected_cell_count is not None and (cell_index < 0 or cell_index >= expected_cell_count):
+            cell_index = int(archive_indices[idx])
+
+        rank = (status, float(values[idx]), idx)
+        previous = winners_by_cell.get(cell_index)
+        if previous is None or (rank[0], rank[1]) > (previous[0], previous[1]):
+            winners_by_cell[cell_index] = rank
+
+    for cell_index, (_status, _value, idx) in winners_by_cell.items():
+        commit_hash = commit_rows[idx]
+        previous_commit = state.index_to_commit.get(cell_index)
         state.index_to_commit[cell_index] = commit_hash
         if commit_hash:
             state.commit_to_index[commit_hash] = cell_index
             commit_to_island[commit_hash] = island_id
-
+        if previous_commit and previous_commit != commit_hash:
+            state.commit_to_index.pop(previous_commit, None)
+            commit_to_island.pop(previous_commit, None)
 
 def purge_island_commit_mappings(commit_to_island: dict[str, str], island_id: str) -> None:
     """Remove any commit-to-island mappings that point at `island_id`."""
