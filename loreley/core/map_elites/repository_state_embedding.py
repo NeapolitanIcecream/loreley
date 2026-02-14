@@ -532,7 +532,7 @@ class RepositoryStateEmbedder:
                 f"expected {getattr(self.cache, 'requested_dimensions', 0)} got {dims} "
                 f"(commit={parent_hash})."
             )
-        sum_vec: Vector = raw_sum
+        sum_vec: list[float] = list(raw_sum)
         file_count = int(parent_agg.file_count)
 
         repo_prefix = _resolve_git_prefix(repo, repo_root)
@@ -560,11 +560,12 @@ class RepositoryStateEmbedder:
         diffs = _parse_diff_tree_raw_z(raw)
         if not diffs:
             # No changes relative to parent: derive directly from parent aggregate.
-            vector = _divide_vector(sum_vec, file_count)
+            immutable_sum = tuple(sum_vec)
+            vector = _divide_vector(immutable_sum, file_count)
             self._persist_aggregate(
                 commit_hash=commit_hash,
                 repo_root=repo_root,
-                sum_vector=sum_vec,
+                sum_vector=immutable_sum,
                 file_count=file_count,
             )
             persisted = self._load_aggregate(commit_hash=commit_hash, repo_root=repo_root)
@@ -647,31 +648,32 @@ class RepositoryStateEmbedder:
             if old_included and not new_included:
                 if old_meta is None:  # pragma: no cover - type narrowing guard
                     continue
-                sum_vec = _vector_sub(sum_vec, old_meta.vector)
+                _vector_accumulate_in_place(sum_vec, old_meta.vector, subtract=True)
                 file_count -= 1
                 continue
             if not old_included and new_included:
                 if new_meta is None:  # pragma: no cover - type narrowing guard
                     continue
-                sum_vec = _vector_add(sum_vec, new_meta.vector)
+                _vector_accumulate_in_place(sum_vec, new_meta.vector)
                 file_count += 1
                 continue
             if old_included and new_included:
                 if old_meta is None or new_meta is None:  # pragma: no cover - type narrowing guard
                     continue
-                sum_vec = _vector_add(sum_vec, _vector_sub(new_meta.vector, old_meta.vector))
+                _vector_apply_replacement_delta_in_place(sum_vec, new_meta.vector, old_meta.vector)
 
         if file_count <= 0 or not sum_vec:
             return None
 
-        vector = _divide_vector(sum_vec, file_count)
+        immutable_sum = tuple(sum_vec)
+        vector = _divide_vector(immutable_sum, file_count)
         if not vector:
             return None
 
         self._persist_aggregate(
             commit_hash=commit_hash,
             repo_root=repo_root,
-            sum_vector=sum_vec,
+            sum_vector=immutable_sum,
             file_count=file_count,
         )
         persisted = self._load_aggregate(commit_hash=commit_hash, repo_root=repo_root)
@@ -899,24 +901,24 @@ def _blob_size_bytes(repo: Repo, blob_sha: str) -> int | None:
         return None
 
 
-def _vector_add(a: Vector, b: Vector) -> Vector:
-    if not a:
-        return b
-    if not b:
-        return a
-    if len(a) != len(b):
-        raise ValueError("Embedding dimension mismatch during vector addition.")
-    return tuple(float(x) + float(y) for x, y in zip(a, b))
+def _vector_accumulate_in_place(target: list[float], delta: Vector, *, subtract: bool = False) -> None:
+    if len(target) != len(delta):
+        raise ValueError("Embedding dimension mismatch during incremental aggregation.")
+    if subtract:
+        for idx, value in enumerate(delta):
+            target[idx] -= float(value)
+        return
+    for idx, value in enumerate(delta):
+        target[idx] += float(value)
 
 
-def _vector_sub(a: Vector, b: Vector) -> Vector:
-    if not b:
-        return a
-    if not a:
-        raise ValueError("Cannot subtract from an empty vector.")
-    if len(a) != len(b):
-        raise ValueError("Embedding dimension mismatch during vector subtraction.")
-    return tuple(float(x) - float(y) for x, y in zip(a, b))
+def _vector_apply_replacement_delta_in_place(target: list[float], new: Vector, old: Vector) -> None:
+    if len(new) != len(old):
+        raise ValueError("Embedding dimension mismatch during incremental aggregation.")
+    if len(target) != len(new):
+        raise ValueError("Embedding dimension mismatch during incremental aggregation.")
+    for idx, (new_value, old_value) in enumerate(zip(new, old)):
+        target[idx] += float(new_value) - float(old_value)
 
 
 def _batched(items: Sequence[str], batch_size: int) -> Iterable[Sequence[str]]:
