@@ -2,6 +2,15 @@
 
 High-level manager that runs the MAP-Elites pipeline on git commits and maintains per-island archives backed by the database.
 
+## Module layout
+
+- `loreley.core.map_elites.map_elites`: compatibility export surface for public MAP-Elites symbols.
+- `loreley.core.map_elites.manager`: `MapElitesManager` orchestration and public API methods.
+- `loreley.core.map_elites.types`: shared immutable/mutable data structures.
+- `loreley.core.map_elites.archive_ops`: archive-centric operations and bookkeeping updates.
+- `loreley.core.map_elites.db_ops`: batched database queries for vectors and fitness values.
+- `loreley.core.map_elites.rebuild`: PCA-fit/refit archive seeding and rebuild routines.
+
 ## Data structures
 
 - **`CommitEmbeddingArtifacts`**: immutable container bundling lightweight embedding artifacts for a commit. In repo-state mode this includes repo-state stats plus the final low-dimensional embedding.

@@ -7,7 +7,9 @@ from typing import Mapping
 import numpy as np
 import pytest
 
-import loreley.core.map_elites.map_elites as map_elites_module
+import loreley.core.map_elites.archive_ops as map_elites_archive_ops
+import loreley.core.map_elites.db_ops as map_elites_db_ops
+import loreley.core.map_elites.manager as map_elites_module
 from loreley.config import Settings
 from loreley.core.map_elites.code_embedding import CommitCodeEmbedding
 from loreley.core.map_elites.dimension_reduction import FinalEmbedding, PCAProjection, PcaHistoryEntry
@@ -315,6 +317,96 @@ def test_ingest_builds_record_with_stubbed_dependencies(
     assert result.record.commit_hash == "abc"
     assert result.artifacts.code_embedding is code_embedding
     assert result.artifacts.final_embedding is final_embedding
+
+
+def test_ingest_sets_message_when_archive_rejects_commit(
+    monkeypatch: pytest.MonkeyPatch, settings: Settings
+) -> None:
+    settings.mapelites_dimensionality_target_dims = 2
+    settings.mapelites_feature_clip = True
+    settings.mapelites_feature_truncation_k = 1.0
+    settings.mapelites_fitness_metric = "score"
+
+    code_embedding = CommitCodeEmbedding(
+        files=(),
+        vector=(0.5, -0.5),
+        model="code",
+        dimensions=2,
+    )
+    stats = RepoStateEmbeddingStats(
+        commit_hash="abc",
+        eligible_files=2,
+        files_embedded=1,
+        files_aggregated=2,
+        unique_blobs=2,
+        cache_hits=1,
+        cache_misses=1,
+        skipped_empty_after_preprocess=0,
+        skipped_failed_embedding=0,
+    )
+    entry = PcaHistoryEntry(
+        commit_hash="abc",
+        vector=(0.5, -0.5),
+        embedding_model="code",
+    )
+    projection = PCAProjection(
+        feature_count=2,
+        components=((1.0, 0.0), (0.0, 1.0)),
+        mean=(0.0, 0.0),
+        explained_variance=(1.0, 1.0),
+        explained_variance_ratio=(0.5, 0.5),
+        sample_count=1,
+        epoch=0,
+        fitted_at=0.0,
+        whiten=False,
+        rotation=None,
+    )
+    final_embedding = FinalEmbedding(
+        commit_hash="abc",
+        vector=(0.2, 0.8),
+        dimensions=2,
+        history_entry=entry,
+        projection=projection,
+    )
+
+    monkeypatch.setattr(
+        map_elites_module,
+        "embed_repository_state_incremental",
+        lambda *args, **kwargs: (code_embedding, stats),
+    )
+    monkeypatch.setattr(
+        map_elites_module,
+        "reduce_commit_embeddings",
+        lambda **kwargs: (final_embedding, (entry,), projection, 0),
+    )
+
+    manager = MapElitesManager(
+        settings=settings,
+        repo_root=Path("."),
+    )
+
+    class NullSnapshotStore:
+        def load(
+            self, island_id: str, *, history_limit: int | None = None
+        ) -> dict[str, object] | None:
+            return None
+
+        def apply_update(
+            self, island_id: str, *, update: object, session: object | None = None
+        ) -> None:
+            return None
+
+    manager._snapshot_store = NullSnapshotStore()  # type: ignore[attr-defined]
+    monkeypatch.setattr(manager, "_persist_island_state", lambda *args, **kwargs: None)
+    monkeypatch.setattr(manager, "_add_to_archive", lambda **kwargs: (-1, -0.2, None))
+
+    result = manager.ingest(commit_hash="abc", metrics={"score": 1.2})
+
+    assert result.inserted is False
+    assert result.status == -1
+    assert result.record is None
+    assert result.message is not None
+    assert "status=-1" in result.message
 
 
 def test_ingest_passes_external_snapshot_session(
@@ -643,6 +735,75 @@ def test_ingest_rebuilds_archive_when_pca_projection_refits(
     assert after["c1"] == pytest.approx((0.5, 0.5))
 
 
+def test_add_single_updates_mappings_when_retrieval_fails() -> None:
+    """Regression: successful inserts must keep bookkeeping consistent even if retrieval fails."""
+
+    class DummyArchive:
+        def __init__(self) -> None:
+            self._payload: dict[str, object] | None = None
+
+        def index_of(self, measures: np.ndarray) -> np.ndarray:
+            batch = np.asarray(measures, dtype=np.float64)
+            assert batch.shape[0] == 1
+            return np.asarray([0], dtype=np.int64)
+
+        def add(
+            self,
+            solution: np.ndarray,
+            objective: np.ndarray,
+            measures: np.ndarray,
+            *,
+            commit_hash: np.ndarray,
+            timestamp: np.ndarray,
+        ) -> Mapping[str, np.ndarray]:
+            self._payload = {
+                "index": np.asarray([0], dtype=np.int64),
+                "objective": np.asarray(objective),
+                "measures": np.asarray(measures),
+                "solution": np.asarray(solution),
+                "commit_hash": np.asarray(commit_hash),
+                "timestamp": np.asarray(timestamp),
+            }
+            return {
+                "status": np.asarray([1], dtype=np.int64),
+                "value": np.asarray([0.1], dtype=np.float64),
+            }
+
+        def retrieve_single(self, measures: np.ndarray) -> tuple[bool, dict[str, object]]:
+            return False, {}
+
+        def data(self) -> Mapping[str, object]:
+            assert self._payload is not None
+            return dict(self._payload)
+
+    state = map_elites_module.IslandState(
+        archive=DummyArchive(),  # type: ignore[arg-type]
+        lower_bounds=np.asarray([0.0, 0.0], dtype=np.float64),
+        upper_bounds=np.asarray([1.0, 1.0], dtype=np.float64),
+    )
+    state.index_to_commit[0] = "old"
+    state.commit_to_index["old"] = 0
+    commit_to_island = {"old": "main"}
+
+    status, _delta, record = map_elites_archive_ops.add_single(
+        state=state,
+        island_id="main",
+        commit_hash="c1",
+        fitness=1.0,
+        measures=np.asarray([0.1, 0.2], dtype=np.float64),
+        commit_to_island=commit_to_island,
+        timestamp=42.0,
+    )
+
+    assert status == 1
+    assert record is not None
+    assert record.commit_hash == "c1"
+    assert record.timestamp == pytest.approx(42.0)
+    assert state.index_to_commit == {0: "c1"}
+    assert state.commit_to_index == {"c1": 0}
+    assert commit_to_island == {"c1": "main"}
+
+
 def test_add_batch_to_archive_uses_status_value_to_update_mappings(settings: Settings) -> None:
     settings.mapelites_dimensionality_target_dims = 2
     manager = MapElitesManager(settings=settings, repo_root=Path("."))
@@ -714,7 +875,7 @@ def test_load_commit_vectors_batches_long_in_queries(settings: Settings, monkeyp
 
     settings.mapelites_dimensionality_penultimate_normalize = False
     manager = MapElitesManager(settings=settings, repo_root=Path("."))
-    monkeypatch.setattr(map_elites_module, "_IN_QUERY_BATCH_SIZE", 2)
+    monkeypatch.setattr(map_elites_db_ops, "_IN_QUERY_BATCH_SIZE", 2)
 
     state = map_elites_module.IslandState(
         archive=object(),  # type: ignore[arg-type]
