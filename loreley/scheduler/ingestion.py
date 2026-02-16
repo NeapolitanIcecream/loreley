@@ -9,7 +9,7 @@ can delegate all ingestion responsibilities to this module.
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Sequence
 from uuid import UUID
 
 from git import Repo
@@ -359,12 +359,18 @@ class MapElitesIngestion:
             return payload_by_commit, errors_by_commit
 
         stmt = (
-            select(CommitCard.commit_hash, Metric)
+            select(
+                CommitCard.commit_hash,
+                Metric.name,
+                Metric.value,
+                Metric.unit,
+                Metric.higher_is_better,
+            )
             .join(Metric, Metric.commit_card_id == CommitCard.id)
             .where(CommitCard.commit_hash.in_(unique))
             .order_by(CommitCard.commit_hash.asc(), Metric.name.asc())
         )
-        for commit_hash, metric in session.execute(stmt).all():
+        for commit_hash, name, value, unit, higher_is_better in session.execute(stmt):
             commit_key = str(commit_hash or "").strip()
             if not commit_key:
                 continue
@@ -373,16 +379,16 @@ class MapElitesIngestion:
             try:
                 payload_by_commit.setdefault(commit_key, []).append(
                     {
-                        "name": metric.name,
-                        "value": float(metric.value),
-                        "unit": metric.unit,
-                        "higher_is_better": bool(metric.higher_is_better),
+                        "name": name,
+                        "value": float(value),
+                        "unit": unit,
+                        "higher_is_better": bool(higher_is_better),
                     }
                 )
             except Exception as exc:  # pragma: no cover - defensive
                 errors_by_commit[commit_key] = (
                     "Failed to build metrics payload "
-                    f"(commit={commit_key} metric={getattr(metric, 'name', None)!r} reason={exc})."
+                    f"(commit={commit_key} metric={name!r} reason={exc})."
                 )
                 payload_by_commit[commit_key] = []
 
