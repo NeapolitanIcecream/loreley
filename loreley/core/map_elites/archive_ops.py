@@ -129,6 +129,8 @@ def add_single(
         return status, delta, None
 
     record: MapElitesRecord | None = None
+    retrieve_reason = ""
+    retrieve_error: Exception | None = None
     try:
         occupied, data = archive.retrieve_single(measures)
         if occupied:
@@ -136,35 +138,36 @@ def add_single(
                 cast(Mapping[str, Any], data),
                 island_id,
             )
+        else:
+            retrieve_reason = "not_occupied"
     except Exception as exc:  # pragma: no cover - defensive
-        log.error(
-            "Archive retrieval failed for commit {} on island {}: {}",
-            commit_hash,
-            island_id,
-            exc,
-        )
+        retrieve_reason = "exception"
+        retrieve_error = exc
 
     if record is None:
-        log.error(
-            "Archive reported success but retrieval failed for commit {} on island {}",
-            commit_hash,
-            island_id,
+        bound = log.bind(
+            event="mapelites.archive.retrieve_single_failed",
+            reason=retrieve_reason or "unknown",
+            island_id=island_id,
+            cell_index=int(cell_index),
+            commit_hash=str(commit_hash),
         )
-        try:
-            for candidate in records_from_store_data(
-                cast(Mapping[str, Any], archive.data()),
-                island_id,
-            ):
-                if candidate.cell_index == cell_index and candidate.commit_hash == commit_hash:
-                    record = candidate
-                    break
-        except Exception as exc:  # pragma: no cover - defensive
-            log.error(
-                "Failed to rebuild archive record from store data for commit {} on island {}: {}",
-                commit_hash,
-                island_id,
-                exc,
-            )
+        if retrieve_error is not None:
+            bound = bound.opt(exception=retrieve_error)
+        bound.error(
+            "Archive add succeeded but retrieve_single() failed; returning synthetic record.",
+        )
+
+        vector = to_vector(measures)
+        record = MapElitesRecord(
+            commit_hash=str(commit_hash),
+            island_id=island_id,
+            cell_index=int(cell_index),
+            fitness=float(fitness),
+            measures=vector,
+            solution=vector,
+            timestamp=float(ts_value),
+        )
 
     state.index_to_commit[cell_index] = commit_hash
     state.commit_to_index[commit_hash] = cell_index
@@ -172,17 +175,6 @@ def add_single(
     if previous_commit and previous_commit != commit_hash:
         state.commit_to_index.pop(previous_commit, None)
         commit_to_island.pop(previous_commit, None)
-
-    if record is None:
-        record = MapElitesRecord(
-            commit_hash=str(commit_hash),
-            island_id=island_id,
-            cell_index=int(cell_index),
-            fitness=float(fitness),
-            measures=to_vector(measures),
-            solution=to_vector(measures),
-            timestamp=float(ts_value),
-        )
 
     return status, delta, record
 

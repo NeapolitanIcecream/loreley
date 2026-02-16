@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Mapping
+from typing import Any, Mapping
 
 import numpy as np
 import pytest
@@ -735,7 +735,9 @@ def test_ingest_rebuilds_archive_when_pca_projection_refits(
     assert after["c1"] == pytest.approx((0.5, 0.5))
 
 
-def test_add_single_updates_mappings_when_retrieval_fails() -> None:
+def test_add_single_updates_mappings_when_retrieval_fails(
+    captured_logs: list[dict[str, Any]],
+) -> None:
     """Regression: successful inserts must keep bookkeeping consistent even if retrieval fails."""
 
     class DummyArchive:
@@ -773,8 +775,7 @@ def test_add_single_updates_mappings_when_retrieval_fails() -> None:
             return False, {}
 
         def data(self) -> Mapping[str, object]:
-            assert self._payload is not None
-            return dict(self._payload)
+            raise AssertionError("archive.data() should not be called when retrieval fails")
 
     state = map_elites_module.IslandState(
         archive=DummyArchive(),  # type: ignore[arg-type]
@@ -802,6 +803,22 @@ def test_add_single_updates_mappings_when_retrieval_fails() -> None:
     assert state.index_to_commit == {0: "c1"}
     assert state.commit_to_index == {"c1": 0}
     assert commit_to_island == {"c1": "main"}
+
+    retrieval_logs: list[dict[str, Any]] = []
+    for entry in captured_logs:
+        if entry.get("module") != "map_elites.archive_ops":
+            continue
+        extra = entry.get("extra")
+        if not isinstance(extra, dict):
+            continue
+        if extra.get("event") != "mapelites.archive.retrieve_single_failed":
+            continue
+        retrieval_logs.append(entry)
+
+    assert retrieval_logs
+    extra = retrieval_logs[-1].get("extra")
+    assert isinstance(extra, dict)
+    assert extra.get("reason") == "not_occupied"
 
 
 def test_add_batch_to_archive_uses_status_value_to_update_mappings(settings: Settings) -> None:
