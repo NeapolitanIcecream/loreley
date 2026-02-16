@@ -6,10 +6,10 @@ The public API here is intentionally small so that ``loreley.scheduler.main``
 can delegate all ingestion responsibilities to this module.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 from uuid import UUID
 
 from git import Repo
@@ -57,6 +57,16 @@ class MapElitesIngestion:
     repo_root: Path
     repo: Repo
     manager: MapElitesManager
+    _prefetched_metrics_payload_by_commit: dict[str, list[dict[str, Any]]] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+    _prefetched_metrics_errors_by_commit: dict[str, str] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
 
     # Public API ------------------------------------------------------------
 
@@ -75,27 +85,42 @@ class MapElitesIngestion:
         completed_loop = False
         try:
             with session_scope() as snapshot_session:
-                for snapshot in snapshots:
-                    try:
-                        if self._ingest_snapshot(snapshot, snapshot_session=snapshot_session):
-                            ingested += 1
-                    except Exception as exc:
-                        raw_reason = normalize_single_line(str(exc))
-                        reason = clamp_text(raw_reason, _INGESTION_REASON_MAX_CHARS) or None
-                        reason_display = reason or raw_reason or exc.__class__.__name__
-                        self.console.log(
-                            f"[bold red]Unhandled ingestion error[/] job={snapshot.job_id} commit={snapshot.result_commit_hash} reason={reason_display}",
+                self._prefetched_metrics_payload_by_commit = None
+                self._prefetched_metrics_errors_by_commit = None
+                try:
+                    if hasattr(snapshot_session, "execute"):
+                        (
+                            self._prefetched_metrics_payload_by_commit,
+                            self._prefetched_metrics_errors_by_commit,
+                        ) = self._load_metrics_payload_batch(
+                            [snapshot.result_commit_hash for snapshot in snapshots],
+                            session=snapshot_session,
                         )
-                        log.exception(
-                            "Unhandled ingestion error for job {} commit {}: {}",
-                            snapshot.job_id,
-                            snapshot.result_commit_hash,
-                            reason_display,
-                        )
-                        # Log first so failures remain visible even if DB writes are down.
-                        # If we cannot record the failure, let the error propagate: the
-                        # scheduler is unlikely to make progress without database writes.
-                        self._record_ingestion_state(snapshot, status="failed", reason=reason_display)
+
+                    for snapshot in snapshots:
+                        try:
+                            if self._ingest_snapshot(snapshot, snapshot_session=snapshot_session):
+                                ingested += 1
+                        except Exception as exc:
+                            raw_reason = normalize_single_line(str(exc))
+                            reason = clamp_text(raw_reason, _INGESTION_REASON_MAX_CHARS) or None
+                            reason_display = reason or raw_reason or exc.__class__.__name__
+                            self.console.log(
+                                f"[bold red]Unhandled ingestion error[/] job={snapshot.job_id} commit={snapshot.result_commit_hash} reason={reason_display}",
+                            )
+                            log.exception(
+                                "Unhandled ingestion error for job {} commit {}: {}",
+                                snapshot.job_id,
+                                snapshot.result_commit_hash,
+                                reason_display,
+                            )
+                            # Log first so failures remain visible even if DB writes are down.
+                            # If we cannot record the failure, let the error propagate: the
+                            # scheduler is unlikely to make progress without database writes.
+                            self._record_ingestion_state(snapshot, status="failed", reason=reason_display)
+                finally:
+                    self._prefetched_metrics_payload_by_commit = None
+                    self._prefetched_metrics_errors_by_commit = None
                 completed_loop = True
         except Exception as exc:
             if not completed_loop:
@@ -215,7 +240,8 @@ class MapElitesIngestion:
         *,
         snapshot_session: Session | None = None,
     ) -> bool:
-        commit_hash = (snapshot.result_commit_hash or "").strip()
+        raw_commit_hash = (snapshot.result_commit_hash or "").strip()
+        commit_hash = raw_commit_hash
         if not commit_hash:
             return False
         try:
@@ -239,24 +265,28 @@ class MapElitesIngestion:
                 reason=reason_display,
             )
             return False
+
         metrics_payload: list[dict[str, Any]] = []
-        with session_scope() as session:
-            commit_row = session.execute(
-                select(CommitCard).where(CommitCard.commit_hash == commit_hash)
-            ).scalar_one_or_none()
-            if commit_row is not None:
-                rows = session.scalars(
-                    select(Metric).where(Metric.commit_card_id == commit_row.id)
-                ).all()
-                for row in rows:
-                    metrics_payload.append(
-                        {
-                            "name": row.name,
-                            "value": float(row.value),
-                            "unit": row.unit,
-                            "higher_is_better": bool(row.higher_is_better),
-                        }
-                    )
+        metrics_error = None
+        metrics_errors_by_commit = self._prefetched_metrics_errors_by_commit
+        if metrics_errors_by_commit:
+            metrics_error = metrics_errors_by_commit.get(commit_hash) or metrics_errors_by_commit.get(raw_commit_hash)
+        if metrics_error:
+            raise ValueError(metrics_error)
+
+        metrics_payload_by_commit = self._prefetched_metrics_payload_by_commit
+        if metrics_payload_by_commit:
+            if commit_hash in metrics_payload_by_commit:
+                metrics_payload = list(metrics_payload_by_commit.get(commit_hash) or [])
+            elif raw_commit_hash in metrics_payload_by_commit:
+                metrics_payload = list(metrics_payload_by_commit.get(raw_commit_hash) or [])
+
+            # If the commit hash was canonicalised (e.g. short -> full hash),
+            # ensure we don't silently miss metrics due to a cache-key mismatch.
+            if not metrics_payload and raw_commit_hash and raw_commit_hash != commit_hash:
+                metrics_payload = self._load_metrics_payload_for_commit(commit_hash)
+        else:
+            metrics_payload = self._load_metrics_payload_for_commit(commit_hash)
         try:
             insertion = self.manager.ingest(
                 commit_hash=commit_hash,
@@ -302,6 +332,89 @@ class MapElitesIngestion:
             record=insertion.record,
         )
         return bool(insertion.record)
+
+    def _load_metrics_payload_batch(
+        self,
+        commit_hashes: Sequence[str],
+        *,
+        session: Session,
+    ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, str]]:
+        """Load commit metrics payload in a single DB round-trip.
+
+        Returns payloads grouped by commit_hash and a per-commit error map.
+        Any commit that fails payload building is reported in the error map and
+        gets an empty metrics payload so ingestion can fail per job.
+        """
+
+        requested: list[str] = []
+        for raw in commit_hashes:
+            value = str(raw or "").strip()
+            if value:
+                requested.append(value)
+
+        unique = list(dict.fromkeys(requested))
+        payload_by_commit: dict[str, list[dict[str, Any]]] = {commit_hash: [] for commit_hash in unique}
+        errors_by_commit: dict[str, str] = {}
+        if not unique:
+            return payload_by_commit, errors_by_commit
+
+        stmt = (
+            select(CommitCard.commit_hash, Metric)
+            .join(Metric, Metric.commit_card_id == CommitCard.id)
+            .where(CommitCard.commit_hash.in_(unique))
+            .order_by(CommitCard.commit_hash.asc(), Metric.name.asc())
+        )
+        for commit_hash, metric in session.execute(stmt).all():
+            commit_key = str(commit_hash or "").strip()
+            if not commit_key:
+                continue
+            if commit_key in errors_by_commit:
+                continue
+            try:
+                payload_by_commit.setdefault(commit_key, []).append(
+                    {
+                        "name": metric.name,
+                        "value": float(metric.value),
+                        "unit": metric.unit,
+                        "higher_is_better": bool(metric.higher_is_better),
+                    }
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                errors_by_commit[commit_key] = (
+                    "Failed to build metrics payload "
+                    f"(commit={commit_key} metric={getattr(metric, 'name', None)!r} reason={exc})."
+                )
+                payload_by_commit[commit_key] = []
+
+        return payload_by_commit, errors_by_commit
+
+    def _load_metrics_payload_for_commit(self, commit_hash: str) -> list[dict[str, Any]]:
+        """Load metrics payload for a single commit (join-based query)."""
+
+        value = str(commit_hash or "").strip()
+        if not value:
+            return []
+
+        with session_scope() as session:
+            stmt = (
+                select(Metric)
+                .join(CommitCard, CommitCard.id == Metric.commit_card_id)
+                .where(CommitCard.commit_hash == value)
+                .order_by(Metric.name.asc())
+            )
+            rows = list(session.scalars(stmt).all())
+
+        payload: list[dict[str, Any]] = []
+        for row in rows:
+            payload.append(
+                {
+                    "name": row.name,
+                    "value": float(row.value),
+                    "unit": row.unit,
+                    "higher_is_better": bool(row.higher_is_better),
+                }
+            )
+        return payload
 
     def _record_ingestion_state(
         self,
