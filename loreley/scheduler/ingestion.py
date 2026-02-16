@@ -88,14 +88,13 @@ class MapElitesIngestion:
                 self._prefetched_metrics_payload_by_commit = None
                 self._prefetched_metrics_errors_by_commit = None
                 try:
-                    if hasattr(snapshot_session, "execute"):
-                        (
-                            self._prefetched_metrics_payload_by_commit,
-                            self._prefetched_metrics_errors_by_commit,
-                        ) = self._load_metrics_payload_batch(
-                            [snapshot.result_commit_hash for snapshot in snapshots],
-                            session=snapshot_session,
-                        )
+                    (
+                        self._prefetched_metrics_payload_by_commit,
+                        self._prefetched_metrics_errors_by_commit,
+                    ) = self._load_metrics_payload_batch(
+                        self._canonicalize_prefetch_commit_hashes(snapshots),
+                        session=snapshot_session,
+                    )
 
                     for snapshot in snapshots:
                         try:
@@ -133,6 +132,37 @@ class MapElitesIngestion:
             )
             log.exception("Snapshot batch commit failed: {}", reason_display)
         return ingested
+
+    def _canonicalize_prefetch_commit_hashes(self, snapshots: Sequence[JobSnapshot]) -> list[str]:
+        """Best-effort canonicalization to improve metrics prefetch hit ratio."""
+
+        resolved_by_raw: dict[str, str] = {}
+        canonicalized: list[str] = []
+        for snapshot in snapshots:
+            raw_hash = str(snapshot.result_commit_hash or "").strip()
+            if not raw_hash:
+                continue
+            resolved = resolved_by_raw.get(raw_hash)
+            if resolved is None:
+                resolved = self._canonicalize_commit_hash_local(raw_hash)
+                resolved_by_raw[raw_hash] = resolved
+            canonicalized.append(resolved)
+        return canonicalized
+
+    def _canonicalize_commit_hash_local(self, commit_hash: str) -> str:
+        """Resolve a commit hash locally without network operations."""
+
+        raw = str(commit_hash or "").strip()
+        if not raw:
+            return raw
+
+        try:
+            resolved = self.repo.commit(raw)
+        except Exception:
+            return raw
+
+        canonical = str(getattr(resolved, "hexsha", "") or "").strip()
+        return canonical or raw
 
     def initialise_root_commit(self, commit_hash: str) -> None:
         """Ensure the configured root commit is present in DB and evaluated.

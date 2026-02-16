@@ -54,6 +54,11 @@ def test_ingest_completed_jobs_continues_after_snapshot_error(monkeypatch, tmp_p
         "_record_ingestion_state",
         lambda _self, _snapshot, *, status, reason=None, **_kwargs: recorded.append((status, reason)),
     )
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_load_metrics_payload_batch",
+        lambda _self, _commit_hashes, *, session: ({}, {}),
+    )
 
     @contextmanager
     def fake_scope():
@@ -151,10 +156,141 @@ def test_ingest_completed_jobs_reuses_single_snapshot_transaction(monkeypatch, t
         return True
 
     monkeypatch.setattr(ingestion_mod.MapElitesIngestion, "_ingest_snapshot", fake_ingest_snapshot)
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_load_metrics_payload_batch",
+        lambda _self, _commit_hashes, *, session: ({}, {}),
+    )
 
     assert ingestion.ingest_completed_jobs() == 2
     assert len(created_sessions) == 1
     assert seen_sessions == [created_sessions[0], created_sessions[0]]
+
+
+def test_ingest_completed_jobs_prefetches_metrics_with_canonical_hashes(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    ingestion = _make_ingestion(tmp_path)
+    snapshots = [
+        JobSnapshot(
+            job_id=uuid4(),
+            base_commit_hash=None,
+            island_id=None,
+            result_commit_hash="abc1234",
+            completed_at=None,
+        ),
+    ]
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_jobs_requiring_ingestion",
+        lambda _self, *, limit: snapshots,
+    )
+
+    canonical_hash = "a" * 40
+
+    class DummyCommit:
+        def __init__(self, hexsha: str) -> None:
+            self.hexsha = hexsha
+
+    class DummyRepo:
+        def commit(self, ref: str) -> DummyCommit:
+            if ref == "abc1234":
+                return DummyCommit(canonical_hash)
+            raise ValueError("unknown commit")
+
+    ingestion.repo = cast(Any, DummyRepo())
+
+    seen_prefetch_hashes: list[list[str]] = []
+
+    def fake_load_metrics_payload_batch(
+        _self,
+        commit_hashes: list[str],
+        *,
+        session: Any,
+    ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, str]]:
+        seen_prefetch_hashes.append(list(commit_hashes))
+        return {}, {}
+
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_load_metrics_payload_batch",
+        fake_load_metrics_payload_batch,
+    )
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_ingest_snapshot",
+        lambda *_args, **_kwargs: False,
+    )
+
+    @contextmanager
+    def fake_scope():
+        yield object()
+
+    monkeypatch.setattr(ingestion_mod, "session_scope", fake_scope)
+
+    assert ingestion.ingest_completed_jobs() == 0
+    assert seen_prefetch_hashes == [[canonical_hash]]
+
+
+def test_ingest_completed_jobs_records_failed_when_prefetched_metrics_payload_invalid(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    ingestion = _make_ingestion(tmp_path)
+    snapshot = JobSnapshot(
+        job_id=uuid4(),
+        base_commit_hash=None,
+        island_id=None,
+        result_commit_hash="deadbeef",
+        completed_at=None,
+    )
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_jobs_requiring_ingestion",
+        lambda _self, *, limit: [snapshot],
+    )
+
+    canonical_hash = "d" * 40
+    failure_reason = "Failed to build metrics payload (commit=deadbeef metric='score' reason=boom)."
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_ensure_commit_available",
+        lambda _self, _commit_hash: canonical_hash,
+    )
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_load_metrics_payload_batch",
+        lambda _self, _commit_hashes, *, session: (
+            {canonical_hash: []},
+            {canonical_hash: failure_reason},
+        ),
+    )
+
+    class DummyManager:
+        def ingest(self, *args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("manager.ingest should not be called when metrics prefetch failed")
+
+    ingestion.manager = DummyManager()  # type: ignore[assignment]
+
+    @contextmanager
+    def fake_scope():
+        yield object()
+
+    monkeypatch.setattr(ingestion_mod, "session_scope", fake_scope)
+
+    recorded: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_record_ingestion_state",
+        lambda _self, _snapshot, *, status, reason=None, **_kwargs: recorded.append((status, reason)),
+    )
+
+    assert ingestion.ingest_completed_jobs() == 0
+    assert len(recorded) == 1
+    assert recorded[0][0] == "failed"
+    assert recorded[0][1] is not None
+    assert "Failed to build metrics payload" in cast(str, recorded[0][1])
 
 
 def test_ingest_completed_jobs_does_not_abort_when_snapshot_batch_commit_fails(
@@ -205,6 +341,11 @@ def test_ingest_completed_jobs_does_not_abort_when_snapshot_batch_commit_fails(
         return True
 
     monkeypatch.setattr(ingestion_mod.MapElitesIngestion, "_ingest_snapshot", fake_ingest_snapshot)
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_load_metrics_payload_batch",
+        lambda _self, _commit_hashes, *, session: ({}, {}),
+    )
 
     assert ingestion.ingest_completed_jobs() == 2
 
