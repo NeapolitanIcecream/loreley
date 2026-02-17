@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+import loreley.core.map_elites.code_embedding as code_embedding_module
 from loreley.config import Settings
 from loreley.core.map_elites.chunk import ChunkedFile, FileChunk
 from loreley.core.map_elites.code_embedding import CodeEmbedder
@@ -89,6 +90,20 @@ def test_weighted_average_falls_back_to_mean_when_weights_zero() -> None:
     result = CodeEmbedder._weighted_average(vectors, weights)
 
     assert result == (2.0, 3.0)
+
+
+def test_build_progress_disables_render_when_stdout_is_not_tty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeStdout:
+        @staticmethod
+        def isatty() -> bool:
+            return False
+
+    monkeypatch.setattr(code_embedding_module.sys, "stdout", _FakeStdout())
+    progress = CodeEmbedder._build_progress()
+
+    assert progress.disable is True
 
 
 def test_embed_batch_aligns_vectors_by_response_index(settings: Settings) -> None:

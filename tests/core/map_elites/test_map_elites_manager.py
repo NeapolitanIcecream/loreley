@@ -152,6 +152,7 @@ def test_manager_rejects_snapshot_dimensionality_when_settings_mismatch(settings
 def test_ingest_short_circuits_when_no_repo_state_embedding(
     monkeypatch: pytest.MonkeyPatch, settings: Settings, captured_logs: list[dict[str, object]]
 ) -> None:
+    settings.mapelites_ingest_info_log_every = 1
     stats = RepoStateEmbeddingStats(
         commit_hash="abc",
         eligible_files=0,
@@ -202,6 +203,65 @@ def test_ingest_short_circuits_when_no_repo_state_embedding(
     assert stage_extra.get("incremental_count") == 0
     assert stage_extra.get("embedding_cache_miss_count") == 0
     assert stage_extra.get("status_code") == 0
+
+
+def test_ingest_info_logs_are_sampled(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+    captured_logs: list[dict[str, object]],
+) -> None:
+    settings.mapelites_ingest_info_log_every = 3
+    stats = RepoStateEmbeddingStats(
+        commit_hash="abc",
+        eligible_files=0,
+        files_embedded=0,
+        files_aggregated=0,
+        unique_blobs=0,
+        cache_hits=0,
+        cache_misses=0,
+        skipped_empty_after_preprocess=0,
+        skipped_failed_embedding=0,
+    )
+    monkeypatch.setattr(
+        map_elites_module,
+        "embed_repository_state_incremental",
+        lambda *args, **kwargs: (None, stats),
+    )
+
+    manager = MapElitesManager(
+        settings=settings,
+        repo_root=Path("."),
+    )
+
+    class NullSnapshotStore:
+        def load(self, island_id: str, *, history_limit: int | None = None) -> dict[str, object] | None:
+            return None
+
+        def apply_update(self, island_id: str, *, update: object, session: object | None = None) -> None:
+            return None
+
+    manager._snapshot_store = NullSnapshotStore()  # type: ignore[attr-defined]
+
+    for idx in range(4):
+        _ = manager.ingest(commit_hash=f"c{idx}")
+
+    ingest_logs = [
+        record
+        for record in captured_logs
+        if record.get("module") == "map_elites.manager"
+        and str(record.get("message", "")).startswith("Ingesting commit ")
+    ]
+    assert len(ingest_logs) == 2
+    assert "c0" in str(ingest_logs[0].get("message"))
+    assert "c3" in str(ingest_logs[1].get("message"))
+
+    stage_logs = [
+        record
+        for record in captured_logs
+        if record.get("module") == "map_elites.manager"
+        and record.get("message") == "MAP-Elites ingest stage metrics"
+    ]
+    assert len(stage_logs) == 2
 
 
 def test_ingest_builds_record_with_stubbed_dependencies(

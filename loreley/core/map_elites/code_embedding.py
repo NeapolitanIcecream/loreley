@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import sys
 from typing import Callable, Iterable, Sequence
 
 from loguru import logger
@@ -338,6 +339,7 @@ class CodeEmbedder:
             TextColumn("{task.description}"),
             TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
             transient=True,
+            disable=not sys.stdout.isatty(),
         )
 
     def _get_client(self) -> OpenAI:

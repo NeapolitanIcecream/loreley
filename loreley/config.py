@@ -549,6 +549,11 @@ class Settings(BaseSettings):
         default=True,
         alias="MAPELITES_FEATURE_CLIP",
     )
+    # Emit one INFO-level ingest log every N ingests to control hot-path log volume.
+    mapelites_ingest_info_log_every: PositiveInt = Field(
+        default=20,
+        alias="MAPELITES_INGEST_INFO_LOG_EVERY",
+    )
     mapelites_sampler_inspiration_count: int = Field(
         default=3,
         alias="MAPELITES_SAMPLER_INSPIRATION_COUNT",

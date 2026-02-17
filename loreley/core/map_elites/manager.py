@@ -79,6 +79,8 @@ class MapElitesManager:
         self._commit_to_island: dict[str, str] = {}
         self._default_island = self.settings.mapelites_default_island_id or "default"
         self._snapshot_store = DatabaseSnapshotStore()
+        self._ingest_info_log_every = int(self.settings.mapelites_ingest_info_log_every)
+        self._ingest_invocations = 0
 
     @staticmethod
     def _infer_snapshot_target_dims(snapshot: Mapping[str, Any]) -> int | None:
@@ -118,12 +120,15 @@ class MapElitesManager:
         effective_island = island_id or self._default_island
         state = self._ensure_island(effective_island)
         working_dir = Path(repo_root or self.repo_root).resolve()
+        ingest_index = self._next_ingest_invocation()
+        emit_sampled_info = self._should_emit_sampled_ingest_info(ingest_index)
 
-        log.info(
-            "Ingesting commit {} for island {}",
-            commit_hash,
-            effective_island,
-        )
+        if emit_sampled_info:
+            log.info(
+                "Ingesting commit {} for island {}",
+                commit_hash,
+                effective_island,
+            )
 
         update: SnapshotUpdate | None = None
         result: MapElitesInsertionResult | None = None
@@ -146,7 +151,8 @@ class MapElitesManager:
             log_level: str = "warning",
         ) -> MapElitesInsertionResult:
             if log_level == "info":
-                log.info("{} {}", message, commit_hash)
+                if emit_sampled_info:
+                    log.info("{} {}", message, commit_hash)
             elif log_level == "error":
                 log.error("{} {}", message, commit_hash)
             else:
@@ -251,7 +257,8 @@ class MapElitesManager:
 
             if state.projection is None:
                 message = "PCA warmup: projection is not ready; skipping archive update."
-                log.info("{} island={} commit={}", message, effective_island, commit_hash)
+                if emit_sampled_info:
+                    log.info("{} island={} commit={}", message, effective_island, commit_hash)
                 result = MapElitesInsertionResult(
                     status=0,
                     delta=0.0,
@@ -306,14 +313,15 @@ class MapElitesManager:
                 )
 
             if record:
-                log.info(
-                    "Inserted commit {} into island {} (cell={} status={} Δ={:.4f})",
-                    commit_hash,
-                    effective_island,
-                    record.cell_index,
-                    status,
-                    delta,
-                )
+                if emit_sampled_info:
+                    log.info(
+                        "Inserted commit {} into island {} (cell={} status={} Δ={:.4f})",
+                        commit_hash,
+                        effective_island,
+                        record.cell_index,
+                        status,
+                        delta,
+                    )
             elif status < 0:
                 log.warning(
                     "Archive rejected commit {} for island {} (status={} Δ={:.4f})",
@@ -323,13 +331,14 @@ class MapElitesManager:
                     delta,
                 )
             else:
-                log.info(
-                    "Commit {} did not improve island {} (status={} Δ={:.4f})",
-                    commit_hash,
-                    effective_island,
-                    status,
-                    delta,
-                )
+                if emit_sampled_info:
+                    log.info(
+                        "Commit {} did not improve island {} (status={} Δ={:.4f})",
+                        commit_hash,
+                        effective_island,
+                        status,
+                        delta,
+                    )
 
             message: str | None = None
             if status <= 0:
@@ -364,21 +373,29 @@ class MapElitesManager:
                 )
             finally:
                 snapshot_apply_ms += (time.perf_counter() - snapshot_apply_started_at) * 1000.0
-                log.bind(
-                    commit_hash=commit_hash,
-                    island_id=effective_island,
-                    aggregate_hit_count=aggregate_hit_count,
-                    incremental_count=incremental_count,
-                    embedding_cache_miss_count=embedding_cache_miss_count,
-                    pca_fit_ms=round(pca_fit_ms, 3),
-                    pca_refit_ms=round(pca_refit_ms, 3),
-                    archive_add_ms=round(archive_add_ms, 3),
-                    snapshot_apply_ms=round(snapshot_apply_ms, 3),
-                    ingest_total_ms=round((time.perf_counter() - ingest_started_at) * 1000.0, 3),
-                    did_initial_fit=did_initial_fit,
-                    did_refit=did_refit,
-                    status_code=result.status if result is not None else None,
-                ).info("MAP-Elites ingest stage metrics")
+                emit_stage_metrics = (
+                    emit_sampled_info
+                    or result is None
+                    or did_initial_fit
+                    or did_refit
+                    or (result is not None and result.status < 0)
+                )
+                if emit_stage_metrics:
+                    log.bind(
+                        commit_hash=commit_hash,
+                        island_id=effective_island,
+                        aggregate_hit_count=aggregate_hit_count,
+                        incremental_count=incremental_count,
+                        embedding_cache_miss_count=embedding_cache_miss_count,
+                        pca_fit_ms=round(pca_fit_ms, 3),
+                        pca_refit_ms=round(pca_refit_ms, 3),
+                        archive_add_ms=round(archive_add_ms, 3),
+                        snapshot_apply_ms=round(snapshot_apply_ms, 3),
+                        ingest_total_ms=round((time.perf_counter() - ingest_started_at) * 1000.0, 3),
+                        did_initial_fit=did_initial_fit,
+                        did_refit=did_refit,
+                        status_code=result.status if result is not None else None,
+                    ).info("MAP-Elites ingest stage metrics")
 
     def get_records(
         self,
@@ -780,6 +797,16 @@ class MapElitesManager:
                 if numeric is not None:
                     aggregated[str(name)] = numeric
         return aggregated
+
+    def _next_ingest_invocation(self) -> int:
+        self._ingest_invocations += 1
+        return self._ingest_invocations
+
+    def _should_emit_sampled_ingest_info(self, ingest_index: int) -> bool:
+        every = self._ingest_info_log_every
+        if every <= 1:
+            return True
+        return ingest_index == 1 or (ingest_index - 1) % every == 0
 
     @staticmethod
     def _build_artifacts(

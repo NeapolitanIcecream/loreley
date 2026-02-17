@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+import loreley.core.map_elites.chunk as chunk_module
 from loreley.config import Settings
 from loreley.core.map_elites.chunk import CodeChunker, chunk_preprocessed_files
 from tests.support import TestSettings
@@ -18,6 +19,18 @@ class _Artifact:
 def make_chunker(settings: Settings | None = None) -> CodeChunker:
     test_settings = settings or TestSettings(MAPELITES_CODE_EMBEDDING_DIMENSIONS=8)
     return CodeChunker(settings=test_settings)
+
+
+def test_build_progress_disables_render_when_stdout_is_not_tty(monkeypatch) -> None:
+    class _FakeStdout:
+        @staticmethod
+        def isatty() -> bool:
+            return False
+
+    monkeypatch.setattr(chunk_module.sys, "stdout", _FakeStdout())
+    progress = CodeChunker._build_progress()
+
+    assert progress.disable is True
 
 
 def test_looks_like_boundary_heuristics(settings: Settings) -> None:
