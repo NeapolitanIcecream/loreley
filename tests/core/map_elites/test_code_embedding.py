@@ -92,6 +92,21 @@ def test_weighted_average_falls_back_to_mean_when_weights_zero() -> None:
     assert result == (2.0, 3.0)
 
 
+def test_weighted_average_raises_when_weight_count_mismatch() -> None:
+    vectors = [(1.0, 2.0), (3.0, 4.0)]
+
+    with pytest.raises(ValueError, match="one weight per vector"):
+        CodeEmbedder._weighted_average(vectors, [1.0])
+
+
+def test_weighted_average_raises_on_dimension_mismatch() -> None:
+    vectors = [(1.0, 2.0), (3.0,)]
+    weights = [1.0, 1.0]
+
+    with pytest.raises(ValueError, match="dimension mismatch"):
+        CodeEmbedder._weighted_average(vectors, weights)
+
+
 def test_build_progress_disables_render_when_stdout_is_not_tty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

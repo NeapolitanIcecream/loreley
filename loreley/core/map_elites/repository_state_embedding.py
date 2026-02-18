@@ -21,6 +21,7 @@ from typing import Iterable, Sequence, cast
 from git import Repo
 from git.exc import GitCommandError
 from loguru import logger
+import numpy as np
 from sqlalchemy import select
 
 from loreley.config import Settings, get_settings
@@ -269,7 +270,8 @@ class RepositoryStateEmbedder:
             self.cache.put_many(vectors_for_misses)
             cached.update(vectors_for_misses)
 
-        sum_totals: list[float] | None = None
+        weighted_vectors: list[np.ndarray] = []
+        weighted_counts: list[float] = []
         aggregated_count = 0
         skipped_failed = len(repo_files) - len(blob_shas)
         dims = 0
@@ -283,24 +285,29 @@ class RepositoryStateEmbedder:
                 skipped_failed += weight
                 continue
 
-            if sum_totals is None:
-                dims = len(vec)
-                if dims <= 0:
-                    skipped_failed += weight
-                    continue
-                sum_totals = [0.0] * dims
+            vector_array = np.asarray(vec, dtype=np.float64)
+            if vector_array.ndim != 1:
+                raise ValueError("Embedding dimension mismatch during repo-state aggregation.")
+            if vector_array.size <= 0:
+                skipped_failed += weight
+                continue
 
-            if len(vec) != dims:
+            if dims == 0:
+                dims = int(vector_array.size)
+            elif int(vector_array.size) != dims:
                 raise ValueError("Embedding dimension mismatch during repo-state aggregation.")
 
-            for i in range(dims):
-                sum_totals[i] += float(vec[i]) * float(weight)
+            weighted_vectors.append(vector_array)
+            weighted_counts.append(float(weight))
             aggregated_count += weight
 
-        if aggregated_count <= 0 or not sum_totals:
+        if aggregated_count <= 0 or not weighted_vectors:
             commit_vector, sum_vector = (), ()
         else:
-            sum_vector = tuple(sum_totals)
+            weight_array = np.asarray(weighted_counts, dtype=np.float64)
+            vector_matrix = np.vstack(weighted_vectors)
+            sum_array = vector_matrix.T @ weight_array
+            sum_vector = tuple(float(value) for value in sum_array.tolist())
             commit_vector = _divide_vector(sum_vector, aggregated_count)
         stats = RepoStateEmbeddingStats(
             commit_hash=commit_hash,

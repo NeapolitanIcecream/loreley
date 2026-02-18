@@ -8,6 +8,7 @@ import sys
 from typing import Callable, Iterable, Sequence
 
 from loguru import logger
+import numpy as np
 from openai import OpenAI, OpenAIError
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from tenacity import RetryError
@@ -308,24 +309,35 @@ class CodeEmbedder:
     ) -> Vector:
         if not vectors:
             return ()
+        if len(weights) != len(vectors):
+            raise ValueError("Embedding aggregation requires one weight per vector.")
+
         dims = len(vectors[0])
-        totals = [0.0] * dims
-        weight_sum = 0.0
-        for vector, weight in zip(vectors, weights):
-            if weight <= 0:
-                continue
-            if len(vector) != dims:
-                raise ValueError("Embedding dimension mismatch during aggregation")
-            for idx in range(dims):
-                totals[idx] += vector[idx] * weight
-            weight_sum += weight
-        if weight_sum == 0.0:
-            weight_sum = float(len(vectors))
-            totals = [
-                sum(vector[idx] for vector in vectors)
-                for idx in range(dims)
-            ]
-        return tuple(value / weight_sum for value in totals)
+        try:
+            matrix = np.asarray(vectors, dtype=np.float64)
+        except ValueError as exc:
+            raise ValueError("Embedding dimension mismatch during aggregation") from exc
+
+        if matrix.ndim != 2 or matrix.shape[1] != dims:
+            raise ValueError("Embedding dimension mismatch during aggregation")
+        if dims == 0:
+            return ()
+
+        weight_array = np.asarray(weights, dtype=np.float64)
+        positive_mask = weight_array > 0.0
+        if not np.any(positive_mask):
+            mean_vector = matrix.mean(axis=0)
+            return tuple(float(value) for value in mean_vector.tolist())
+
+        positive_weights = weight_array[positive_mask]
+        positive_matrix = matrix[positive_mask]
+        weight_sum = float(positive_weights.sum())
+        if weight_sum <= 0.0:
+            mean_vector = matrix.mean(axis=0)
+            return tuple(float(value) for value in mean_vector.tolist())
+
+        weighted_totals = positive_matrix.T @ positive_weights
+        return tuple(float(value) for value in (weighted_totals / weight_sum).tolist())
 
     @staticmethod
     def _batched(sequence: Sequence[FileChunk], batch_size: int) -> Iterable[Sequence[FileChunk]]:

@@ -44,6 +44,42 @@ def test_pca_projection_transform_basic() -> None:
         projection.transform((1.0, 2.0, 3.0))
 
 
+def test_pca_projection_transform_with_whiten_and_rotation() -> None:
+    projection = PCAProjection(
+        feature_count=2,
+        components=((1.0, 0.0), (0.0, 1.0)),
+        mean=(0.0, 0.0),
+        explained_variance=(4.0, 1.0),
+        explained_variance_ratio=(1.0, 1.0),
+        sample_count=10,
+        epoch=0,
+        fitted_at=123.0,
+        whiten=True,
+        rotation=((0.0, 1.0), (-1.0, 0.0)),
+    )
+
+    result = projection.transform((4.0, 2.0))
+    assert result == pytest.approx((-2.0, 2.0))
+
+
+def test_pca_projection_transform_rejects_invalid_rotation_shape() -> None:
+    projection = PCAProjection(
+        feature_count=2,
+        components=((1.0, 0.0), (0.0, 1.0)),
+        mean=(0.0, 0.0),
+        explained_variance=(1.0, 1.0),
+        explained_variance_ratio=(1.0, 1.0),
+        sample_count=10,
+        epoch=0,
+        fitted_at=123.0,
+        whiten=False,
+        rotation=((1.0, 0.0, 0.0),),
+    )
+
+    with pytest.raises(ValueError, match="must be square"):
+        projection.transform((1.0, 2.0))
+
+
 def test_build_history_entry_returns_code_vector(settings: Settings) -> None:
     code_embedding = CommitCodeEmbedding(
         files=(),

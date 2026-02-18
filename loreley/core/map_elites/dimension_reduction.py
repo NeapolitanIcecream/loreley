@@ -85,34 +85,37 @@ class PCAProjection:
                 "PCA projection expects vectors with "
                 f"{self.feature_count} dimensions, received {len(vector)}",
             )
-        centered = [value - mean for value, mean in zip(vector, self.mean)]
-        transformed = [
-            sum(component[idx] * centered[idx] for idx in range(self.feature_count))
-            for component in self.components
-        ]
+        vector_array = np.asarray(vector, dtype=np.float64)
+        mean_array = np.asarray(self.mean, dtype=np.float64)
+        components_matrix = np.asarray(self.components, dtype=np.float64)
+
+        centered = vector_array - mean_array
+        transformed = components_matrix @ centered
         if self.whiten and self.explained_variance:
-            variances = list(self.explained_variance)
-            if len(variances) < len(transformed):
-                variances.extend([1.0] * (len(transformed) - len(variances)))
-            transformed = [
-                value / math.sqrt(variance) if variance > 0.0 else value
-                for value, variance in zip(transformed, variances)
-            ]
+            variances = np.asarray(self.explained_variance, dtype=np.float64)
+            if variances.size < transformed.size:
+                variances = np.pad(
+                    variances,
+                    (0, transformed.size - variances.size),
+                    mode="constant",
+                    constant_values=1.0,
+                )
+            scales = np.sqrt(variances[: transformed.size])
+            positive_scales = scales > 0.0
+            transformed = transformed.copy()
+            transformed[positive_scales] = (
+                transformed[positive_scales] / scales[positive_scales]
+            )
         if self.rotation:
-            rotation = self.rotation
-            dims = len(transformed)
-            if len(rotation) != dims or any(len(row) != dims for row in rotation):
+            rotation_matrix = np.asarray(self.rotation, dtype=np.float64)
+            dims = int(transformed.size)
+            if rotation_matrix.shape != (dims, dims):
                 raise ValueError(
                     "PCA rotation matrix must be square with the same dimensionality "
                     f"as the projection (dims={dims})."
                 )
-            rotated: list[float] = []
-            for col in range(dims):
-                rotated.append(
-                    sum(transformed[row] * rotation[row][col] for row in range(dims))
-                )
-            transformed = rotated
-        return tuple(transformed)
+            transformed = transformed @ rotation_matrix
+        return tuple(float(value) for value in transformed.tolist())
 
     @classmethod
     def from_model(
@@ -412,7 +415,11 @@ class DimensionReducer:
             random_state=seed,
         )
         try:
-            model.fit([entry.vector for entry in samples])
+            sample_matrix = np.asarray(
+                [entry.vector for entry in samples],
+                dtype=np.float64,
+            )
+            model.fit(sample_matrix)
         except ValueError as exc:
             log.error("Unable to fit PCA: {}", exc)
             return None
