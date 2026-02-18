@@ -9,6 +9,7 @@ This CLI is designed to:
 
 import os
 import sys
+import json
 from enum import Enum
 from typing import Sequence
 
@@ -32,6 +33,8 @@ from loreley.preflight import (
 
 console = Console()
 app = typer.Typer(add_completion=False, help="Loreley unified CLI.")
+config_app = typer.Typer(help="Inspect effective Loreley configuration.")
+app.add_typer(config_app, name="config")
 
 
 class DoctorRole(str, Enum):
@@ -121,6 +124,50 @@ def _get_log_level(ctx: typer.Context) -> str | None:
     obj = getattr(ctx, "obj", None) or {}
     level = obj.get("log_level")
     return str(level) if level else None
+
+
+@config_app.command("dump")
+def config_dump(
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Print effective settings as JSON.",
+        show_default=True,
+    ),
+    yaml_output: bool = typer.Option(
+        False,
+        "--yaml",
+        help="Print effective settings as YAML.",
+        show_default=True,
+    ),
+    mask_secrets: bool = typer.Option(
+        True,
+        "--mask-secrets/--no-mask-secrets",
+        help="Mask credentials and API keys in the output.",
+        show_default=True,
+    ),
+) -> None:
+    """Dump effective configuration for reproducibility and troubleshooting."""
+    if json_output and yaml_output:
+        typer.echo(
+            "Invalid output format: choose exactly one output format via --json or --yaml.",
+        )
+        raise typer.Exit(code=1)
+
+    settings = _load_settings_or_exit()
+    payload = settings.export_safe(mask_secrets=bool(mask_secrets))
+
+    if yaml_output:
+        try:
+            import yaml
+        except Exception as exc:  # pragma: no cover - defensive
+            typer.echo("YAML output is unavailable: install PyYAML first.")
+            raise typer.Exit(code=1) from exc
+        serialized = yaml.safe_dump(payload, allow_unicode=True, sort_keys=True)
+    else:
+        serialized = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
+
+    typer.echo(serialized)
 
 
 @app.command()
@@ -308,7 +355,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Console script entrypoint."""
     args = list(argv) if argv is not None else None
     try:
-        app(prog_name="loreley", args=args, standalone_mode=False)
+        result = app(prog_name="loreley", args=args, standalone_mode=False)
+        if isinstance(result, int):
+            return int(result)
         return 0
     except click.ClickException as exc:
         exc.show()
@@ -317,7 +366,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         console.print("[yellow]Aborted[/]")
         return 1
     except typer.Exit as exc:
-        return int(getattr(exc, "exit_code", 0) or 0)
+        exit_code = getattr(exc, "exit_code", None)
+        if exit_code is None:
+            exit_code = getattr(exc, "code", 0)
+        return int(exit_code or 0)
 
 
 if __name__ == "__main__":  # pragma: no cover

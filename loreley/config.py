@@ -4,7 +4,7 @@ from functools import lru_cache
 import uuid
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse, urlunparse
 
 from loguru import logger
 from pydantic import Field, PositiveInt, computed_field
@@ -13,6 +13,45 @@ from rich.console import Console
 
 console = Console()
 log = logger.bind(module="config")
+
+
+def _mask_secret(value: str | None) -> str | None:
+    """Return a constant marker for present secrets."""
+    normalized = (value or "").strip()
+    if not normalized:
+        return None
+    return "***"
+
+
+def _sanitize_url(raw: str) -> str:
+    """Best-effort redaction for credential-bearing URLs."""
+    value = (raw or "").strip()
+    if not value:
+        return value
+    parsed = urlparse(value)
+    if not parsed.scheme:
+        return value
+    netloc = parsed.hostname or ""
+    if parsed.port is not None:
+        netloc = f"{netloc}:{parsed.port}"
+    safe = parsed._replace(netloc=netloc, query="", fragment="")
+    return urlunparse(safe)
+
+
+def _sanitize_sqlalchemy_dsn(raw: str) -> str:
+    """Hide passwords in SQLAlchemy DSNs."""
+    try:
+        from sqlalchemy.engine.url import make_url
+    except Exception:
+        return _sanitize_url(raw)
+
+    try:
+        url = make_url(raw)
+        if url.password:
+            url = url.set(password="***")
+        return str(url)
+    except Exception:
+        return _sanitize_url(raw)
 
 
 class Settings(BaseSettings):
@@ -636,40 +675,101 @@ class Settings(BaseSettings):
             f"@{self.db_host}:{self.db_port}/{self.db_name}"
         )
 
-    def export_safe(self) -> dict[str, Any]:
-        """Return non-sensitive settings for debugging/logging."""
+    def export_safe(self, *, mask_secrets: bool = True) -> dict[str, Any]:
+        """Return effective settings for debugging/logging."""
         from loreley.naming import (
             DEFAULT_TASKS_QUEUE_PREFIX,
             DEFAULT_TASKS_REDIS_NAMESPACE_PREFIX,
             safe_namespace_or_none,
         )
 
+        def _maybe_secret(value: str | None) -> str | None:
+            normalized = (value or "").strip() or None
+            if normalized is None:
+                return None
+            if mask_secrets:
+                return _mask_secret(normalized)
+            return normalized
+
+        def _maybe_url(value: str | None) -> str | None:
+            normalized = (value or "").strip() or None
+            if normalized is None:
+                return None
+            if mask_secrets:
+                return _sanitize_url(normalized)
+            return normalized
+
         exp_ns = safe_namespace_or_none(self.experiment_id)
         return {
             "app_name": self.app_name,
             "environment": self.environment,
+            "log_level": self.log_level,
+            "logs_base_dir": self.logs_base_dir,
+            "openai_api_spec": self.openai_api_spec,
+            "openai_base_url": _maybe_url(self.openai_base_url),
+            "openai_api_key": _maybe_secret(self.openai_api_key),
             "mapelites_experiment_root_commit": self.mapelites_experiment_root_commit,
+            "database_dsn": (
+                _sanitize_sqlalchemy_dsn(self.database_dsn) if mask_secrets else self.database_dsn
+            ),
+            "db_scheme": self.db_scheme,
             "db_host": self.db_host,
             "db_port": self.db_port,
             "db_name": self.db_name,
+            "db_password": _maybe_secret(self.db_password),
             "db_pool_size": self.db_pool_size,
             "db_max_overflow": self.db_max_overflow,
             "db_pool_timeout": self.db_pool_timeout,
             "db_echo": self.db_echo,
+            "tasks_redis_url": _maybe_url(self.tasks_redis_url),
             "tasks_redis_host": self.tasks_redis_host,
             "tasks_redis_port": self.tasks_redis_port,
+            "tasks_redis_db": self.tasks_redis_db,
+            "tasks_redis_password": _maybe_secret(self.tasks_redis_password),
             "tasks_redis_namespace": (
                 f"{DEFAULT_TASKS_REDIS_NAMESPACE_PREFIX}.{exp_ns}" if exp_ns else None
             ),
             "tasks_queue_name": f"{DEFAULT_TASKS_QUEUE_PREFIX}.{exp_ns}" if exp_ns else None,
+            "tasks_worker_max_retries": self.tasks_worker_max_retries,
+            "tasks_worker_time_limit_seconds": self.tasks_worker_time_limit_seconds,
             "experiment_id": str(self.experiment_id) if self.experiment_id else None,
+            "scheduler_repo_root": self.scheduler_repo_root,
+            "scheduler_poll_interval_seconds": self.scheduler_poll_interval_seconds,
             "worker_repo_worktree": self.worker_repo_worktree,
+            "worker_repo_remote_url": _maybe_url(self.worker_repo_remote_url),
             "worker_repo_branch": self.worker_repo_branch,
             "worker_repo_fetch_depth": self.worker_repo_fetch_depth,
+            "worker_repo_enable_lfs": self.worker_repo_enable_lfs,
+            "worker_repo_job_branch_ttl_hours": self.worker_repo_job_branch_ttl_hours,
+            "worker_planning_backend": self.worker_planning_backend,
+            "worker_planning_max_attempts": self.worker_planning_max_attempts,
+            "worker_planning_timeout_seconds": self.worker_planning_timeout_seconds,
+            "worker_coding_backend": self.worker_coding_backend,
+            "worker_coding_max_attempts": self.worker_coding_max_attempts,
+            "worker_coding_timeout_seconds": self.worker_coding_timeout_seconds,
+            "worker_cursor_model": self.worker_cursor_model,
+            "worker_kilocode_mode": self.worker_kilocode_mode,
+            "worker_kilocode_json_output": self.worker_kilocode_json_output,
+            "worker_kilocode_openai_api_spec": self.worker_kilocode_openai_api_spec,
+            "worker_kilocode_openai_base_url": _maybe_url(self.worker_kilocode_openai_base_url),
+            "worker_kilocode_openai_api_key": _maybe_secret(self.worker_kilocode_openai_api_key),
+            "worker_kilocode_openai_model": self.worker_kilocode_openai_model,
+            "worker_evaluator_plugin": self.worker_evaluator_plugin,
+            "worker_evaluator_timeout_seconds": self.worker_evaluator_timeout_seconds,
+            "worker_evaluator_max_metrics": self.worker_evaluator_max_metrics,
+            "worker_evolution_global_goal": self.worker_evolution_global_goal,
+            "mapelites_code_embedding_model": self.mapelites_code_embedding_model,
+            "mapelites_code_embedding_dimensions": self.mapelites_code_embedding_dimensions,
+            "mapelites_dimensionality_target_dims": self.mapelites_dimensionality_target_dims,
+            "mapelites_archive_cells_per_dim": self.mapelites_archive_cells_per_dim,
+            "mapelites_fitness_metric": self.mapelites_fitness_metric,
+            "mapelites_fitness_higher_is_better": self.mapelites_fitness_higher_is_better,
             "scheduler_max_unfinished_jobs": self.scheduler_max_unfinished_jobs,
             "scheduler_dispatch_batch_size": self.scheduler_dispatch_batch_size,
             "scheduler_schedule_batch_size": self.scheduler_schedule_batch_size,
+            "scheduler_ingest_batch_size": self.scheduler_ingest_batch_size,
             "scheduler_max_total_jobs": self.scheduler_max_total_jobs,
+            "scheduler_startup_approve": self.scheduler_startup_approve,
         }
 
 
