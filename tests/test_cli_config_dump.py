@@ -38,6 +38,30 @@ def test_config_dump_json_masks_secrets_by_default(monkeypatch: pytest.MonkeyPat
     assert payload["worker_repo_remote_url"] == "https://example.com/repo.git"
 
 
+def test_config_dump_json_sanitizes_ipv6_urls(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    settings = TestSettings(
+        OPENAI_API_KEY="sk-test-secret",
+        OPENAI_BASE_URL="https://gateway.example.com/v1",
+        DB_PASSWORD="db-secret-password",
+        DB_HOST="db.internal",
+        DB_PORT=5433,
+        DB_NAME="loreley_dev",
+        TASKS_REDIS_PASSWORD="redis-secret",
+        TASKS_REDIS_URL="redis://:redis-secret@[::1]:6380/2",
+        WORKER_KILOCODE_OPENAI_API_KEY="kilo-secret",
+        WORKER_REPO_REMOTE_URL="https://token@[::1]:8443/repo.git",
+    )
+    monkeypatch.setattr("loreley.cli.get_settings", lambda: settings)
+
+    code = main(["config", "dump", "--json"])
+    captured = capsys.readouterr()
+
+    assert code == 0
+    payload = json.loads(captured.out)
+    assert payload["tasks_redis_url"] == "redis://[::1]:6380/2"
+    assert payload["worker_repo_remote_url"] == "https://[::1]:8443/repo.git"
+
+
 def test_config_dump_json_can_disable_secret_masking(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     settings = _make_settings()
     monkeypatch.setattr("loreley.cli.get_settings", lambda: settings)

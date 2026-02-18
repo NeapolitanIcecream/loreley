@@ -31,9 +31,9 @@ def _sanitize_url(raw: str) -> str:
     parsed = urlparse(value)
     if not parsed.scheme:
         return value
-    netloc = parsed.hostname or ""
-    if parsed.port is not None:
-        netloc = f"{netloc}:{parsed.port}"
+    netloc = parsed.netloc
+    if "@" in netloc:
+        netloc = netloc.rsplit("@", 1)[1]
     safe = parsed._replace(netloc=netloc, query="", fragment="")
     return urlunparse(safe)
 
