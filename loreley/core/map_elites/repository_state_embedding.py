@@ -270,8 +270,7 @@ class RepositoryStateEmbedder:
             self.cache.put_many(vectors_for_misses)
             cached.update(vectors_for_misses)
 
-        weighted_vectors: list[np.ndarray] = []
-        weighted_counts: list[float] = []
+        sum_array = np.zeros(0, dtype=np.float64)
         aggregated_count = 0
         skipped_failed = len(repo_files) - len(blob_shas)
         dims = 0
@@ -294,19 +293,16 @@ class RepositoryStateEmbedder:
 
             if dims == 0:
                 dims = int(vector_array.size)
+                sum_array = np.zeros(dims, dtype=np.float64)
             elif int(vector_array.size) != dims:
                 raise ValueError("Embedding dimension mismatch during repo-state aggregation.")
 
-            weighted_vectors.append(vector_array)
-            weighted_counts.append(float(weight))
+            sum_array += vector_array * float(weight)
             aggregated_count += weight
 
-        if aggregated_count <= 0 or not weighted_vectors:
+        if aggregated_count <= 0 or sum_array.size <= 0:
             commit_vector, sum_vector = (), ()
         else:
-            weight_array = np.asarray(weighted_counts, dtype=np.float64)
-            vector_matrix = np.vstack(weighted_vectors)
-            sum_array = vector_matrix.T @ weight_array
             sum_vector = tuple(float(value) for value in sum_array.tolist())
             commit_vector = _divide_vector(sum_vector, aggregated_count)
         stats = RepoStateEmbeddingStats(
