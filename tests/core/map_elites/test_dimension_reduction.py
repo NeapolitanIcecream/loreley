@@ -5,8 +5,8 @@ from typing import Sequence
 import pytest
 
 from loreley.config import Settings
-from loreley.core.map_elites.code_embedding import CommitCodeEmbedding
 from loreley.core.map_elites.dimension_reduction import (
+    CommitCodeEmbedding,
     DimensionReducer,
     FinalEmbedding,
     PCAProjection,
