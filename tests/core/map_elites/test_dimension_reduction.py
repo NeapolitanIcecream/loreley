@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Sequence
 
+import numpy as np
 import pytest
 
 from loreley.config import Settings
@@ -78,6 +79,38 @@ def test_pca_projection_transform_rejects_invalid_rotation_shape() -> None:
 
     with pytest.raises(ValueError, match="must be square"):
         projection.transform((1.0, 2.0))
+
+
+def test_pca_projection_transform_batch_matches_transform() -> None:
+    projection = PCAProjection(
+        feature_count=2,
+        components=((1.0, 0.0), (0.0, 1.0)),
+        mean=(0.0, 0.0),
+        explained_variance=(4.0, 1.0),
+        explained_variance_ratio=(1.0, 1.0),
+        sample_count=10,
+        epoch=0,
+        fitted_at=123.0,
+        whiten=True,
+        rotation=((0.0, 1.0), (-1.0, 0.0)),
+    )
+
+    vectors = np.asarray(
+        [
+            (4.0, 2.0),
+            (0.0, 0.0),
+            (1.0, -1.0),
+        ],
+        dtype=np.float64,
+    )
+    projected = projection.transform_batch(vectors)
+    expected = np.asarray([projection.transform(row) for row in vectors], dtype=np.float64)
+    assert projected == pytest.approx(expected)
+
+    with pytest.raises(ValueError):
+        projection.transform_batch(np.asarray([1.0, 2.0], dtype=np.float64))
+    with pytest.raises(ValueError):
+        projection.transform_batch(np.asarray([[1.0, 2.0, 3.0]], dtype=np.float64))
 
 
 def test_build_history_entry_returns_code_vector(settings: Settings) -> None:

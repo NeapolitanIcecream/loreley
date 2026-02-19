@@ -101,7 +101,7 @@ def seed_after_initial_fit(
     target_dims: int,
     commit_to_island: dict[str, str],
     load_commit_fitnesses: Callable[[Sequence[str], Session | None], Mapping[str, float]],
-    clip_vector: Callable[[Vector, IslandState], np.ndarray],
+    clip_vector: Callable[[Sequence[float] | np.ndarray, IslandState], np.ndarray],
     build_archive: Callable[[], GridArchive],
     add_batch: Callable[..., tuple[np.ndarray, np.ndarray]],
 ) -> None:
@@ -138,6 +138,7 @@ def seed_after_initial_fit(
         except (TypeError, ValueError):
             return float(settings.mapelites_fitness_floor)
 
+    candidate_vectors: list[tuple[float, ...]] = []
     for entry in sorted(candidates, key=_fitness_key, reverse=True):
         commit = str(entry.commit_hash or "").strip()
         if not commit:
@@ -155,20 +156,37 @@ def seed_after_initial_fit(
             skipped += 1
             continue
 
-        try:
-            reduced = pad_or_trim(
-                projection.transform(entry.vector),
-                target_dims=target_dims,
-            )
-        except ValueError:
+        if len(entry.vector) != projection.feature_count:
             skipped += 1
             continue
-
-        measures = clip_vector(reduced, state)
+        candidate_vectors.append(entry.vector)
         candidate_commits.append(commit)
         candidate_fitnesses.append(fitness_value)
-        candidate_measures.append(measures)
-        candidate_timestamps.append(timestamp)
+
+    reduced_matrix = np.asarray([], dtype=np.float64).reshape(0, int(target_dims))
+    if candidate_vectors:
+        try:
+            vector_matrix = np.asarray(candidate_vectors, dtype=np.float64)
+            projected = projection.transform_batch(vector_matrix)
+        except ValueError:
+            skipped += len(candidate_vectors)
+            candidate_commits.clear()
+            candidate_fitnesses.clear()
+            candidate_vectors.clear()
+            projected = np.asarray([], dtype=np.float64).reshape(0, int(projection.dimensions))
+
+        if projected.size:
+            projected_dims = int(projected.shape[1])
+            if projected_dims >= target_dims:
+                reduced_matrix = projected[:, :target_dims]
+            else:
+                reduced_matrix = np.zeros((projected.shape[0], target_dims), dtype=np.float64)
+                reduced_matrix[:, :projected_dims] = projected
+
+    if reduced_matrix.size:
+        candidate_timestamps = [timestamp] * int(reduced_matrix.shape[0])
+        for row in reduced_matrix:
+            candidate_measures.append(clip_vector(row, state))
 
     inserted = _rebuild_archive_from_batch(
         state=state,
@@ -206,7 +224,7 @@ def rebuild_after_refit(
         [str, Sequence[str], IslandState, Session | None],
         Mapping[str, tuple[float, ...]],
     ],
-    clip_vector: Callable[[Vector, IslandState], np.ndarray],
+    clip_vector: Callable[[Sequence[float] | np.ndarray, IslandState], np.ndarray],
     build_archive: Callable[[], GridArchive],
     add_batch: Callable[..., tuple[np.ndarray, np.ndarray]],
 ) -> FinalEmbedding:
@@ -235,6 +253,7 @@ def rebuild_after_refit(
 
     inserted = 0
     missing = 0
+    candidate_vectors: list[tuple[float, ...]] = []
     candidate_commits: list[str] = []
     candidate_fitnesses: list[float] = []
     candidate_measures: list[np.ndarray] = []
@@ -247,15 +266,29 @@ def rebuild_after_refit(
         if not vec:
             missing += 1
             continue
-        reduced = pad_or_trim(
-            aligned.transform(vec),
-            target_dims=target_dims,
-        )
-        measures = clip_vector(reduced, state)
+        if len(vec) != aligned.feature_count:
+            raise ValueError(
+                "Stored commit vector dimensionality mismatch "
+                f"(commit={commit} expected={aligned.feature_count} got={len(vec)})."
+            )
+        candidate_vectors.append(vec)
         candidate_commits.append(commit)
         candidate_fitnesses.append(float(record.fitness))
-        candidate_measures.append(measures)
         candidate_timestamps.append(float(record.timestamp))
+
+    reduced_matrix = np.asarray([], dtype=np.float64).reshape(0, int(target_dims))
+    if candidate_vectors:
+        vector_matrix = np.asarray(candidate_vectors, dtype=np.float64)
+        projected = aligned.transform_batch(vector_matrix)
+        projected_dims = int(projected.shape[1])
+        if projected_dims >= target_dims:
+            reduced_matrix = projected[:, :target_dims]
+        else:
+            reduced_matrix = np.zeros((projected.shape[0], target_dims), dtype=np.float64)
+            reduced_matrix[:, :projected_dims] = projected
+
+    if reduced_matrix.size:
+        candidate_measures.extend(clip_vector(row, state) for row in reduced_matrix)
 
     inserted = _rebuild_archive_from_batch(
         state=state,

@@ -71,7 +71,7 @@ def build_archive(
 
 def clip_vector(
     *,
-    vector: Vector,
+    vector: Sequence[float] | np.ndarray,
     settings: Settings,
     clip_radius: float,
     state: IslandState,

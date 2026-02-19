@@ -737,7 +737,7 @@ class MapElitesManager:
             upper_bounds=upper_bounds,
         )
 
-    def _clip_vector(self, vector: Vector, state: IslandState) -> np.ndarray:
+    def _clip_vector(self, vector: Sequence[float] | np.ndarray, state: IslandState) -> np.ndarray:
         return archive_clip_vector(
             vector=vector,
             settings=self.settings,

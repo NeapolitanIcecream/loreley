@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import math
 import time
 from typing import Sequence
@@ -73,6 +73,73 @@ class PCAProjection:
     # enabled). Computed with orthogonal Procrustes to align successive PCA refits
     # and reduce coordinate jitter. This matrix may include a reflection.
     rotation: tuple[Vector, ...] | None = None
+    _mean_array: np.ndarray | None = field(
+        init=False,
+        default=None,
+        repr=False,
+        compare=False,
+    )
+    _components_matrix: np.ndarray | None = field(
+        init=False,
+        default=None,
+        repr=False,
+        compare=False,
+    )
+    _rotation_matrix: np.ndarray | None = field(
+        init=False,
+        default=None,
+        repr=False,
+        compare=False,
+    )
+    _whiten_scales: np.ndarray | None = field(
+        init=False,
+        default=None,
+        repr=False,
+        compare=False,
+    )
+    _whiten_positive_scales: np.ndarray | None = field(
+        init=False,
+        default=None,
+        repr=False,
+        compare=False,
+    )
+
+    def _ensure_numpy_views(self) -> None:
+        if self._mean_array is not None and self._components_matrix is not None:
+            return
+
+        mean_array = np.asarray(self.mean, dtype=np.float64)
+        components_matrix = np.asarray(self.components, dtype=np.float64)
+        if components_matrix.ndim != 2:
+            components_matrix = components_matrix.reshape(
+                int(self.dimensions),
+                int(self.feature_count),
+            )
+
+        rotation_matrix = None
+        if self.rotation:
+            rotation_matrix = np.asarray(self.rotation, dtype=np.float64)
+
+        whiten_scales = None
+        whiten_positive = None
+        if self.whiten and self.explained_variance:
+            variances = np.asarray(self.explained_variance, dtype=np.float64)
+            dims = int(self.dimensions)
+            if variances.size < dims:
+                variances = np.pad(
+                    variances,
+                    (0, dims - variances.size),
+                    mode="constant",
+                    constant_values=1.0,
+                )
+            whiten_scales = np.sqrt(variances[:dims])
+            whiten_positive = whiten_scales > 0.0
+
+        object.__setattr__(self, "_mean_array", mean_array)
+        object.__setattr__(self, "_components_matrix", components_matrix)
+        object.__setattr__(self, "_rotation_matrix", rotation_matrix)
+        object.__setattr__(self, "_whiten_scales", whiten_scales)
+        object.__setattr__(self, "_whiten_positive_scales", whiten_positive)
 
     @property
     def dimensions(self) -> int:
@@ -85,29 +152,35 @@ class PCAProjection:
                 "PCA projection expects vectors with "
                 f"{self.feature_count} dimensions, received {len(vector)}",
             )
-        vector_array = np.asarray(vector, dtype=np.float64)
-        mean_array = np.asarray(self.mean, dtype=np.float64)
-        components_matrix = np.asarray(self.components, dtype=np.float64)
+        transformed = self.transform_array(vector)
+        return tuple(map(float, transformed))
 
+    def transform_array(self, vector: Sequence[float] | np.ndarray) -> np.ndarray:
+        """Apply stored PCA projection to a single vector and return an ndarray."""
+        if len(vector) != self.feature_count:
+            raise ValueError(
+                "PCA projection expects vectors with "
+                f"{self.feature_count} dimensions, received {len(vector)}",
+            )
+        self._ensure_numpy_views()
+        vector_array = np.asarray(vector, dtype=np.float64).reshape(-1)
+        mean_array = self._mean_array
+        components_matrix = self._components_matrix
+        if mean_array is None or components_matrix is None:  # pragma: no cover
+            raise RuntimeError("PCAProjection numpy caches were not initialised.")
         centered = vector_array - mean_array
         transformed = components_matrix @ centered
-        if self.whiten and self.explained_variance:
-            variances = np.asarray(self.explained_variance, dtype=np.float64)
-            if variances.size < transformed.size:
-                variances = np.pad(
-                    variances,
-                    (0, transformed.size - variances.size),
-                    mode="constant",
-                    constant_values=1.0,
-                )
-            scales = np.sqrt(variances[: transformed.size])
-            positive_scales = scales > 0.0
+
+        scales = self._whiten_scales
+        positive_scales = self._whiten_positive_scales
+        if scales is not None and positive_scales is not None:
             transformed = transformed.copy()
             transformed[positive_scales] = (
                 transformed[positive_scales] / scales[positive_scales]
             )
-        if self.rotation:
-            rotation_matrix = np.asarray(self.rotation, dtype=np.float64)
+
+        rotation_matrix = self._rotation_matrix
+        if rotation_matrix is not None:
             dims = int(transformed.size)
             if rotation_matrix.shape != (dims, dims):
                 raise ValueError(
@@ -115,7 +188,53 @@ class PCAProjection:
                     f"as the projection (dims={dims})."
                 )
             transformed = transformed @ rotation_matrix
-        return tuple(float(value) for value in transformed.tolist())
+        return transformed
+
+    def transform_batch(self, vectors: np.ndarray) -> np.ndarray:
+        """Apply stored PCA projection to a batch of vectors.
+
+        Parameters
+        ----------
+        vectors:
+            A 2D array with shape (n_samples, feature_count).
+        """
+        self._ensure_numpy_views()
+        vector_matrix = np.asarray(vectors, dtype=np.float64)
+        if vector_matrix.ndim != 2:
+            raise ValueError(
+                "PCA projection expects a 2D array with shape (n_samples, feature_count)."
+            )
+        if vector_matrix.shape[1] != self.feature_count:
+            raise ValueError(
+                "PCA projection expects vectors with "
+                f"{self.feature_count} dimensions, received {vector_matrix.shape[1]}",
+            )
+
+        mean_array = self._mean_array
+        components_matrix = self._components_matrix
+        if mean_array is None or components_matrix is None:  # pragma: no cover
+            raise RuntimeError("PCAProjection numpy caches were not initialised.")
+        centered = vector_matrix - mean_array
+        transformed = centered @ components_matrix.T
+
+        scales = self._whiten_scales
+        positive_scales = self._whiten_positive_scales
+        if scales is not None and positive_scales is not None:
+            transformed = transformed.copy()
+            transformed[:, positive_scales] = (
+                transformed[:, positive_scales] / scales[positive_scales]
+            )
+
+        rotation_matrix = self._rotation_matrix
+        if rotation_matrix is not None:
+            dims = int(transformed.shape[1])
+            if rotation_matrix.shape != (dims, dims):
+                raise ValueError(
+                    "PCA rotation matrix must be square with the same dimensionality "
+                    f"as the projection (dims={dims})."
+                )
+            transformed = transformed @ rotation_matrix
+        return transformed
 
     @classmethod
     def from_model(
@@ -183,23 +302,14 @@ def align_pca_projection(
         )
         return projection
 
-    ref_rows: list[list[float]] = []
-    new_rows: list[list[float]] = []
-    for anchor in anchors:
-        try:
-            ref_rows.append(list(reference.transform(anchor)))
-            new_rows.append(list(projection.transform(anchor)))
-        except ValueError:
-            continue
-
-    if not ref_rows or len(ref_rows) != len(new_rows):
+    anchor_rows = [anchor for anchor in anchors if len(anchor) == projection.feature_count]
+    if len(anchor_rows) < 2:
         return projection
-    if len(ref_rows) < 2:
-        return projection
-
-    z_ref = np.asarray(ref_rows, dtype=np.float64)
-    z_new = np.asarray(new_rows, dtype=np.float64)
-    if z_ref.shape[1] != dims or z_new.shape[1] != dims:
+    try:
+        anchor_matrix = np.asarray(anchor_rows, dtype=np.float64)
+        z_ref = reference.transform_batch(anchor_matrix)
+        z_new = projection.transform_batch(anchor_matrix)
+    except ValueError:
         return projection
 
     try:
