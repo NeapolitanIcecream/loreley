@@ -165,6 +165,13 @@ def test_build_history_entry_normalizes_vector_when_enabled(settings: Settings) 
     assert zero_entry.vector == (0.0, 0.0)
 
 
+def test_l2_normalize_rejects_non_1d_vector() -> None:
+    with pytest.raises(ValueError, match="1-D"):
+        DimensionReducer._l2_normalize(
+            ((1.0, 2.0), (3.0, 4.0)),  # type: ignore[arg-type]
+        )
+
+
 def test_history_raises_on_dimension_change(settings: Settings) -> None:
     settings.mapelites_dimensionality_penultimate_normalize = False
     reducer = DimensionReducer(settings=settings)
