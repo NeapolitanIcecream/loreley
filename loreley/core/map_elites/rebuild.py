@@ -64,7 +64,7 @@ def _rebuild_archive_from_batch(
     island_id: str,
     candidate_commits: Sequence[str],
     candidate_fitnesses: Sequence[float],
-    candidate_measures: Sequence[np.ndarray],
+    candidate_measures: Sequence[np.ndarray] | np.ndarray,
     candidate_timestamps: Sequence[float],
     commit_to_island: dict[str, str],
     build_archive: Callable[[], GridArchive],
@@ -125,7 +125,7 @@ def seed_after_initial_fit(
     timestamp = time.time()
     candidate_commits: list[str] = []
     candidate_fitnesses: list[float] = []
-    candidate_measures: list[np.ndarray] = []
+    candidate_measures: np.ndarray = np.asarray([], dtype=np.float64).reshape(0, int(target_dims))
     candidate_timestamps: list[float] = []
 
     def _fitness_key(entry: PcaHistoryEntry) -> float:
@@ -185,8 +185,7 @@ def seed_after_initial_fit(
 
     if reduced_matrix.size:
         candidate_timestamps = [timestamp] * int(reduced_matrix.shape[0])
-        for row in reduced_matrix:
-            candidate_measures.append(clip_vector(row, state))
+        candidate_measures = clip_vector(reduced_matrix, state)
 
     inserted = _rebuild_archive_from_batch(
         state=state,
@@ -256,7 +255,7 @@ def rebuild_after_refit(
     candidate_vectors: list[tuple[float, ...]] = []
     candidate_commits: list[str] = []
     candidate_fitnesses: list[float] = []
-    candidate_measures: list[np.ndarray] = []
+    candidate_measures: np.ndarray = np.asarray([], dtype=np.float64).reshape(0, int(target_dims))
     candidate_timestamps: list[float] = []
     for record in sorted(previous_records, key=lambda item: float(item.fitness), reverse=True):
         commit = str(record.commit_hash or "").strip()
@@ -288,7 +287,7 @@ def rebuild_after_refit(
             reduced_matrix[:, :projected_dims] = projected
 
     if reduced_matrix.size:
-        candidate_measures.extend(clip_vector(row, state) for row in reduced_matrix)
+        candidate_measures = clip_vector(reduced_matrix, state)
 
     inserted = _rebuild_archive_from_batch(
         state=state,

@@ -185,7 +185,7 @@ def add_batch(
     island_id: str,
     commit_hashes: Sequence[str],
     objectives: Sequence[float],
-    measures: Sequence[np.ndarray],
+    measures: Sequence[np.ndarray] | np.ndarray,
     timestamps: Sequence[float],
     commit_to_island: dict[str, str],
 ) -> tuple[np.ndarray, np.ndarray]:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from typing import Iterator, Sequence
 
 from sqlalchemy import select
@@ -13,6 +12,7 @@ from loreley.db.base import session_scope
 from loreley.db.models import CommitCard, MapElitesPcaHistory, MapElitesRepoStateAggregate, Metric
 
 from .types import IslandState
+from .vector_math import mean_and_maybe_l2_normalize_from_sum
 
 __all__ = [
     "_IN_QUERY_BATCH_SIZE",
@@ -93,12 +93,11 @@ def load_commit_vectors(
                 file_count = int(row.file_count or 0)
                 if file_count <= 0:
                     continue
-                raw = [float(v) / float(file_count) for v in (row.sum_vector or [])]
-                vec = tuple(raw)
-                if normalize and vec:
-                    magnitude = math.sqrt(sum(value * value for value in vec))
-                    if magnitude > 0.0:
-                        vec = tuple(value / magnitude for value in vec)
+                vec = mean_and_maybe_l2_normalize_from_sum(
+                    row.sum_vector or (),
+                    file_count,
+                    normalize=normalize,
+                )
                 if vec:
                     vectors[commit] = vec
 

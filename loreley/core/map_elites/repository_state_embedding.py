@@ -32,6 +32,11 @@ from .code_embedding import CommitCodeEmbedding, embed_chunked_files
 from .file_embedding_cache import FileEmbeddingCache, build_file_embedding_cache
 from .preprocess import CodePreprocessor, PreprocessedFile
 from .repository_files import RepositoryFile, build_pinned_ignore_spec, is_ignored_path, list_repository_files
+from .vector_math import (
+    apply_replacement_delta_in_place,
+    accumulate_in_place,
+    divide_vector,
+)
 
 log = logger.bind(module="map_elites.repository_state_embedding")
 
@@ -195,7 +200,10 @@ class RepositoryStateEmbedder:
         commit_hash: str,
         aggregate: MapElitesRepoStateAggregate,
     ) -> tuple[CommitCodeEmbedding | None, RepoStateEmbeddingStats]:
-        vector = _divide_vector(tuple(float(v) for v in aggregate.sum_vector), int(aggregate.file_count))
+        vector = divide_vector(
+            aggregate.sum_vector or (),
+            float(int(aggregate.file_count or 0)),
+        )
         stats = RepoStateEmbeddingStats(
             commit_hash=commit_hash,
             eligible_files=int(aggregate.file_count),
@@ -304,7 +312,7 @@ class RepositoryStateEmbedder:
             commit_vector, sum_vector = (), ()
         else:
             sum_vector = tuple(float(value) for value in sum_array.tolist())
-            commit_vector = _divide_vector(sum_vector, aggregated_count)
+            commit_vector = tuple((sum_array / float(aggregated_count)).tolist())
         stats = RepoStateEmbeddingStats(
             commit_hash=commit_hash,
             eligible_files=len(repo_files),
@@ -541,8 +549,12 @@ class RepositoryStateEmbedder:
 
         pinned_ignore = str(getattr(self.settings, "mapelites_repo_state_ignore_text", "") or "").strip()
 
-        raw_sum = tuple(float(v) for v in (parent_agg.sum_vector or ()))
-        dims = len(raw_sum)
+        sum_vec = np.asarray(parent_agg.sum_vector or (), dtype=np.float64)
+        if sum_vec.ndim != 1:
+            raise RepoStateEmbeddingError(
+                f"Parent aggregate has an invalid vector shape (commit={parent_hash})."
+            )
+        dims = int(sum_vec.size)
         if dims <= 0:
             raise RepoStateEmbeddingError(
                 f"Parent aggregate has no vector data (commit={parent_hash})."
@@ -553,7 +565,6 @@ class RepositoryStateEmbedder:
                 f"expected {getattr(self.cache, 'requested_dimensions', 0)} got {dims} "
                 f"(commit={parent_hash})."
             )
-        sum_vec: list[float] = list(raw_sum)
         file_count = int(parent_agg.file_count)
 
         repo_prefix = _resolve_git_prefix(repo, repo_root)
@@ -581,8 +592,8 @@ class RepositoryStateEmbedder:
         diffs = _parse_diff_tree_raw_z(raw)
         if not diffs:
             # No changes relative to parent: derive directly from parent aggregate.
-            immutable_sum = tuple(sum_vec)
-            vector = _divide_vector(immutable_sum, file_count)
+            immutable_sum = tuple(float(v) for v in sum_vec.tolist())
+            vector = tuple((sum_vec / float(file_count)).tolist())
             self._persist_aggregate(
                 commit_hash=commit_hash,
                 repo_root=repo_root,
@@ -704,11 +715,11 @@ class RepositoryStateEmbedder:
                     continue
                 _vector_apply_replacement_delta_in_place(sum_vec, new_meta.vector, old_meta.vector)
 
-        if file_count <= 0 or not sum_vec:
+        if file_count <= 0 or sum_vec.size <= 0:
             return None
 
-        immutable_sum = tuple(sum_vec)
-        vector = _divide_vector(immutable_sum, file_count)
+        immutable_sum = tuple(float(v) for v in sum_vec.tolist())
+        vector = tuple((sum_vec / float(file_count)).tolist())
         if not vector:
             return None
 
@@ -850,7 +861,7 @@ def bootstrap_repository_state_aggregate(
 def _divide_vector(vector: Vector, count: int) -> Vector:
     if not vector or count <= 0:
         return ()
-    return tuple(float(v) / float(count) for v in vector)
+    return divide_vector(vector, float(count))
 
 
 @dataclass(frozen=True, slots=True)
@@ -952,7 +963,15 @@ def _blob_size_bytes(repo: Repo, blob_sha: str) -> int | None:
         return None
 
 
-def _vector_accumulate_in_place(target: list[float], delta: Vector, *, subtract: bool = False) -> None:
+def _vector_accumulate_in_place(
+    target: list[float] | np.ndarray,
+    delta: Vector | np.ndarray,
+    *,
+    subtract: bool = False,
+) -> None:
+    if isinstance(target, np.ndarray):
+        accumulate_in_place(target, delta, subtract=subtract)
+        return
     if len(target) != len(delta):
         raise ValueError("Embedding dimension mismatch during incremental aggregation.")
     if subtract:
@@ -963,7 +982,14 @@ def _vector_accumulate_in_place(target: list[float], delta: Vector, *, subtract:
         target[idx] += float(value)
 
 
-def _vector_apply_replacement_delta_in_place(target: list[float], new: Vector, old: Vector) -> None:
+def _vector_apply_replacement_delta_in_place(
+    target: list[float] | np.ndarray,
+    new: Vector | np.ndarray,
+    old: Vector | np.ndarray,
+) -> None:
+    if isinstance(target, np.ndarray):
+        apply_replacement_delta_in_place(target, new, old)
+        return
     if len(new) != len(old):
         raise ValueError("Embedding dimension mismatch during incremental aggregation.")
     if len(target) != len(new):

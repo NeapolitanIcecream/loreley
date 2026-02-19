@@ -532,7 +532,7 @@ class MapElitesManager:
         island_id: str,
         commit_hashes: Sequence[str],
         objectives: Sequence[float],
-        measures: Sequence[np.ndarray],
+        measures: Sequence[np.ndarray] | np.ndarray,
         timestamps: Sequence[float],
         commit_to_island: dict[str, str] | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:

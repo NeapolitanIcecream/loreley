@@ -13,6 +13,7 @@ from sklearn.decomposition import PCA
 
 from loreley.config import Settings, get_settings
 from .code_embedding import CommitCodeEmbedding
+from .vector_math import l2_normalize as l2_normalize_vector
 
 __all__ = [
     "PcaHistoryEntry",
@@ -578,13 +579,7 @@ class DimensionReducer:
 
     @staticmethod
     def _l2_normalize(vector: Vector) -> Vector:
-        vector_array = np.asarray(vector, dtype=np.float64)
-        if vector_array.ndim != 1:
-            raise ValueError("L2 normalization expects a 1-D vector.")
-        magnitude = float(np.linalg.norm(vector_array))
-        if magnitude == 0.0:
-            return vector
-        return tuple((vector_array / magnitude).tolist())
+        return l2_normalize_vector(vector)
 
 
 def reduce_commit_embeddings(
