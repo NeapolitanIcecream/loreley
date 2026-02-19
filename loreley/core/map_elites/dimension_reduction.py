@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import dataclass, field, replace
-import math
 import time
 from typing import Sequence
 
@@ -579,10 +578,11 @@ class DimensionReducer:
 
     @staticmethod
     def _l2_normalize(vector: Vector) -> Vector:
-        magnitude = math.sqrt(sum(value * value for value in vector))
+        vector_array = np.asarray(vector, dtype=np.float64)
+        magnitude = float(np.linalg.norm(vector_array))
         if magnitude == 0.0:
             return vector
-        return tuple(value / magnitude for value in vector)
+        return tuple((vector_array / magnitude).tolist())
 
 
 def reduce_commit_embeddings(

@@ -137,6 +137,34 @@ def test_build_history_entry_returns_code_vector(settings: Settings) -> None:
     assert empty is None
 
 
+def test_build_history_entry_normalizes_vector_when_enabled(settings: Settings) -> None:
+    settings.mapelites_dimensionality_penultimate_normalize = True
+    reducer = DimensionReducer(settings=settings)
+
+    embedding = CommitCodeEmbedding(
+        files=(),
+        vector=(3.0, 4.0),
+        model="code-model",
+        dimensions=2,
+    )
+    entry = reducer.build_history_entry(commit_hash="norm", code_embedding=embedding)
+    assert entry is not None
+    assert entry.vector == pytest.approx((0.6, 0.8))
+
+    zero_embedding = CommitCodeEmbedding(
+        files=(),
+        vector=(0.0, 0.0),
+        model="code-model",
+        dimensions=2,
+    )
+    zero_entry = reducer.build_history_entry(
+        commit_hash="zero",
+        code_embedding=zero_embedding,
+    )
+    assert zero_entry is not None
+    assert zero_entry.vector == (0.0, 0.0)
+
+
 def test_history_raises_on_dimension_change(settings: Settings) -> None:
     settings.mapelites_dimensionality_penultimate_normalize = False
     reducer = DimensionReducer(settings=settings)
