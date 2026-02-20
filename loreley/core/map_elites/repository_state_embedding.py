@@ -312,7 +312,7 @@ class RepositoryStateEmbedder:
             commit_vector, sum_vector = (), ()
         else:
             sum_vector = tuple(float(value) for value in sum_array.tolist())
-            commit_vector = tuple((sum_array / float(aggregated_count)).tolist())
+            commit_vector = divide_vector(sum_array, float(aggregated_count))
         stats = RepoStateEmbeddingStats(
             commit_hash=commit_hash,
             eligible_files=len(repo_files),
@@ -593,7 +593,7 @@ class RepositoryStateEmbedder:
         if not diffs:
             # No changes relative to parent: derive directly from parent aggregate.
             immutable_sum = tuple(float(v) for v in sum_vec.tolist())
-            vector = tuple((sum_vec / float(file_count)).tolist())
+            vector = divide_vector(sum_vec, float(file_count))
             self._persist_aggregate(
                 commit_hash=commit_hash,
                 repo_root=repo_root,
@@ -701,25 +701,25 @@ class RepositoryStateEmbedder:
             if old_included and not new_included:
                 if old_meta is None:  # pragma: no cover - type narrowing guard
                     continue
-                _vector_accumulate_in_place(sum_vec, old_meta.vector, subtract=True)
+                accumulate_in_place(sum_vec, old_meta.vector, subtract=True)
                 file_count -= 1
                 continue
             if not old_included and new_included:
                 if new_meta is None:  # pragma: no cover - type narrowing guard
                     continue
-                _vector_accumulate_in_place(sum_vec, new_meta.vector)
+                accumulate_in_place(sum_vec, new_meta.vector)
                 file_count += 1
                 continue
             if old_included and new_included:
                 if old_meta is None or new_meta is None:  # pragma: no cover - type narrowing guard
                     continue
-                _vector_apply_replacement_delta_in_place(sum_vec, new_meta.vector, old_meta.vector)
+                apply_replacement_delta_in_place(sum_vec, new_meta.vector, old_meta.vector)
 
         if file_count <= 0 or sum_vec.size <= 0:
             return None
 
         immutable_sum = tuple(float(v) for v in sum_vec.tolist())
-        vector = tuple((sum_vec / float(file_count)).tolist())
+        vector = divide_vector(sum_vec, float(file_count))
         if not vector:
             return None
 
@@ -858,12 +858,6 @@ def bootstrap_repository_state_aggregate(
     )
 
 
-def _divide_vector(vector: Vector, count: int) -> Vector:
-    if not vector or count <= 0:
-        return ()
-    return divide_vector(vector, float(count))
-
-
 @dataclass(frozen=True, slots=True)
 class _DiffEntry:
     status: str
@@ -961,41 +955,6 @@ def _blob_size_bytes(repo: Repo, blob_sha: str) -> int | None:
         return int(size_str.strip())
     except Exception:
         return None
-
-
-def _vector_accumulate_in_place(
-    target: list[float] | np.ndarray,
-    delta: Vector | np.ndarray,
-    *,
-    subtract: bool = False,
-) -> None:
-    if isinstance(target, np.ndarray):
-        accumulate_in_place(target, delta, subtract=subtract)
-        return
-    if len(target) != len(delta):
-        raise ValueError("Embedding dimension mismatch during incremental aggregation.")
-    if subtract:
-        for idx, value in enumerate(delta):
-            target[idx] -= float(value)
-        return
-    for idx, value in enumerate(delta):
-        target[idx] += float(value)
-
-
-def _vector_apply_replacement_delta_in_place(
-    target: list[float] | np.ndarray,
-    new: Vector | np.ndarray,
-    old: Vector | np.ndarray,
-) -> None:
-    if isinstance(target, np.ndarray):
-        apply_replacement_delta_in_place(target, new, old)
-        return
-    if len(new) != len(old):
-        raise ValueError("Embedding dimension mismatch during incremental aggregation.")
-    if len(target) != len(new):
-        raise ValueError("Embedding dimension mismatch during incremental aggregation.")
-    for idx, (new_value, old_value) in enumerate(zip(new, old)):
-        target[idx] += float(new_value) - float(old_value)
 
 
 def _batched(items: Sequence[str], batch_size: int) -> Iterable[Sequence[str]]:
