@@ -112,7 +112,13 @@ def apply_replacement_delta_in_place(
     new: Sequence[float] | np.ndarray,
     old: Sequence[float] | np.ndarray,
 ) -> None:
-    """Apply replacement delta (target += new - old) in place."""
+    """Apply replacement delta (target += new - old) in place.
+
+    This function is optimized for the common case where `new` and `old` do not share
+    memory with `target`. When NumPy reports potential aliasing, it falls back to a
+    safe (but allocating) implementation to preserve the semantics of
+    `target += new - old`.
+    """
 
     if not isinstance(target, np.ndarray):
         raise TypeError("Target must be a NumPy array.")
@@ -125,6 +131,13 @@ def apply_replacement_delta_in_place(
         raise ValueError("Embedding dimension mismatch during incremental aggregation.")
 
     # Avoid allocating an intermediate (new-old) array on hot paths.
+    if (isinstance(new, np.ndarray) and np.may_share_memory(target, new_array)) or (
+        isinstance(old, np.ndarray) and np.may_share_memory(target, old_array)
+    ):
+        # Preserve semantics when operands may alias `target` (e.g. old is a view of target).
+        target += new_array - old_array
+        return
+
     target += new_array
     target -= old_array
 
