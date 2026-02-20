@@ -124,5 +124,7 @@ def apply_replacement_delta_in_place(
     if new_array.shape != old_array.shape or new_array.shape != target.shape:
         raise ValueError("Embedding dimension mismatch during incremental aggregation.")
 
-    target += new_array - old_array
+    # Avoid allocating an intermediate (new-old) array on hot paths.
+    target += new_array
+    target -= old_array
 
