@@ -67,11 +67,45 @@ def render() -> None:
         except Exception:
             best_fitness = None
 
+    selected_stats: dict[str, Any] | None = None
+    if island_id and isinstance(islands, list):
+        for entry in islands:
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("island_id") or "") == str(island_id):
+                selected_stats = entry
+                break
+    coverage = selected_stats.get("coverage") if selected_stats else None
+    qd_score = selected_stats.get("qd_score") if selected_stats else None
+    norm_qd_score = selected_stats.get("norm_qd_score") if selected_stats else None
+    occupied = selected_stats.get("occupied") if selected_stats else None
+    cells = selected_stats.get("cells") if selected_stats else None
+
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Jobs (loaded)", f"{total_jobs}")
     c2.metric("Succeeded", f"{succeeded}")
     c3.metric("Failed", f"{failed}")
     c4.metric("Best fitness", f"{best_fitness:.6f}" if isinstance(best_fitness, (int, float)) else "n/a")
+
+    c5, c6, c7, c8 = st.columns(4)
+    c5.metric(
+        "Coverage",
+        f"{float(coverage) * 100:.2f}%" if isinstance(coverage, (int, float)) else "n/a",
+    )
+    c6.metric(
+        "Norm QD score",
+        f"{float(norm_qd_score):.6f}" if isinstance(norm_qd_score, (int, float)) else "n/a",
+    )
+    c7.metric(
+        "QD score",
+        f"{float(qd_score):.6f}" if isinstance(qd_score, (int, float)) else "n/a",
+    )
+    c8.metric(
+        "Occupied cells",
+        f"{int(occupied)}/{int(cells)}"
+        if isinstance(occupied, (int, float)) and isinstance(cells, (int, float))
+        else "n/a",
+    )
 
     # Charts
     try:

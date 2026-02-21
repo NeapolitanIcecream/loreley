@@ -54,6 +54,8 @@ def test_manager_lazy_loads_persisted_snapshot_for_stats_and_records(settings: S
     stats = manager.describe_island("main")
     assert stats["cells"] == 16
     assert stats["occupied"] == 1
+    assert stats["coverage"] == pytest.approx(1 / 16)
+    assert stats["norm_qd_score"] == pytest.approx(float(stats["qd_score"]) / float(stats["cells"]))
     assert stats["best_fitness"] == pytest.approx(1.23)
 
     records = manager.get_records("main")

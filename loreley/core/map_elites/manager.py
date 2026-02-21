@@ -494,14 +494,25 @@ class MapElitesManager:
         state = self._ensure_island(effective_island)
         archive = state.archive
         stats = archive.stats
+        occupied = int(getattr(stats, "num_elites", 0))
+        cells = int(np.prod(getattr(archive, "dims", self._grid_shape)))
+        qd_score = float(getattr(stats, "qd_score", 0.0) or 0.0)
+        coverage_value = getattr(stats, "coverage", None)
+        if coverage_value is None:
+            coverage_value = (occupied / cells) if cells else 0.0
+        norm_qd_value = getattr(stats, "norm_qd_score", None)
+        if norm_qd_value is None:
+            norm_qd_value = (qd_score / cells) if cells else 0.0
         best = getattr(stats, "objective_max", None)
         if best is None:
             best = getattr(stats, "obj_max", None)
         return {
             "island_id": effective_island,
-            "occupied": int(getattr(stats, "num_elites", 0)),
-            "cells": int(np.prod(getattr(archive, "dims", self._grid_shape))),
-            "qd_score": float(getattr(stats, "qd_score", 0.0)),
+            "occupied": occupied,
+            "cells": cells,
+            "coverage": float(coverage_value or 0.0),
+            "qd_score": qd_score,
+            "norm_qd_score": float(norm_qd_value or 0.0),
             "best_fitness": float(best or 0.0),
         }
 

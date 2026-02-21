@@ -14,7 +14,9 @@ class IslandStatsOut(OrmOutModel):
     island_id: str
     occupied: int
     cells: int
+    coverage: float
     qd_score: float
+    norm_qd_score: float
     best_fitness: float
 
 

@@ -38,4 +38,4 @@ High-level manager that runs the MAP-Elites pipeline on git commits and maintain
 - **`get_records(island_id=None)`**: returns all current `MapElitesRecord` entries for an island, rebuilding them from the underlying archive.
 - **`sample_records(island_id=None, count=1)`**: randomly samples up to `count` elites from an island's archive for downstream planning or analysis.
 - **`clear_island(island_id=None)`**: clears an island's archive and associated PCA history/projection state, removing all stored elites and mappings for that island.
-- **`describe_island(island_id=None)`**: returns a small dict of observability stats for an island (ID, occupied cell count, total cells, QD score, and best fitness).
+- **`describe_island(island_id=None)`**: returns a small dict of observability stats for an island (ID, occupied cell count, total cells, coverage, QD score, normalized QD score, and best fitness).

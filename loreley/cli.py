@@ -35,6 +35,8 @@ console = Console()
 app = typer.Typer(add_completion=False, help="Loreley unified CLI.")
 config_app = typer.Typer(help="Inspect effective Loreley configuration.")
 app.add_typer(config_app, name="config")
+archive_app = typer.Typer(help="Inspect MAP-Elites archives.")
+app.add_typer(archive_app, name="archive")
 
 
 class DoctorRole(str, Enum):
@@ -349,6 +351,63 @@ def reset_db(
     _configure_logging_or_exit(settings=settings, role="db", override_level=_get_log_level(ctx))
     code = reset_database(console=console, yes=bool(yes))
     raise typer.Exit(code=int(code))
+
+
+@archive_app.command("stats")
+def archive_stats(
+    ctx: typer.Context,
+    island_id: str | None = typer.Option(
+        None,
+        "--island-id",
+        help="Island ID; empty means the default island.",
+        show_default=False,
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Print stats as JSON.",
+        show_default=True,
+    ),
+) -> None:
+    """Print MAP-Elites archive stats for an island."""
+    settings = _load_settings_or_exit()
+    _configure_logging_or_exit(settings=settings, role="archive", override_level=_get_log_level(ctx))
+    effective_island = (island_id or "").strip() or (settings.mapelites_default_island_id or "main")
+
+    try:
+        from loreley.core.map_elites.map_elites import MapElitesManager
+
+        manager = MapElitesManager(settings=settings)
+        stats = dict(manager.describe_island(effective_island))
+    except Exception as exc:  # pragma: no cover - defensive
+        console.print(
+            "[bold red]Failed to load archive stats[/] "
+            f"island={effective_island} reason={exc}",
+        )
+        raise typer.Exit(code=1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(stats, ensure_ascii=False, indent=2, sort_keys=True))
+        return
+
+    from rich.table import Table
+
+    table = Table(title="MAP-Elites archive stats")
+    table.add_column("field", style="bold")
+    table.add_column("value")
+    for key in (
+        "island_id",
+        "occupied",
+        "cells",
+        "coverage",
+        "qd_score",
+        "norm_qd_score",
+        "best_fitness",
+    ):
+        if key not in stats:
+            continue
+        table.add_row(str(key), str(stats.get(key)))
+    console.print(table)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
