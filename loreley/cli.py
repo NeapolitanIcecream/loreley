@@ -353,6 +353,203 @@ def reset_db(
     raise typer.Exit(code=int(code))
 
 
+@app.command()
+def status(
+    ctx: typer.Context,
+    island_id: str | None = typer.Option(
+        None,
+        "--island-id",
+        help="Island ID; empty means the default island.",
+        show_default=False,
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Print status as JSON.",
+        show_default=True,
+    ),
+) -> None:
+    """Print a high-level operational status summary."""
+    settings = _load_settings_or_exit()
+    _configure_logging_or_exit(settings=settings, role="status", override_level=_get_log_level(ctx))
+    effective_island = (island_id or "").strip() or (settings.mapelites_default_island_id or "main")
+
+    def _short_hash(value: str | None) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return "n/a"
+        return raw[:12] if len(raw) > 12 else raw
+
+    try:
+        from sqlalchemy import func, select
+
+        from loreley.db.base import session_scope
+        from loreley.db.models import CommitCard, EvolutionJob, InstanceMetadata, JobStatus, Metric
+
+        with session_scope() as session:
+            instance = session.get(InstanceMetadata, 1)
+            if instance is None:
+                from loreley.db.instance import INIT_DB_HINT
+
+                console.print(f"[bold red]Instance metadata is missing[/] {INIT_DB_HINT}")
+                raise typer.Exit(code=1)
+
+            unfinished_statuses = (
+                JobStatus.PENDING,
+                JobStatus.QUEUED,
+                JobStatus.RUNNING,
+            )
+            stmt_unfinished = select(func.count(EvolutionJob.id)).where(
+                EvolutionJob.status.in_(unfinished_statuses),
+            )
+            unfinished_jobs = int(session.execute(stmt_unfinished).scalar_one())
+
+            status_norm = func.lower(func.trim(func.coalesce(EvolutionJob.ingestion_status, "")))
+            commit_norm = func.trim(func.coalesce(EvolutionJob.result_commit_hash, ""))
+            stmt_pending_ingest = (
+                select(func.count(EvolutionJob.id))
+                .where(EvolutionJob.status == JobStatus.SUCCEEDED)
+                .where(status_norm.notin_(("succeeded", "skipped")))
+                .where(commit_norm != "")
+            )
+            pending_ingestion_jobs = int(session.execute(stmt_pending_ingest).scalar_one())
+
+            best_commit: dict[str, object] | None = None
+            metric_name = str(settings.mapelites_fitness_metric or "").strip()
+            if metric_name:
+                order_column = (
+                    Metric.value.desc()
+                    if bool(settings.mapelites_fitness_higher_is_better)
+                    else Metric.value.asc()
+                )
+                conditions = [Metric.name == metric_name]
+                root_commit = str(getattr(instance, "root_commit_hash", "") or "").strip()
+                if root_commit:
+                    conditions.append(CommitCard.commit_hash != root_commit)
+                stmt_best = (
+                    select(
+                        CommitCard.commit_hash,
+                        CommitCard.subject,
+                        CommitCard.island_id,
+                        Metric.value,
+                        CommitCard.created_at,
+                    )
+                    .join(Metric, Metric.commit_card_id == CommitCard.id)
+                    .where(*conditions)
+                    .order_by(order_column)
+                    .limit(1)
+                )
+                row = session.execute(stmt_best).first()
+                if row:
+                    commit_hash, subject, best_island, fitness_value, created_at = row
+                    best_commit = {
+                        "commit_hash": str(commit_hash),
+                        "subject": str(subject),
+                        "island_id": str(best_island) if best_island is not None else None,
+                        "metric": metric_name,
+                        "fitness": float(fitness_value) if fitness_value is not None else None,
+                        "created_at": created_at.isoformat() if created_at is not None else None,
+                    }
+
+            instance_payload: dict[str, object] = {
+                "experiment_id_raw": str(getattr(instance, "experiment_id_raw", "") or ""),
+                "experiment_uuid": str(getattr(instance, "experiment_uuid", "") or ""),
+                "root_commit_hash": str(getattr(instance, "root_commit_hash", "") or ""),
+                "repository_slug": getattr(instance, "repository_slug", None),
+                "repository_canonical_origin": getattr(instance, "repository_canonical_origin", None),
+            }
+            jobs_payload: dict[str, int] = {
+                "unfinished": unfinished_jobs,
+                "pending_ingestion": pending_ingestion_jobs,
+            }
+    except typer.Exit:
+        raise
+    except Exception as exc:  # pragma: no cover - defensive
+        console.print(f"[bold red]Failed to load status[/] reason={exc}")
+        raise typer.Exit(code=1) from exc
+
+    try:
+        from loreley.core.map_elites.map_elites import MapElitesManager
+
+        manager = MapElitesManager(settings=settings)
+        archive_stats = dict(manager.describe_island(effective_island))
+    except Exception as exc:  # pragma: no cover - defensive
+        console.print(
+            "[bold red]Failed to load archive stats[/] "
+            f"island={effective_island} reason={exc}",
+        )
+        raise typer.Exit(code=1) from exc
+
+    payload: dict[str, object] = {
+        "instance": instance_payload,
+        "jobs": jobs_payload,
+        "archive": archive_stats,
+        "best_commit": best_commit,
+    }
+
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return
+
+    from rich.table import Table
+
+    table = Table(title="Loreley status")
+    table.add_column("field", style="bold")
+    table.add_column("value")
+
+    table.add_row("experiment_id", str(instance_payload.get("experiment_id_raw") or "n/a"))
+    table.add_row("root_commit", _short_hash(str(instance_payload.get("root_commit_hash") or "")))
+    repo_slug = instance_payload.get("repository_slug")
+    if repo_slug:
+        table.add_row("repository", str(repo_slug))
+    origin = instance_payload.get("repository_canonical_origin")
+    if origin:
+        table.add_row("origin", str(origin))
+
+    table.add_section()
+    table.add_row("unfinished_jobs", str(unfinished_jobs))
+    table.add_row("pending_ingestion", str(pending_ingestion_jobs))
+
+    table.add_section()
+    table.add_row("island_id", str(archive_stats.get("island_id") or effective_island))
+    occupied = archive_stats.get("occupied")
+    cells = archive_stats.get("cells")
+    if isinstance(occupied, (int, float)) and isinstance(cells, (int, float)) and int(cells) > 0:
+        table.add_row("occupied", f"{int(occupied)}/{int(cells)}")
+    else:
+        table.add_row("occupied", "n/a")
+    coverage = archive_stats.get("coverage")
+    if isinstance(coverage, (int, float)):
+        table.add_row("coverage", f"{float(coverage) * 100.0:.2f}%")
+    else:
+        table.add_row("coverage", "n/a")
+    qd_score = archive_stats.get("qd_score")
+    if isinstance(qd_score, (int, float)):
+        table.add_row("qd_score", f"{float(qd_score):.6f}")
+    else:
+        table.add_row("qd_score", "n/a")
+
+    table.add_section()
+    if best_commit:
+        table.add_row("best_commit", _short_hash(str(best_commit.get("commit_hash") or "")))
+        table.add_row("best_metric", str(best_commit.get("metric") or "n/a"))
+        fitness = best_commit.get("fitness")
+        if isinstance(fitness, (int, float)):
+            table.add_row("best_fitness", f"{float(fitness):.6f}")
+        else:
+            table.add_row("best_fitness", "n/a")
+        best_island = best_commit.get("island_id")
+        if best_island:
+            table.add_row("best_island", str(best_island))
+        subject = best_commit.get("subject")
+        if subject:
+            table.add_row("best_subject", str(subject))
+    else:
+        table.add_row("best_commit", "n/a")
+
+    console.print(table)
+
+
 @archive_app.command("stats")
 def archive_stats(
     ctx: typer.Context,
