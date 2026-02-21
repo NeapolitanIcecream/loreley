@@ -212,7 +212,7 @@ class MapElitesIngestion:
                 .where(
                     EvolutionJob.status == JobStatus.SUCCEEDED,
                 )
-                .where(status_norm.notin_(("succeeded", "skipped")))
+                .where(status_norm.not_in(("succeeded", "skipped")))
                 .where(commit_norm != "")
                 .order_by(failed_last.asc(), EvolutionJob.completed_at.asc())
                 .limit(batch_limit)

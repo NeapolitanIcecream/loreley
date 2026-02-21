@@ -71,6 +71,28 @@ def _configure_logging_or_exit(*, settings: Settings, role: str, override_level:
         raise typer.Exit(code=1) from exc
 
 
+def _resolve_effective_island(*, settings: Settings, island_id: str | None) -> str:
+    raw = (island_id or "").strip()
+    if raw:
+        return raw
+    default_island = str(settings.mapelites_default_island_id or "").strip()
+    return default_island or "main"
+
+
+def _load_archive_stats_or_exit(*, settings: Settings, island_id: str) -> dict[str, object]:
+    try:
+        from loreley.core.map_elites.map_elites import MapElitesManager
+
+        manager = MapElitesManager(settings=settings)
+        return dict(manager.describe_island(island_id))
+    except Exception as exc:  # pragma: no cover - defensive
+        console.print(
+            "[bold red]Failed to load archive stats[/] "
+            f"island={island_id} reason={exc}",
+        )
+        raise typer.Exit(code=1) from exc
+
+
 def _run_doctor(
     *,
     settings: Settings,
@@ -372,7 +394,7 @@ def status(
     """Print a high-level operational status summary."""
     settings = _load_settings_or_exit()
     _configure_logging_or_exit(settings=settings, role="status", override_level=_get_log_level(ctx))
-    effective_island = (island_id or "").strip() or (settings.mapelites_default_island_id or "main")
+    effective_island = _resolve_effective_island(settings=settings, island_id=island_id)
 
     def _short_hash(value: str | None) -> str:
         raw = str(value or "").strip()
@@ -409,7 +431,7 @@ def status(
             stmt_pending_ingest = (
                 select(func.count(EvolutionJob.id))
                 .where(EvolutionJob.status == JobStatus.SUCCEEDED)
-                .where(status_norm.notin_(("succeeded", "skipped")))
+                .where(status_norm.not_in(("succeeded", "skipped")))
                 .where(commit_norm != "")
             )
             pending_ingestion_jobs = int(session.execute(stmt_pending_ingest).scalar_one())
@@ -468,17 +490,7 @@ def status(
         console.print(f"[bold red]Failed to load status[/] reason={exc}")
         raise typer.Exit(code=1) from exc
 
-    try:
-        from loreley.core.map_elites.map_elites import MapElitesManager
-
-        manager = MapElitesManager(settings=settings)
-        archive_stats = dict(manager.describe_island(effective_island))
-    except Exception as exc:  # pragma: no cover - defensive
-        console.print(
-            "[bold red]Failed to load archive stats[/] "
-            f"island={effective_island} reason={exc}",
-        )
-        raise typer.Exit(code=1) from exc
+    archive_stats = _load_archive_stats_or_exit(settings=settings, island_id=effective_island)
 
     payload: dict[str, object] = {
         "instance": instance_payload,
@@ -528,6 +540,11 @@ def status(
         table.add_row("qd_score", f"{float(qd_score):.6f}")
     else:
         table.add_row("qd_score", "n/a")
+    norm_qd_score = archive_stats.get("norm_qd_score")
+    if isinstance(norm_qd_score, (int, float)):
+        table.add_row("norm_qd_score", f"{float(norm_qd_score):.6f}")
+    else:
+        table.add_row("norm_qd_score", "n/a")
 
     table.add_section()
     if best_commit:
@@ -569,19 +586,8 @@ def archive_stats(
     """Print MAP-Elites archive stats for an island."""
     settings = _load_settings_or_exit()
     _configure_logging_or_exit(settings=settings, role="archive", override_level=_get_log_level(ctx))
-    effective_island = (island_id or "").strip() or (settings.mapelites_default_island_id or "main")
-
-    try:
-        from loreley.core.map_elites.map_elites import MapElitesManager
-
-        manager = MapElitesManager(settings=settings)
-        stats = dict(manager.describe_island(effective_island))
-    except Exception as exc:  # pragma: no cover - defensive
-        console.print(
-            "[bold red]Failed to load archive stats[/] "
-            f"island={effective_island} reason={exc}",
-        )
-        raise typer.Exit(code=1) from exc
+    effective_island = _resolve_effective_island(settings=settings, island_id=island_id)
+    stats = _load_archive_stats_or_exit(settings=settings, island_id=effective_island)
 
     if json_output:
         typer.echo(json.dumps(stats, ensure_ascii=False, indent=2, sort_keys=True))
