@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     app_name: str = Field(default="Loreley", alias="APP_NAME")
     environment: str = Field(default="development", alias="APP_ENV")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+    profile: str = Field(default="default", alias="LORELEY_PROFILE")
     logs_base_dir: str | None = Field(
         default=None,
         alias="LOGS_BASE_DIR",
@@ -622,6 +623,36 @@ class Settings(BaseSettings):
     def model_post_init(self, __context: Any) -> None:
         """Apply derived defaults that depend on other fields."""
 
+        raw_profile = str(getattr(self, "profile", "") or "").strip()
+        effective_profile = raw_profile.lower() if raw_profile else "default"
+
+        def _set_if_unset(field: str, value: object) -> None:
+            if field in self.model_fields_set:
+                return
+            object.__setattr__(self, field, value)
+
+        if effective_profile in {"large-repo-1m-30k", "large_repo_1m_30k"}:
+            # Scaling-oriented defaults for long runs on large repositories.
+            _set_if_unset("scheduler_poll_interval_seconds", 15.0)
+            _set_if_unset("tasks_worker_time_limit_seconds", 0)
+            _set_if_unset("worker_planning_timeout_seconds", 1200)
+            _set_if_unset("worker_coding_timeout_seconds", 3600)
+            _set_if_unset("worker_evaluator_timeout_seconds", 3600)
+
+            _set_if_unset("mapelites_preprocess_max_file_size_kb", 256)
+            _set_if_unset("mapelites_chunk_target_lines", 120)
+            _set_if_unset("mapelites_chunk_min_lines", 40)
+            _set_if_unset("mapelites_chunk_overlap_lines", 12)
+            _set_if_unset("mapelites_code_embedding_batch_size", 64)
+            _set_if_unset("mapelites_dimensionality_min_fit_samples", 128)
+            _set_if_unset("mapelites_dimensionality_history_size", 8192)
+            _set_if_unset("mapelites_dimensionality_refit_interval", 250)
+            _set_if_unset("mapelites_feature_normalization_warmup_samples", 128)
+            _set_if_unset("mapelites_seed_population_size", 32)
+            _set_if_unset("mapelites_sampler_inspiration_count", 4)
+            _set_if_unset("mapelites_sampler_neighbor_max_radius", 4)
+            _set_if_unset("mapelites_sampler_fallback_sample_size", 32)
+
         if self.worker_repo_worktree_randomize:
             suffix_len = int(self.worker_repo_worktree_random_suffix_len or 0)
             suffix_len = max(1, min(32, suffix_len))
@@ -700,6 +731,7 @@ class Settings(BaseSettings):
             "app_name": self.app_name,
             "environment": self.environment,
             "log_level": self.log_level,
+            "profile": self.profile,
             "logs_base_dir": self.logs_base_dir,
             "openai_api_spec": self.openai_api_spec,
             "openai_base_url": _maybe_url(self.openai_base_url),

@@ -302,6 +302,10 @@ class EvolutionScheduler:
             root_commit=canonical,
         )
         eligible = int(scan.eligible_files)
+        max_chunks_per_file = int(getattr(self.settings, "mapelites_chunk_max_chunks_per_file", 0) or 0)
+        if max_chunks_per_file <= 0:
+            max_chunks_per_file = 1
+        root_chunk_upper_bound = eligible * max_chunks_per_file
         log.info(
             "Repo-state root scan commit={} eligible_files={} filters={}",
             canonical,
@@ -315,8 +319,20 @@ class EvolutionScheduler:
                 eligible_files=eligible,
                 repo_root=self.repo_root,
                 details={
+                    "profile": str(getattr(self.settings, "profile", "default")),
                     "embedding_model": str(self.settings.mapelites_code_embedding_model),
                     "embedding_dimensions": getattr(self.settings, "mapelites_code_embedding_dimensions", None),
+                    "embedding_batch_size": int(getattr(self.settings, "mapelites_code_embedding_batch_size", 0) or 0),
+                    "chunk_target_lines": int(getattr(self.settings, "mapelites_chunk_target_lines", 0) or 0),
+                    "chunk_min_lines": int(getattr(self.settings, "mapelites_chunk_min_lines", 0) or 0),
+                    "chunk_overlap_lines": int(getattr(self.settings, "mapelites_chunk_overlap_lines", 0) or 0),
+                    "chunk_max_chunks_per_file": max_chunks_per_file,
+                    "root_chunk_upper_bound": root_chunk_upper_bound,
+                    "pca_target_dims": int(getattr(self.settings, "mapelites_dimensionality_target_dims", 0) or 0),
+                    "pca_min_fit_samples": int(getattr(self.settings, "mapelites_dimensionality_min_fit_samples", 0) or 0),
+                    "pca_history_size": int(getattr(self.settings, "mapelites_dimensionality_history_size", 0) or 0),
+                    "pca_refit_interval": int(getattr(self.settings, "mapelites_dimensionality_refit_interval", 0) or 0),
+                    "seed_population_size": int(getattr(self.settings, "mapelites_seed_population_size", 0) or 0),
                     **filters,
                 },
                 console=self.console,

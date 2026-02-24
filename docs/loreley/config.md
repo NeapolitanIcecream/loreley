@@ -5,6 +5,9 @@ Centralised configuration for the Loreley application, backed by `pydantic-setti
 ## Settings
 
 - **`Settings`**: `BaseSettings` subclass that loads core application configuration.
+  - **Profiles**: `LORELEY_PROFILE` selects an optional configuration preset that applies scaling-oriented defaults when the corresponding fields are not explicitly set via environment variables. Supported values:
+    - `"default"`: keep built-in defaults (no overrides).
+    - `"large-repo-1m-30k"`: recommended defaults for running ~30k iterations on ~1M LOC repositories (after ignore filtering). Required settings remain required.
   - **Environment**: `app_name`, `environment`, `log_level`, `logs_base_dir`. `log_level` controls the global Loguru log level used across long-running processes (including the scheduler, workers, and their CLI wrappers); `logs_base_dir` (via `LOGS_BASE_DIR`) optionally overrides the parent directory for the `logs/` tree. When set, logs are written under `<LOGS_BASE_DIR>/logs/...`; when unset, they default to `<cwd>/logs/...`. See the scripts documentation under `docs/script` for concrete examples.
   - **OpenAI-compatible API**: `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_API_SPEC` configure the API key, base URL, and API surface for all OpenAI-compatible LLM and embedding calls, used by `loreley.core.map_elites.code_embedding.CodeEmbedder` and `loreley.core.worker.commit_summary.CommitSummarizer`. `OPENAI_API_KEY` is treated as a secret and should be managed outside the database. When unset, `OPENAI_API_KEY`/`OPENAI_BASE_URL` fall back to the OpenAI Python client's own environment variable defaults. `OPENAI_API_SPEC` accepts:
     - `"responses"` (default): use the unified `responses` API (`client.responses.create`) for text generation.
