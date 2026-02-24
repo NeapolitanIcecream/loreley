@@ -366,6 +366,11 @@ class DimensionReducer:
             projection.feature_count if projection else None
         )
         self._samples_since_fit = max(0, int(samples_since_fit or 0))
+        self._history_matrix: np.ndarray | None = None
+        self._history_matrix_size = 0
+        self._history_matrix_keys: list[str] = []
+        self._history_matrix_index: dict[str, int] = {}
+        self._history_matrix_feature_count: int | None = None
 
         if history:
             for entry in history:
@@ -380,6 +385,18 @@ class DimensionReducer:
     def projection(self) -> PCAProjection | None:
         """Return the currently active PCA projection."""
         return self._projection
+
+    def set_projection(self, projection: PCAProjection | None) -> None:
+        """Replace the stored PCA projection (e.g. after alignment)."""
+        if projection is not None:
+            if self._feature_count is None:
+                self._feature_count = int(projection.feature_count)
+            elif int(projection.feature_count) != int(self._feature_count):
+                raise ValueError(
+                    "PCA projection feature_count mismatch "
+                    f"(expected={self._feature_count} got={projection.feature_count})."
+                )
+        self._projection = projection
 
     @property
     def samples_since_fit(self) -> int:
@@ -471,12 +488,16 @@ class DimensionReducer:
             self._history.pop(commit_hash)
         self._history[commit_hash] = entry
 
+        dropped_hash = None
         if len(self._history) > self._history_limit:
             dropped_hash, _ = self._history.popitem(last=False)
             log.debug("Evicted oldest embedding {}", dropped_hash)
 
         if count_for_refit and is_new_entry:
             self._samples_since_fit += 1
+
+        if self._history_matrix is not None:
+            self._update_history_matrix(entry, dropped_hash=dropped_hash)
 
     def _should_refit(self) -> bool:
         """Return True when PCA should be recomputed."""
@@ -489,28 +510,139 @@ class DimensionReducer:
             return False
         return self._samples_since_fit >= self._refit_interval
 
+    def _invalidate_history_matrix(self) -> None:
+        self._history_matrix = None
+        self._history_matrix_size = 0
+        self._history_matrix_keys.clear()
+        self._history_matrix_index.clear()
+        self._history_matrix_feature_count = None
+
+    def _rebuild_history_matrix(self) -> None:
+        feature_count = int(self._feature_count or 0)
+        if feature_count <= 0 or not self._history:
+            self._invalidate_history_matrix()
+            return
+
+        sample_count = len(self._history)
+        capacity = min(int(self._history_limit), max(1, sample_count))
+        matrix = np.empty((capacity, feature_count), dtype=np.float64)
+        keys: list[str] = []
+        index: dict[str, int] = {}
+        for row, (commit_hash, item) in enumerate(self._history.items()):
+            matrix[row, :] = item.vector
+            keys.append(commit_hash)
+            index[commit_hash] = row
+
+        self._history_matrix = matrix
+        self._history_matrix_size = sample_count
+        self._history_matrix_keys = keys
+        self._history_matrix_index = index
+        self._history_matrix_feature_count = feature_count
+
+    def _ensure_history_matrix_capacity(self, min_capacity: int) -> None:
+        if self._history_matrix is None:
+            return
+        if min_capacity <= int(self._history_matrix.shape[0]):
+            return
+        feature_count = int(self._history_matrix.shape[1])
+        history_limit = int(self._history_limit)
+        desired = min(history_limit, max(int(self._history_matrix.shape[0]) * 2, min_capacity))
+        if desired <= int(self._history_matrix.shape[0]):
+            return
+        grown = np.empty((desired, feature_count), dtype=np.float64)
+        if self._history_matrix_size:
+            grown[: self._history_matrix_size, :] = self._history_matrix[
+                : self._history_matrix_size,
+                :,
+            ]
+        self._history_matrix = grown
+
+    def _drop_history_matrix_row(self, commit_hash: str) -> None:
+        if self._history_matrix is None:
+            return
+        idx = self._history_matrix_index.pop(commit_hash, None)
+        if idx is None:
+            return
+        last = int(self._history_matrix_size) - 1
+        if last < 0:
+            self._invalidate_history_matrix()
+            return
+        if idx != last:
+            self._history_matrix[idx, :] = self._history_matrix[last, :]
+            swapped = self._history_matrix_keys[last]
+            self._history_matrix_keys[idx] = swapped
+            self._history_matrix_index[swapped] = idx
+        self._history_matrix_keys.pop()
+        self._history_matrix_size = last
+
+    def _upsert_history_matrix_row(self, entry: PcaHistoryEntry) -> None:
+        if self._history_matrix is None:
+            return
+        feature_count = int(self._feature_count or 0)
+        if feature_count <= 0:
+            self._invalidate_history_matrix()
+            return
+        if int(self._history_matrix.shape[1]) != feature_count:
+            self._invalidate_history_matrix()
+            return
+        if self._history_matrix_feature_count is None:
+            self._history_matrix_feature_count = feature_count
+        elif int(self._history_matrix_feature_count) != feature_count:
+            self._invalidate_history_matrix()
+            return
+
+        commit_hash = entry.commit_hash
+        idx = self._history_matrix_index.get(commit_hash)
+        if idx is not None:
+            self._history_matrix[idx, :] = entry.vector
+            return
+
+        self._ensure_history_matrix_capacity(self._history_matrix_size + 1)
+        if self._history_matrix is None:
+            return
+        idx = int(self._history_matrix_size)
+        if idx >= int(self._history_matrix.shape[0]):
+            self._invalidate_history_matrix()
+            return
+        self._history_matrix[idx, :] = entry.vector
+        self._history_matrix_size = idx + 1
+        self._history_matrix_keys.append(commit_hash)
+        self._history_matrix_index[commit_hash] = idx
+
+    def _update_history_matrix(
+        self,
+        entry: PcaHistoryEntry,
+        *,
+        dropped_hash: str | None,
+    ) -> None:
+        if self._history_matrix is None:
+            return
+        if dropped_hash:
+            self._drop_history_matrix_row(dropped_hash)
+        self._upsert_history_matrix_row(entry)
+
     def _fit_projection(self) -> PCAProjection | None:
         """Fit PCA using the stored history."""
-        samples = list(self._history.values())
-        if len(samples) < self._min_fit_samples:
+        sample_count = len(self._history)
+        if sample_count < self._min_fit_samples:
             log.debug(
                 "Not enough samples for PCA: have {} require {}",
-                len(samples),
+                sample_count,
                 self._min_fit_samples,
             )
             return None
 
-        feature_count = samples[0].dimensions
-        if feature_count == 0:
+        feature_count = int(self._feature_count or 0)
+        if feature_count <= 0:
             log.warning("Cannot fit PCA without features.")
             return None
 
-        n_components = min(self._target_dims, len(samples), feature_count)
+        n_components = min(self._target_dims, sample_count, feature_count)
         if n_components == 0:
             log.warning(
                 "PCA target components resolved to 0 (target={}, samples={}, features={})",
                 self._target_dims,
-                len(samples),
+                sample_count,
                 feature_count,
             )
             return None
@@ -524,11 +656,27 @@ class DimensionReducer:
             whiten=True,
             random_state=seed,
         )
+
+        if (
+            self._history_matrix is None
+            or self._history_matrix_feature_count != feature_count
+            or self._history_matrix_size != sample_count
+        ):
+            self._rebuild_history_matrix()
+        sample_matrix = self._history_matrix
+        if sample_matrix is None or self._history_matrix_size != sample_count:
+            try:
+                sample_matrix = np.asarray(
+                    [item.vector for item in self._history.values()],
+                    dtype=np.float64,
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                log.error("Unable to build PCA sample matrix: {}", exc)
+                return None
+        else:
+            sample_matrix = sample_matrix[:sample_count, :]
+
         try:
-            sample_matrix = np.asarray(
-                [entry.vector for entry in samples],
-                dtype=np.float64,
-            )
             model.fit(sample_matrix)
         except ValueError as exc:
             log.error("Unable to fit PCA: {}", exc)
@@ -537,14 +685,14 @@ class DimensionReducer:
         previous_epoch = self._projection.epoch if self._projection else -1
         projection = PCAProjection.from_model(
             model,
-            len(samples),
+            sample_count,
             epoch=previous_epoch + 1,
         )
         self._projection = projection
         self._samples_since_fit = 0
         log.info(
             "Fitted PCA projection: samples={} components={} variance_retained={:.3f}",
-            len(samples),
+            sample_count,
             projection.dimensions,
             sum(projection.explained_variance_ratio),
         )
@@ -590,6 +738,7 @@ def reduce_commit_embeddings(
     projection: PCAProjection | None = None,
     settings: Settings | None = None,
     samples_since_fit: int = 0,
+    reducer: DimensionReducer | None = None,
 ) -> tuple[
     FinalEmbedding | None,
     tuple[PcaHistoryEntry, ...],
@@ -601,12 +750,13 @@ def reduce_commit_embeddings(
     Returns a tuple of (final_embedding, updated_history, updated_projection, samples_since_fit).
     """
 
-    reducer = DimensionReducer(
-        settings=settings,
-        history=history,
-        projection=projection,
-        samples_since_fit=samples_since_fit,
-    )
+    if reducer is None:
+        reducer = DimensionReducer(
+            settings=settings,
+            history=history,
+            projection=projection,
+            samples_since_fit=samples_since_fit,
+        )
     entry = reducer.build_history_entry(
         commit_hash=commit_hash,
         code_embedding=code_embedding,

@@ -17,4 +17,5 @@ PCA-based dimensionality reduction of commit embeddings before they are fed into
 
 ## Convenience API
 
-- **`reduce_commit_embeddings(...)`**: one-shot helper that constructs a `DimensionReducer`, builds a PCA history entry from a commit's code embedding, and returns the `FinalEmbedding` together with the updated history, updated projection, and the updated `samples_since_fit` counter. Callers must persist `samples_since_fit` alongside history/projection so `MAPELITES_DIMENSION_REDUCTION_REFIT_INTERVAL` works across repeated one-shot calls.
+- **`reduce_commit_embeddings(...)`**: helper that runs the full reduction pipeline once. By default it constructs a fresh `DimensionReducer`, builds a PCA history entry from a commit's code embedding, and returns the `FinalEmbedding` together with the updated history, updated projection, and the updated `samples_since_fit` counter. Callers must persist `samples_since_fit` alongside history/projection so `MAPELITES_DIMENSION_REDUCTION_REFIT_INTERVAL` works across repeated calls.
+  - When an existing `DimensionReducer` is supplied via `reducer=...`, the helper reuses it instead of reconstructing PCA state. This is useful for long-lived ingest loops that can keep reducer state in memory between commits.

@@ -29,7 +29,13 @@ from .db_ops import (
     load_commit_fitnesses as db_load_commit_fitnesses,
     load_commit_vectors as db_load_commit_vectors,
 )
-from .dimension_reduction import FinalEmbedding, PCAProjection, reduce_commit_embeddings, resolve_pca_history_limit
+from .dimension_reduction import (
+    DimensionReducer,
+    FinalEmbedding,
+    PCAProjection,
+    reduce_commit_embeddings,
+    resolve_pca_history_limit,
+)
 from .preprocess import PreprocessedFile
 from .rebuild import (
     pad_or_trim as rebuild_pad_or_trim,
@@ -76,6 +82,7 @@ class MapElitesManager:
         self._lower_template, self._upper_template = self._build_feature_bounds()
         self._grid_shape = tuple(self._cells_per_dim for _ in range(self._target_dims))
         self._archives: dict[str, IslandState] = {}
+        self._reducers: dict[str, DimensionReducer] = {}
         self._commit_to_island: dict[str, str] = {}
         self._default_island = self.settings.mapelites_default_island_id or "default"
         self._snapshot_store = DatabaseSnapshotStore()
@@ -192,6 +199,15 @@ class MapElitesManager:
                 return result
 
             old_projection = state.projection
+            reducer = self._reducers.get(effective_island)
+            if reducer is None:
+                reducer = DimensionReducer(
+                    settings=self.settings,
+                    history=state.history,
+                    projection=state.projection,
+                    samples_since_fit=state.samples_since_fit,
+                )
+                self._reducers[effective_island] = reducer
             pca_fit_started_at = time.perf_counter()
             final_embedding, history, projection, samples_since_fit = reduce_commit_embeddings(
                 commit_hash=commit_hash,
@@ -200,6 +216,7 @@ class MapElitesManager:
                 projection=state.projection,
                 samples_since_fit=state.samples_since_fit,
                 settings=self.settings,
+                reducer=reducer,
             )
             pca_fit_ms += (time.perf_counter() - pca_fit_started_at) * 1000.0
             state.history = history
@@ -228,6 +245,8 @@ class MapElitesManager:
                     snapshot_session=snapshot_session,
                 )
                 pca_refit_ms += (time.perf_counter() - pca_refit_started_at) * 1000.0
+                if effective_island in self._reducers:
+                    self._reducers[effective_island].set_projection(state.projection)
 
             update = SnapshotUpdate(
                 lower_bounds=state.lower_bounds.tolist(),
@@ -474,6 +493,7 @@ class MapElitesManager:
         state.archive.clear()
         state.history = tuple()
         state.projection = None
+        self._reducers.pop(effective_island, None)
         for commit in tuple(state.commit_to_index.keys()):
             self._commit_to_island.pop(commit, None)
         state.commit_to_index.clear()
@@ -718,6 +738,12 @@ class MapElitesManager:
                 commit_to_island=self._commit_to_island,
             )
         self._archives[island_id] = state
+        self._reducers[island_id] = DimensionReducer(
+            settings=self.settings,
+            history=state.history,
+            projection=state.projection,
+            samples_since_fit=state.samples_since_fit,
+        )
         log.info(
             "Initialized MAP-Elites archive for island {} (cells={} dims={})",
             island_id,
