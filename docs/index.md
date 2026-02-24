@@ -122,6 +122,7 @@ Note: on first start the scheduler performs a repo-state root scan at `MAPELITES
 ```bash
 uv run loreley scheduler
 uv run loreley worker
+uv run loreley status
 ```
 
 See: [Running the scheduler](script/run_scheduler.md), [Running the worker](script/run_worker.md)
@@ -256,11 +257,16 @@ Use this index as a quick map of the rest of the documentation:
   - [UI API (`loreley.api`)](loreley/api.md)
   - [Streamlit UI (`loreley.ui`)](loreley/ui.md)
 - **Operations**
+  - [Doctor checks](script/doctor.md)
+  - [Status](script/status.md)
+  - [Archive stats](script/archive_stats.md)
+  - [Config dump](script/config_dump.md)
   - [Running the scheduler](script/run_scheduler.md)
   - [Running the worker](script/run_worker.md)
   - [Running the UI API](script/run_api.md)
   - [Running the UI](script/run_ui.md)
   - [Resetting the database](script/reset_db.md)
+  - [Benchmarking](script/benchmarks.md)
 
 ---
 

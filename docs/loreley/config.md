@@ -37,4 +37,8 @@ Centralised configuration for the Loreley application, backed by `pydantic-setti
 
 ## Access helpers
 
-- **`get_settings()`**: cached factory that instantiates `Settings`, logs a concise summary of the environment and DB host using `rich`/`loguru`, and returns a singleton instance for reuse across the loreley.
+- **`get_settings()`**: cached factory that instantiates `Settings`, logs a concise summary of the environment and DB host using `rich`/`loguru`, and returns a singleton instance for reuse across Loreley.
+
+## CLI
+
+- **`loreley config dump`**: dumps the effective configuration as JSON or YAML, with credentials masked by default. Useful for troubleshooting and reproducibility.

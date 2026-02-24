@@ -40,6 +40,7 @@ cp env.example .env
 uv run loreley doctor --role all
 uv run loreley scheduler
 uv run loreley worker
+uv run loreley status
 ```
 
 ### Optional UI (read-only)

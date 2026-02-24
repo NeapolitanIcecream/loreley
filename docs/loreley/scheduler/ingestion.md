@@ -40,7 +40,7 @@ from loreley.scheduler.ingestion import MapElitesIngestion
 
 Internally, `_ingest_snapshot(...)`:
 
-1. Reads `result_commit_hash` from the job row and loads metrics from the
+1. Reads `result_commit_hash` from the job row, canonicalizes it to improve cache hit ratio, and loads metrics from the
    `metrics` table for that commit hash.
 2. Ensures the corresponding git commit is present locally, fetching from
    remotes as necessary.
