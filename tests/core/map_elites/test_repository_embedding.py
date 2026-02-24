@@ -363,6 +363,46 @@ def test_repository_state_embedder_uses_cache_hits_and_misses(
     assert e2.vector == pytest.approx(expected)
 
 
+def test_repository_state_embedder_embeds_all_cache_misses_without_truncation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    settings: Settings,
+) -> None:
+    repo = _init_repo(tmp_path)
+    settings.mapelites_preprocess_allowed_extensions = [".py"]
+    settings.mapelites_preprocess_allowed_filenames = []
+    settings.mapelites_preprocess_excluded_globs = []
+    settings.mapelites_preprocess_max_file_size_kb = 64
+
+    for idx in range(70):
+        (tmp_path / f"f{idx:03d}.py").write_text(f"print({idx})\n", encoding="utf-8")
+    commit = _commit_all(repo, "init")
+
+    calls = _stub_embed_chunked_files(monkeypatch)
+    cache = _StubFileEmbeddingCache(
+        embedding_model="stub",
+        requested_dimensions=int(getattr(settings, "mapelites_code_embedding_dimensions", 2) or 2),
+    )
+    embedder = RepositoryStateEmbedder(settings=settings, cache=cache, repo=repo)
+
+    repo_files = list_repository_files(repo_root=tmp_path, commit_hash=commit, settings=settings, repo=repo)
+    missing_blob_shas = [f.blob_sha for f in repo_files]
+
+    vectors, embedded_count, skipped_empty = embedder._embed_cache_misses(
+        root=tmp_path,
+        commit_hash=commit,
+        repo_files=repo_files,
+        missing_blob_shas=missing_blob_shas,
+    )
+
+    expected_unique = set(missing_blob_shas)
+    assert skipped_empty == 0
+    assert embedded_count == len(expected_unique)
+    assert set(vectors) == expected_unique
+    assert sum(calls["file_counts"]) == len(expected_unique)
+    assert all(count <= 64 for count in calls["file_counts"])
+
+
 def test_repository_state_embedder_deduplicates_duplicate_blobs(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

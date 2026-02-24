@@ -70,16 +70,17 @@ def test_run_builds_commit_embedding(monkeypatch: pytest.MonkeyPatch, settings: 
     assert result.vector == pytest.approx(file_embedding.vector)
 
 
-def test_prepare_chunk_payloads_respects_max_chunks(settings: Settings) -> None:
-    settings.mapelites_code_embedding_max_chunks_per_commit = 2
+def test_prepare_chunk_payloads_includes_all_chunks(settings: Settings) -> None:
     embedder = CodeEmbedder(settings=settings, client=None)
 
     chunked = _make_chunked_file(chunk_count=4)
     payloads, lookup = embedder._prepare_chunk_payloads([chunked])
 
-    assert len(payloads) == 2
+    assert len(payloads) == 4
     assert payloads[0].chunk_id.endswith("0000")
     assert payloads[1].chunk_id.endswith("0001")
+    assert payloads[2].chunk_id.endswith("0002")
+    assert payloads[3].chunk_id.endswith("0003")
     assert lookup[chunked.path] is chunked
 
 

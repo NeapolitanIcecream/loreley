@@ -92,10 +92,6 @@ class CodeEmbedder:
         if self._dimensions <= 0:
             raise ValueError("MAPELITES_CODE_EMBEDDING_DIMENSIONS must be a positive integer.")
         self._batch_size = max(1, self.settings.mapelites_code_embedding_batch_size)
-        self._max_chunks = max(
-            0,
-            self.settings.mapelites_code_embedding_max_chunks_per_commit,
-        )
         self._max_retries = max(1, self.settings.mapelites_code_embedding_max_retries)
         self._retry_backoff = max(
             0.0,
@@ -164,13 +160,6 @@ class CodeEmbedder:
         for file in files:
             for chunk in file.chunks:
                 payloads.append(chunk)
-                if self._max_chunks and len(payloads) >= self._max_chunks:
-                    log.debug(
-                        "Hit chunk cap {} while preparing {}; remaining chunks dropped.",
-                        self._max_chunks,
-                        file.path,
-                    )
-                    return payloads, owner_lookup
         return payloads, owner_lookup
 
     def _embed_chunks(self, chunks: Sequence[FileChunk]) -> list[ChunkEmbedding]:

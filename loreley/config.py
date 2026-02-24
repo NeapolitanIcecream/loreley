@@ -503,10 +503,6 @@ class Settings(BaseSettings):
         default=12,
         alias="MAPELITES_CODE_EMBEDDING_BATCH_SIZE",
     )
-    mapelites_code_embedding_max_chunks_per_commit: int = Field(
-        default=512,
-        alias="MAPELITES_CODE_EMBEDDING_MAX_CHUNKS_PER_COMMIT",
-    )
     mapelites_code_embedding_max_retries: int = Field(
         default=3,
         alias="MAPELITES_CODE_EMBEDDING_MAX_RETRIES",

@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Sequence, cast
+from typing import Iterable, Sequence, TypeVar, cast
 
 from git import Repo
 from git.exc import GitCommandError
@@ -41,6 +41,7 @@ from .vector_math import (
 log = logger.bind(module="map_elites.repository_state_embedding")
 
 Vector = tuple[float, ...]
+T = TypeVar("T")
 
 
 class RepoStateEmbeddingError(RuntimeError):
@@ -775,45 +776,64 @@ class RepositoryStateEmbedder:
             repo=self._repo,
         )
 
-        preprocessed: list[PreprocessedFile] = []
-        skipped_empty = 0
-        blob_for_path: dict[Path, str] = {}
-        for blob_sha, entry in wanted.items():
-            raw = preprocessor.load_text(entry.path)
-            if raw is None:
-                continue
-            cleaned = preprocessor.cleanup_text(raw)
-            if not cleaned.strip():
-                skipped_empty += 1
-                continue
-            preprocessed.append(
-                PreprocessedFile(
-                    path=entry.path,
-                    change_count=1,  # uniform weighting per file
-                    content=cleaned,
-                )
-            )
-            blob_for_path[entry.path] = blob_sha
-
-        if not preprocessed:
-            return {}, 0, skipped_empty
-
-        chunked = chunk_preprocessed_files(
-            cast(Sequence[PreprocessedArtifact], preprocessed),
-            settings=self.settings,
+        wanted_items = sorted(
+            wanted.items(),
+            key=lambda item: item[1].path.as_posix(),
         )
-        commit_embedding = embed_chunked_files(chunked, settings=self.settings)
-        if not commit_embedding:
-            return {}, 0, skipped_empty
 
         vectors: dict[str, Vector] = {}
-        for file_embedding in commit_embedding.files:
-            blob_sha = blob_for_path.get(file_embedding.file.path)
-            if not blob_sha:
-                continue
-            vectors[blob_sha] = tuple(float(v) for v in file_embedding.vector)
+        skipped_empty_total = 0
 
-        return vectors, len(vectors), skipped_empty
+        # Embed in batches to keep memory and request payloads bounded.
+        batch_size = 64
+        for batch in _batched(wanted_items, batch_size):
+            preprocessed: list[PreprocessedFile] = []
+            blob_for_path: dict[Path, str] = {}
+            skipped_empty = 0
+
+            for blob_sha, entry in batch:
+                raw = preprocessor.load_text(entry.path)
+                if raw is None:
+                    continue
+                cleaned = preprocessor.cleanup_text(raw)
+                if not cleaned.strip():
+                    skipped_empty += 1
+                    continue
+                preprocessed.append(
+                    PreprocessedFile(
+                        path=entry.path,
+                        change_count=1,  # uniform weighting per file
+                        content=cleaned,
+                    )
+                )
+                blob_for_path[entry.path] = blob_sha
+
+            skipped_empty_total += skipped_empty
+            if not preprocessed:
+                continue
+
+            chunked = chunk_preprocessed_files(
+                cast(Sequence[PreprocessedArtifact], preprocessed),
+                settings=self.settings,
+            )
+            log.debug(
+                "Embedding {} cache-miss files for commit {}",
+                len(chunked),
+                commit_hash,
+            )
+            commit_embedding = embed_chunked_files(chunked, settings=self.settings)
+            if not commit_embedding:
+                continue
+
+            for file_embedding in commit_embedding.files:
+                blob_sha = blob_for_path.get(file_embedding.file.path)
+                if not blob_sha:
+                    continue
+                vec = tuple(float(v) for v in file_embedding.vector)
+                if vec:
+                    vectors[blob_sha] = vec
+
+        return vectors, len(vectors), skipped_empty_total
 
 
 def embed_repository_state_incremental(
@@ -957,7 +977,7 @@ def _blob_size_bytes(repo: Repo, blob_sha: str) -> int | None:
         return None
 
 
-def _batched(items: Sequence[str], batch_size: int) -> Iterable[Sequence[str]]:
+def _batched(items: Sequence[T], batch_size: int) -> Iterable[Sequence[T]]:
     step = max(1, int(batch_size))
     for start in range(0, len(items), step):
         yield items[start : start + step]
