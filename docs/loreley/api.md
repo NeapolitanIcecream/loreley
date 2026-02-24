@@ -25,15 +25,17 @@ See also: [Running the UI API](../script/run_api.md)
 ## Configuration
 
 The UI API relies on the standard Loreley settings (`loreley.config.Settings`), especially
-database and logs configuration.
+database and logs configuration. On startup it validates that the database contains an
+`InstanceMetadata` marker (schema/version). If the marker is missing, seed it by starting
+the scheduler/worker once (or via `uv run loreley reset-db --yes`). If the schema version
+is mismatched, reset the schema with `uv run loreley reset-db --yes` (dev).
 
 Common variables:
 
 - `DATABASE_URL`
-- `EXPERIMENT_ID` (must match the database marker)
-- `MAPELITES_EXPERIMENT_ROOT_COMMIT` (must match the database marker)
 - `LOGS_BASE_DIR` (optional; logs are read from `<LOGS_BASE_DIR>/logs` or `<cwd>/logs`)
 - `LOG_LEVEL`
+- `EXPERIMENT_ID` (optional; used to resolve the experiment namespace for log browsing; if unset, the API falls back to the database marker)
 
 ## Versioning and prefix
 

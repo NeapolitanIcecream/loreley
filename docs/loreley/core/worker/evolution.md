@@ -16,7 +16,7 @@ Autonomous evolution worker that orchestrates planning, coding, evaluation, repo
 - **`EvolutionWorker`**: service-layer entry point for running an evolution job synchronously end-to-end.
   - Constructor wires together dependencies, all of which may be overridden for tests or custom orchestration:
     - `WorkerRepository` for git operations.
-    - `PlanningAgent` / `CodingAgent` for Codex-powered planning and coding.
+    - `PlanningAgent` / `CodingAgent` for backend-driven planning and coding (Kilocode by default; pluggable backends).
     - `Evaluator` for running evaluation plugins.
     - `CommitSummarizer` for generating concise commit messages.
     - `EvolutionJobStore` for DB persistence of job status and results.

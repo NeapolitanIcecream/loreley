@@ -14,7 +14,13 @@ uv run loreley scheduler --once       # single tick (cron / smoke tests)
 uv run loreley scheduler --yes --once # non-interactive run
 ```
 
-This command requires `EXPERIMENT_ID` and `SCHEDULER_MAX_TOTAL_JOBS` to be set in the environment (or `.env`).
+Minimum required settings for a functional scheduler are:
+
+- `EXPERIMENT_ID`
+- `MAPELITES_EXPERIMENT_ROOT_COMMIT`
+- `SCHEDULER_MAX_TOTAL_JOBS`
+
+You also need database and Redis connectivity (`DATABASE_URL`, `TASKS_REDIS_URL`), and a repository checkout (`SCHEDULER_REPO_ROOT`, or it falls back to `WORKER_REPO_WORKTREE` / the current directory).
 
 On first start the scheduler performs a repo-state root scan at `MAPELITES_EXPERIMENT_ROOT_COMMIT`
 and requires operator approval. In non-interactive environments, pass `--yes` or set

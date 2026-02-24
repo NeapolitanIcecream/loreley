@@ -14,7 +14,7 @@ uv sync --extra ui
 uv run loreley api
 ```
 
-This command requires `DATABASE_URL` to point at a Loreley database with an instance metadata marker (created by `uv run loreley reset-db --yes`).
+This command requires `DATABASE_URL` to point at a Loreley database with an instance metadata marker (seeded automatically when you start the scheduler/worker once, or explicitly via `uv run loreley reset-db --yes`).
 
 ## Options
 
