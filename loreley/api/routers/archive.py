@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query
 
+from loreley.api.pagination import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT
 from loreley.api.schemas.archive import ArchiveRecordOut, ArchiveSnapshotMetaOut, IslandStatsOut
 from loreley.api.services.archive import (
     describe_island,
@@ -12,7 +13,7 @@ from loreley.api.services.archive import (
     snapshot_meta,
     snapshot_updated_at,
 )
-from loreley.config import get_settings
+from loreley.config import get_settings, resolve_default_island_id
 
 router = APIRouter()
 
@@ -34,11 +35,18 @@ def get_islands() -> list[IslandStatsOut]:
 @router.get("/archive/records", response_model=list[ArchiveRecordOut])
 def get_records(
     island_id: str = Query(default="", description="Island ID; empty means default island."),
+    limit: int = Query(default=DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
+    offset: int = Query(default=0, ge=0),
 ) -> list[ArchiveRecordOut]:
     settings = get_settings()
-    effective_island = island_id.strip() or (settings.mapelites_default_island_id or "main")
+    effective_island = island_id.strip() or resolve_default_island_id(settings)
 
-    records = list_records(island_id=effective_island, settings=settings)
+    records = list_records(
+        island_id=effective_island,
+        settings=settings,
+        limit=limit,
+        offset=offset,
+    )
     return records
 
 
@@ -47,7 +55,7 @@ def get_snapshot_meta(
     island_id: str,
 ) -> ArchiveSnapshotMetaOut:
     settings = get_settings()
-    effective_island = island_id.strip() or (settings.mapelites_default_island_id or "main")
+    effective_island = island_id.strip() or resolve_default_island_id(settings)
     cells_per_dim = max(2, int(settings.mapelites_archive_cells_per_dim))
 
     meta = snapshot_meta(island_id=effective_island, settings=settings)
@@ -65,5 +73,4 @@ def get_snapshot_meta(
         history_length=int(meta.history_length),
         updated_at=updated_at,
     )
-
 

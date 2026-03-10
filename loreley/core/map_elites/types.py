@@ -16,6 +16,8 @@ if TYPE_CHECKING:
 
 __all__ = [
     "Vector",
+    "compact_solution",
+    "materialize_solution",
     "CommitEmbeddingArtifacts",
     "MapElitesRecord",
     "MapElitesInsertionResult",
@@ -23,6 +25,31 @@ __all__ = [
 ]
 
 Vector = tuple[float, ...]
+
+
+def _to_vector(values: object) -> Vector:
+    if values is None:
+        return ()
+    return tuple(float(v) for v in np.asarray(values).ravel())
+
+
+def compact_solution(*, measures: object, solution: object) -> Vector:
+    """Drop persisted solution payloads when they duplicate archive measures."""
+
+    measures_vector = _to_vector(measures)
+    solution_vector = _to_vector(solution)
+    if solution_vector and solution_vector != measures_vector:
+        return solution_vector
+    return ()
+
+
+def materialize_solution(*, measures: object, solution: object) -> Vector:
+    """Return a concrete solution vector, falling back to measures when compacted."""
+
+    solution_vector = _to_vector(solution)
+    if solution_vector:
+        return solution_vector
+    return _to_vector(measures)
 
 
 @dataclass(slots=True, frozen=True)
