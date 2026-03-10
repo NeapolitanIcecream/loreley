@@ -93,9 +93,12 @@ def test_checkout_for_job_creates_branch(monkeypatch: pytest.MonkeyPatch, tmp_pa
     worktree_path = tmp_path / "job-worktree"
 
     monkeypatch.setattr(repo, "_repo_lock", _noop_lock)
-    monkeypatch.setattr(repo, "prepare", lambda: None)
-    monkeypatch.setattr(repo, "_ensure_commit_available", lambda base_commit, repo=None: None)
-    monkeypatch.setattr(repo, "_get_repo", lambda: base_repo)
+    monkeypatch.setattr(
+        repo,
+        "_prepare_base_repo_for_checkout",
+        lambda *, base_commit: base_repo,
+    )
+    monkeypatch.setattr(repo, "_remove_worktree", lambda path: base_git.worktree("remove", "--force", str(path)))
     monkeypatch.setattr(repo, "_open_repo", lambda path: job_repo)
     monkeypatch.setattr(repo, "_allocate_job_worktree_path", lambda job_id, base_commit: worktree_path)
     monkeypatch.setattr(repo, "_ensure_worktree_path_available", lambda path, repo: None)
@@ -130,9 +133,12 @@ def test_checkout_for_job_detaches_when_branch_not_requested(
     worktree_path = tmp_path / "detached-worktree"
 
     monkeypatch.setattr(repo, "_repo_lock", _noop_lock)
-    monkeypatch.setattr(repo, "prepare", lambda: None)
-    monkeypatch.setattr(repo, "_ensure_commit_available", lambda base_commit, repo=None: None)
-    monkeypatch.setattr(repo, "_get_repo", lambda: base_repo)
+    monkeypatch.setattr(
+        repo,
+        "_prepare_base_repo_for_checkout",
+        lambda *, base_commit: base_repo,
+    )
+    monkeypatch.setattr(repo, "_remove_worktree", lambda path: base_git.worktree("remove", "--force", str(path)))
     monkeypatch.setattr(repo, "_open_repo", lambda path: job_repo)
     monkeypatch.setattr(repo, "_allocate_job_worktree_path", lambda job_id, base_commit: worktree_path)
     monkeypatch.setattr(repo, "_ensure_worktree_path_available", lambda path, repo: None)
@@ -166,9 +172,12 @@ def test_checkout_lease_preserves_worktree_on_failure(
     worktree_path = tmp_path / "failed-worktree"
 
     monkeypatch.setattr(repo, "_repo_lock", _noop_lock)
-    monkeypatch.setattr(repo, "prepare", lambda: None)
-    monkeypatch.setattr(repo, "_ensure_commit_available", lambda base_commit, repo=None: None)
-    monkeypatch.setattr(repo, "_get_repo", lambda: base_repo)
+    monkeypatch.setattr(
+        repo,
+        "_prepare_base_repo_for_checkout",
+        lambda *, base_commit: base_repo,
+    )
+    monkeypatch.setattr(repo, "_remove_worktree", lambda path: base_git.worktree("remove", "--force", str(path)))
     monkeypatch.setattr(repo, "_open_repo", lambda path: job_repo)
     monkeypatch.setattr(repo, "_allocate_job_worktree_path", lambda job_id, base_commit: worktree_path)
     monkeypatch.setattr(repo, "_ensure_worktree_path_available", lambda path, repo: None)
@@ -183,3 +192,41 @@ def test_checkout_lease_preserves_worktree_on_failure(
 
     assert ("add", "--detach", str(worktree_path), "deadbeef") in base_git.worktree_calls
     assert not any(call[:1] == ("remove",) for call in base_git.worktree_calls)
+
+
+def test_prepare_base_repo_for_checkout_skips_full_upstream_sync(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    settings: Settings,
+) -> None:
+    """Checkout preparation should avoid the full `prepare()` sync path for hot worker jobs."""
+
+    repo = _make_repo(settings, tmp_path)
+    repo.enable_lfs = False
+    base_repo = _FakeRepo(_FakeGit())
+    calls: list[str] = []
+
+    monkeypatch.setattr(repo, "_ensure_worktree_ready", lambda: calls.append("ensure_worktree_ready"))
+    monkeypatch.setattr(repo, "_get_repo", lambda: base_repo)
+    monkeypatch.setattr(repo, "_ensure_remote_origin", lambda *, repo=None: calls.append("ensure_remote_origin"))
+    monkeypatch.setattr(
+        repo,
+        "_ensure_commit_available",
+        lambda base_commit, repo=None: calls.append(f"ensure_commit_available:{base_commit}"),
+    )
+    monkeypatch.setattr(repo, "_prune_worktrees", lambda *, repo=None: calls.append("prune_worktrees"))
+    monkeypatch.setattr(
+        repo,
+        "_sync_upstream",
+        lambda: (_ for _ in ()).throw(AssertionError("_sync_upstream should not run")),
+    )
+
+    prepared = repo._prepare_base_repo_for_checkout(base_commit="abc123")
+
+    assert prepared is base_repo
+    assert calls == [
+        "ensure_worktree_ready",
+        "ensure_remote_origin",
+        "ensure_commit_available:abc123",
+        "prune_worktrees",
+    ]

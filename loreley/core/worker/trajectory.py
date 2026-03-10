@@ -29,6 +29,7 @@ from loreley.core.openai_retry import openai_retrying, retry_error_details
 from loreley.db.models import CommitCard, CommitChunkSummary
 
 log = logger.bind(module="worker.trajectory")
+_MISSING = object()
 
 __all__ = [
     "ChunkSummaryError",
@@ -68,9 +69,35 @@ def _get_commit_card(
     commit_hash = (commit_hash or "").strip()
     if not commit_hash:
         return None
-    return session.execute(
+    cache = _commit_card_cache(session)
+    cached = cache.get(commit_hash, _MISSING)
+    if cached is not _MISSING:
+        return cached
+    card = session.execute(
         select(CommitCard).where(CommitCard.commit_hash == commit_hash)
     ).scalar_one_or_none()
+    cache[commit_hash] = card
+    return card
+
+
+def _commit_card_cache(session: Session) -> dict[str, CommitCard | None]:
+    """Return a session-scoped commit-card cache for trajectory traversals."""
+
+    info = getattr(session, "info", None)
+    if isinstance(info, dict):
+        cache = info.get("_trajectory_commit_card_cache")
+        if isinstance(cache, dict):
+            return cache
+        new_cache: dict[str, CommitCard | None] = {}
+        info["_trajectory_commit_card_cache"] = new_cache
+        return new_cache
+
+    cache = getattr(session, "_trajectory_commit_card_cache", None)
+    if isinstance(cache, dict):
+        return cache
+    new_cache = {}
+    setattr(session, "_trajectory_commit_card_cache", new_cache)
+    return new_cache
 
 
 def find_lca(
@@ -827,5 +854,4 @@ def _extract_chat_completion_text(response: Any) -> str:
                 parts.append(part)
         return "".join(parts)
     return str(content or "")
-
 

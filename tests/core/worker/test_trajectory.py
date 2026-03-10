@@ -27,6 +27,8 @@ class _Result:
 class _FakeSession:
     def __init__(self, cards: dict[str, Any]) -> None:
         self._cards = dict(cards)
+        self.info: dict[str, Any] = {}
+        self.execute_count = 0
 
     def get(self, model: Any, key: Any) -> Any:
         if model is CommitCard:
@@ -35,6 +37,7 @@ class _FakeSession:
         return None
 
     def execute(self, _stmt: Any) -> _Result:
+        self.execute_count += 1
         # Trajectory code loads commit cards via `select(CommitCard).where(...)`.
         try:
             params = _stmt.compile().params
@@ -217,3 +220,26 @@ def test_build_rollup_marks_zero_unique_steps_for_ancestor_inspiration(settings:
     assert any("unique_steps_count: 0" in line for line in rollup.lines)
 
 
+def test_build_rollup_caches_commit_card_reads_across_chain_walks(settings: Settings) -> None:
+    """Repeated chain traversals should reuse commit-card rows within one rollup."""
+
+    cards: dict[str, Any] = {"r": _card("r", None, "root")}
+    parent = "r"
+    for i in range(1, 41):
+        commit = f"c{i}"
+        cards[commit] = _card(commit, parent, f"step {i}")
+        parent = commit
+
+    session = cast(Session, _FakeSession(cards))
+    settings.worker_planning_trajectory_block_size = 8
+    settings.worker_planning_trajectory_max_raw_steps = 6
+    settings.worker_planning_trajectory_max_chunks = 0
+
+    _ = build_inspiration_trajectory_rollup(
+        base_commit_hash="c3",
+        inspiration_commit_hash="c40",
+        session=session,
+        settings=settings,
+    )
+
+    assert session.execute_count == 41

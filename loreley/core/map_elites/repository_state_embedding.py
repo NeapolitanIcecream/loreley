@@ -625,25 +625,47 @@ class RepositoryStateEmbedder:
                 skipped_failed_embedding=0,
             )
 
+        selection_cache: dict[tuple[str | None, str | None], tuple[bool, Path | None, str | None]] = {}
+
         def _selected(path_str: str | None, sha: str | None) -> tuple[bool, Path | None, str | None]:
+            cache_key = (path_str, sha)
+            cached = selection_cache.get(cache_key)
+            if cached is not None:
+                return cached
             if not path_str or _is_null_sha(sha):
-                return False, None, None
+                result = (False, None, None)
+                selection_cache[cache_key] = result
+                return result
             git_path = path_str.strip().lstrip("/")
             if not git_path:
-                return False, None, None
+                result = (False, None, None)
+                selection_cache[cache_key] = result
+                return result
             if ignore_spec and is_ignored_path(ignore_spec, git_path):
-                return False, None, None
+                result = (False, None, None)
+                selection_cache[cache_key] = result
+                return result
             repo_rel = _git_path_to_repo_rel(git_path, repo_prefix=repo_prefix)
             if repo_rel is None:
-                return False, None, None
+                result = (False, None, None)
+                selection_cache[cache_key] = result
+                return result
             if preprocess_filter.is_excluded(repo_rel):
-                return False, None, None
+                result = (False, None, None)
+                selection_cache[cache_key] = result
+                return result
             if not preprocess_filter.is_code_file(repo_rel):
-                return False, None, None
+                result = (False, None, None)
+                selection_cache[cache_key] = result
+                return result
             size = _blob_size_bytes(repo, str(sha))
             if size is None or size <= 0 or size > max_bytes:
-                return False, None, None
-            return True, repo_rel, str(sha)
+                result = (False, None, None)
+                selection_cache[cache_key] = result
+                return result
+            result = (True, repo_rel, str(sha))
+            selection_cache[cache_key] = result
+            return result
 
         old_shas: list[str] = []
         new_shas: list[str] = []
@@ -987,4 +1009,3 @@ def _batched(items: Sequence[T], batch_size: int) -> Iterable[Sequence[T]]:
     step = max(1, int(batch_size))
     for start in range(0, len(items), step):
         yield items[start : start + step]
-

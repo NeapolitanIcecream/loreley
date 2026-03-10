@@ -122,11 +122,7 @@ class WorkerRepository:
         worktree_path: Path | None = None
 
         with self._repo_lock():
-            self.prepare()
-            base_repo = self._get_repo()
-            # Ensure the base commit is present locally before creating the worktree.
-            self._ensure_commit_available(base_commit, repo=base_repo)
-            self._prune_worktrees(repo=base_repo)
+            base_repo = self._prepare_base_repo_for_checkout(base_commit=base_commit)
 
             worktree_path = self._allocate_job_worktree_path(
                 job_id=job_uuid,
@@ -208,6 +204,25 @@ class WorkerRepository:
                 action()
                 progress.update(task_id, completed=1)
 
+    def _prepare_base_repo_for_checkout(self, *, base_commit: str) -> Repo:
+        """Prepare the shared base clone for a commit-specific checkout.
+
+        Job-specific worktree creation only needs the base clone to exist, the
+        `origin` remote to be configured correctly, and the requested commit to
+        be available locally. Skipping a full upstream sync here avoids
+        serialising every worker behind `fetch + clean + checkout` on the
+        shared base clone.
+        """
+
+        self._ensure_worktree_ready()
+        base_repo = self._get_repo()
+        self._ensure_remote_origin(repo=base_repo)
+        self._ensure_commit_available(base_commit, repo=base_repo)
+        if self.enable_lfs:
+            self._sync_lfs(repo=base_repo)
+        self._prune_worktrees(repo=base_repo)
+        return base_repo
+
     def checkout_for_job(
         self,
         *,
@@ -232,10 +247,7 @@ class WorkerRepository:
             job_uuid = UUID(str(job_id))
 
         with self._repo_lock():
-            self.prepare()
-            base_repo = self._get_repo()
-            self._ensure_commit_available(base_commit, repo=base_repo)
-            self._prune_worktrees(repo=base_repo)
+            base_repo = self._prepare_base_repo_for_checkout(base_commit=base_commit)
             worktree_path = self._allocate_job_worktree_path(
                 job_id=job_uuid,
                 base_commit=base_commit,
@@ -706,4 +718,3 @@ class WorkerRepository:
             repo.git.worktree("prune")
         except GitCommandError as exc:
             log.debug("Worktree prune skipped: {}", exc)
-

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 from git import Repo
 
+import loreley.core.map_elites.repository_state_embedding as repo_state_mod
 from loreley.config import Settings
 from loreley.core.map_elites.file_embedding_cache import DatabaseFileEmbeddingCache
 from loreley.core.map_elites.repository_state_embedding import RepositoryStateEmbedder
@@ -214,3 +215,88 @@ def test_repo_state_incremental_delete_last_eligible_file_returns_empty_embeddin
     assert persisted_agg.file_count == 0
     assert tuple(persisted_agg.sum_vector) == pytest.approx((0.0, 0.0))
 
+
+def test_repo_state_incremental_reuses_blob_size_checks_across_selection_passes(
+    tmp_path: Path,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Incremental selection should not repeat blob-size git calls for the same diff entry."""
+
+    repo = _init_repo(tmp_path)
+    settings.mapelites_preprocess_allowed_extensions = [".py"]
+    settings.mapelites_preprocess_allowed_filenames = []
+    settings.mapelites_preprocess_excluded_globs = []
+    settings.mapelites_preprocess_max_file_size_kb = 64
+    settings.mapelites_repo_state_ignore_text = ""
+
+    (tmp_path / "a.py").write_text("print('a1')\n", encoding="utf-8")
+    c1 = _commit_all(repo, "c1")
+
+    (tmp_path / "a.py").write_text("print('a2')\n", encoding="utf-8")
+    c2 = _commit_all(repo, "c2")
+
+    sha_a1 = _blob_sha(repo, c1, "a.py")
+    sha_a2 = _blob_sha(repo, c2, "a.py")
+
+    parent_agg = SimpleNamespace(
+        file_count=1,
+        sum_vector=list(_vec_for_sha(sha_a1)),
+    )
+
+    persisted: dict[str, object] = {}
+
+    def _fake_load_aggregate(*, commit_hash: str, repo_root: Path):  # type: ignore[no-untyped-def]
+        if commit_hash == c1:
+            return parent_agg
+        return persisted.get(commit_hash)
+
+    def _fake_persist_aggregate(  # type: ignore[no-untyped-def]
+        *,
+        commit_hash: str,
+        repo_root: Path,
+        sum_vector,
+        file_count: int,
+    ) -> None:
+        persisted[commit_hash] = SimpleNamespace(
+            file_count=int(file_count),
+            sum_vector=list(sum_vector),
+        )
+
+    def _fake_load_file_cache_metadata(*, blob_shas, dimensions: int):  # type: ignore[no-untyped-def]
+        dims = int(dimensions)
+        assert dims == 2
+        return {
+            sha_a1: RepositoryStateEmbedder._VectorMeta(vector=_vec_for_sha(sha_a1)),
+            sha_a2: RepositoryStateEmbedder._VectorMeta(vector=_vec_for_sha(sha_a2)),
+        }
+
+    seen_blob_sizes: list[str] = []
+
+    def _fake_blob_size_bytes(repo_obj, blob_sha: str):  # type: ignore[no-untyped-def]
+        assert repo_obj is repo
+        seen_blob_sizes.append(blob_sha)
+        return 16
+
+    cache = DatabaseFileEmbeddingCache(
+        embedding_model="stub",
+        requested_dimensions=2,
+    )
+    monkeypatch.setattr(DatabaseFileEmbeddingCache, "put_many", lambda *_args, **_kwargs: None)
+
+    embedder = RepositoryStateEmbedder(
+        settings=settings,
+        cache=cache,
+        repo=repo,
+    )
+
+    monkeypatch.setattr(embedder, "_load_aggregate", _fake_load_aggregate)
+    monkeypatch.setattr(embedder, "_persist_aggregate", _fake_persist_aggregate)
+    monkeypatch.setattr(embedder, "_load_file_cache_metadata", _fake_load_file_cache_metadata)
+    monkeypatch.setattr(repo_state_mod, "_blob_size_bytes", _fake_blob_size_bytes)
+
+    embedding, stats = embedder.embed_incremental(commit_hash=c2, repo_root=tmp_path)
+
+    assert embedding is not None
+    assert stats.files_aggregated == 1
+    assert seen_blob_sizes == [sha_a1, sha_a2]
