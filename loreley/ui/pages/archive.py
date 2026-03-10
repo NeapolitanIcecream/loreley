@@ -43,12 +43,32 @@ def render() -> None:
 
     dims = int(meta.get("dims", 0) or 0)
     cells_per_dim = int(meta.get("cells_per_dim", 0) or 0)
-    st.caption(f"island={island_id} dims={dims} cells_per_dim={cells_per_dim} entries={meta.get('entry_count')}")
+    entry_count = int(meta.get("entry_count", 0) or 0)
+    page_size = st.selectbox("Page size", [100, 250, 500, 1000], index=1)
+    max_page = max(1, (entry_count + page_size - 1) // page_size)
+    page = int(
+        st.number_input(
+            "Page",
+            min_value=1,
+            max_value=max_page,
+            value=1,
+            step=1,
+        )
+    )
+    offset = (page - 1) * page_size
+    st.caption(
+        f"island={island_id} dims={dims} cells_per_dim={cells_per_dim} "
+        f"entries={entry_count} page={page}/{max_page}"
+    )
 
     records = api_get_or_stop(
         api_base_url,
         "/api/v1/archive/records",
-        params={"island_id": island_id},
+        params={
+            "island_id": island_id,
+            "limit": page_size,
+            "offset": offset,
+        },
     ) or []
     records_df = pd.DataFrame(records)
     if records_df.empty:
@@ -138,5 +158,4 @@ def render() -> None:
             )
             with st.expander("Selected commit detail", expanded=False):
                 st.json(detail)
-
 

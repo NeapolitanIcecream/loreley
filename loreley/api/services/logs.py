@@ -63,20 +63,21 @@ def tail_log_file(settings: Settings, *, role: str, filename: str, lines: int = 
 
     # Simple tail implementation: read from end in fixed-size chunks.
     chunk_size = 64 * 1024
-    buffer = b""
+    chunks: list[bytes] = []
     with path.open("rb") as f:
         f.seek(0, 2)
-        file_size = f.tell()
-        offset = 0
-        while file_size - offset > 0 and buffer.count(b"\n") <= target_lines:
-            offset = min(file_size, offset + chunk_size)
-            f.seek(file_size - offset)
-            buffer = f.read(offset) + buffer
-            if offset >= file_size:
-                break
+        cursor = f.tell()
+        newline_count = 0
+        while cursor > 0 and newline_count <= target_lines:
+            read_size = min(chunk_size, cursor)
+            cursor -= read_size
+            f.seek(cursor)
+            chunk = f.read(read_size)
+            chunks.append(chunk)
+            newline_count += chunk.count(b"\n")
 
+    buffer = b"".join(reversed(chunks))
     text = buffer.decode("utf-8", errors="replace")
     parts = text.splitlines()
     return "\n".join(parts[-target_lines:])
-
 

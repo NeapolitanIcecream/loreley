@@ -12,7 +12,7 @@ from ribs.archives import GridArchive
 from loreley.config import Settings
 
 from .snapshot import SnapshotCellUpsert, to_list
-from .types import IslandState, MapElitesRecord, Vector
+from .types import IslandState, MapElitesRecord, Vector, compact_solution, materialize_solution
 
 log = logger.bind(module="map_elites.archive_ops")
 
@@ -20,6 +20,8 @@ __all__ = [
     "build_feature_bounds",
     "build_archive",
     "clip_vector",
+    "compact_solution",
+    "materialize_solution",
     "to_vector",
     "record_from_scalar_row",
     "records_from_store_data",
@@ -92,8 +94,6 @@ def clip_vector(
     if settings.mapelites_feature_clip:
         return np.clip(normalised, state.lower_bounds, state.upper_bounds)
     return normalised
-
-
 def add_single(
     *,
     state: IslandState,
@@ -285,7 +285,10 @@ def build_archive_replace_payload(
             cell_index=int(record.cell_index),
             objective=float(record.fitness),
             measures=tuple(float(v) for v in record.measures),
-            solution=tuple(float(v) for v in record.solution),
+            solution=compact_solution(
+                measures=record.measures,
+                solution=record.solution,
+            ),
             commit_hash=str(record.commit_hash),
             timestamp=float(record.timestamp),
         )
@@ -323,7 +326,10 @@ def records_from_store_data(
             cell_index=int(cell_index),
             fitness=fitness,
             measures=to_vector(measures[idx]) if idx < len(measures) else (),
-            solution=to_vector(solutions[idx]) if idx < len(solutions) else (),
+            solution=materialize_solution(
+                measures=measures[idx] if idx < len(measures) else (),
+                solution=solutions[idx] if idx < len(solutions) else (),
+            ),
             timestamp=timestamp_value,
         )
         records.append(record)
@@ -344,7 +350,10 @@ def record_from_scalar_row(data: Mapping[str, Any], island_id: str) -> MapElites
         cell_index=int(data.get("index", -1)),
         fitness=float(data.get("objective", 0.0)),
         measures=to_vector(data.get("measures", ())),
-        solution=to_vector(data.get("solution", ())),
+        solution=materialize_solution(
+            measures=data.get("measures", ()),
+            solution=data.get("solution", ()),
+        ),
         timestamp=float(data.get("timestamp", time.time())),
     )
 

@@ -7,8 +7,9 @@ from typing import Any
 
 from sqlalchemy import func, select
 
-from loreley.config import Settings, get_settings
-from loreley.core.map_elites.types import MapElitesRecord
+from loreley.api.pagination import normalize_pagination
+from loreley.config import Settings, get_settings, resolve_default_island_id
+from loreley.core.map_elites.types import MapElitesRecord, materialize_solution
 from loreley.core.map_elites.snapshot import ensure_supported_snapshot_meta
 from loreley.db.base import session_scope
 from loreley.db.models import MapElitesArchiveCell, MapElitesPcaHistory, MapElitesState
@@ -35,8 +36,7 @@ def list_islands() -> list[str]:
         return values
 
     base_settings = get_settings()
-    default_island = (base_settings.mapelites_default_island_id or "main").strip() or "main"
-    return [default_island]
+    return [resolve_default_island_id(base_settings)]
 
 
 def describe_island(
@@ -82,10 +82,13 @@ def list_records(
     *,
     island_id: str,
     settings: Settings | None = None,
+    limit: int = 200,
+    offset: int = 0,
 ) -> list[MapElitesRecord]:
     """Return all elite records for an island from persisted archive cells."""
 
     _ = settings or get_settings()
+    limit, offset = normalize_pagination(limit, offset)
 
     with session_scope() as session:
         rows = list(
@@ -93,6 +96,8 @@ def list_records(
                 select(MapElitesArchiveCell)
                 .where(MapElitesArchiveCell.island_id == island_id)
                 .order_by(MapElitesArchiveCell.cell_index.asc())
+                .limit(limit)
+                .offset(offset)
             ).scalars().all()
         )
 
@@ -105,7 +110,10 @@ def list_records(
                 cell_index=int(row.cell_index),
                 fitness=float(row.objective or 0.0),
                 measures=tuple(float(v) for v in (row.measures or ())),
-                solution=tuple(float(v) for v in (row.solution or ())),
+                solution=materialize_solution(
+                    measures=row.measures or (),
+                    solution=row.solution or (),
+                ),
                 timestamp=float(row.timestamp or 0.0),
             )
         )
@@ -172,4 +180,3 @@ def snapshot_updated_at(*, island_id: str) -> Any:
             MapElitesState.island_id == island_id,
         )
         return session.execute(stmt).scalar_one_or_none()
-

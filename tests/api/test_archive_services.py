@@ -32,8 +32,10 @@ class _ExecResult:
 class _FakeSession:
     def __init__(self, result: _ExecResult) -> None:
         self._result = result
+        self.statements = []
 
     def execute(self, _stmt):
+        self.statements.append(_stmt)
         return self._result
 
 
@@ -74,7 +76,7 @@ def test_list_records_reads_archive_cells_without_manager(
             cell_index=1,
             objective=1.2,
             measures=[0.1, 0.2],
-            solution=[0.3, 0.4],
+            solution=[],
             timestamp=10.0,
         ),
         SimpleNamespace(
@@ -87,15 +89,25 @@ def test_list_records_reads_archive_cells_without_manager(
             timestamp=11.0,
         ),
     ]
+    session = _FakeSession(_ExecResult(rows=rows))
 
     @contextmanager
     def _fake_scope():
-        yield _FakeSession(_ExecResult(rows=rows))
+        yield session
 
     monkeypatch.setattr(archive_service, "session_scope", _fake_scope)
 
-    records = archive_service.list_records(island_id="main", settings=settings)
+    records = archive_service.list_records(
+        island_id="main",
+        settings=settings,
+        limit=1,
+        offset=1,
+    )
 
     assert [record.commit_hash for record in records] == ["c1", "c2"]
     assert records[0].measures == pytest.approx((0.1, 0.2))
+    assert records[0].solution == pytest.approx((0.1, 0.2))
     assert records[1].solution == pytest.approx((0.7, 0.8))
+    stmt = session.statements[0]
+    assert int(stmt._limit_clause.value) == 1
+    assert int(stmt._offset_clause.value) == 1

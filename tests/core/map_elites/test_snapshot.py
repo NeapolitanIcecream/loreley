@@ -230,3 +230,38 @@ def test_apply_snapshot_only_maps_entries_with_positive_add_status() -> None:
     assert len(restored_state.archive.add_calls) == 1
 
 
+def test_apply_snapshot_uses_measures_when_solution_is_compacted() -> None:
+    """Regression: compacted archive rows should still restore a valid solution vector."""
+
+    snapshot = {
+        "island_id": "main",
+        "lower_bounds": [-1.0, -1.0],
+        "upper_bounds": [1.0, 1.0],
+        "history": [],
+        "projection": None,
+        "archive": [
+            {
+                "index": 0,
+                "objective": 1.0,
+                "measures": [0.1, 0.2],
+                "solution": [],
+                "commit_hash": "c1",
+                "timestamp": 10.0,
+            },
+        ],
+    }
+
+    restored_state = DummyState(archive=DummyArchive())
+    commit_to_island: dict[str, str] = {}
+
+    apply_snapshot(
+        state=restored_state,
+        snapshot=snapshot,
+        island_id="main",
+        commit_to_island=commit_to_island,
+    )
+
+    assert len(restored_state.archive.add_calls) == 1
+    add_call = restored_state.archive.add_calls[0]
+    assert np.allclose(add_call["solution"], np.asarray([[0.1, 0.2]], dtype=np.float64))
+

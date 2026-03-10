@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 from loreley.db.base import session_scope
 from loreley.db.models import MapElitesArchiveCell, MapElitesPcaHistory, MapElitesState
 from .dimension_reduction import PCAProjection, PcaHistoryEntry
+from .types import compact_solution, materialize_solution
 
 log = logger.bind(module="map_elites.snapshot")
 
@@ -296,7 +297,13 @@ class DatabaseSnapshotStore:
                         "commit_hash": str(cell.commit_hash),
                         "objective": float(cell.objective),
                         "measures": [float(v) for v in cell.measures],
-                        "solution": [float(v) for v in cell.solution],
+                        "solution": [
+                            float(v)
+                            for v in compact_solution(
+                                measures=cell.measures,
+                                solution=cell.solution,
+                            )
+                        ],
                         "timestamp": float(cell.timestamp),
                     }
                     for cell in cells
@@ -310,7 +317,13 @@ class DatabaseSnapshotStore:
                 "commit_hash": str(cell.commit_hash),
                 "objective": float(cell.objective),
                 "measures": [float(v) for v in cell.measures],
-                "solution": [float(v) for v in cell.solution],
+                "solution": [
+                    float(v)
+                    for v in compact_solution(
+                        measures=cell.measures,
+                        solution=cell.solution,
+                    )
+                ],
                 "timestamp": float(cell.timestamp),
             }
             stmt = pg_insert(MapElitesArchiveCell).values(**values)
@@ -371,7 +384,13 @@ class DatabaseSnapshotStore:
                     "index": int(row.cell_index),
                     "objective": float(row.objective or 0.0),
                     "measures": [float(v) for v in (row.measures or [])],
-                    "solution": [float(v) for v in (row.solution or [])],
+                    "solution": [
+                        float(v)
+                        for v in materialize_solution(
+                            measures=row.measures or [],
+                            solution=row.solution or [],
+                        )
+                    ],
                     "commit_hash": str(row.commit_hash or ""),
                     "timestamp": float(row.timestamp or 0.0),
                 }
@@ -562,10 +581,12 @@ def restore_archive_entries(
     stored_indices: list[int | None] = []
 
     for entry in entries:
-        solution_values = array_to_list(entry.get("solution"))
         measures_values = array_to_list(entry.get("measures"))
-        if not solution_values or not measures_values:
+        if not measures_values:
             continue
+        solution_values = array_to_list(entry.get("solution"))
+        if not solution_values:
+            solution_values = list(measures_values)
 
         solution = np.asarray(solution_values, dtype=np.float64)
         measures = np.asarray(measures_values, dtype=np.float64)
@@ -714,4 +735,3 @@ def to_list(values: Any) -> list[Any]:
     if isinstance(values, (list, tuple)):
         return list(values)
     return [values]
-
