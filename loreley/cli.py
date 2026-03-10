@@ -17,7 +17,7 @@ import click
 import typer
 from rich.console import Console
 
-from loreley.config import Settings, get_settings
+from loreley.config import Settings, get_settings, resolve_default_island_id
 from loreley.entrypoints import configure_process_logging, reset_database, run_api, run_scheduler, run_ui, run_worker
 from loreley.preflight import (
     CheckResult,
@@ -75,8 +75,7 @@ def _resolve_effective_island(*, settings: Settings, island_id: str | None) -> s
     raw = (island_id or "").strip()
     if raw:
         return raw
-    default_island = str(settings.mapelites_default_island_id or "").strip()
-    return default_island or "main"
+    return resolve_default_island_id(settings)
 
 
 def _load_archive_stats_or_exit(*, settings: Settings, island_id: str) -> dict[str, object]:
@@ -636,5 +635,4 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main(sys.argv[1:]))
-
 

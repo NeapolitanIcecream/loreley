@@ -16,7 +16,7 @@ from loguru import logger
 from rich.console import Console
 from sqlalchemy import func, select
 
-from loreley.config import Settings
+from loreley.config import Settings, resolve_default_island_id
 from loreley.core.map_elites.sampler import MapElitesSampler, ScheduledSamplerJob
 from loreley.db.base import session_scope
 from loreley.db.models import EvolutionJob, JobStatus
@@ -144,7 +144,7 @@ class JobScheduler:
         if count <= 0:
             return 0
 
-        effective_island = island_id or self.settings.mapelites_default_island_id or "main"
+        effective_island = island_id or resolve_default_island_id(self.settings)
         now = datetime.now(timezone.utc)
         jobs: list[EvolutionJob] = []
         goal = (self.settings.worker_evolution_global_goal or "").strip()

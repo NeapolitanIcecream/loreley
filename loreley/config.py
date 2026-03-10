@@ -811,3 +811,11 @@ def get_settings() -> Settings:
     )
     log.info("Settings initialised: {}", settings.export_safe())
     return settings
+
+
+def resolve_default_island_id(settings: Settings | None = None) -> str:
+    """Return the effective default island ID with a shared fallback."""
+
+    base_settings = settings or get_settings()
+    value = str(getattr(base_settings, "mapelites_default_island_id", "") or "").strip()
+    return value or "main"

@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, cast
+from types import SimpleNamespace
+
+from sqlalchemy.exc import MultipleResultsFound
 
 from loreley.scheduler import ingestion as ingestion_mod
 from loreley.scheduler.ingestion import MapElitesIngestion
@@ -88,3 +92,62 @@ def test_root_initialisation_evaluates_without_ingesting_into_archive(
     # MAP-Elites archive.
     assert manager.ingest_calls == []
 
+
+def test_root_commit_evaluation_skips_when_metrics_already_exist_even_if_multiple(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Regression: root evaluation should skip when any existing metric row is present."""
+
+    settings = TestSettings(MAPELITES_CODE_EMBEDDING_DIMENSIONS=8)
+    ingestion = MapElitesIngestion(
+        settings=settings,
+        console=ingestion_mod.Console(),
+        repo_root=tmp_path,
+        repo=cast(Any, object()),
+        manager=DummyManager(),  # type: ignore[arg-type]
+    )
+
+    commit_row = SimpleNamespace(id="card-1")
+
+    class _CommitResult:
+        def scalar_one_or_none(self) -> object:
+            return commit_row
+
+    class _MetricExistsResult:
+        def scalar_one_or_none(self) -> object:
+            raise MultipleResultsFound("multiple metrics exist")
+
+        def scalar(self) -> object:
+            return "metric-1"
+
+        def first(self) -> tuple[str]:
+            return ("metric-1",)
+
+    class _Session:
+        def __init__(self) -> None:
+            self._calls = 0
+
+        def execute(self, _stmt: object) -> object:
+            self._calls += 1
+            if self._calls == 1:
+                return _CommitResult()
+            return _MetricExistsResult()
+
+    @contextmanager
+    def _fake_scope():
+        yield _Session()
+
+    monkeypatch.setattr(ingestion_mod, "session_scope", _fake_scope)
+
+    worker_repo_calls: list[object] = []
+
+    class _ForbiddenWorkerRepository:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            worker_repo_calls.append(object())
+
+    monkeypatch.setattr(ingestion_mod, "WorkerRepository", _ForbiddenWorkerRepository)
+
+    ingestion._ensure_root_commit_evaluated("abc123")
+
+    assert worker_repo_calls == []

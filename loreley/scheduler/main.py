@@ -15,7 +15,7 @@ from loguru import logger
 from rich.console import Console
 from sqlalchemy import case, func, select
 
-from loreley.config import Settings, get_settings
+from loreley.config import Settings, get_settings, resolve_default_island_id
 from loreley.core.experiments import ExperimentError, bootstrap_instance
 from loreley.core.git import RepositoryError, require_commit, wrap_git_error
 from loreley.core.map_elites.map_elites import MapElitesManager
@@ -482,7 +482,7 @@ class EvolutionScheduler:
         if not root_hash:
             return 0
 
-        default_island = self.settings.mapelites_default_island_id or "main"
+        default_island = resolve_default_island_id(self.settings)
 
         # Skip when the archive already contains any elites for the default island.
         records = self.manager.get_records(default_island)
@@ -686,4 +686,3 @@ if __name__ == "__main__":  # pragma: no cover
     from loreley.cli import main as loreley_main
 
     raise SystemExit(loreley_main(["scheduler", *sys.argv[1:]]))
-

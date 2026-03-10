@@ -110,7 +110,9 @@ def test_ingest_snapshot_records_failed_when_commit_unavailable(monkeypatch, tmp
     assert recorded == [("failed", "missing commit")]
 
 
-def test_ingest_completed_jobs_reuses_single_snapshot_transaction(monkeypatch, tmp_path) -> None:
+def test_ingest_completed_jobs_uses_prefetch_session_only_for_metrics_prefetch(
+    monkeypatch, tmp_path
+) -> None:
     ingestion = _make_ingestion(tmp_path)
     snapshots = [
         JobSnapshot(
@@ -164,7 +166,7 @@ def test_ingest_completed_jobs_reuses_single_snapshot_transaction(monkeypatch, t
 
     assert ingestion.ingest_completed_jobs() == 2
     assert len(created_sessions) == 1
-    assert seen_sessions == [created_sessions[0], created_sessions[0]]
+    assert seen_sessions == [None, None]
 
 
 def test_ingest_completed_jobs_prefetches_metrics_with_canonical_hashes(
@@ -293,7 +295,7 @@ def test_ingest_completed_jobs_records_failed_when_prefetched_metrics_payload_in
     assert "Failed to build metrics payload" in cast(str, recorded[0][1])
 
 
-def test_ingest_completed_jobs_does_not_abort_when_snapshot_batch_commit_fails(
+def test_ingest_completed_jobs_raises_when_metrics_prefetch_session_commit_fails(
     monkeypatch, tmp_path
 ) -> None:
     ingestion = _make_ingestion(tmp_path)
@@ -332,12 +334,15 @@ def test_ingest_completed_jobs_does_not_abort_when_snapshot_batch_commit_fails(
 
     monkeypatch.setattr(ingestion_mod, "session_scope", fake_scope)
 
+    seen_snapshots: list[JobSnapshot] = []
+
     def fake_ingest_snapshot(
         _self,
-        _snapshot: JobSnapshot,
+        snapshot: JobSnapshot,
         *,
         snapshot_session: Any | None = None,
     ) -> bool:
+        seen_snapshots.append(snapshot)
         return True
 
     monkeypatch.setattr(ingestion_mod.MapElitesIngestion, "_ingest_snapshot", fake_ingest_snapshot)
@@ -347,7 +352,13 @@ def test_ingest_completed_jobs_does_not_abort_when_snapshot_batch_commit_fails(
         lambda _self, _commit_hashes, *, session: ({}, {}),
     )
 
-    assert ingestion.ingest_completed_jobs() == 2
+    try:
+        ingestion.ingest_completed_jobs()
+    except RuntimeError as exc:
+        assert str(exc) == "commit failed"
+    else:  # pragma: no cover - defensive
+        raise AssertionError("Expected ingestion prefetch failure to propagate")
+    assert seen_snapshots == []
 
 
 def test_ingest_snapshot_records_failed_when_manager_raises(monkeypatch, tmp_path) -> None:
@@ -528,4 +539,3 @@ def test_record_ingestion_state_clamps_long_reason(monkeypatch, tmp_path) -> Non
     assert dummy_job.ingestion_reason is not None
     assert dummy_job.ingestion_reason.endswith("…")
     assert len(dummy_job.ingestion_reason) == 4096
-
