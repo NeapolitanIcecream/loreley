@@ -44,7 +44,7 @@ from .rebuild import (
     seed_after_initial_fit,
 )
 from .repository_state_embedding import RepoStateEmbeddingStats, embed_repository_state_incremental
-from .snapshot import DatabaseSnapshotStore, SnapshotCellUpsert, SnapshotUpdate, apply_snapshot
+from .snapshot import DatabaseSnapshotStore, SnapshotCellUpsert, SnapshotUpdate, apply_snapshot, to_list
 from .types import (
     CommitEmbeddingArtifacts,
     IslandState,
@@ -252,6 +252,7 @@ class MapElitesManager:
                 lower_bounds=state.lower_bounds.tolist(),
                 upper_bounds=state.upper_bounds.tolist(),
                 projection=state.projection,
+                history_limit=resolve_pca_history_limit(self.settings),
                 history_upsert=final_embedding.history_entry if final_embedding else None,
                 history_seen_at=time.time(),
                 samples_since_fit=state.samples_since_fit,
@@ -467,6 +468,34 @@ class MapElitesManager:
             )
         return dict(cell_commits)
 
+    def get_cell_objectives(self, island_id: str | None = None) -> dict[int, float]:
+        """Return occupied cell objectives without materialising full archive records."""
+
+        effective_island = island_id or self._default_island
+        state = self._ensure_island(effective_island)
+        if state.archive.empty:
+            return {}
+
+        data = cast(Mapping[str, Any], state.archive.data())
+        indices = to_list(data.get("index"))
+        objectives = to_list(data.get("objective"))
+        if not indices or not objectives:
+            return {}
+
+        values: dict[int, float] = {}
+        for idx, raw_cell_index in enumerate(indices):
+            if idx >= len(objectives):
+                break
+            try:
+                cell_index = int(raw_cell_index)
+                objective = float(objectives[idx])
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(objective):
+                continue
+            values[cell_index] = objective
+        return values
+
     def sample_records(
         self,
         island_id: str | None = None,
@@ -503,6 +532,7 @@ class MapElitesManager:
             lower_bounds=state.lower_bounds.tolist(),
             upper_bounds=state.upper_bounds.tolist(),
             projection=None,
+            history_limit=resolve_pca_history_limit(self.settings),
             clear=True,
             history_seen_at=time.time(),
         )

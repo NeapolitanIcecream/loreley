@@ -98,6 +98,7 @@ class EvolutionScheduler:
             console=self.console,
             sampler=self.sampler,
         )
+        self._total_jobs_count = int(self.job_scheduler.count_total_jobs())
         self.ingestion = MapElitesIngestion(
             settings=self.settings,
             console=self.console,
@@ -154,13 +155,17 @@ class EvolutionScheduler:
         unfinished = self.job_scheduler.count_unfinished_jobs()
         stats["seed_scheduled"] = self._maybe_schedule_seed_jobs(unfinished_jobs=unfinished)
         effective_unfinished = unfinished + stats["seed_scheduled"]
-        total_jobs = self.job_scheduler.count_total_jobs()
+        total_jobs = self._get_total_jobs_count()
         stats["scheduled"] = self.job_scheduler.schedule_jobs(
             unfinished_jobs=effective_unfinished,
             total_jobs=total_jobs,
         )
         stats["unfinished"] = unfinished + stats["seed_scheduled"] + stats["scheduled"]
-        total_jobs_after = total_jobs + stats["scheduled"]
+        created_total = stats["seed_scheduled"] + stats["scheduled"]
+        if created_total > 0:
+            total_jobs_after = self._adjust_total_jobs_count(created_total)
+        else:
+            total_jobs_after = total_jobs
 
         remaining_total_str = ""
         max_total = self._max_total_jobs
@@ -253,6 +258,19 @@ class EvolutionScheduler:
             if remaining <= 0:
                 break
             time.sleep(min(quantum, remaining))
+
+    def _get_total_jobs_count(self, *, refresh: bool = False) -> int:
+        cached = getattr(self, "_total_jobs_count", None)
+        if refresh or cached is None:
+            cached = int(self.job_scheduler.count_total_jobs())
+            self._total_jobs_count = cached
+        return int(cached)
+
+    def _adjust_total_jobs_count(self, delta: int) -> int:
+        current = self._get_total_jobs_count()
+        updated = max(0, current + int(delta))
+        self._total_jobs_count = updated
+        return updated
 
     # DB coordination helpers ----------------------------------------------
 
@@ -493,15 +511,13 @@ class EvolutionScheduler:
 
         with session_scope() as session:
             stmt = select(
-                func.count(EvolutionJob.id),
                 func.coalesce(
                     func.sum(case((EvolutionJob.is_seed_job.is_(True), 1), else_=0)),
                     0,
                 ),
             )
-            total_jobs, seed_count = session.execute(stmt).one()
-            total_jobs = int(total_jobs)
-            seed_count = int(seed_count)
+            seed_count = int(session.execute(stmt).scalar_one())
+        total_jobs = self._get_total_jobs_count()
         non_seed_jobs_exist = total_jobs > seed_count
 
         if non_seed_jobs_exist:

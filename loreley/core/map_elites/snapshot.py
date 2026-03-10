@@ -90,6 +90,7 @@ class SnapshotUpdate:
     upper_bounds: Sequence[float] | None = None
     projection: PCAProjection | None = None
     samples_since_fit: int | None = None
+    history_limit: int | None = None
 
     history_upsert: PcaHistoryEntry | None = None
     history_seen_at: float | None = None
@@ -281,66 +282,17 @@ class DatabaseSnapshotStore:
             return
 
         if update.archive_replace is not None:
-            # Replacing the archive is rare (initial PCA fit or later PCA refits).
-            # Purge rows first so stale cell indices do not linger.
-            session.execute(
-                delete(MapElitesArchiveCell).where(
-                    MapElitesArchiveCell.island_id == island_id,
-                )
+            self._apply_archive_replace(
+                session,
+                island_id=island_id,
+                cells=update.archive_replace,
             )
-            cells = list(update.archive_replace)
-            if cells:
-                values = [
-                    {
-                        "island_id": island_id,
-                        "cell_index": int(cell.cell_index),
-                        "commit_hash": str(cell.commit_hash),
-                        "objective": float(cell.objective),
-                        "measures": [float(v) for v in cell.measures],
-                        "solution": [
-                            float(v)
-                            for v in compact_solution(
-                                measures=cell.measures,
-                                solution=cell.solution,
-                            )
-                        ],
-                        "timestamp": float(cell.timestamp),
-                    }
-                    for cell in cells
-                ]
-                session.execute(pg_insert(MapElitesArchiveCell), values)
         elif update.cell_upsert is not None:
             cell = update.cell_upsert
-            values = {
-                "island_id": island_id,
-                "cell_index": int(cell.cell_index),
-                "commit_hash": str(cell.commit_hash),
-                "objective": float(cell.objective),
-                "measures": [float(v) for v in cell.measures],
-                "solution": [
-                    float(v)
-                    for v in compact_solution(
-                        measures=cell.measures,
-                        solution=cell.solution,
-                    )
-                ],
-                "timestamp": float(cell.timestamp),
-            }
-            stmt = pg_insert(MapElitesArchiveCell).values(**values)
-            stmt = stmt.on_conflict_do_update(
-                index_elements=[
-                    MapElitesArchiveCell.__table__.c.island_id,
-                    MapElitesArchiveCell.__table__.c.cell_index,
-                ],
-                set_={
-                    "commit_hash": stmt.excluded.commit_hash,
-                    "objective": stmt.excluded.objective,
-                    "measures": stmt.excluded.measures,
-                    "solution": stmt.excluded.solution,
-                    "timestamp": stmt.excluded.timestamp,
-                },
+            self._upsert_archive_cells(
+                session,
+                values=[self._archive_cell_values(island_id=island_id, cell=cell)],
             )
-            session.execute(stmt)
 
         if update.history_upsert is not None:
             entry = update.history_upsert
@@ -364,6 +316,162 @@ class DatabaseSnapshotStore:
                 },
             )
             session.execute(stmt)
+            self._prune_history_entries(
+                session,
+                island_id=island_id,
+                history_limit=update.history_limit,
+            )
+
+    def _archive_cell_values(
+        self,
+        *,
+        island_id: str,
+        cell: SnapshotCellUpsert,
+    ) -> dict[str, object]:
+        return {
+            "island_id": island_id,
+            "cell_index": int(cell.cell_index),
+            "commit_hash": str(cell.commit_hash),
+            "objective": float(cell.objective),
+            "measures": [float(v) for v in cell.measures],
+            "solution": [
+                float(v)
+                for v in compact_solution(
+                    measures=cell.measures,
+                    solution=cell.solution,
+                )
+            ],
+            "timestamp": float(cell.timestamp),
+        }
+
+    def _apply_archive_replace(
+        self,
+        session: Session,
+        *,
+        island_id: str,
+        cells: Sequence[SnapshotCellUpsert],
+    ) -> None:
+        existing_rows = list(
+            session.execute(
+                select(MapElitesArchiveCell)
+                .where(MapElitesArchiveCell.island_id == island_id)
+                .order_by(MapElitesArchiveCell.cell_index.asc())
+            )
+            .scalars()
+            .all()
+        )
+        stale_indices, upsert_values = self._diff_archive_replace(
+            island_id=island_id,
+            existing_rows=existing_rows,
+            cells=cells,
+        )
+        if stale_indices:
+            session.execute(
+                delete(MapElitesArchiveCell).where(
+                    MapElitesArchiveCell.island_id == island_id,
+                    MapElitesArchiveCell.cell_index.in_(stale_indices),
+                )
+            )
+        self._upsert_archive_cells(session, values=upsert_values)
+
+    def _diff_archive_replace(
+        self,
+        *,
+        island_id: str,
+        existing_rows: Sequence[MapElitesArchiveCell],
+        cells: Sequence[SnapshotCellUpsert],
+    ) -> tuple[list[int], list[dict[str, object]]]:
+        desired_by_cell = {
+            int(cell.cell_index): self._archive_cell_values(island_id=island_id, cell=cell)
+            for cell in cells
+        }
+        existing_by_cell = {int(getattr(row, "cell_index")): row for row in existing_rows}
+
+        stale_indices = sorted(
+            cell_index
+            for cell_index in existing_by_cell
+            if cell_index not in desired_by_cell
+        )
+        upsert_values: list[dict[str, object]] = []
+        for cell_index in sorted(desired_by_cell):
+            values = desired_by_cell[cell_index]
+            row = existing_by_cell.get(cell_index)
+            if row is not None and self._archive_row_matches_values(row, values):
+                continue
+            upsert_values.append(values)
+        return stale_indices, upsert_values
+
+    def _archive_row_matches_values(
+        self,
+        row: MapElitesArchiveCell,
+        values: Mapping[str, object],
+    ) -> bool:
+        return (
+            str(getattr(row, "commit_hash", "") or "") == str(values.get("commit_hash", "") or "")
+            and float(getattr(row, "objective", 0.0) or 0.0) == float(values.get("objective", 0.0) or 0.0)
+            and [float(v) for v in (getattr(row, "measures", ()) or ())] == list(values.get("measures", ()))
+            and [float(v) for v in (getattr(row, "solution", ()) or ())] == list(values.get("solution", ()))
+            and float(getattr(row, "timestamp", 0.0) or 0.0) == float(values.get("timestamp", 0.0) or 0.0)
+        )
+
+    def _upsert_archive_cells(
+        self,
+        session: Session,
+        *,
+        values: Sequence[Mapping[str, object]],
+    ) -> None:
+        payload = [dict(value) for value in values if value]
+        if not payload:
+            return
+        stmt = pg_insert(MapElitesArchiveCell).values(payload)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[
+                MapElitesArchiveCell.__table__.c.island_id,
+                MapElitesArchiveCell.__table__.c.cell_index,
+            ],
+            set_={
+                "commit_hash": stmt.excluded.commit_hash,
+                "objective": stmt.excluded.objective,
+                "measures": stmt.excluded.measures,
+                "solution": stmt.excluded.solution,
+                "timestamp": stmt.excluded.timestamp,
+            },
+        )
+        session.execute(stmt)
+
+    def _prune_history_entries(
+        self,
+        session: Session,
+        *,
+        island_id: str,
+        history_limit: int | None,
+    ) -> None:
+        effective_limit = int(history_limit or 0)
+        if effective_limit <= 0:
+            return
+
+        stale_commit_hashes = list(
+            session.execute(
+                select(MapElitesPcaHistory.commit_hash)
+                .where(MapElitesPcaHistory.island_id == island_id)
+                .order_by(
+                    MapElitesPcaHistory.last_seen_at.desc(),
+                    MapElitesPcaHistory.commit_hash.asc(),
+                )
+                .offset(effective_limit)
+            )
+            .scalars()
+            .all()
+        )
+        if not stale_commit_hashes:
+            return
+
+        session.execute(
+            delete(MapElitesPcaHistory).where(
+                MapElitesPcaHistory.island_id == island_id,
+                MapElitesPcaHistory.commit_hash.in_(stale_commit_hashes),
+            )
+        )
 
     def _load_archive_entries(self, session, *, island_id: str) -> list[dict[str, Any]]:
         rows = list(

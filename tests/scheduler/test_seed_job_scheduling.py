@@ -14,11 +14,19 @@ from loreley.scheduler.main import EvolutionScheduler
 
 
 class _FakeResult:
-    def __init__(self, row: tuple[object, object]) -> None:
+    def __init__(self, row: object) -> None:
         self._row = row
 
-    def one(self) -> tuple[object, object]:
+    def one(self) -> object:
         return self._row
+
+    def scalar_one(self) -> object:
+        row = self._row
+        if isinstance(row, tuple):
+            if len(row) != 1:
+                raise AssertionError("scalar_one() expected a single-column row")
+            return row[0]
+        return row
 
 
 @dataclass
@@ -35,6 +43,9 @@ class _FakeSession:
         if any(d.get("expr") is EvolutionJob or d.get("type") is EvolutionJob for d in descriptions):
             raise AssertionError("seed scheduling must not execute select(EvolutionJob)")
 
+        descriptions = list(getattr(stmt, "column_descriptions", []))
+        if len(descriptions) == 1:
+            return _FakeResult((self.seed_count,))
         return _FakeResult((self.total_jobs, self.seed_count))
 
 
@@ -70,6 +81,7 @@ def _make_scheduler(*, settings: Settings, records: list[object]) -> EvolutionSc
     scheduler._max_total_jobs = 100
     scheduler.manager = _DummyManager(records=records)
     scheduler.job_scheduler = _DummyJobScheduler(created_calls=[], created_return=0)
+    scheduler._total_jobs_count = 0
     return cast(EvolutionScheduler, scheduler)
 
 
@@ -104,6 +116,7 @@ def test_seed_scheduling_is_noop_when_non_seed_jobs_exist(
         }
     )
     scheduler = _make_scheduler(settings=settings, records=[])
+    scheduler._total_jobs_count = 3
     executed: list[object] = []
     fake_session = _FakeSession(total_jobs=3, seed_count=2, executed=executed)
 
@@ -136,6 +149,7 @@ def test_seed_scheduling_creates_limited_jobs_without_loading_rows(
     )
     scheduler = _make_scheduler(settings=settings, records=[])
     scheduler._max_total_jobs = 20
+    scheduler._total_jobs_count = 2
     cast(Any, scheduler.job_scheduler).created_return = 3
 
     executed: list[object] = []
@@ -165,3 +179,41 @@ def test_seed_scheduling_creates_limited_jobs_without_loading_rows(
     ]
     assert len(executed) == 1
 
+
+def test_tick_reuses_cached_total_job_count(settings: Settings) -> None:
+    scheduler = cast(Any, EvolutionScheduler.__new__(EvolutionScheduler))
+    scheduler.settings = settings
+    scheduler.console = Console(record=True)
+    scheduler._max_total_jobs = 10
+    scheduler._stop_requested = False
+    scheduler._total_jobs_count = 4
+
+    class _DummyIngestion:
+        def ingest_completed_jobs(self) -> int:
+            return 0
+
+    class _DummyJobScheduler:
+        def dispatch_pending_jobs(self) -> int:
+            return 0
+
+        def count_unfinished_jobs(self) -> int:
+            return 1
+
+        def count_total_jobs(self) -> int:
+            raise AssertionError("tick should reuse the cached total job count")
+
+        def schedule_jobs(self, unfinished_jobs: int, *, total_jobs: int) -> int:
+            assert unfinished_jobs == 1
+            assert total_jobs == 4
+            return 2
+
+    scheduler.ingestion = _DummyIngestion()
+    scheduler.job_scheduler = _DummyJobScheduler()
+    scheduler._maybe_schedule_seed_jobs = lambda unfinished_jobs: 0
+    scheduler._create_best_fitness_branch_if_possible = lambda: None
+    scheduler.stop = lambda: None
+
+    stats = EvolutionScheduler.tick(cast(EvolutionScheduler, scheduler))
+
+    assert stats["scheduled"] == 2
+    assert scheduler._total_jobs_count == 6
