@@ -11,7 +11,7 @@ import numpy as np
 from loguru import logger
 from sqlalchemy.orm import Session
 
-from loreley.config import Settings, get_settings
+from loreley.config import Settings, get_settings, resolve_default_island_id
 
 from .archive_ops import (
     add_batch as archive_add_batch,
@@ -84,7 +84,7 @@ class MapElitesManager:
         self._archives: dict[str, IslandState] = {}
         self._reducers: dict[str, DimensionReducer] = {}
         self._commit_to_island: dict[str, str] = {}
-        self._default_island = self.settings.mapelites_default_island_id or "default"
+        self._default_island = resolve_default_island_id(self.settings)
         self._snapshot_store = DatabaseSnapshotStore()
         self._ingest_info_log_every = int(self.settings.mapelites_ingest_info_log_every)
         self._ingest_invocations = 0

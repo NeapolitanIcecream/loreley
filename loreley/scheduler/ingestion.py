@@ -18,7 +18,7 @@ from rich.console import Console
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
-from loreley.config import Settings
+from loreley.config import Settings, resolve_default_island_id
 from loreley.core.contracts import clamp_text, normalize_single_line
 from loreley.core.git import RepositoryError as GitRepositoryError, require_commit
 from loreley.core.map_elites.map_elites import MapElitesManager
@@ -81,56 +81,43 @@ class MapElitesIngestion:
         if batch == 0:
             return 0
         snapshots = self._jobs_requiring_ingestion(limit=batch)
+        if not snapshots:
+            return 0
         ingested = 0
-        completed_loop = False
-        try:
-            with session_scope() as snapshot_session:
-                self._prefetched_metrics_payload_by_commit = None
-                self._prefetched_metrics_errors_by_commit = None
-                try:
-                    (
-                        self._prefetched_metrics_payload_by_commit,
-                        self._prefetched_metrics_errors_by_commit,
-                    ) = self._load_metrics_payload_batch(
-                        self._canonicalize_prefetch_commit_hashes(snapshots),
-                        session=snapshot_session,
-                    )
 
-                    for snapshot in snapshots:
-                        try:
-                            if self._ingest_snapshot(snapshot, snapshot_session=snapshot_session):
-                                ingested += 1
-                        except Exception as exc:
-                            raw_reason = normalize_single_line(str(exc))
-                            reason = clamp_text(raw_reason, _INGESTION_REASON_MAX_CHARS) or None
-                            reason_display = reason or raw_reason or exc.__class__.__name__
-                            self.console.log(
-                                f"[bold red]Unhandled ingestion error[/] job={snapshot.job_id} commit={snapshot.result_commit_hash} reason={reason_display}",
-                            )
-                            log.exception(
-                                "Unhandled ingestion error for job {} commit {}: {}",
-                                snapshot.job_id,
-                                snapshot.result_commit_hash,
-                                reason_display,
-                            )
-                            # Log first so failures remain visible even if DB writes are down.
-                            # If we cannot record the failure, let the error propagate: the
-                            # scheduler is unlikely to make progress without database writes.
-                            self._record_ingestion_state(snapshot, status="failed", reason=reason_display)
-                finally:
-                    self._prefetched_metrics_payload_by_commit = None
-                    self._prefetched_metrics_errors_by_commit = None
-                completed_loop = True
-        except Exception as exc:
-            if not completed_loop:
-                raise
-            raw_reason = normalize_single_line(str(exc))
-            reason = clamp_text(raw_reason, _INGESTION_REASON_MAX_CHARS) or None
-            reason_display = reason or raw_reason or exc.__class__.__name__
-            self.console.log(
-                f"[bold red]Snapshot batch commit failed[/] reason={reason_display}",
-            )
-            log.exception("Snapshot batch commit failed: {}", reason_display)
+        self._prefetched_metrics_payload_by_commit = None
+        self._prefetched_metrics_errors_by_commit = None
+        try:
+            with session_scope() as prefetch_session:
+                (
+                    self._prefetched_metrics_payload_by_commit,
+                    self._prefetched_metrics_errors_by_commit,
+                ) = self._load_metrics_payload_batch(
+                    self._canonicalize_prefetch_commit_hashes(snapshots),
+                    session=prefetch_session,
+                )
+
+            for snapshot in snapshots:
+                try:
+                    if self._ingest_snapshot(snapshot):
+                        ingested += 1
+                except Exception as exc:
+                    raw_reason = normalize_single_line(str(exc))
+                    reason = clamp_text(raw_reason, _INGESTION_REASON_MAX_CHARS) or None
+                    reason_display = reason or raw_reason or exc.__class__.__name__
+                    self.console.log(
+                        f"[bold red]Unhandled ingestion error[/] job={snapshot.job_id} commit={snapshot.result_commit_hash} reason={reason_display}",
+                    )
+                    log.exception(
+                        "Unhandled ingestion error for job {} commit {}: {}",
+                        snapshot.job_id,
+                        snapshot.result_commit_hash,
+                        reason_display,
+                    )
+                    self._record_ingestion_state(snapshot, status="failed", reason=reason_display)
+        finally:
+            self._prefetched_metrics_payload_by_commit = None
+            self._prefetched_metrics_errors_by_commit = None
         return ingested
 
     def _canonicalize_prefetch_commit_hashes(self, snapshots: Sequence[JobSnapshot]) -> list[str]:
@@ -515,8 +502,10 @@ class MapElitesIngestion:
             ).scalar_one_or_none()
             if commit_row is not None:
                 existing = session.execute(
-                    select(Metric.id).where(Metric.commit_card_id == commit_row.id)
-                ).scalar_one_or_none()
+                    select(Metric.id)
+                    .where(Metric.commit_card_id == commit_row.id)
+                    .limit(1)
+                ).first()
                 if existing is not None:
                     return
 
@@ -543,7 +532,7 @@ class MapElitesIngestion:
                 create_branch=False,
             ) as checkout:
                 goal = f"Baseline evaluation for root commit {commit_hash}"
-                default_island = self.settings.mapelites_default_island_id or "main"
+                default_island = resolve_default_island_id(self.settings)
                 payload: dict[str, Any] = {
                     "job": {
                         "id": None,
@@ -612,7 +601,7 @@ class MapElitesIngestion:
                     else f"Commit {commit_hash}"
                 )
                 subject = subject[:72].strip() or f"Commit {commit_hash}"
-                default_island = self.settings.mapelites_default_island_id or "main"
+                default_island = resolve_default_island_id(self.settings)
 
                 commit_row = CommitCard(
                     commit_hash=commit_hash,
@@ -717,7 +706,7 @@ class MapElitesIngestion:
                 CommitCard.commit_hash == commit_hash,
             )
             existing = session.execute(stmt).scalar_one_or_none()
-            default_island = self.settings.mapelites_default_island_id or "main"
+            default_island = resolve_default_island_id(self.settings)
 
             if existing:
                 updated = False
@@ -776,5 +765,4 @@ class MapElitesIngestion:
     @staticmethod
     def _now_iso() -> str:
         return datetime.now(timezone.utc).isoformat()
-
 

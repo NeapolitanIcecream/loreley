@@ -16,7 +16,7 @@ from loguru import logger
 from rich.console import Console
 from sqlalchemy.exc import SQLAlchemyError
 
-from loreley.config import Settings, get_settings
+from loreley.config import Settings, get_settings, resolve_default_island_id
 from loreley.db.base import session_scope
 from loreley.db.models import EvolutionJob, JobStatus
 
@@ -76,7 +76,7 @@ class MapElitesSampler:
             self.settings.mapelites_sampler_fallback_sample_size,
         )
         self._default_priority = self.settings.mapelites_sampler_default_priority
-        self._default_island = self.settings.mapelites_default_island_id or "default"
+        self._default_island = resolve_default_island_id(self.settings)
 
     def schedule_job(
         self,
