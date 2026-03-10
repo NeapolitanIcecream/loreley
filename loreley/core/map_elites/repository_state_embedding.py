@@ -16,6 +16,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
+import subprocess
 from typing import Iterable, Sequence, TypeVar, cast
 
 from git import Repo
@@ -625,6 +626,15 @@ class RepositoryStateEmbedder:
                 skipped_failed_embedding=0,
             )
 
+        candidate_blob_shas = sorted(
+            {
+                str(sha).strip()
+                for entry in diffs
+                for sha in (entry.old_sha, entry.new_sha)
+                if str(sha or "").strip() and not _is_null_sha(sha)
+            }
+        )
+        blob_sizes = _load_blob_sizes(repo, candidate_blob_shas)
         selection_cache: dict[tuple[str | None, str | None], tuple[bool, Path | None, str | None]] = {}
 
         def _selected(path_str: str | None, sha: str | None) -> tuple[bool, Path | None, str | None]:
@@ -658,7 +668,7 @@ class RepositoryStateEmbedder:
                 result = (False, None, None)
                 selection_cache[cache_key] = result
                 return result
-            size = _blob_size_bytes(repo, str(sha))
+            size = blob_sizes.get(str(sha))
             if size is None or size <= 0 or size > max_bytes:
                 result = (False, None, None)
                 selection_cache[cache_key] = result
@@ -818,9 +828,18 @@ class RepositoryStateEmbedder:
             preprocessed: list[PreprocessedFile] = []
             blob_for_path: dict[Path, str] = {}
             skipped_empty = 0
+            blob_texts: dict[str, str] = {}
+
+            if self._repo is not None:
+                blob_texts = _load_blob_texts(
+                    self._repo,
+                    [blob_sha for blob_sha, _entry in batch],
+                )
 
             for blob_sha, entry in batch:
-                raw = preprocessor.load_text(entry.path)
+                raw = blob_texts.get(blob_sha)
+                if raw is None:
+                    raw = preprocessor.load_text(entry.path)
                 if raw is None:
                     continue
                 cleaned = preprocessor.cleanup_text(raw)
@@ -1003,6 +1022,108 @@ def _blob_size_bytes(repo: Repo, blob_sha: str) -> int | None:
         return int(size_str.strip())
     except Exception:
         return None
+
+
+def _load_blob_sizes(repo: Repo, blob_shas: Sequence[str]) -> dict[str, int]:
+    cleaned = sorted(
+        {
+            str(sha).strip()
+            for sha in blob_shas
+            if str(sha or "").strip() and not _is_null_sha(sha)
+        }
+    )
+    if not cleaned:
+        return {}
+
+    git_root = getattr(repo, "working_tree_dir", None)
+    if not git_root:
+        return {sha: size for sha in cleaned if (size := _blob_size_bytes(repo, sha)) is not None}
+
+    proc = subprocess.run(
+        [
+            "git",
+            "cat-file",
+            "--batch-check=%(objectname) %(objecttype) %(objectsize)",
+        ],
+        cwd=str(git_root),
+        input="".join(f"{sha}\n" for sha in cleaned).encode("utf-8"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return {sha: size for sha in cleaned if (size := _blob_size_bytes(repo, sha)) is not None}
+
+    sizes: dict[str, int] = {}
+    for raw_line in (proc.stdout or b"").splitlines():
+        line = raw_line.decode("utf-8", errors="replace").strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) != 3:
+            continue
+        sha, obj_type, size_text = parts
+        if obj_type != "blob":
+            continue
+        try:
+            sizes[sha] = int(size_text)
+        except ValueError:
+            continue
+    return sizes
+
+
+def _load_blob_texts(repo: Repo, blob_shas: Sequence[str]) -> dict[str, str]:
+    cleaned = [
+        str(sha).strip()
+        for sha in blob_shas
+        if str(sha or "").strip() and not _is_null_sha(sha)
+    ]
+    if not cleaned:
+        return {}
+
+    git_root = getattr(repo, "working_tree_dir", None)
+    if not git_root:
+        return {}
+
+    proc = subprocess.run(
+        ["git", "cat-file", "--batch"],
+        cwd=str(git_root),
+        input="".join(f"{sha}\n" for sha in cleaned).encode("utf-8"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return {}
+
+    payload = proc.stdout or b""
+    cursor = 0
+    texts: dict[str, str] = {}
+    while cursor < len(payload):
+        line_end = payload.find(b"\n", cursor)
+        if line_end < 0:
+            break
+        header = payload[cursor:line_end].decode("utf-8", errors="replace").strip()
+        cursor = line_end + 1
+        if not header:
+            continue
+        if header.endswith(" missing"):
+            continue
+        parts = header.split()
+        if len(parts) != 3:
+            break
+        sha, obj_type, size_text = parts
+        try:
+            size = int(size_text)
+        except ValueError:
+            break
+        content_end = cursor + size
+        content = payload[cursor:content_end]
+        cursor = min(content_end + 1, len(payload))
+        if obj_type != "blob":
+            continue
+        texts[sha] = content.decode("utf-8", errors="ignore")
+    return texts
 
 
 def _batched(items: Sequence[T], batch_size: int) -> Iterable[Sequence[T]]:

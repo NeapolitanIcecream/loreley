@@ -271,12 +271,13 @@ def test_repo_state_incremental_reuses_blob_size_checks_across_selection_passes(
             sha_a2: RepositoryStateEmbedder._VectorMeta(vector=_vec_for_sha(sha_a2)),
         }
 
-    seen_blob_sizes: list[str] = []
+    seen_blob_size_batches: list[list[str]] = []
 
-    def _fake_blob_size_bytes(repo_obj, blob_sha: str):  # type: ignore[no-untyped-def]
+    def _fake_load_blob_sizes(repo_obj, blob_shas):  # type: ignore[no-untyped-def]
         assert repo_obj is repo
-        seen_blob_sizes.append(blob_sha)
-        return 16
+        batch = list(blob_shas)
+        seen_blob_size_batches.append(batch)
+        return {sha: 16 for sha in batch}
 
     cache = DatabaseFileEmbeddingCache(
         embedding_model="stub",
@@ -293,13 +294,14 @@ def test_repo_state_incremental_reuses_blob_size_checks_across_selection_passes(
     monkeypatch.setattr(embedder, "_load_aggregate", _fake_load_aggregate)
     monkeypatch.setattr(embedder, "_persist_aggregate", _fake_persist_aggregate)
     monkeypatch.setattr(embedder, "_load_file_cache_metadata", _fake_load_file_cache_metadata)
-    monkeypatch.setattr(repo_state_mod, "_blob_size_bytes", _fake_blob_size_bytes)
+    monkeypatch.setattr(repo_state_mod, "_load_blob_sizes", _fake_load_blob_sizes)
 
     embedding, stats = embedder.embed_incremental(commit_hash=c2, repo_root=tmp_path)
 
     assert embedding is not None
     assert stats.files_aggregated == 1
-    assert seen_blob_sizes == [sha_a1, sha_a2]
+    assert len(seen_blob_size_batches) == 1
+    assert sorted(seen_blob_size_batches[0]) == sorted([sha_a1, sha_a2])
 
 
 def test_repo_state_incremental_can_rebuild_from_zero_file_parent(
