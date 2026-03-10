@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import func, select
 
 from loreley.config import Settings, get_settings
-from loreley.core.map_elites.map_elites import MapElitesManager
+from loreley.core.map_elites.types import MapElitesRecord
 from loreley.core.map_elites.snapshot import ensure_supported_snapshot_meta
 from loreley.db.base import session_scope
 from loreley.db.models import MapElitesArchiveCell, MapElitesPcaHistory, MapElitesState
@@ -44,23 +44,72 @@ def describe_island(
     island_id: str,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
-    """Return MAP-Elites stats for an island using MapElitesManager."""
+    """Return MAP-Elites stats for an island directly from persisted archive rows."""
 
     base_settings = settings or get_settings()
-    manager = MapElitesManager(settings=base_settings)
-    return dict(manager.describe_island(island_id))
+    dims = max(1, int(base_settings.mapelites_dimensionality_target_dims))
+    cells_per_dim = max(2, int(base_settings.mapelites_archive_cells_per_dim))
+    cells = int(cells_per_dim**dims)
+
+    with session_scope() as session:
+        occupied, qd_score, best_fitness = session.execute(
+            select(
+                func.count(MapElitesArchiveCell.cell_index),
+                func.coalesce(func.sum(MapElitesArchiveCell.objective), 0.0),
+                func.max(MapElitesArchiveCell.objective),
+            ).where(
+                MapElitesArchiveCell.island_id == island_id,
+            )
+        ).one()
+
+    occupied_value = int(occupied or 0)
+    qd_score_value = float(qd_score or 0.0)
+    best_value = float(best_fitness) if best_fitness is not None else 0.0
+    coverage = (occupied_value / cells) if cells else 0.0
+    norm_qd_score = (qd_score_value / cells) if cells else 0.0
+    return {
+        "island_id": island_id,
+        "occupied": occupied_value,
+        "cells": cells,
+        "coverage": coverage,
+        "qd_score": qd_score_value,
+        "norm_qd_score": norm_qd_score,
+        "best_fitness": best_value,
+    }
 
 
 def list_records(
     *,
     island_id: str,
     settings: Settings | None = None,
-) -> list[Any]:
-    """Return all elite records for an island."""
+) -> list[MapElitesRecord]:
+    """Return all elite records for an island from persisted archive cells."""
 
-    base_settings = settings or get_settings()
-    manager = MapElitesManager(settings=base_settings)
-    return list(manager.get_records(island_id))
+    _ = settings or get_settings()
+
+    with session_scope() as session:
+        rows = list(
+            session.execute(
+                select(MapElitesArchiveCell)
+                .where(MapElitesArchiveCell.island_id == island_id)
+                .order_by(MapElitesArchiveCell.cell_index.asc())
+            ).scalars().all()
+        )
+
+    records: list[MapElitesRecord] = []
+    for row in rows:
+        records.append(
+            MapElitesRecord(
+                commit_hash=str(row.commit_hash or ""),
+                island_id=str(row.island_id or island_id),
+                cell_index=int(row.cell_index),
+                fitness=float(row.objective or 0.0),
+                measures=tuple(float(v) for v in (row.measures or ())),
+                solution=tuple(float(v) for v in (row.solution or ())),
+                timestamp=float(row.timestamp or 0.0),
+            )
+        )
+    return records
 
 
 def snapshot_meta(
@@ -123,5 +172,4 @@ def snapshot_updated_at(*, island_id: str) -> Any:
             MapElitesState.island_id == island_id,
         )
         return session.execute(stmt).scalar_one_or_none()
-
 

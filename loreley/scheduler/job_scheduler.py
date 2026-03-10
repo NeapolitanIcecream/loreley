@@ -9,7 +9,7 @@ high-level control flow.
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Sequence
+from typing import Mapping, Sequence
 from uuid import UUID
 
 from loguru import logger
@@ -109,9 +109,18 @@ class JobScheduler:
                 return 0
             target = min(target, remaining_total)
 
+        snapshot = self.sampler.get_cell_commits_snapshot()
+        if snapshot is None:
+            self.console.log("[yellow]Sampler returned no job[/]")
+            return 0
+        effective_island, cell_commits = snapshot
+
         scheduled_ids: list[UUID] = []
         for _ in range(target):
-            job = self._schedule_single_job()
+            job = self._schedule_single_job(
+                island_id=effective_island,
+                cell_commits=cell_commits,
+            )
             if not job:
                 break
             scheduled_ids.append(job.job_id)
@@ -194,9 +203,17 @@ class JobScheduler:
         self._enqueue_jobs(job_ids)
         return len(job_ids)
 
-    def _schedule_single_job(self) -> ScheduledSamplerJob | None:
+    def _schedule_single_job(
+        self,
+        *,
+        island_id: str | None = None,
+        cell_commits: Mapping[int, str] | None = None,
+    ) -> ScheduledSamplerJob | None:
         try:
-            scheduled = self.sampler.schedule_job()
+            scheduled = self.sampler.schedule_job(
+                island_id=island_id,
+                cell_commits=cell_commits,
+            )
         except Exception as exc:  # pragma: no cover - defensive
             self.console.log(f"[bold red]Sampler failed[/] reason={exc}")
             log.exception("Sampler failed to create a job: {}", exc)
@@ -299,5 +316,3 @@ class JobScheduler:
                 [str(job_id) for job_id in missing[:10]],
             )
         return len(sent)
-
-

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from typing import Any, cast
+from types import SimpleNamespace
 
 import pytest
 from rich.console import Console
@@ -92,3 +93,55 @@ def test_enqueue_jobs_logs_marked_vs_sent_mismatch(
     assert "marked {} job(s) as QUEUED" in message
     assert args[0] == len(job_ids)
     assert args[1] == 0
+
+
+def test_schedule_jobs_reuses_single_cell_commit_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    sender = DummySenderActor()
+    monkeypatch.setattr(
+        job_scheduler,
+        "build_evolution_job_sender_actor",
+        lambda **_kwargs: sender,
+    )
+
+    settings.scheduler_max_unfinished_jobs = 3
+    settings.scheduler_schedule_batch_size = 2
+
+    class DummySampler:
+        def __init__(self) -> None:
+            self.snapshot_calls = 0
+            self.schedule_calls: list[tuple[str | None, dict[int, str]]] = []
+
+        def get_cell_commits_snapshot(self, island_id: str | None = None):
+            self.snapshot_calls += 1
+            return ("main", {0: "base"})
+
+        def schedule_job(self, *, island_id: str | None = None, cell_commits=None, priority=None):
+            del priority
+            snapshot = dict(cell_commits or {})
+            self.schedule_calls.append((island_id, snapshot))
+            return SimpleNamespace(
+                job_id=uuid.uuid4(),
+                island_id=island_id or "main",
+                base_commit_hash="base",
+                inspiration_commit_hashes=(),
+            )
+
+    sampler = DummySampler()
+    scheduler = cast(Any, JobScheduler)(
+        settings=settings,
+        console=Console(record=True),
+        sampler=cast(MapElitesSampler, sampler),
+    )
+    monkeypatch.setattr(JobScheduler, "_enqueue_jobs", lambda _self, ids: len(list(ids)))
+
+    scheduled = scheduler.schedule_jobs(unfinished_jobs=0, total_jobs=0)
+
+    assert scheduled == 2
+    assert sampler.snapshot_calls == 1
+    assert sampler.schedule_calls == [
+        ("main", {0: "base"}),
+        ("main", {0: "base"}),
+    ]
