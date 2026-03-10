@@ -171,6 +171,7 @@ class Metric(TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("commit_card_id", "name", name="uq_metric_commit_card_name"),
         Index("ix_metrics_commit_card_id", "commit_card_id"),
+        Index("ix_metrics_name_value", "name", "value"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -213,6 +214,20 @@ class EvolutionJob(TimestampMixin, Base):
     __table_args__ = (
         Index("ix_evolution_jobs_status", "status"),
         Index("ix_evolution_jobs_base_commit", "base_commit_hash"),
+        Index(
+            "ix_evolution_jobs_pending_priority",
+            "status",
+            "priority",
+            "scheduled_at",
+            "created_at",
+        ),
+        Index(
+            "ix_evolution_jobs_ingestion_scan",
+            "status",
+            "ingestion_status",
+            "completed_at",
+            "result_commit_hash",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(

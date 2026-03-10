@@ -83,10 +83,16 @@ class MapElitesSampler:
         *,
         island_id: str | None = None,
         priority: int | None = None,
+        cell_commits: Mapping[int, str] | None = None,
     ) -> ScheduledSamplerJob | None:
         """Select base/inspiration commits and persist an EvolutionJob."""
         effective_island = island_id or self._default_island
-        cell_commits = self.manager.get_cell_commits(effective_island)
+        if cell_commits is None:
+            snapshot = self.get_cell_commits_snapshot(effective_island)
+            if snapshot is None:
+                log.warning("Cannot schedule job; island {} archive is empty", effective_island)
+                return None
+            effective_island, cell_commits = snapshot
         if not cell_commits:
             log.warning("Cannot schedule job; island {} archive is empty", effective_island)
             return None
@@ -127,6 +133,18 @@ class MapElitesSampler:
             base_commit_hash=base_commit_hash,
             inspiration_commit_hashes=tuple(inspirations),
         )
+
+    def get_cell_commits_snapshot(
+        self,
+        island_id: str | None = None,
+    ) -> tuple[str, Mapping[int, str]] | None:
+        """Return a stable occupied-cell snapshot for a scheduling tick."""
+
+        effective_island = island_id or self._default_island
+        cell_commits = self.manager.get_cell_commits(effective_island)
+        if not cell_commits:
+            return None
+        return effective_island, dict(cell_commits)
 
     def _select_inspirations(
         self,
@@ -314,4 +332,3 @@ class MapElitesSampler:
             log.error("Failed to persist evolution job for island {}: {}", island_id, exc)
             return None
         return job
-
