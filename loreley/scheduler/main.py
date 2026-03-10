@@ -156,14 +156,15 @@ class EvolutionScheduler:
         stats["seed_scheduled"] = self._maybe_schedule_seed_jobs(unfinished_jobs=unfinished)
         effective_unfinished = unfinished + stats["seed_scheduled"]
         total_jobs = self._get_total_jobs_count()
+        if stats["seed_scheduled"] > 0:
+            total_jobs = self._adjust_total_jobs_count(stats["seed_scheduled"])
         stats["scheduled"] = self.job_scheduler.schedule_jobs(
             unfinished_jobs=effective_unfinished,
             total_jobs=total_jobs,
         )
         stats["unfinished"] = unfinished + stats["seed_scheduled"] + stats["scheduled"]
-        created_total = stats["seed_scheduled"] + stats["scheduled"]
-        if created_total > 0:
-            total_jobs_after = self._adjust_total_jobs_count(created_total)
+        if stats["scheduled"] > 0:
+            total_jobs_after = self._adjust_total_jobs_count(stats["scheduled"])
         else:
             total_jobs_after = total_jobs
 

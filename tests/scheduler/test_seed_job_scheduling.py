@@ -217,3 +217,43 @@ def test_tick_reuses_cached_total_job_count(settings: Settings) -> None:
 
     assert stats["scheduled"] == 2
     assert scheduler._total_jobs_count == 6
+
+
+def test_tick_accounts_for_seed_jobs_before_sampler_scheduling(settings: Settings) -> None:
+    scheduler = cast(Any, EvolutionScheduler.__new__(EvolutionScheduler))
+    scheduler.settings = settings
+    scheduler.console = Console(record=True)
+    scheduler._max_total_jobs = 10
+    scheduler._stop_requested = False
+    scheduler._total_jobs_count = 4
+
+    class _DummyIngestion:
+        def ingest_completed_jobs(self) -> int:
+            return 0
+
+    class _DummyJobScheduler:
+        def dispatch_pending_jobs(self) -> int:
+            return 0
+
+        def count_unfinished_jobs(self) -> int:
+            return 1
+
+        def count_total_jobs(self) -> int:
+            raise AssertionError("tick should not refresh total job count from the database")
+
+        def schedule_jobs(self, unfinished_jobs: int, *, total_jobs: int) -> int:
+            assert unfinished_jobs == 3
+            assert total_jobs == 6
+            return 1
+
+    scheduler.ingestion = _DummyIngestion()
+    scheduler.job_scheduler = _DummyJobScheduler()
+    scheduler._maybe_schedule_seed_jobs = lambda unfinished_jobs: 2
+    scheduler._create_best_fitness_branch_if_possible = lambda: None
+    scheduler.stop = lambda: None
+
+    stats = EvolutionScheduler.tick(cast(EvolutionScheduler, scheduler))
+
+    assert stats["seed_scheduled"] == 2
+    assert stats["scheduled"] == 1
+    assert scheduler._total_jobs_count == 7
