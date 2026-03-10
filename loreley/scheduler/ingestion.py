@@ -15,7 +15,7 @@ from uuid import UUID
 from git import Repo
 from loguru import logger
 from rich.console import Console
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from loreley.config import Settings, resolve_default_island_id
@@ -185,48 +185,132 @@ class MapElitesIngestion:
     # Job result ingestion --------------------------------------------------
 
     def _jobs_requiring_ingestion(self, *, limit: int) -> list[JobSnapshot]:
-        batch_limit = max(limit * 4, 32)
+        page_size = max(limit * 4, 32)
         snapshots: list[JobSnapshot] = []
+        seen_job_ids: set[UUID] = set()
         now = datetime.now(timezone.utc)
         with session_scope() as session:
-            status_norm = func.lower(func.trim(func.coalesce(EvolutionJob.ingestion_status, "")))
-            commit_norm = func.trim(func.coalesce(EvolutionJob.result_commit_hash, ""))
-            # Always prioritise fresh jobs so a backlog of failed ingestions
-            # cannot block the scheduler from ingesting new results.
-            failed_last = case((status_norm == "failed", 1), else_=0)
-            stmt = (
-                select(EvolutionJob)
-                .where(
-                    EvolutionJob.status == JobStatus.SUCCEEDED,
+            snapshots.extend(
+                self._collect_jobs_requiring_ingestion(
+                    session=session,
+                    limit=limit,
+                    page_size=page_size,
+                    now=now,
+                    include_exact_failed=False,
+                    seen_job_ids=seen_job_ids,
                 )
-                .where(status_norm.not_in(("succeeded", "skipped")))
-                .where(commit_norm != "")
-                .order_by(failed_last.asc(), EvolutionJob.completed_at.asc())
-                .limit(batch_limit)
             )
-            rows = list(session.execute(stmt).scalars())
-            for job in rows:
-                status = (job.ingestion_status or "").strip().lower()
-                if status in {"succeeded", "skipped"}:
-                    continue
-                if status == "failed" and self._should_backoff_failed_job(job, now=now):
-                    continue
-                commit_hash = (job.result_commit_hash or "").strip()
-                if not commit_hash:
-                    continue
-
-                snapshots.append(
-                    JobSnapshot(
-                        job_id=job.id,
-                        base_commit_hash=job.base_commit_hash,
-                        island_id=job.island_id,
-                        result_commit_hash=commit_hash,
-                        completed_at=job.completed_at,
+            remaining = max(0, limit - len(snapshots))
+            if remaining > 0:
+                snapshots.extend(
+                    self._collect_jobs_requiring_ingestion(
+                        session=session,
+                        limit=remaining,
+                        page_size=page_size,
+                        now=now,
+                        include_exact_failed=True,
+                        seen_job_ids=seen_job_ids,
                     )
                 )
+        return snapshots
+
+    def _collect_jobs_requiring_ingestion(
+        self,
+        *,
+        session: Session,
+        limit: int,
+        page_size: int,
+        now: datetime,
+        include_exact_failed: bool,
+        seen_job_ids: set[UUID],
+    ) -> list[JobSnapshot]:
+        snapshots: list[JobSnapshot] = []
+        offset = 0
+        while len(snapshots) < limit:
+            rows = self._load_jobs_requiring_ingestion_page(
+                session=session,
+                limit=page_size,
+                offset=offset,
+                include_exact_failed=include_exact_failed,
+            )
+            if not rows:
+                break
+            offset += len(rows)
+            for job in rows:
+                snapshot = self._coerce_job_snapshot_for_ingestion(
+                    job,
+                    now=now,
+                    seen_job_ids=seen_job_ids,
+                )
+                if snapshot is None:
+                    continue
+                snapshots.append(snapshot)
                 if len(snapshots) >= limit:
                     break
+            if len(rows) < page_size:
+                break
         return snapshots
+
+    def _load_jobs_requiring_ingestion_page(
+        self,
+        *,
+        session: Session,
+        limit: int,
+        offset: int,
+        include_exact_failed: bool,
+    ) -> list[EvolutionJob]:
+        stmt = (
+            select(EvolutionJob)
+            .where(EvolutionJob.status == JobStatus.SUCCEEDED)
+            .where(EvolutionJob.result_commit_hash.is_not(None))
+            .where(EvolutionJob.result_commit_hash != "")
+        )
+        if include_exact_failed:
+            stmt = stmt.where(EvolutionJob.ingestion_status == "failed")
+        else:
+            stmt = stmt.where(
+                or_(
+                    EvolutionJob.ingestion_status.is_(None),
+                    EvolutionJob.ingestion_status == "",
+                    EvolutionJob.ingestion_status.not_in(("failed", "succeeded", "skipped")),
+                )
+            )
+        stmt = (
+            stmt.order_by(
+                EvolutionJob.completed_at.asc(),
+                EvolutionJob.id.asc(),
+            )
+            .limit(limit)
+            .offset(offset)
+        )
+        return list(session.execute(stmt).scalars())
+
+    def _coerce_job_snapshot_for_ingestion(
+        self,
+        job: EvolutionJob,
+        *,
+        now: datetime,
+        seen_job_ids: set[UUID],
+    ) -> JobSnapshot | None:
+        job_id = getattr(job, "id", None)
+        if job_id is None or job_id in seen_job_ids:
+            return None
+        status = (job.ingestion_status or "").strip().lower()
+        if status in {"succeeded", "skipped"}:
+            return None
+        if status == "failed" and self._should_backoff_failed_job(job, now=now):
+            return None
+        commit_hash = (job.result_commit_hash or "").strip()
+        if not commit_hash:
+            return None
+        seen_job_ids.add(job_id)
+        return JobSnapshot(
+            job_id=job_id,
+            base_commit_hash=job.base_commit_hash,
+            island_id=job.island_id,
+            result_commit_hash=commit_hash,
+            completed_at=job.completed_at,
+        )
 
     def _should_backoff_failed_job(self, job: EvolutionJob, *, now: datetime) -> bool:
         last_attempt = getattr(job, "ingestion_last_attempt_at", None)
@@ -765,4 +849,3 @@ class MapElitesIngestion:
     @staticmethod
     def _now_iso() -> str:
         return datetime.now(timezone.utc).isoformat()
-
