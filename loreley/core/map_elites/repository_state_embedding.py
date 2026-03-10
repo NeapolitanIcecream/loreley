@@ -201,15 +201,20 @@ class RepositoryStateEmbedder:
         commit_hash: str,
         aggregate: MapElitesRepoStateAggregate,
     ) -> tuple[CommitCodeEmbedding | None, RepoStateEmbeddingStats]:
+        file_count = int(aggregate.file_count or 0)
+        if file_count < 0:
+            raise RepoStateEmbeddingError(
+                f"Repo-state aggregate has an invalid file count (commit={commit_hash})."
+            )
         vector = divide_vector(
             aggregate.sum_vector or (),
-            float(int(aggregate.file_count or 0)),
+            float(file_count),
         )
         stats = RepoStateEmbeddingStats(
             commit_hash=commit_hash,
-            eligible_files=int(aggregate.file_count),
+            eligible_files=file_count,
             files_embedded=0,
-            files_aggregated=int(aggregate.file_count),
+            files_aggregated=file_count,
             unique_blobs=0,
             cache_hits=0,
             cache_misses=0,
@@ -394,7 +399,7 @@ class RepositoryStateEmbedder:
 
         if not row:
             return None
-        if int(row.file_count or 0) <= 0:
+        if int(row.file_count or 0) < 0:
             raise RepoStateEmbeddingError(
                 f"Repo-state aggregate has an invalid file count (commit={commit_hash})."
             )
@@ -422,19 +427,22 @@ class RepositoryStateEmbedder:
             raise RepoStateEmbeddingError(
                 "Repo-state embedding requires a positive embedding dimension."
             )
-        if file_count <= 0 or not sum_vector:
+        normalized_sum = tuple(float(v) for v in sum_vector)
+        if file_count < 0:
             raise RepoStateEmbeddingError(
-                f"Repo-state aggregate persist requires file_count > 0 (commit={commit_hash})."
+                f"Repo-state aggregate persist requires file_count >= 0 (commit={commit_hash})."
             )
-        if len(sum_vector) != requested_dims:
+        if not normalized_sum and file_count == 0:
+            normalized_sum = tuple(0.0 for _ in range(requested_dims))
+        if len(normalized_sum) != requested_dims:
             raise RepoStateEmbeddingError(
                 "Repo-state aggregate has unexpected dimensions; "
-                f"expected {requested_dims} got {len(sum_vector)} (commit={commit_hash})."
+                f"expected {requested_dims} got {len(normalized_sum)} (commit={commit_hash})."
             )
         row = MapElitesRepoStateAggregate(
             commit_hash=str(commit_hash),
             file_count=int(file_count),
-            sum_vector=[float(v) for v in sum_vector],
+            sum_vector=[float(v) for v in normalized_sum],
         )
 
         try:
@@ -716,14 +724,12 @@ class RepositoryStateEmbedder:
                     continue
                 apply_replacement_delta_in_place(sum_vec, new_meta.vector, old_meta.vector)
 
-        if file_count <= 0 or sum_vec.size <= 0:
-            return None
-
         immutable_sum = tuple(float(v) for v in sum_vec.tolist())
+        if file_count < 0:
+            raise RepoStateEmbeddingError(
+                f"Incremental repo-state aggregate underflowed file count (commit={commit_hash})."
+            )
         vector = divide_vector(sum_vec, float(file_count))
-        if not vector:
-            return None
-
         self._persist_aggregate(
             commit_hash=commit_hash,
             repo_root=repo_root,
@@ -981,5 +987,4 @@ def _batched(items: Sequence[T], batch_size: int) -> Iterable[Sequence[T]]:
     step = max(1, int(batch_size))
     for start in range(0, len(items), step):
         yield items[start : start + step]
-
 
