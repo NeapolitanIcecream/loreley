@@ -551,7 +551,7 @@ class RepositoryStateEmbedder:
         parent_agg = self._load_aggregate(commit_hash=parent_hash, repo_root=repo_root)
         if parent_agg is None:
             return None
-        if int(parent_agg.file_count or 0) <= 0:
+        if int(parent_agg.file_count or 0) < 0:
             raise RepoStateEmbeddingError(
                 f"Parent aggregate has an invalid file count (commit={parent_hash})."
             )
