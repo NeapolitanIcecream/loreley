@@ -496,6 +496,75 @@ def test_jobs_requiring_ingestion_skips_backoff_failed_jobs(monkeypatch, tmp_pat
     assert [snap.result_commit_hash for snap in snapshots] == ["fresh"]
 
 
+def test_jobs_requiring_ingestion_pages_through_failed_backlog(monkeypatch, tmp_path) -> None:
+    """Regression: backoff-filtered failed rows must not hide later retryable jobs."""
+
+    ingestion = _make_ingestion(tmp_path)
+    now = datetime.now(timezone.utc)
+
+    class DummyJob:
+        def __init__(
+            self,
+            *,
+            commit: str,
+            attempts: int,
+            last_attempt: datetime | None,
+        ) -> None:
+            self.id = uuid4()
+            self.base_commit_hash = None
+            self.island_id = None
+            self.result_commit_hash = commit
+            self.completed_at = now
+            self.ingestion_status = "failed"
+            self.ingestion_attempts = attempts
+            self.ingestion_last_attempt_at = last_attempt
+
+    blocked = [
+        DummyJob(
+            commit=f"blocked-{idx}",
+            attempts=1,
+            last_attempt=now,
+        )
+        for idx in range(40)
+    ]
+    retryable = DummyJob(
+        commit="retryable",
+        attempts=1,
+        last_attempt=now - timedelta(seconds=31),
+    )
+
+    class DummyResult:
+        def __init__(self, rows: list[object]) -> None:
+            self._rows = rows
+
+        def scalars(self) -> list[object]:
+            return self._rows
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def execute(self, _stmt: Any) -> DummyResult:
+            self.calls += 1
+            if self.calls == 1:
+                return DummyResult([])
+            if self.calls == 2:
+                return DummyResult(blocked[:32])
+            if self.calls == 3:
+                return DummyResult([*blocked[32:], retryable])
+            return DummyResult([])
+
+    @contextmanager
+    def fake_scope():
+        yield DummySession()
+
+    monkeypatch.setattr(ingestion_mod, "session_scope", fake_scope)
+
+    snapshots = ingestion._jobs_requiring_ingestion(limit=1)
+
+    assert [snap.result_commit_hash for snap in snapshots] == ["retryable"]
+
+
 def test_record_ingestion_state_clamps_long_reason(monkeypatch, tmp_path) -> None:
     ingestion = _make_ingestion(tmp_path)
 
