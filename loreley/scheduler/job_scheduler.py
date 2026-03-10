@@ -9,7 +9,7 @@ high-level control flow.
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Mapping, Sequence
+from typing import Sequence
 from uuid import UUID
 
 from loguru import logger
@@ -17,7 +17,7 @@ from rich.console import Console
 from sqlalchemy import func, select
 
 from loreley.config import Settings, resolve_default_island_id
-from loreley.core.map_elites.sampler import MapElitesSampler, ScheduledSamplerJob
+from loreley.core.map_elites.sampler import MapElitesSampler, SamplingSnapshot, ScheduledSamplerJob
 from loreley.db.base import session_scope
 from loreley.db.models import EvolutionJob, JobStatus
 from loreley.tasks.workers import build_evolution_job_sender_actor
@@ -109,21 +109,24 @@ class JobScheduler:
                 return 0
             target = min(target, remaining_total)
 
-        snapshot = self.sampler.get_cell_commits_snapshot()
-        if snapshot is None:
+        sampling_snapshot = self.sampler.get_sampling_snapshot()
+        if sampling_snapshot is None:
             self.console.log("[yellow]Sampler returned no job[/]")
             return 0
-        effective_island, cell_commits = snapshot
+        effective_island = sampling_snapshot.island_id
 
         scheduled_ids: list[UUID] = []
+        selected_base_commits: set[str] = set()
         for _ in range(target):
             job = self._schedule_single_job(
                 island_id=effective_island,
-                cell_commits=cell_commits,
+                sampling_snapshot=sampling_snapshot,
+                excluded_base_commits=selected_base_commits,
             )
             if not job:
                 break
             scheduled_ids.append(job.job_id)
+            selected_base_commits.add(str(job.base_commit_hash))
         if scheduled_ids:
             self._enqueue_jobs(scheduled_ids)
         return len(scheduled_ids)
@@ -207,12 +210,14 @@ class JobScheduler:
         self,
         *,
         island_id: str | None = None,
-        cell_commits: Mapping[int, str] | None = None,
+        sampling_snapshot: SamplingSnapshot | None = None,
+        excluded_base_commits: Sequence[str] | None = None,
     ) -> ScheduledSamplerJob | None:
         try:
             scheduled = self.sampler.schedule_job(
                 island_id=island_id,
-                cell_commits=cell_commits,
+                sampling_snapshot=sampling_snapshot,
+                excluded_base_commits=excluded_base_commits,
             )
         except Exception as exc:  # pragma: no cover - defensive
             self.console.log(f"[bold red]Sampler failed[/] reason={exc}")

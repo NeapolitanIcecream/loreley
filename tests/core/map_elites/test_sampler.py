@@ -15,6 +15,7 @@ from loreley.core.map_elites.sampler import MapElitesSampler
 class FakeRecord:
     commit_hash: str
     cell_index: int
+    objective: float = 0.0
 
 
 class FakeManager:
@@ -23,6 +24,9 @@ class FakeManager:
 
     def get_cell_commits(self, island_id: str | None = None) -> Mapping[int, str]:  # noqa: ARG002
         return {record.cell_index: record.commit_hash for record in self._records}
+
+    def get_cell_objectives(self, island_id: str | None = None) -> Mapping[int, float]:  # noqa: ARG002
+        return {record.cell_index: record.objective for record in self._records}
 
 
 def make_sampler(settings: Settings, records: Sequence[FakeRecord]) -> MapElitesSampler:
@@ -168,3 +172,80 @@ def test_schedule_job_with_and_without_records(monkeypatch, settings: Settings) 
     assert job.job_id is not None
     assert job.base_commit_hash in {record.commit_hash for record in records}
     assert captured_calls
+
+
+def test_schedule_job_prefers_higher_objective_cells_when_available(
+    monkeypatch,
+    settings: Settings,
+) -> None:
+    records = [
+        FakeRecord(commit_hash="low", cell_index=0, objective=0.5),
+        FakeRecord(commit_hash="high", cell_index=1, objective=5.0),
+    ]
+
+    class RecordingRng:
+        def __init__(self) -> None:
+            self.random_values = [0.99]
+            self.choice_calls = 0
+            self.shuffle_calls = 0
+
+        def choice(self, items: Sequence[tuple[int, str]]) -> tuple[int, str]:
+            self.choice_calls += 1
+            return items[0]
+
+        def random(self) -> float:
+            return self.random_values.pop(0)
+
+        def shuffle(self, items: list[int]) -> None:
+            self.shuffle_calls += 1
+
+    sampler = MapElitesSampler(
+        manager=FakeManager(records),
+        settings=settings,
+        rng=RecordingRng(),
+    )
+
+    monkeypatch.setattr(
+        MapElitesSampler,
+        "_persist_job",
+        lambda *_args, **_kwargs: SimpleNamespace(id=uuid4()),
+    )
+
+    job = sampler.schedule_job()
+
+    assert job is not None
+    assert job.base_commit_hash == "high"
+
+
+def test_schedule_job_excludes_base_commits_selected_earlier_in_batch(
+    monkeypatch,
+    settings: Settings,
+) -> None:
+    records = [
+        FakeRecord(commit_hash="c0", cell_index=0, objective=0.5),
+        FakeRecord(commit_hash="c1", cell_index=1, objective=0.6),
+        FakeRecord(commit_hash="c2", cell_index=2, objective=0.7),
+    ]
+    sampler = make_sampler(settings, records=records)
+
+    monkeypatch.setattr(
+        MapElitesSampler,
+        "_persist_job",
+        lambda *_args, **_kwargs: SimpleNamespace(id=uuid4()),
+    )
+
+    snapshot = sampler.get_sampling_snapshot()
+    assert snapshot is not None
+
+    first = sampler.schedule_job(
+        sampling_snapshot=snapshot,
+        excluded_base_commits=set(),
+    )
+    assert first is not None
+
+    second = sampler.schedule_job(
+        sampling_snapshot=snapshot,
+        excluded_base_commits={first.base_commit_hash},
+    )
+    assert second is not None
+    assert second.base_commit_hash != first.base_commit_hash

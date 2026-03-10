@@ -9,7 +9,7 @@ from rich.console import Console
 
 import loreley.scheduler.job_scheduler as job_scheduler
 from loreley.config import Settings
-from loreley.core.map_elites.sampler import MapElitesSampler
+from loreley.core.map_elites.sampler import MapElitesSampler, SamplingSnapshot
 from loreley.scheduler.job_scheduler import JobScheduler
 
 
@@ -95,7 +95,7 @@ def test_enqueue_jobs_logs_marked_vs_sent_mismatch(
     assert args[1] == 0
 
 
-def test_schedule_jobs_reuses_single_cell_commit_snapshot(
+def test_schedule_jobs_reuses_single_sampling_snapshot_and_avoids_duplicate_bases(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,
 ) -> None:
@@ -112,22 +112,42 @@ def test_schedule_jobs_reuses_single_cell_commit_snapshot(
     class DummySampler:
         def __init__(self) -> None:
             self.snapshot_calls = 0
-            self.schedule_calls: list[tuple[str | None, dict[int, str]]] = []
+            self.schedule_calls: list[tuple[str | None, tuple[str, ...]]] = []
 
-        def get_cell_commits_snapshot(self, island_id: str | None = None):
+        def get_sampling_snapshot(self, island_id: str | None = None):
             self.snapshot_calls += 1
-            return ("main", {0: "base"})
-
-        def schedule_job(self, *, island_id: str | None = None, cell_commits=None, priority=None):
-            del priority
-            snapshot = dict(cell_commits or {})
-            self.schedule_calls.append((island_id, snapshot))
-            return SimpleNamespace(
-                job_id=uuid.uuid4(),
+            return SamplingSnapshot(
                 island_id=island_id or "main",
-                base_commit_hash="base",
-                inspiration_commit_hashes=(),
+                cell_commits={0: "base-a", 1: "base-b"},
+                cell_objectives={0: 1.0, 1: 2.0},
+                items=((0, "base-a"), (1, "base-b")),
+                neighbor_cell_indices=None,
+                neighbor_commits=(),
+                neighbor_coords=None,
             )
+
+        def schedule_job(
+            self,
+            *,
+            island_id: str | None = None,
+            sampling_snapshot: SamplingSnapshot | None = None,
+            excluded_base_commits=None,
+            **_kwargs: object,
+        ):
+            excluded = tuple(sorted(str(commit) for commit in (excluded_base_commits or ())))
+            self.schedule_calls.append((island_id, excluded))
+            if sampling_snapshot is None:
+                raise AssertionError("sampling_snapshot should be reused across the batch")
+            for _cell_index, commit_hash in sampling_snapshot.items:
+                if commit_hash in set(excluded):
+                    continue
+                return SimpleNamespace(
+                    job_id=uuid.uuid4(),
+                    island_id=island_id or "main",
+                    base_commit_hash=commit_hash,
+                    inspiration_commit_hashes=(),
+                )
+            return None
 
     sampler = DummySampler()
     scheduler = cast(Any, JobScheduler)(
@@ -142,6 +162,6 @@ def test_schedule_jobs_reuses_single_cell_commit_snapshot(
     assert scheduled == 2
     assert sampler.snapshot_calls == 1
     assert sampler.schedule_calls == [
-        ("main", {0: "base"}),
-        ("main", {0: "base"}),
+        ("main", ()),
+        ("main", ("base-a",)),
     ]

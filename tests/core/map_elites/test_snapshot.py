@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Mapping
+from types import SimpleNamespace
 
 import numpy as np
+from sqlalchemy.dialects import postgresql
 
 from loreley.core.map_elites.dimension_reduction import PCAProjection, PcaHistoryEntry
 from loreley.core.map_elites.snapshot import (
+    DatabaseSnapshotStore,
+    SnapshotCellUpsert,
     apply_snapshot,
     serialize_projection,
 )
@@ -265,3 +269,112 @@ def test_apply_snapshot_uses_measures_when_solution_is_compacted() -> None:
     add_call = restored_state.archive.add_calls[0]
     assert np.allclose(add_call["solution"], np.asarray([[0.1, 0.2]], dtype=np.float64))
 
+
+def test_diff_archive_replace_skips_unchanged_rows_and_deletes_stale_cells() -> None:
+    store = DatabaseSnapshotStore()
+    existing_rows = [
+        SimpleNamespace(
+            cell_index=0,
+            commit_hash="c0",
+            objective=1.0,
+            measures=[0.1, 0.2],
+            solution=[],
+            timestamp=10.0,
+        ),
+        SimpleNamespace(
+            cell_index=1,
+            commit_hash="stale",
+            objective=0.1,
+            measures=[0.2, 0.3],
+            solution=[],
+            timestamp=11.0,
+        ),
+        SimpleNamespace(
+            cell_index=2,
+            commit_hash="old-c2",
+            objective=0.5,
+            measures=[0.3, 0.4],
+            solution=[],
+            timestamp=12.0,
+        ),
+    ]
+    cells = (
+        SnapshotCellUpsert(
+            cell_index=0,
+            objective=1.0,
+            measures=(0.1, 0.2),
+            solution=(0.1, 0.2),
+            commit_hash="c0",
+            timestamp=10.0,
+        ),
+        SnapshotCellUpsert(
+            cell_index=2,
+            objective=0.75,
+            measures=(0.3, 0.4),
+            solution=(0.3, 0.4),
+            commit_hash="c2",
+            timestamp=20.0,
+        ),
+    )
+
+    stale_indices, upsert_values = store._diff_archive_replace(  # type: ignore[attr-defined]
+        island_id="main",
+        existing_rows=existing_rows,
+        cells=cells,
+    )
+
+    assert stale_indices == [1]
+    assert upsert_values == [
+        {
+            "island_id": "main",
+            "cell_index": 2,
+            "commit_hash": "c2",
+            "objective": 0.75,
+            "measures": [0.3, 0.4],
+            "solution": [],
+            "timestamp": 20.0,
+        }
+    ]
+
+
+def test_prune_history_entries_deletes_rows_beyond_limit() -> None:
+    store = DatabaseSnapshotStore()
+
+    class DummyScalarResult:
+        def __init__(self, values: list[str]) -> None:
+            self._values = values
+
+        def scalars(self) -> "DummyScalarResult":
+            return self
+
+        def all(self) -> list[str]:
+            return list(self._values)
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.statements: list[object] = []
+
+        def execute(self, stmt: object) -> DummyScalarResult:
+            self.statements.append(stmt)
+            if len(self.statements) == 1:
+                return DummyScalarResult(["old-1", "old-2"])
+            return DummyScalarResult([])
+
+    session = DummySession()
+
+    store._prune_history_entries(  # type: ignore[attr-defined]
+        session,  # type: ignore[arg-type]
+        island_id="main",
+        history_limit=3,
+    )
+
+    assert len(session.statements) == 2
+    compiled = str(
+        session.statements[1].compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    ).upper()
+    assert "DELETE FROM MAP_ELITES_PCA_HISTORY" in compiled
+    assert "OLD-1" in compiled
+    assert "OLD-2" in compiled
