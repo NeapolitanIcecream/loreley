@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import streamlit as st
 
-from loreley.api.pagination import MAX_PAGE_LIMIT
+from loreley.db.models import JobStatus
 from loreley.ui.components.aggrid import render_table, selected_rows
-from loreley.ui.components.api import api_get_all_pages_or_stop, api_get_or_stop, render_artifact_downloads
+from loreley.ui.components.api import api_get_or_stop, api_get_page_or_stop, render_artifact_downloads
+from loreley.ui.paging import advance_cursor_pager, current_cursor, normalize_cursor_pager, pager_signature
 from loreley.ui.state import API_BASE_URL_KEY
+
+_JOBS_CURSOR_KEY = "loreley_jobs_cursor_stack"
+_JOBS_CURSOR_INDEX_KEY = "loreley_jobs_cursor_index"
+_JOBS_CURSOR_SIGNATURE_KEY = "loreley_jobs_cursor_signature"
 
 
 def render() -> None:
@@ -24,41 +29,56 @@ def render() -> None:
         st.error(f"Missing pandas dependency: {exc}")
         return
 
-    rows = api_get_all_pages_or_stop(
+    page_size = st.selectbox("Page size", [50, 100, 200, 500], index=1)
+    status_options = ["all", *(status.value for status in JobStatus)]
+    selected_status = st.selectbox("Status filter", options=status_options, index=0)
+
+    params: dict[str, object] = {"limit": page_size}
+    if selected_status != "all":
+        params["status"] = selected_status
+
+    signature = pager_signature((api_base_url, selected_status, page_size))
+    state = normalize_cursor_pager(
+        signature=signature,
+        stored_signature=st.session_state.get(_JOBS_CURSOR_SIGNATURE_KEY),
+        cursors=st.session_state.get(_JOBS_CURSOR_KEY),
+        index=st.session_state.get(_JOBS_CURSOR_INDEX_KEY),
+    )
+    st.session_state[_JOBS_CURSOR_SIGNATURE_KEY] = state.signature
+    st.session_state[_JOBS_CURSOR_KEY] = list(state.cursors)
+    st.session_state[_JOBS_CURSOR_INDEX_KEY] = state.index
+
+    cursor = current_cursor(state)
+    if cursor:
+        params["cursor"] = cursor
+    page = api_get_page_or_stop(
         api_base_url,
         "/api/v1/jobs/page",
-        page_limit=MAX_PAGE_LIMIT,
-        max_items=MAX_PAGE_LIMIT,
+        params=params,
     )
-    df = pd.DataFrame(rows)
+    rows = page.get("items") if isinstance(page, dict) else []
+    df = pd.DataFrame(rows if isinstance(rows, list) else [])
 
     st.subheader("Jobs")
     if df.empty:
         st.info("No jobs found.")
         return
 
-    # Filters
-    statuses: list[str] = []
-    if "status" in df.columns:
-        try:
-            values = df["status"].tolist()
-        except Exception:
-            values = []
-        normalized: set[str] = set()
-        for v in values:
-            try:
-                is_missing = v is None or pd.isna(v)
-            except Exception:
-                is_missing = v is None
-            if is_missing:
-                continue
-            s = str(v).strip()
-            if s:
-                normalized.add(s)
-        statuses = sorted(normalized)
-    selected_statuses = st.multiselect("Status filter", options=statuses, default=statuses)
-    if selected_statuses and "status" in df.columns:
-        df = df[df["status"].isin(selected_statuses)]
+    st.caption(f"page={state.index + 1} items={len(df)}")
+    prev_col, next_col = st.columns(2)
+    with prev_col:
+        if st.button("Previous page", disabled=state.index <= 0, key="jobs_prev_page"):
+            st.session_state[_JOBS_CURSOR_INDEX_KEY] = state.index - 1
+            _rerun()
+    with next_col:
+        if st.button("Next page", disabled=not page.get("next_cursor"), key="jobs_next_page"):
+            next_state = advance_cursor_pager(
+                state,
+                next_cursor=str(page.get("next_cursor") or ""),
+            )
+            st.session_state[_JOBS_CURSOR_KEY] = list(next_state.cursors)
+            st.session_state[_JOBS_CURSOR_INDEX_KEY] = next_state.index
+            _rerun()
 
     grid = render_table(df, key="jobs_grid", selection="single")
     sel = selected_rows(grid)
@@ -134,3 +154,8 @@ def render() -> None:
     else:
         st.json(detail)
 
+
+def _rerun() -> None:
+    rerun = getattr(st, "rerun", None) or getattr(st, "experimental_rerun", None)
+    if callable(rerun):
+        rerun()

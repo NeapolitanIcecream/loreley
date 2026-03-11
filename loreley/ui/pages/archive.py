@@ -6,9 +6,15 @@ from typing import Any, cast
 
 import streamlit as st
 
+from loreley.api.pagination import MAX_PAGE_LIMIT
 from loreley.ui.components.aggrid import render_table, selected_rows
-from loreley.ui.components.api import api_get_or_stop
+from loreley.ui.components.api import api_get_all_pages_or_stop, api_get_or_stop, api_get_page_or_stop
+from loreley.ui.paging import advance_cursor_pager, current_cursor, normalize_cursor_pager, pager_signature
 from loreley.ui.state import API_BASE_URL_KEY, ISLAND_ID_KEY
+
+_ARCHIVE_CURSOR_KEY = "loreley_archive_cursor_stack"
+_ARCHIVE_CURSOR_INDEX_KEY = "loreley_archive_cursor_index"
+_ARCHIVE_CURSOR_SIGNATURE_KEY = "loreley_archive_cursor_signature"
 
 
 def render() -> None:
@@ -45,35 +51,59 @@ def render() -> None:
     cells_per_dim = int(meta.get("cells_per_dim", 0) or 0)
     entry_count = int(meta.get("entry_count", 0) or 0)
     page_size = st.selectbox("Page size", [100, 250, 500, 1000], index=1)
-    max_page = max(1, (entry_count + page_size - 1) // page_size)
-    page = int(
-        st.number_input(
-            "Page",
-            min_value=1,
-            max_value=max_page,
-            value=1,
-            step=1,
-        )
+
+    signature = pager_signature((api_base_url, island_id, page_size))
+    state = normalize_cursor_pager(
+        signature=signature,
+        stored_signature=st.session_state.get(_ARCHIVE_CURSOR_SIGNATURE_KEY),
+        cursors=st.session_state.get(_ARCHIVE_CURSOR_KEY),
+        index=st.session_state.get(_ARCHIVE_CURSOR_INDEX_KEY),
     )
+    st.session_state[_ARCHIVE_CURSOR_SIGNATURE_KEY] = state.signature
+    st.session_state[_ARCHIVE_CURSOR_KEY] = list(state.cursors)
+    st.session_state[_ARCHIVE_CURSOR_INDEX_KEY] = state.index
+
+    params = {"island_id": island_id, "limit": page_size}
+    cursor = current_cursor(state)
+    if cursor:
+        params["cursor"] = cursor
+    records_page = api_get_page_or_stop(
+        api_base_url,
+        "/api/v1/archive/records/page",
+        params=params,
+    )
+
+    records = records_page.get("items") if isinstance(records_page, dict) else []
+    visualization_records = _load_visualization_records(api_base_url, island_id)
     st.caption(
         f"island={island_id} dims={dims} cells_per_dim={cells_per_dim} "
-        f"entries={entry_count} page={page}/{max_page}"
+        f"entries={entry_count} page={state.index + 1}"
     )
-    offset = (page - 1) * page_size
+    prev_col, next_col = st.columns(2)
+    with prev_col:
+        if st.button("Previous page", disabled=state.index <= 0, key="archive_prev_page"):
+            st.session_state[_ARCHIVE_CURSOR_INDEX_KEY] = state.index - 1
+            _rerun()
+    with next_col:
+        if st.button(
+            "Next page",
+            disabled=not records_page.get("next_cursor"),
+            key="archive_next_page",
+        ):
+            next_state = advance_cursor_pager(
+                state,
+                next_cursor=str(records_page.get("next_cursor") or ""),
+            )
+            st.session_state[_ARCHIVE_CURSOR_KEY] = list(next_state.cursors)
+            st.session_state[_ARCHIVE_CURSOR_INDEX_KEY] = next_state.index
+            _rerun()
 
-    records = api_get_or_stop(
-        api_base_url,
-        "/api/v1/archive/records",
-        params={
-            "island_id": island_id,
-            "limit": page_size,
-            "offset": offset,
-        },
-    ) or []
     records_df = pd.DataFrame(records)
     if records_df.empty:
         st.info("No archive records yet.")
         return
+
+    visualization_df = pd.DataFrame(visualization_records)
 
     metric_name = None
     higher_is_better = True
@@ -99,9 +129,9 @@ def render() -> None:
         st.error(f"Missing plotly dependency: {exc}")
         return
 
-    if dims == 2 and cells_per_dim > 0 and "cell_index" in records_df.columns:
+    if dims == 2 and cells_per_dim > 0 and "cell_index" in visualization_df.columns:
         grid = np.full((cells_per_dim, cells_per_dim), np.nan, dtype=float)
-        for _, row in records_df.iterrows():
+        for _, row in visualization_df.iterrows():
             raw_idx = row.get("cell_index")
             if raw_idx is None:
                 continue
@@ -121,7 +151,7 @@ def render() -> None:
         st.plotly_chart(fig, width="stretch")
     else:
         # Scatter projection using selected dims.
-        measures = records_df.get("measures")
+        measures = visualization_df.get("measures")
         if measures is None:
             st.info("Records have no measures; cannot plot.")
         else:
@@ -134,7 +164,7 @@ def render() -> None:
                 dim_x = st.selectbox("X dimension", list(range(max_dim)), index=0)
                 dim_y = st.selectbox("Y dimension", list(range(max_dim)), index=1)
                 points = []
-                for r in records:
+                for r in visualization_records:
                     if not isinstance(r, dict):
                         continue
                     vec = r.get("measures")
@@ -174,3 +204,20 @@ def render() -> None:
             )
             with st.expander("Selected commit detail", expanded=False):
                 st.json(detail)
+
+
+def _load_visualization_records(api_base_url: str, island_id: str) -> list[dict[str, Any]]:
+    payload = api_get_all_pages_or_stop(
+        api_base_url,
+        "/api/v1/archive/records/page",
+        params={"island_id": island_id},
+        page_limit=MAX_PAGE_LIMIT,
+        max_items=None,
+    )
+    return [item for item in payload if isinstance(item, dict)]
+
+
+def _rerun() -> None:
+    rerun = getattr(st, "rerun", None) or getattr(st, "experimental_rerun", None)
+    if callable(rerun):
+        rerun()
