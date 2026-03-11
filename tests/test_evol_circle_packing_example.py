@@ -11,7 +11,7 @@ from loreley.core.worker.evaluator import EvaluationContext
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE_SCRIPT = ROOT / "examples" / "evol_circle_packing.py"
-LOCAL_EVAL_SCRIPT = ROOT / "examples" / "circle-packing" / "scripts" / "local_eval.py"
+LOCAL_EVAL_SCRIPT = ROOT / "examples" / "circle_packing_env" / "local_eval.py"
 EVALUATE_SCRIPT = ROOT / "examples" / "circle_packing_env" / "evaluate.py"
 EXAMPLE_REPO = ROOT / "examples" / "circle-packing"
 
@@ -296,6 +296,16 @@ def test_local_eval_reports_baseline_metrics() -> None:
     assert payload["repeated_runs"]["deterministic"] is True
     assert payload["target_metrics"]["sum_radii"] == pytest.approx(0.25)
     assert payload["target_metrics"]["packing_density"] > 0.0
+
+
+def test_load_local_eval_module_falls_back_to_main_repo_copy(tmp_path: Path) -> None:
+    module = _load_module("test_circle_packing_local_eval_loader", EXAMPLE_SCRIPT)
+    module.REPO_ROOT = tmp_path / "missing-circle-packing"
+    module.EVAL_ENV_ROOT = ROOT / "examples" / "circle_packing_env"
+
+    local_eval = module._load_local_eval_module()  # noqa: SLF001 - spec-level assertion
+
+    assert hasattr(local_eval, "evaluate_repo")
 
 
 def test_circle_packing_evaluator_emits_runtime_metric(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -930,10 +930,23 @@ def _load_module_from_path(module_name: str, path: Path) -> Any:
     return module
 
 
+def _resolve_local_eval_script_path() -> Path:
+    preferred = REPO_ROOT / "scripts" / "local_eval.py"
+    if preferred.is_file():
+        return preferred
+    fallback = EVAL_ENV_ROOT / "local_eval.py"
+    if fallback.is_file():
+        return fallback
+    raise FileNotFoundError(
+        "Could not find local_eval.py in either the circle-packing submodule "
+        f"({preferred}) or the main-repo fallback ({fallback})."
+    )
+
+
 def _load_local_eval_module() -> Any:
     return _load_module_from_path(
         "circle_packing_local_eval",
-        REPO_ROOT / "scripts" / "local_eval.py",
+        _resolve_local_eval_script_path(),
     )
 
 
