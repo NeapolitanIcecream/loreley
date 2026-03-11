@@ -48,3 +48,7 @@ class ArchiveSnapshotMetaOut(OrmOutModel):
     history_length: int
     updated_at: datetime | None = None
 
+
+class ArchiveRecordPageOut(OrmOutModel):
+    items: list[ArchiveRecordOut] = Field(default_factory=list)
+    next_cursor: str | None = None

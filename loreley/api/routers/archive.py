@@ -5,11 +5,12 @@ from __future__ import annotations
 from fastapi import APIRouter, Query
 
 from loreley.api.pagination import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT
-from loreley.api.schemas.archive import ArchiveRecordOut, ArchiveSnapshotMetaOut, IslandStatsOut
+from loreley.api.schemas.archive import ArchiveRecordOut, ArchiveRecordPageOut, ArchiveSnapshotMetaOut, IslandStatsOut
 from loreley.api.services.archive import (
     describe_island,
     list_islands,
     list_records,
+    list_records_page,
     snapshot_meta,
     snapshot_updated_at,
 )
@@ -50,6 +51,26 @@ def get_records(
     return records
 
 
+@router.get("/archive/records/page", response_model=ArchiveRecordPageOut)
+def get_records_page(
+    island_id: str = Query(default="", description="Island ID; empty means default island."),
+    limit: int = Query(default=DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
+    cursor: str | None = Query(default=None, description="Opaque pagination cursor."),
+) -> ArchiveRecordPageOut:
+    settings = get_settings()
+    effective_island = island_id.strip() or resolve_default_island_id(settings)
+    page = list_records_page(
+        island_id=effective_island,
+        settings=settings,
+        limit=limit,
+        cursor=cursor,
+    )
+    return ArchiveRecordPageOut(
+        items=page.items,
+        next_cursor=page.next_cursor,
+    )
+
+
 @router.get("/archive/snapshot_meta", response_model=ArchiveSnapshotMetaOut)
 def get_snapshot_meta(
     island_id: str,
@@ -73,4 +94,3 @@ def get_snapshot_meta(
         history_length=int(meta.history_length),
         updated_at=updated_at,
     )
-

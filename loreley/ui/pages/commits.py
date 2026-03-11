@@ -6,7 +6,7 @@ import streamlit as st
 
 from loreley.api.pagination import MAX_PAGE_LIMIT
 from loreley.ui.components.aggrid import render_table, selected_rows
-from loreley.ui.components.api import api_get_or_stop, render_artifact_downloads
+from loreley.ui.components.api import api_get_all_pages_or_stop, api_get_or_stop, render_artifact_downloads
 from loreley.ui.state import API_BASE_URL_KEY, COMMIT_HASH_KEY, ISLAND_ID_KEY
 
 
@@ -25,10 +25,16 @@ def render() -> None:
         st.error(f"Missing pandas dependency: {exc}")
         return
 
-    params = {"limit": MAX_PAGE_LIMIT}
+    params: dict[str, object] = {}
     if island_id:
         params["island_id"] = island_id
-    rows = api_get_or_stop(api_base_url, "/api/v1/commits", params=params) or []
+    rows = api_get_all_pages_or_stop(
+        api_base_url,
+        "/api/v1/commits/page",
+        params=params,
+        page_limit=MAX_PAGE_LIMIT,
+        max_items=MAX_PAGE_LIMIT,
+    )
     df = pd.DataFrame(rows)
 
     st.subheader("Commits")
@@ -160,5 +166,4 @@ def render() -> None:
                 st.plotly_chart(fig, width="stretch")
         else:
             st.info("No metrics found for this commit.")
-
 

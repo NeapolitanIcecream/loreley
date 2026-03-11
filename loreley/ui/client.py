@@ -60,11 +60,31 @@ class LoreleyAPIClient:
         except HttpCallError as exc:  # pragma: no cover - network dependent
             raise APIError(exc.message, status_code=exc.status_code) from exc
 
+    def get_json_page(
+        self,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """GET a paginated JSON payload with `items` and `next_cursor` keys."""
+
+        payload = self.get_json(path, params=params)
+        if not isinstance(payload, dict):
+            raise APIError("Invalid paginated API response: expected an object.")
+        items = payload.get("items")
+        if items is None:
+            payload["items"] = []
+        elif not isinstance(items, list):
+            raise APIError("Invalid paginated API response: `items` must be a list.")
+        next_cursor = payload.get("next_cursor")
+        if next_cursor is not None and not isinstance(next_cursor, str):
+            raise APIError("Invalid paginated API response: `next_cursor` must be a string or null.")
+        return payload
+
     def get_bytes(self, path: str, *, params: dict[str, Any] | None = None) -> tuple[bytes, str | None]:
         """GET raw bytes from the API (used for downloading artifacts)."""
         try:
             return self._http.get_bytes(path, params=params)
         except HttpCallError as exc:  # pragma: no cover - network dependent
             raise APIError(exc.message, status_code=exc.status_code) from exc
-
 

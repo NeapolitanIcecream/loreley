@@ -2,13 +2,77 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 
-from loreley.api.pagination import normalize_pagination
+from loreley.api.pagination import decode_cursor, encode_cursor, normalize_pagination
 from loreley.db.base import session_scope
 from loreley.db.models import CommitCard, Metric
+
+
+@dataclass(frozen=True, slots=True)
+class CommitPage:
+    items: list[CommitCard]
+    next_cursor: str | None
+
+
+def _normalize_cursor_datetime(value: object) -> datetime:
+    if not isinstance(value, str):
+        raise ValueError("commits cursor is missing created_at")
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _encode_commit_cursor(commit: CommitCard) -> str:
+    if not isinstance(commit.created_at, datetime):
+        raise ValueError("commits cursor requires created_at")
+    return encode_cursor(
+        {
+            "created_at": commit.created_at.isoformat(),
+            "commit_id": str(commit.id),
+        }
+    )
+
+
+def list_commits_page(
+    *,
+    island_id: str | None = None,
+    limit: int = 200,
+    cursor: str | None = None,
+) -> CommitPage:
+    """Return a cursor-paginated page of commits ordered newest-first."""
+
+    limit, _ = normalize_pagination(limit, 0)
+
+    with session_scope() as session:
+        stmt = select(CommitCard)
+        if island_id:
+            stmt = stmt.where(CommitCard.island_id == island_id)
+        if cursor:
+            payload = decode_cursor(cursor)
+            cursor_ts = _normalize_cursor_datetime(payload.get("created_at"))
+            cursor_commit_id = UUID(str(payload.get("commit_id")))
+            stmt = stmt.where(
+                or_(
+                    CommitCard.created_at < cursor_ts,
+                    and_(
+                        CommitCard.created_at == cursor_ts,
+                        CommitCard.id < cursor_commit_id,
+                    ),
+                )
+            )
+        stmt = stmt.order_by(CommitCard.created_at.desc(), CommitCard.id.desc())
+        stmt = stmt.limit(limit + 1)
+        rows = list(session.execute(stmt).scalars())
+
+    items = rows[:limit]
+    next_cursor = _encode_commit_cursor(items[-1]) if len(rows) > limit and items else None
+    return CommitPage(items=items, next_cursor=next_cursor)
 
 
 def list_commits(
@@ -25,7 +89,7 @@ def list_commits(
         stmt = select(CommitCard)
         if island_id:
             stmt = stmt.where(CommitCard.island_id == island_id)
-        stmt = stmt.order_by(CommitCard.created_at.desc())
+        stmt = stmt.order_by(CommitCard.created_at.desc(), CommitCard.id.desc())
         stmt = stmt.limit(limit).offset(offset)
         return list(session.execute(stmt).scalars())
 
@@ -48,5 +112,4 @@ def list_metrics(*, commit_card_id: UUID) -> list[Metric]:
             .order_by(Metric.name.asc())
         )
         return list(session.execute(stmt).scalars())
-
 

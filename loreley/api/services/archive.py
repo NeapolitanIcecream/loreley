@@ -7,7 +7,7 @@ from typing import Any
 
 from sqlalchemy import func, select
 
-from loreley.api.pagination import normalize_pagination
+from loreley.api.pagination import decode_cursor, encode_cursor, normalize_pagination
 from loreley.config import Settings, get_settings, resolve_default_island_id
 from loreley.core.map_elites.types import MapElitesRecord, materialize_solution
 from loreley.core.map_elites.snapshot import ensure_supported_snapshot_meta
@@ -22,6 +22,12 @@ class SnapshotMeta:
     upper_bounds: list[float]
     has_projection: bool
     history_length: int
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveRecordPage:
+    items: list[MapElitesRecord]
+    next_cursor: str | None
 
 
 def _fitness_metric_name(settings: Settings) -> str | None:
@@ -114,7 +120,6 @@ def list_records(
     offset: int = 0,
 ) -> list[MapElitesRecord]:
     """Return all elite records for an island from persisted archive cells."""
-
     base_settings = settings or get_settings()
     metric_name = _fitness_metric_name(base_settings)
     higher_is_better = bool(base_settings.mapelites_fitness_higher_is_better)
@@ -146,6 +151,77 @@ def list_records(
                 if commit_hash and value is not None
             }
 
+    return _build_records_from_rows(
+        rows=rows,
+        island_id=island_id,
+        metric_values_by_commit=metric_values_by_commit,
+        metric_name=metric_name,
+        higher_is_better=higher_is_better,
+    )
+
+
+def list_records_page(
+    *,
+    island_id: str,
+    settings: Settings | None = None,
+    limit: int = 200,
+    cursor: str | None = None,
+) -> ArchiveRecordPage:
+    """Return a cursor-paginated page of archive records for an island."""
+
+    base_settings = settings or get_settings()
+    metric_name = _fitness_metric_name(base_settings)
+    higher_is_better = bool(base_settings.mapelites_fitness_higher_is_better)
+    limit, _ = normalize_pagination(limit, 0)
+
+    with session_scope() as session:
+        stmt = (
+            select(MapElitesArchiveCell)
+            .where(MapElitesArchiveCell.island_id == island_id)
+            .order_by(MapElitesArchiveCell.cell_index.asc())
+        )
+        if cursor:
+            payload = decode_cursor(cursor)
+            last_cell_index = int(payload.get("cell_index"))
+            stmt = stmt.where(MapElitesArchiveCell.cell_index > last_cell_index)
+        stmt = stmt.limit(limit + 1)
+        rows = list(session.execute(stmt).scalars().all())
+        items_rows = rows[:limit]
+        metric_values_by_commit: dict[str, float] = {}
+        if metric_name and items_rows:
+            metric_stmt = (
+                select(CommitCard.commit_hash, Metric.value)
+                .join(Metric, Metric.commit_card_id == CommitCard.id)
+                .where(
+                    CommitCard.commit_hash.in_([str(row.commit_hash or "") for row in items_rows]),
+                    Metric.name == metric_name,
+                )
+            )
+            metric_values_by_commit = {
+                str(commit_hash): float(value)
+                for commit_hash, value in session.execute(metric_stmt).all()
+                if commit_hash and value is not None
+            }
+
+    records = _build_records_from_rows(
+        rows=items_rows,
+        island_id=island_id,
+        metric_values_by_commit=metric_values_by_commit,
+        metric_name=metric_name,
+        higher_is_better=higher_is_better,
+    )
+    next_cursor = encode_cursor({"cell_index": records[-1].cell_index}) if len(rows) > limit and records else None
+    return ArchiveRecordPage(items=records, next_cursor=next_cursor)
+
+
+def _build_records_from_rows(
+    *,
+    rows: list[MapElitesArchiveCell],
+    island_id: str,
+    metric_values_by_commit: dict[str, float],
+    metric_name: str | None,
+    higher_is_better: bool,
+) -> list[MapElitesRecord]:
     records: list[MapElitesRecord] = []
     for row in rows:
         commit_hash = str(row.commit_hash or "")
