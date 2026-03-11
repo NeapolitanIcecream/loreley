@@ -35,6 +35,7 @@ Vector = tuple[float, ...]
 
 __all__ = [
     "DatabaseSnapshotStore",
+    "SnapshotStoreError",
     "SnapshotCellUpsert",
     "SnapshotUpdate",
     "apply_snapshot",
@@ -49,6 +50,10 @@ __all__ = [
 ]
 
 UNSUPPORTED_META_KEYS = ("archive", "history")
+
+
+class SnapshotStoreError(RuntimeError):
+    """Raised when MAP-Elites snapshot state cannot be loaded or persisted."""
 
 
 def ensure_supported_snapshot_meta(
@@ -103,6 +108,15 @@ class SnapshotUpdate:
 class DatabaseSnapshotStore:
     """Postgres-backed snapshot store using the incremental MAP-Elites tables."""
 
+    @staticmethod
+    def _raise_store_error(*, action: str, island_id: str, exc: Exception) -> None:
+        if isinstance(exc, SQLAlchemyError):
+            message = f"Failed to {action} MAP-Elites snapshot for island {island_id}: {exc}"
+        else:
+            message = f"Unexpected error while {action} snapshot for island {island_id}: {exc}"
+        log.exception(message)
+        raise SnapshotStoreError(message) from exc
+
     def load(self, island_id: str, *, history_limit: int | None = None) -> dict[str, Any] | None:
         """Load a snapshot payload compatible with `apply_snapshot()`."""
 
@@ -140,19 +154,9 @@ class DatabaseSnapshotStore:
         except ValueError:
             raise
         except SQLAlchemyError as exc:
-            log.error(
-                "Failed to load MAP-Elites snapshot for island {}: {}",
-                island_id,
-                exc,
-            )
-            return None
+            self._raise_store_error(action="load", island_id=island_id, exc=exc)
         except Exception as exc:  # pragma: no cover - defensive
-            log.error(
-                "Unexpected error while loading snapshot for island {}: {}",
-                island_id,
-                exc,
-            )
-            return None
+            self._raise_store_error(action="loading", island_id=island_id, exc=exc)
 
     def apply_update(
         self,
@@ -185,17 +189,9 @@ class DatabaseSnapshotStore:
         except ValueError:
             raise
         except SQLAlchemyError as exc:
-            log.error(
-                "Failed to persist MAP-Elites snapshot for island {}: {}",
-                island_id,
-                exc,
-            )
+            self._raise_store_error(action="persist", island_id=island_id, exc=exc)
         except Exception as exc:  # pragma: no cover - defensive
-            log.error(
-                "Unexpected error while persisting snapshot for island {}: {}",
-                island_id,
-                exc,
-            )
+            self._raise_store_error(action="persisting", island_id=island_id, exc=exc)
 
     def _apply_update_within_savepoint(
         self,
@@ -218,17 +214,9 @@ class DatabaseSnapshotStore:
         except ValueError:
             raise
         except SQLAlchemyError as exc:
-            log.error(
-                "Failed to persist MAP-Elites snapshot for island {}: {}",
-                island_id,
-                exc,
-            )
+            self._raise_store_error(action="persist", island_id=island_id, exc=exc)
         except Exception as exc:  # pragma: no cover - defensive
-            log.error(
-                "Unexpected error while persisting snapshot for island {}: {}",
-                island_id,
-                exc,
-            )
+            self._raise_store_error(action="persisting", island_id=island_id, exc=exc)
 
     def _apply_update_in_session(
         self,

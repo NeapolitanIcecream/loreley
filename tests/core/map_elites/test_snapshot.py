@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.exc import SQLAlchemyError
 
+import loreley.core.map_elites.snapshot as snapshot_module
 from loreley.core.map_elites.dimension_reduction import PCAProjection, PcaHistoryEntry
 from loreley.core.map_elites.snapshot import (
     DatabaseSnapshotStore,
@@ -417,3 +421,41 @@ def test_prune_history_entries_deletes_rows_beyond_limit() -> None:
     assert "DELETE FROM MAP_ELITES_PCA_HISTORY" in compiled
     assert "OLD-1" in compiled
     assert "OLD-2" in compiled
+
+
+def test_snapshot_load_raises_on_database_error() -> None:
+    """Regression: snapshot load must fail fast instead of pretending the island is empty."""
+
+    store = DatabaseSnapshotStore()
+
+    @contextmanager
+    def broken_scope():  # type: ignore[no-untyped-def]
+        raise SQLAlchemyError("boom")
+        yield
+
+    original_scope = snapshot_module.session_scope
+    snapshot_module.session_scope = broken_scope
+    try:
+        with pytest.raises(snapshot_module.SnapshotStoreError, match="Failed to load MAP-Elites snapshot"):
+            store.load("main")
+    finally:
+        snapshot_module.session_scope = original_scope
+
+
+def test_snapshot_apply_update_raises_on_database_error() -> None:
+    """Regression: snapshot persistence errors must not be reduced to log-only warnings."""
+
+    store = DatabaseSnapshotStore()
+
+    @contextmanager
+    def broken_scope():  # type: ignore[no-untyped-def]
+        raise SQLAlchemyError("boom")
+        yield
+
+    original_scope = snapshot_module.session_scope
+    snapshot_module.session_scope = broken_scope
+    try:
+        with pytest.raises(snapshot_module.SnapshotStoreError, match="Failed to persist MAP-Elites snapshot"):
+            store.apply_update("main", update=snapshot_module.SnapshotUpdate())
+    finally:
+        snapshot_module.session_scope = original_scope
