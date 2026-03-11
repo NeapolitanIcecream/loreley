@@ -2,17 +2,18 @@ from __future__ import annotations
 
 import importlib
 import sys
-import types
 
 import pytest
 
 
 class _FakeStreamlitModule:
     def __init__(self) -> None:
-        self.link_calls: list[dict[str, object]] = []
-        self.markdown_calls: list[str] = []
+        self.button_calls: list[dict[str, object]] = []
+        self.button_values: dict[str, bool] = {}
+        self.download_calls: list[dict[str, object]] = []
         self.write_calls: list[str] = []
         self.error_calls: list[str] = []
+        self.session_state: dict[str, object] = {}
 
     @staticmethod
     def cache_resource(*_args, **_kwargs):
@@ -28,11 +29,14 @@ class _FakeStreamlitModule:
 
         return _decorator
 
-    def link_button(self, label: str, url: str, **kwargs) -> None:
-        self.link_calls.append({"label": label, "url": url, "kwargs": kwargs})
+    def button(self, label: str, **kwargs) -> bool:
+        payload = {"label": label, "kwargs": kwargs}
+        self.button_calls.append(payload)
+        key = str(kwargs.get("key") or "")
+        return bool(self.button_values.get(key, False))
 
-    def markdown(self, value: str) -> None:
-        self.markdown_calls.append(value)
+    def download_button(self, label: str, **kwargs) -> None:
+        self.download_calls.append({"label": label, "kwargs": kwargs})
 
     def write(self, value: str) -> None:
         self.write_calls.append(value)
@@ -82,29 +86,54 @@ def test_api_get_all_pages_without_max_items_follows_cursor(ui_api_module) -> No
     assert calls == [{"limit": 100}, {"limit": 100, "cursor": "page-2"}]
 
 
-def test_render_artifact_downloads_uses_links_without_prefetch(ui_api_module) -> None:
+def test_render_artifact_downloads_defers_fetch_until_prepare_clicked(ui_api_module) -> None:
     module, fake_streamlit = ui_api_module
+    fetch_calls: list[tuple[str, str]] = []
 
-    def _unexpected_fetch(*_args, **_kwargs):
-        raise AssertionError("artifact bytes should not be fetched while rendering links")
+    def _fake_fetch(base_url: str, path: str, *, params=None):
+        fetch_calls.append((base_url, path))
+        return b"payload", "application/json"
 
-    module.api_get_bytes_or_stop = _unexpected_fetch
+    module.api_get_bytes_or_stop = _fake_fetch
 
     module.render_artifact_downloads(
         api_base_url="http://example.local/root/",
         artifacts={
             "planning_prompt_url": "/api/v1/jobs/123/artifacts/planning_prompt",
-            "evaluation_json_url": "/api/v1/jobs/123/artifacts/evaluation_json",
         },
         key_prefix="artifact_test",
     )
 
-    assert [call["label"] for call in fake_streamlit.link_calls] == [
-        "Open: Planning prompt",
-        "Open: Evaluation JSON",
-    ]
-    assert [call["url"] for call in fake_streamlit.link_calls] == [
-        "http://example.local/api/v1/jobs/123/artifacts/planning_prompt",
-        "http://example.local/api/v1/jobs/123/artifacts/evaluation_json",
+    assert fetch_calls == []
+    assert fake_streamlit.download_calls == []
+    assert [call["label"] for call in fake_streamlit.button_calls] == [
+        "Prepare: Planning prompt",
     ]
 
+
+def test_render_artifact_downloads_fetches_server_side_after_prepare(ui_api_module) -> None:
+    module, fake_streamlit = ui_api_module
+    fetch_calls: list[tuple[str, str]] = []
+    fake_streamlit.button_values["artifact_test_planning_prompt_prepare"] = True
+
+    def _fake_fetch(base_url: str, path: str, *, params=None):
+        fetch_calls.append((base_url, path))
+        return b"payload", "application/json"
+
+    module.api_get_bytes_or_stop = _fake_fetch
+
+    module.render_artifact_downloads(
+        api_base_url="http://example.local/root/",
+        artifacts={
+            "planning_prompt_url": "/api/v1/jobs/123/artifacts/planning_prompt",
+        },
+        key_prefix="artifact_test",
+    )
+
+    assert fetch_calls == [
+        ("http://example.local/root/", "/api/v1/jobs/123/artifacts/planning_prompt"),
+    ]
+    assert len(fake_streamlit.download_calls) == 1
+    assert fake_streamlit.download_calls[0]["label"] == "Download: Planning prompt"
+    assert fake_streamlit.download_calls[0]["kwargs"]["data"] == b"payload"
+    assert fake_streamlit.download_calls[0]["kwargs"]["mime"] == "application/json"

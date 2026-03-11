@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import urljoin
 
 import streamlit as st
 
@@ -120,18 +119,6 @@ def api_get_bytes_or_stop(
         st.stop()
 
 
-def build_api_url(base_url: str, path: str) -> str:
-    """Return an absolute API URL for a possibly relative path."""
-
-    root = str(base_url or "").strip()
-    target = str(path or "").strip()
-    if not root:
-        return target
-    if not target:
-        return root
-    return urljoin(root.rstrip("/") + "/", target)
-
-
 def render_artifact_downloads(
     *,
     api_base_url: str,
@@ -150,15 +137,27 @@ def render_artifact_downloads(
         url = artifacts.get(f"{artifact_key}_url")
         if not url:
             continue
-        absolute_url = build_api_url(api_base_url, str(url))
-        if hasattr(st, "link_button"):
-            st.link_button(
-                f"Open: {label}",
-                absolute_url,
-                key=f"{key_prefix}_{artifact_key}",
+        payload_key = f"{key_prefix}_{artifact_key}_payload"
+        prepared = st.session_state.get(payload_key)
+        if st.button(
+            f"Prepare: {label}",
+            key=f"{key_prefix}_{artifact_key}_prepare",
+        ):
+            data, content_type = api_get_bytes_or_stop(api_base_url, str(url))
+            prepared = {
+                "data": data,
+                "content_type": content_type,
+            }
+            st.session_state[payload_key] = prepared
+
+        if isinstance(prepared, dict) and "data" in prepared:
+            st.download_button(
+                f"Download: {label}",
+                data=prepared["data"],
+                file_name=artifact_filename(artifact_key),
+                mime=str(prepared.get("content_type") or "application/octet-stream"),
+                key=f"{key_prefix}_{artifact_key}_download",
             )
-        else:  # pragma: no cover - compatibility fallback
-            st.markdown(f"[Open: {label}]({absolute_url})")
         rendered = True
 
     if not rendered:

@@ -7,6 +7,7 @@ from typing import Any, cast
 import streamlit as st
 
 from loreley.api.pagination import MAX_PAGE_LIMIT
+from loreley.ui.archive_plotting import build_scatter_points
 from loreley.ui.components.aggrid import render_table, selected_rows
 from loreley.ui.components.api import api_get_all_pages_or_stop, api_get_or_stop, api_get_page_or_stop
 from loreley.ui.paging import advance_cursor_pager, current_cursor, normalize_cursor_pager, pager_signature
@@ -163,22 +164,15 @@ def render() -> None:
             if max_dim >= 2:
                 dim_x = st.selectbox("X dimension", list(range(max_dim)), index=0)
                 dim_y = st.selectbox("Y dimension", list(range(max_dim)), index=1)
-                points = []
-                for r in visualization_records:
-                    if not isinstance(r, dict):
-                        continue
-                    vec = r.get("measures")
-                    if not isinstance(vec, list) or len(vec) <= max(dim_x, dim_y):
-                        continue
-                    points.append(
-                        {
-                            "x": float(vec[dim_x]),
-                            "y": float(vec[dim_y]),
-                            "value": float(r.get(value_key, r.get("fitness", 0.0))),
-                            "commit_hash": r.get("commit_hash"),
-                            "cell_index": r.get("cell_index"),
-                        }
-                    )
+                points = build_scatter_points(
+                    [r for r in visualization_records if isinstance(r, dict)],
+                    dim_x=dim_x,
+                    dim_y=dim_y,
+                    value_key=value_key,
+                )
+                if not points:
+                    st.info("No archive records with plottable values for the selected dimensions.")
+                    return
                 plot_df = pd.DataFrame(points)
                 fig = px.scatter(
                     plot_df,
