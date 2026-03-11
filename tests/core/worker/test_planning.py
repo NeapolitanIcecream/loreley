@@ -122,5 +122,5 @@ def test_planning_prompt_requests_markdown_deliverable(settings: Settings) -> No
 
     assert "Markdown plan document" in prompt
     assert "Output requirements" in prompt
+    assert "Operate non-interactively" in prompt
     assert "Use '##' headings" in prompt
-

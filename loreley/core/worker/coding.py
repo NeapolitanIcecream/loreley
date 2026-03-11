@@ -261,6 +261,7 @@ Plan (Markdown):
 
 Output requirements:
 - Apply the required changes.
+- Operate non-interactively: do not ask for clarification, approval, or confirmation; make reasonable assumptions and proceed.
 - Do not create git commits or push branches; leave the repository in a modified state.
 - Return a single Markdown execution report.
 - Use '##' headings for these sections: Summary, Changes, Tests, Follow-ups (optional).
@@ -354,5 +355,4 @@ Output requirements:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
         except Exception as exc:  # pragma: no cover - best-effort logging
             log.debug("Failed to write coding debug artifact: {}", exc)
-
 
