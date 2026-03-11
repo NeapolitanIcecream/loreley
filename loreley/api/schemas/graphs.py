@@ -20,6 +20,7 @@ class CommitGraphNodeOut(OrmOutModel):
     metric_name: str | None = None
     metric_value: float | None = None
     fitness: float | None = None
+    objective: float | None = None
     is_elite: bool = False
     extra: dict[str, Any] = Field(default_factory=dict)
 
@@ -39,10 +40,10 @@ class CommitGraphEdgeOut(OrmOutModel):
 
 class CommitGraphOut(OrmOutModel):
     metric_name: str | None
+    higher_is_better: bool
     mode: str
     max_nodes: int
     truncated: bool
     nodes: list[CommitGraphNodeOut]
     edges: list[CommitGraphEdgeOut]
-
 

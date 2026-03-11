@@ -75,6 +75,22 @@ def render() -> None:
         st.info("No archive records yet.")
         return
 
+    metric_name = None
+    higher_is_better = True
+    if isinstance(islands, list):
+        for entry in islands:
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("island_id") or "") != str(island_id):
+                continue
+            metric_name = entry.get("metric_name")
+            if entry.get("higher_is_better") is not None:
+                higher_is_better = bool(entry.get("higher_is_better"))
+            break
+
+    value_key = "metric_value" if "metric_value" in records_df.columns and records_df["metric_value"].notna().any() else "fitness"
+    value_label = metric_name or ("Metric" if value_key == "metric_value" else "Fitness")
+
     # Visualization
     st.subheader("Visualization")
     try:
@@ -93,12 +109,12 @@ def render() -> None:
             try:
                 idx = int(cast(Any, raw_idx))
                 coords = np.unravel_index(idx, (cells_per_dim, cells_per_dim))
-                grid[coords] = float(cast(Any, raw_fitness))
+                grid[coords] = float(cast(Any, row.get(value_key, raw_fitness)))
             except Exception:
                 continue
         fig = px.imshow(
             grid,
-            title="Cell fitness heatmap (2D)",
+            title=f"Cell {value_label.lower()} heatmap (2D)",
             aspect="auto",
             origin="lower",
         )
@@ -128,7 +144,7 @@ def render() -> None:
                         {
                             "x": float(vec[dim_x]),
                             "y": float(vec[dim_y]),
-                            "fitness": float(r.get("fitness", 0.0)),
+                            "value": float(r.get(value_key, r.get("fitness", 0.0))),
                             "commit_hash": r.get("commit_hash"),
                             "cell_index": r.get("cell_index"),
                         }
@@ -138,9 +154,9 @@ def render() -> None:
                     plot_df,
                     x="x",
                     y="y",
-                    color="fitness",
+                    color="value",
                     hover_data=["commit_hash", "cell_index"],
-                    title="Archive records scatter (selected measures)",
+                    title=f"Archive records scatter ({value_label.lower()})",
                 )
                 st.plotly_chart(fig, width="stretch")
             else:
@@ -158,4 +174,3 @@ def render() -> None:
             )
             with st.expander("Selected commit detail", expanded=False):
                 st.json(detail)
-

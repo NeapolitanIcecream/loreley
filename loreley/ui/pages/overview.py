@@ -61,9 +61,35 @@ def render() -> None:
     running = int(status_counts.get("running", 0))
 
     best_fitness = None
+    metric_name = None
+    higher_is_better = True
     if isinstance(islands, list) and islands:
         try:
-            best_fitness = max(float(i.get("best_fitness", 0.0)) for i in islands if isinstance(i, dict))
+            metric_name = next(
+                (
+                    str(entry.get("metric_name"))
+                    for entry in islands
+                    if isinstance(entry, dict) and entry.get("metric_name")
+                ),
+                None,
+            )
+            higher_is_better = bool(
+                next(
+                    (
+                        entry.get("higher_is_better")
+                        for entry in islands
+                        if isinstance(entry, dict) and entry.get("higher_is_better") is not None
+                    ),
+                    True,
+                )
+            )
+            values = [
+                float(i.get("best_fitness", 0.0))
+                for i in islands
+                if isinstance(i, dict) and i.get("best_fitness") is not None
+            ]
+            if values:
+                best_fitness = max(values) if higher_is_better else min(values)
         except Exception:
             best_fitness = None
 
@@ -85,7 +111,10 @@ def render() -> None:
     c1.metric("Jobs (loaded)", f"{total_jobs}")
     c2.metric("Succeeded", f"{succeeded}")
     c3.metric("Failed", f"{failed}")
-    c4.metric("Best fitness", f"{best_fitness:.6f}" if isinstance(best_fitness, (int, float)) else "n/a")
+    c4.metric(
+        f"Best {metric_name or 'metric'}",
+        f"{best_fitness:.6f}" if isinstance(best_fitness, (int, float)) else "n/a",
+    )
 
     c5, c6, c7, c8 = st.columns(4)
     c5.metric(
@@ -93,11 +122,11 @@ def render() -> None:
         f"{float(coverage) * 100:.2f}%" if isinstance(coverage, (int, float)) else "n/a",
     )
     c6.metric(
-        "Norm QD score",
+        "Objective norm QD",
         f"{float(norm_qd_score):.6f}" if isinstance(norm_qd_score, (int, float)) else "n/a",
     )
     c7.metric(
-        "QD score",
+        "Objective QD",
         f"{float(qd_score):.6f}" if isinstance(qd_score, (int, float)) else "n/a",
     )
     c8.metric(
@@ -144,17 +173,26 @@ def render() -> None:
     nodes = graph.get("nodes") if isinstance(graph, dict) else None
     if isinstance(nodes, list) and nodes:
         nodes_df: Any = pd.DataFrame([n for n in nodes if isinstance(n, dict)])
-        if not nodes_df.empty and {"created_at", "fitness"} <= set(nodes_df.columns):
+        value_column = "metric_value" if "metric_value" in nodes_df.columns else "fitness"
+        if not nodes_df.empty and {"created_at", value_column} <= set(nodes_df.columns):
             nodes_df = nodes_df.copy()
             nodes_df["created_at"] = pd.to_datetime(nodes_df["created_at"], errors="coerce", utc=True)
-            nodes_df["fitness"] = pd.to_numeric(nodes_df["fitness"], errors="coerce")
-            nodes_df = nodes_df.dropna(subset=["created_at", "fitness"]).sort_values("created_at")
+            nodes_df[value_column] = pd.to_numeric(nodes_df[value_column], errors="coerce")
+            nodes_df = nodes_df.dropna(subset=["created_at", value_column]).sort_values("created_at")
             if not nodes_df.empty:
-                nodes_df["best_so_far"] = nodes_df["fitness"].cummax()
-                fig = px.line(nodes_df, x="created_at", y="best_so_far", title="Best fitness over time (loaded commits)")
+                graph_higher_is_better = bool(graph.get("higher_is_better", True)) if isinstance(graph, dict) else True
+                if graph_higher_is_better:
+                    nodes_df["best_so_far"] = nodes_df[value_column].cummax()
+                else:
+                    nodes_df["best_so_far"] = nodes_df[value_column].cummin()
+                fig = px.line(
+                    nodes_df,
+                    x="created_at",
+                    y="best_so_far",
+                    title=f"Best {metric_name or 'metric'} over time (loaded commits)",
+                )
                 st.plotly_chart(fig, width="stretch")
 
     st.subheader("Islands")
     st.dataframe(islands or [], width="stretch")
-
 

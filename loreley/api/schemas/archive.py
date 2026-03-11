@@ -18,6 +18,9 @@ class IslandStatsOut(OrmOutModel):
     qd_score: float
     norm_qd_score: float
     best_fitness: float
+    best_objective: float
+    metric_name: str | None = None
+    higher_is_better: bool
 
 
 class ArchiveRecordOut(OrmOutModel):
@@ -25,6 +28,10 @@ class ArchiveRecordOut(OrmOutModel):
     island_id: str
     cell_index: int
     fitness: float
+    objective: float | None = None
+    metric_value: float | None = None
+    metric_name: str | None = None
+    higher_is_better: bool | None = None
     measures: list[float] = Field(default_factory=list)
     solution: list[float] = Field(default_factory=list)
     timestamp: float
@@ -40,5 +47,4 @@ class ArchiveSnapshotMetaOut(OrmOutModel):
     has_projection: bool
     history_length: int
     updated_at: datetime | None = None
-
 

@@ -23,6 +23,7 @@ class CommitNode:
     message: str | None
     metric_value: float | None
     fitness: float | None
+    objective: float | None
     extra: dict[str, Any]
 
 
@@ -39,6 +40,7 @@ class CommitGraph:
     edges: list[CommitEdge]
     truncated: bool
     metric_name: str | None
+    higher_is_better: bool
 
 
 def build_commit_lineage_graph(
@@ -66,9 +68,11 @@ def build_commit_lineage_graph(
         stmt = (
             select(CommitCard)
             .order_by(CommitCard.created_at.desc())
-            .limit(limit)
+            .limit(limit + 1)
         )
         commits = list(session.execute(stmt).scalars())
+        truncated = len(commits) > limit
+        commits = commits[:limit]
 
         metric_map: dict[str, float] = {}
         if metric_name and commits:
@@ -87,10 +91,7 @@ def build_commit_lineage_graph(
 
     for c in commits:
         raw = metric_map.get(str(c.id))
-        if raw is None:
-            fitness = fitness_floor
-        else:
-            fitness = raw * direction
+        objective = fitness_floor if raw is None else raw * direction
         nodes.append(
             CommitNode(
                 commit_hash=c.commit_hash,
@@ -100,7 +101,8 @@ def build_commit_lineage_graph(
                 author=c.author,
                 message=getattr(c, "subject", None),
                 metric_value=raw,
-                fitness=fitness,
+                fitness=raw,
+                objective=objective,
                 extra={},
             )
         )
@@ -111,7 +113,11 @@ def build_commit_lineage_graph(
             if parent and parent in commit_set:
                 edges.append(CommitEdge(source=parent, target=c.commit_hash, kind="parent"))
 
-    truncated = len(commits) >= limit
-    return CommitGraph(nodes=nodes, edges=edges, truncated=truncated, metric_name=metric_name)
-
+    return CommitGraph(
+        nodes=nodes,
+        edges=edges,
+        truncated=truncated,
+        metric_name=metric_name,
+        higher_is_better=higher_is_better,
+    )
 
