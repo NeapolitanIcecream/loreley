@@ -45,6 +45,7 @@ def _encode_commit_cursor(commit: CommitCard) -> str:
 def list_commits_page(
     *,
     island_id: str | None = None,
+    query: str | None = None,
     limit: int = 200,
     cursor: str | None = None,
 ) -> CommitPage:
@@ -53,9 +54,11 @@ def list_commits_page(
     limit, _ = normalize_pagination(limit, 0)
 
     with session_scope() as session:
-        stmt = select(CommitCard)
-        if island_id:
-            stmt = stmt.where(CommitCard.island_id == island_id)
+        stmt = _apply_commit_filters(
+            select(CommitCard),
+            island_id=island_id,
+            query=query,
+        )
         if cursor:
             try:
                 payload = decode_cursor(cursor)
@@ -84,6 +87,7 @@ def list_commits_page(
 def list_commits(
     *,
     island_id: str | None = None,
+    query: str | None = None,
     limit: int = 200,
     offset: int = 0,
 ) -> list[CommitCard]:
@@ -92,9 +96,11 @@ def list_commits(
     limit, offset = normalize_pagination(limit, offset)
 
     with session_scope() as session:
-        stmt = select(CommitCard)
-        if island_id:
-            stmt = stmt.where(CommitCard.island_id == island_id)
+        stmt = _apply_commit_filters(
+            select(CommitCard),
+            island_id=island_id,
+            query=query,
+        )
         stmt = stmt.order_by(CommitCard.created_at.desc(), CommitCard.id.desc())
         stmt = stmt.limit(limit).offset(offset)
         return list(session.execute(stmt).scalars())
@@ -118,3 +124,27 @@ def list_metrics(*, commit_card_id: UUID) -> list[Metric]:
             .order_by(Metric.name.asc())
         )
         return list(session.execute(stmt).scalars())
+
+
+def _apply_commit_filters(
+    stmt,
+    *,
+    island_id: str | None,
+    query: str | None,
+):
+    if island_id:
+        stmt = stmt.where(CommitCard.island_id == island_id)
+
+    text_query = str(query or "").strip()
+    if not text_query:
+        return stmt
+
+    pattern = f"%{text_query}%"
+    return stmt.where(
+        or_(
+            CommitCard.commit_hash.ilike(pattern),
+            CommitCard.author.ilike(pattern),
+            CommitCard.subject.ilike(pattern),
+            CommitCard.change_summary.ilike(pattern),
+        )
+    )

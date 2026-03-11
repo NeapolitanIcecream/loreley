@@ -137,16 +137,28 @@ def render_artifact_downloads(
         url = artifacts.get(f"{artifact_key}_url")
         if not url:
             continue
-        data, content_type = api_get_bytes_or_stop(api_base_url, str(url))
-        st.download_button(
-            f"Download: {label}",
-            data=data,
-            file_name=artifact_filename(artifact_key),
-            mime=content_type or "application/octet-stream",
-            key=f"{key_prefix}_{artifact_key}",
-        )
+        payload_key = f"{key_prefix}_{artifact_key}_payload"
+        prepared = st.session_state.get(payload_key)
+        if st.button(
+            f"Prepare: {label}",
+            key=f"{key_prefix}_{artifact_key}_prepare",
+        ):
+            data, content_type = api_get_bytes_or_stop(api_base_url, str(url))
+            prepared = {
+                "data": data,
+                "content_type": content_type,
+            }
+            st.session_state[payload_key] = prepared
+
+        if isinstance(prepared, dict) and "data" in prepared:
+            st.download_button(
+                f"Download: {label}",
+                data=prepared["data"],
+                file_name=artifact_filename(artifact_key),
+                mime=str(prepared.get("content_type") or "application/octet-stream"),
+                key=f"{key_prefix}_{artifact_key}_download",
+            )
         rendered = True
 
     if not rendered:
         st.write(empty_message)
-

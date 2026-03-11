@@ -22,6 +22,32 @@ _REDUNDANT_INDEX_NAMES = (
     "ix_map_elites_archive_cells_island",
     "ix_map_elites_repo_state_aggregates_commit",
 )
+_MANAGED_INDEX_DDL = (
+    """
+    CREATE INDEX IF NOT EXISTS "ix_evolution_jobs_ingestion_sort_expr"
+    ON evolution_jobs (
+        status,
+        ingestion_status,
+        COALESCE(completed_at, created_at),
+        id
+    )
+    WHERE result_commit_hash IS NOT NULL AND result_commit_hash <> ''
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS "ix_evolution_jobs_ui_sort_expr"
+    ON evolution_jobs (
+        COALESCE(completed_at, created_at) DESC,
+        id DESC
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS "ix_map_elites_archive_cells_island_commit"
+    ON map_elites_archive_cells (
+        island_id,
+        commit_hash
+    )
+    """,
+)
 
 console = Console()
 log = logger.bind(module="db.base")
@@ -103,6 +129,8 @@ def ensure_database_schema(*, validate_marker: bool = True, settings: Settings |
         with engine.begin() as conn:
             for index_name in _REDUNDANT_INDEX_NAMES:
                 conn.execute(text(f'DROP INDEX IF EXISTS "{index_name}"'))
+            for ddl in _MANAGED_INDEX_DDL:
+                conn.execute(text(ddl))
         if validate_marker:
             with session_scope() as session:
                 ensure_instance_marker(
