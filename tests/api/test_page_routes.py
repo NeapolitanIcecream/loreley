@@ -89,6 +89,38 @@ def test_commits_page_route_returns_items_and_next_cursor(monkeypatch) -> None:
     assert response.json()["items"][0]["commit_hash"] == "abc"
 
 
+def test_commits_page_route_passes_query_filter(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    row = SimpleNamespace(
+        id=uuid4(),
+        commit_hash="abc",
+        parent_commit_hash=None,
+        island_id="main",
+        job_id=None,
+        author="bot",
+        subject="Subject",
+        change_summary="Summary",
+        evaluation_summary=None,
+        tags=[],
+        key_files=[],
+        highlights=[],
+        created_at=datetime(2026, 3, 11, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 3, 11, tzinfo=timezone.utc),
+    )
+
+    def _fake_list_commits_page(**kwargs):
+        captured.update(kwargs)
+        return CommitPage(items=[row], next_cursor=None)
+
+    monkeypatch.setattr(commits_router, "list_commits_page", _fake_list_commits_page)
+
+    client = _build_test_client()
+    response = client.get("/api/v1/commits/page?query=bugfix")
+
+    assert response.status_code == 200
+    assert captured["query"] == "bugfix"
+
+
 def test_archive_records_page_route_returns_items_and_next_cursor(monkeypatch) -> None:
     settings = Settings.model_validate({"mapelites_code_embedding_dimensions": 8})
     monkeypatch.setattr(archive_router, "get_settings", lambda: settings)

@@ -97,6 +97,40 @@ def test_list_commits_page_applies_cursor_without_offset(monkeypatch: pytest.Mon
     assert all(getattr(stmt, "_offset_clause", None) is None for stmt in statements)
 
 
+def test_list_commits_page_applies_server_side_query_filter(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = datetime(2026, 3, 11, tzinfo=timezone.utc)
+    rows = [
+        SimpleNamespace(id=uuid4(), created_at=now, island_id="main"),
+        SimpleNamespace(id=uuid4(), created_at=now, island_id="main"),
+    ]
+    statements: list[object] = []
+
+    class _Session:
+        def execute(self, stmt):
+            statements.append(stmt)
+            return _ExecResult(rows)
+
+    @contextmanager
+    def _fake_scope():
+        yield _Session()
+
+    monkeypatch.setattr(commits_service, "session_scope", _fake_scope)
+
+    page = commits_service.list_commits_page(island_id="main", query="bugfix", limit=2)
+
+    assert len(page.items) == 2
+    assert len(statements) == 1
+    compiled = statements[0].compile()
+    params = {str(key): value for key, value in compiled.params.items()}
+    assert any(value == "%bugfix%" for value in params.values())
+    sql = str(compiled)
+    assert "commit_cards.commit_hash" in sql
+    assert "commit_cards.author" in sql
+    assert "commit_cards.subject" in sql
+    assert "commit_cards.change_summary" in sql
+    assert getattr(statements[0], "_offset_clause", None) is None
+
+
 def test_list_records_page_returns_cursor_and_metric_value(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,

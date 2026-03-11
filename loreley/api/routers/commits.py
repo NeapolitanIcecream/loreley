@@ -18,21 +18,23 @@ router = APIRouter()
 @router.get("/commits", response_model=list[CommitOut])
 def get_commits(
     island_id: str | None = None,
+    query: str | None = None,
     limit: int = Query(default=DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
     offset: int = Query(default=0, ge=0),
 ) -> list[CommitOut]:
-    rows = list_commits(island_id=island_id, limit=limit, offset=offset)
+    rows = list_commits(island_id=island_id, query=query, limit=limit, offset=offset)
     return [CommitOut.model_validate(row) for row in rows]
 
 
 @router.get("/commits/page", response_model=CommitPageOut)
 def get_commits_page(
     island_id: str | None = None,
+    query: str | None = Query(default=None, description="Server-side text filter."),
     limit: int = Query(default=DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
     cursor: str | None = Query(default=None, description="Opaque pagination cursor."),
 ) -> CommitPageOut:
     try:
-        page = list_commits_page(island_id=island_id, limit=limit, cursor=cursor)
+        page = list_commits_page(island_id=island_id, query=query, limit=limit, cursor=cursor)
     except PaginationCursorError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return CommitPageOut(

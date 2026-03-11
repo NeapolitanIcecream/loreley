@@ -466,3 +466,26 @@ class MapElitesRepoStateAggregate(TimestampMixin, Base):
             "<MapElitesRepoStateAggregate "
             f"commit={self.commit_hash[:12]!r} files={self.file_count!r}>"
         )
+
+
+Index(
+    "ix_evolution_jobs_ingestion_sort_expr",
+    EvolutionJob.status,
+    EvolutionJob.ingestion_status,
+    func.coalesce(EvolutionJob.completed_at, EvolutionJob.created_at),
+    EvolutionJob.id,
+    postgresql_where=(
+        EvolutionJob.result_commit_hash.is_not(None)
+        & (EvolutionJob.result_commit_hash != "")
+    ),
+)
+Index(
+    "ix_evolution_jobs_ui_sort_expr",
+    func.coalesce(EvolutionJob.completed_at, EvolutionJob.created_at).desc(),
+    EvolutionJob.id.desc(),
+)
+Index(
+    "ix_map_elites_archive_cells_island_commit",
+    MapElitesArchiveCell.island_id,
+    MapElitesArchiveCell.commit_hash,
+)
