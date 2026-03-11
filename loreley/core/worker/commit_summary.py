@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import textwrap
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from loguru import logger
 from openai import OpenAI, OpenAIError
@@ -19,11 +19,15 @@ if TYPE_CHECKING:
 
 log = logger.bind(module="worker.commit_summary")
 
-__all__ = ["CommitSummarizer", "CommitSummaryError"]
+__all__ = ["CommitSummarizer", "CommitSummaryError", "CommitSummaryUnavailableError"]
 
 
 class CommitSummaryError(RuntimeError):
     """Raised when the commit summarizer cannot produce a subject line."""
+
+
+class CommitSummaryUnavailableError(RuntimeError):
+    """Raised when the commit summarizer cannot initialize its client."""
 
 
 class CommitSummarizer:
@@ -36,6 +40,8 @@ class CommitSummarizer:
         client: Any | None = None,
     ) -> None:
         self.settings = settings or get_settings()
+        self._client: Any | None = client
+        self._client_factory: Callable[[], Any] | None = None
         if client is not None:
             self._client = client
         else:
@@ -44,7 +50,7 @@ class CommitSummarizer:
                 client_kwargs["api_key"] = self.settings.openai_api_key
             if self.settings.openai_base_url:
                 client_kwargs["base_url"] = self.settings.openai_base_url
-            self._client = (
+            self._client_factory = lambda: (
                 OpenAI(**client_kwargs)  # type: ignore[call-arg]
                 if client_kwargs
                 else OpenAI()
@@ -81,13 +87,14 @@ class CommitSummarizer:
             for attempt in retryer:
                 with attempt:
                     attempt_number = int(getattr(attempt.retry_state, "attempt_number", 0) or 0)
+                    client = self._get_client()
                     instructions = (
                         "Respond with a single concise git commit subject line "
                         f"in imperative mood (<= {self._subject_limit} characters), "
                         "without surrounding quotes."
                     )
                     if self._api_spec == "responses":
-                        response = self._client.responses.create(
+                        response = client.responses.create(
                             model=self._model,
                             input=prompt,
                             temperature=self._temperature,
@@ -96,7 +103,7 @@ class CommitSummarizer:
                         )
                         subject = (response.output_text or "").strip()
                     else:
-                        response = self._client.chat.completions.create(
+                        response = client.chat.completions.create(
                             model=self._model,
                             messages=[
                                 {"role": "system", "content": instructions},
@@ -117,6 +124,19 @@ class CommitSummarizer:
             raise CommitSummaryError(
                 f"Commit summarizer failed after {attempts} attempt(s): {last_exc}",
             ) from last_exc
+
+    def _get_client(self) -> Any:
+        if self._client is not None:
+            return self._client
+        if self._client_factory is None:
+            raise CommitSummaryUnavailableError("Commit summarizer client is not configured.")
+        try:
+            self._client = self._client_factory()
+        except Exception as exc:
+            raise CommitSummaryUnavailableError(
+                f"Commit summarizer could not initialize an OpenAI client: {exc}",
+            ) from exc
+        return self._client
 
     def _build_prompt(
         self,

@@ -33,7 +33,11 @@ from loreley.core.worker.planning import (
     PlanningAgentResponse,
     PlanningError,
 )
-from loreley.core.worker.commit_summary import CommitSummarizer, CommitSummaryError
+from loreley.core.worker.commit_summary import (
+    CommitSummarizer,
+    CommitSummaryError,
+    CommitSummaryUnavailableError,
+)
 from loreley.core.worker.trajectory import build_inspiration_trajectory_rollup
 from loreley.core.worker.job_store import (
     EvolutionJobStore,
@@ -383,7 +387,7 @@ class EvolutionWorker:
                 plan=plan.plan,
                 coding=coding.report,
             )
-        except CommitSummaryError as exc:
+        except (CommitSummaryError, CommitSummaryUnavailableError) as exc:
             log.warning("Commit summarizer failed; falling back to non-LLM subject: {}", exc)
             fallback = (
                 coding.report.summary

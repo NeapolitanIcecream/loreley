@@ -301,11 +301,11 @@ def check_instance_marker(*, schema_version: int) -> CheckResult:
 
 
 def check_openai_api_key(value: str | None, *, required: bool) -> CheckResult:
-    """Check OPENAI_API_KEY presence.
+    """Check OpenAI-compatible API key presence.
 
     Note:
     - Some OpenAI-compatible gateways accept dummy keys. In that case, set any
-      non-empty OPENAI_API_KEY value to satisfy this check.
+      non-empty OPENAI_API_KEY or LORELEY_LLM_API_KEY value to satisfy this check.
     """
     if (value or "").strip():
         return CheckResult("openai_api_key", "ok", "configured")
@@ -313,13 +313,45 @@ def check_openai_api_key(value: str | None, *, required: bool) -> CheckResult:
         return CheckResult(
             "openai_api_key",
             "fail",
-            "OPENAI_API_KEY is not set (required for embeddings / summaries).",
+            "OPENAI_API_KEY / LORELEY_LLM_API_KEY is not set (required for embeddings / summaries).",
         )
     return CheckResult(
         "openai_api_key",
         "warn",
-        "OPENAI_API_KEY is not set (OpenAI API calls may fail).",
+        "OPENAI_API_KEY / LORELEY_LLM_API_KEY is not set (OpenAI API calls may fail).",
     )
+
+
+def _scheduler_requires_openai_api_key(settings: Settings) -> bool:
+    model = str(getattr(settings, "mapelites_code_embedding_model", "") or "").strip().lower()
+    return not model.startswith("local-hash")
+
+
+def _worker_requires_openai_api_key(settings: Settings) -> bool:
+    model = str(getattr(settings, "mapelites_code_embedding_model", "") or "").strip().lower()
+    if not model.startswith("local-hash"):
+        return True
+    return int(getattr(settings, "worker_planning_trajectory_max_chunks", 0) or 0) > 0
+
+
+def _check_openai_api_key_for_scheduler(settings: Settings) -> CheckResult:
+    if not _scheduler_requires_openai_api_key(settings) and not (settings.openai_api_key or "").strip():
+        return CheckResult(
+            "openai_api_key",
+            "ok",
+            "not required: MAP-Elites uses local-hash embeddings for this scheduler configuration.",
+        )
+    return check_openai_api_key(settings.openai_api_key, required=True)
+
+
+def _check_openai_api_key_for_worker(settings: Settings) -> CheckResult:
+    if not _worker_requires_openai_api_key(settings) and not (settings.openai_api_key or "").strip():
+        return CheckResult(
+            "openai_api_key",
+            "ok",
+            "not required: local-hash embeddings are enabled and trajectory summarization is disabled.",
+        )
+    return check_openai_api_key(settings.openai_api_key, required=True)
 
 
 def check_evaluator_plugin(
@@ -413,7 +445,7 @@ def preflight_scheduler(settings: Settings, *, timeout_seconds: float = 2.0) -> 
     """Preflight checks that should pass before starting the scheduler."""
     results: list[CheckResult] = []
 
-    results.append(check_openai_api_key(settings.openai_api_key, required=True))
+    results.append(_check_openai_api_key_for_scheduler(settings))
     results.append(check_database(dsn=settings.database_dsn, timeout_seconds=timeout_seconds))
     results.append(
         check_redis(
@@ -466,7 +498,7 @@ def preflight_worker(settings: Settings, *, timeout_seconds: float = 2.0) -> lis
     results: list[CheckResult] = []
 
     results.append(check_binary(settings.worker_repo_git_bin or "git", label="git"))
-    results.append(check_openai_api_key(settings.openai_api_key, required=True))
+    results.append(_check_openai_api_key_for_worker(settings))
     results.append(check_database(dsn=settings.database_dsn, timeout_seconds=timeout_seconds))
     results.append(
         check_redis(
@@ -574,5 +606,3 @@ def preflight_ui(settings: Settings, *, timeout_seconds: float = 2.0) -> list[Ch
         )
     )
     return results
-
-

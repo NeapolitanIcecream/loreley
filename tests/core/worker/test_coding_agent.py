@@ -123,6 +123,10 @@ def test_coding_prompt_includes_markdown_contract(tmp_path: Path, settings: Sett
     assert "Plan (Markdown):" in prompt
     assert "Output requirements:" in prompt
     assert "Operate non-interactively" in prompt
+    assert "Treat explicit speed or runtime requirements" in prompt
+    assert "git status --porcelain" in prompt
+    assert "Prefer the smallest relevant set of source-file edits" in prompt
+    assert "Do not delete or rename existing tracked files" in prompt
     assert "Do not create git commits" in prompt
     assert "Commit message" not in prompt
 

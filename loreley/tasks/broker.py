@@ -16,7 +16,7 @@ log = logger.bind(module="tasks.broker")
 
 broker: RedisBroker | None = None
 
-__all__ = ["broker", "setup_broker", "build_redis_broker"]
+__all__ = ["broker", "setup_broker", "build_redis_broker", "reset_redis_namespace"]
 
 
 def _safe_connection_repr(settings: Settings) -> str:
@@ -79,3 +79,25 @@ def setup_broker(settings: Settings | None = None) -> RedisBroker:
     )
     return redis_broker
 
+
+def reset_redis_namespace(settings: Settings | None = None) -> int:
+    """Delete all Redis keys under the experiment namespace.
+
+    `RedisBroker.flush_all()` only clears declared queues. During a DB reset we
+    often have not declared any queues yet, so experiment-scoped message lists
+    can survive. This helper scans the namespace directly to guarantee a clean
+    slate for the next run.
+    """
+
+    redis_broker = build_redis_broker(settings)
+    pattern = f"{redis_broker.namespace}:*"
+    keys = list(redis_broker.client.scan_iter(match=pattern))
+    if not keys:
+        return 0
+    deleted = int(redis_broker.client.delete(*keys) or 0)
+    log.info(
+        "Redis namespace reset: namespace={} deleted_keys={}",
+        redis_broker.namespace,
+        deleted,
+    )
+    return deleted

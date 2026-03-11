@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,6 +30,7 @@ class CodexCliBackend:
     """
 
     bin: str
+    model: str | None
     profile: str | None
     timeout_seconds: int
     extra_env: dict[str, str]
@@ -38,6 +41,7 @@ class CodexCliBackend:
     color: str = "never"
     ephemeral: bool = True
     capture_last_message: bool = True
+    isolate_home: bool = True
 
     def run(
         self,
@@ -57,8 +61,14 @@ class CodexCliBackend:
 
         start = monotonic()
         with tempfile.TemporaryDirectory(prefix="loreley-codex-") as temp_dir:
+            temp_path = Path(temp_dir)
             output_last_message_path = (
-                Path(temp_dir) / "last-message.md" if self.capture_last_message else None
+                temp_path / "last-message.md" if self.capture_last_message else None
+            )
+            self._prepare_isolated_home(
+                env=env,
+                temp_dir=temp_path,
+                worktree=worktree,
             )
             command = self._build_command(output_last_message_path=output_last_message_path)
             log.debug(
@@ -139,20 +149,25 @@ class CodexCliBackend:
         *,
         output_last_message_path: Path | None,
     ) -> list[str]:
-        command: list[str] = [self.bin, "exec"]
+        command: list[str] = [self.bin]
 
-        if self.ephemeral:
-            command.append("--ephemeral")
+        if self.model:
+            command.extend(["--model", self.model])
 
         if self.profile:
             command.extend(["--profile", self.profile])
 
         if self.approval_policy:
-            command.extend(["--ask-for-approval", self.approval_policy])
+            command.extend(["-a", self.approval_policy])
 
-        sandbox = self.sandbox or ("workspace-write" if self.full_auto else "read-only")
+        sandbox = self._requested_sandbox()
         if sandbox:
             command.extend(["--sandbox", sandbox])
+
+        command.append("exec")
+
+        if self.ephemeral:
+            command.append("--ephemeral")
 
         if self.color:
             command.extend(["--color", self.color])
@@ -173,6 +188,42 @@ class CodexCliBackend:
             log.debug("Failed to read Codex last-message output from {}: {}", path, exc)
             return ""
 
+    def _prepare_isolated_home(
+        self,
+        *,
+        env: dict[str, str],
+        temp_dir: Path,
+        worktree: Path,
+    ) -> None:
+        if not self.isolate_home:
+            return
+        if "CODEX_HOME" in (self.extra_env or {}):
+            return
+
+        source_home = Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex")).expanduser()
+        source_auth = source_home / "auth.json"
+        isolated_home = temp_dir / "codex-home"
+        isolated_home.mkdir(parents=True, exist_ok=True)
+        if source_auth.is_file():
+            shutil.copy2(source_auth, isolated_home / "auth.json")
+        trusted_worktree = None
+        if self._requested_sandbox() != "read-only":
+            trusted_worktree = json.dumps(str(worktree.resolve()))
+            (isolated_home / "config.toml").write_text(
+                f"[projects.{trusted_worktree}]\ntrust_level = \"trusted\"\n",
+                encoding="utf-8",
+            )
+        env["CODEX_HOME"] = str(isolated_home)
+        log.debug(
+            "Prepared isolated CODEX_HOME={} for task auth_copied={} trusted_worktree={}",
+            isolated_home,
+            source_auth.is_file(),
+            trusted_worktree or "<none>",
+        )
+
+    def _requested_sandbox(self) -> str | None:
+        return self.sandbox or ("workspace-write" if self.full_auto else "read-only")
+
 
 def codex_planning_backend() -> CodexCliBackend:
     """Factory to build a Codex backend for the planning agent."""
@@ -182,11 +233,13 @@ def codex_planning_backend() -> CodexCliBackend:
     settings = get_settings()
     return CodexCliBackend(
         bin=settings.worker_planning_codex_bin,
+        model=settings.worker_planning_codex_model,
         profile=settings.worker_planning_codex_profile,
         timeout_seconds=settings.worker_planning_timeout_seconds,
         extra_env=dict(settings.worker_planning_extra_env or {}),
         error_cls=PlanningError,
         full_auto=False,
+        sandbox="read-only",
     )
 
 
@@ -198,11 +251,13 @@ def codex_coding_backend() -> CodexCliBackend:
     settings = get_settings()
     return CodexCliBackend(
         bin=settings.worker_coding_codex_bin,
+        model=settings.worker_coding_codex_model,
         profile=settings.worker_coding_codex_profile,
         timeout_seconds=settings.worker_coding_timeout_seconds,
         extra_env=dict(settings.worker_coding_extra_env or {}),
         error_cls=CodingError,
         full_auto=True,
+        sandbox="workspace-write",
     )
 
 

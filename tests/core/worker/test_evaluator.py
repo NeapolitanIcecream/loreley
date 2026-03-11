@@ -152,3 +152,13 @@ def test_coerce_extra_and_validate_context(tmp_path: Path, settings: Settings) -
         Evaluator._validate_context(ctx_file)  # type: ignore[attr-defined]
 
 
+def test_evaluator_records_duration_in_extra(tmp_path: Path, settings: Settings) -> None:
+    evaluator = Evaluator(settings=settings)
+    evaluator._plugin_callable = object()  # type: ignore[assignment]  # noqa: SLF001
+    evaluator._execute_with_timeout = lambda *_args, **_kwargs: {"summary": "ok"}  # type: ignore[method-assign]
+
+    result = evaluator.evaluate(EvaluationContext(worktree=tmp_path))
+
+    assert "evaluator_duration_seconds" in result.extra
+    assert isinstance(result.extra["evaluator_duration_seconds"], float)
+    assert result.extra["evaluator_duration_seconds"] >= 0.0
