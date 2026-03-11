@@ -54,6 +54,55 @@ def api_get_or_stop(base_url: str, path: str, *, params: dict[str, Any] | None =
         st.stop()
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def api_get_page(base_url: str, path: str, params: tuple[tuple[str, str], ...] = ()) -> dict[str, Any]:
+    """Cached GET request returning a paginated JSON payload."""
+
+    client = get_api_client(base_url)
+    return client.get_json_page(path, params=dict(params))
+
+
+def api_get_page_or_stop(base_url: str, path: str, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    """GET a paginated JSON payload, showing an error and stopping on failures."""
+
+    try:
+        return api_get_page(base_url, path, freeze_params(params))
+    except APIError as exc:
+        st.error(f"API error: {exc}")
+        st.stop()
+
+
+def api_get_all_pages_or_stop(
+    base_url: str,
+    path: str,
+    *,
+    params: dict[str, Any] | None = None,
+    page_limit: int,
+    max_items: int | None = None,
+) -> list[Any]:
+    """Fetch sequential cursor pages and flatten their `items` arrays."""
+
+    items: list[Any] = []
+    cursor: str | None = None
+    while True:
+        remaining = None if max_items is None else max(0, int(max_items) - len(items))
+        if remaining == 0:
+            break
+        current_params = dict(params or {})
+        current_params["limit"] = page_limit if remaining is None else min(page_limit, remaining)
+        if cursor:
+            current_params["cursor"] = cursor
+        page = api_get_page_or_stop(base_url, path, params=current_params)
+        page_items = page.get("items")
+        if not isinstance(page_items, list):
+            break
+        items.extend(page_items)
+        cursor = page.get("next_cursor")
+        if not cursor or not page_items:
+            break
+    return items
+
+
 def api_get_bytes_or_stop(
     base_url: str,
     path: str,
@@ -100,5 +149,4 @@ def render_artifact_downloads(
 
     if not rendered:
         st.write(empty_message)
-
 

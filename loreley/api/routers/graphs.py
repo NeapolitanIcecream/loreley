@@ -27,11 +27,11 @@ def commit_lineage(
     edges = [CommitGraphEdgeOut.model_validate(e) for e in graph.edges]
     return CommitGraphOut(
         metric_name=graph.metric_name,
+        higher_is_better=bool(graph.higher_is_better),
         mode=mode,
         max_nodes=int(max_nodes),
         truncated=bool(graph.truncated),
         nodes=nodes,
         edges=edges,
     )
-
 

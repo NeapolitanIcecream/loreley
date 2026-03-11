@@ -17,6 +17,11 @@ from loreley.config import Settings, get_settings
 from loreley.db.instance import ensure_instance_marker, seed_instance_marker
 
 INSTANCE_SCHEMA_VERSION = 3
+_REDUNDANT_INDEX_NAMES = (
+    "ix_commit_cards_commit_hash",
+    "ix_map_elites_archive_cells_island",
+    "ix_map_elites_repo_state_aggregates_commit",
+)
 
 console = Console()
 log = logger.bind(module="db.base")
@@ -95,6 +100,9 @@ def ensure_database_schema(*, validate_marker: bool = True, settings: Settings |
 
         engine = get_engine()
         Base.metadata.create_all(bind=engine)
+        with engine.begin() as conn:
+            for index_name in _REDUNDANT_INDEX_NAMES:
+                conn.execute(text(f'DROP INDEX IF EXISTS "{index_name}"'))
         if validate_marker:
             with session_scope() as session:
                 ensure_instance_marker(

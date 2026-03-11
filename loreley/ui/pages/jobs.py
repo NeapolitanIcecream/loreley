@@ -6,7 +6,7 @@ import streamlit as st
 
 from loreley.api.pagination import MAX_PAGE_LIMIT
 from loreley.ui.components.aggrid import render_table, selected_rows
-from loreley.ui.components.api import api_get_or_stop, render_artifact_downloads
+from loreley.ui.components.api import api_get_all_pages_or_stop, api_get_or_stop, render_artifact_downloads
 from loreley.ui.state import API_BASE_URL_KEY
 
 
@@ -24,13 +24,11 @@ def render() -> None:
         st.error(f"Missing pandas dependency: {exc}")
         return
 
-    rows = (
-        api_get_or_stop(
-            api_base_url,
-            "/api/v1/jobs",
-            params={"limit": MAX_PAGE_LIMIT},
-        )
-        or []
+    rows = api_get_all_pages_or_stop(
+        api_base_url,
+        "/api/v1/jobs/page",
+        page_limit=MAX_PAGE_LIMIT,
+        max_items=MAX_PAGE_LIMIT,
     )
     df = pd.DataFrame(rows)
 
@@ -135,5 +133,4 @@ def render() -> None:
             )
     else:
         st.json(detail)
-
 

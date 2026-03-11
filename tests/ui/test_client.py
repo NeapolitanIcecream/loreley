@@ -48,3 +48,30 @@ def test_ui_client_get_bytes_returns_content_and_content_type() -> None:
     assert body == b"payload"
     assert content_type == "application/octet-stream"
 
+
+def test_ui_client_get_json_page_validates_paginated_shape() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"items": [{"id": 1}], "next_cursor": "abc"},
+            request=request,
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = LoreleyAPIClient("http://example.local", transport=transport)
+    payload = client.get_json_page("/api/v1/jobs/page")
+    assert payload == {"items": [{"id": 1}], "next_cursor": "abc"}
+
+
+def test_ui_client_get_json_page_rejects_non_list_items() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"items": {"id": 1}, "next_cursor": None},
+            request=request,
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = LoreleyAPIClient("http://example.local", transport=transport)
+    with pytest.raises(APIError, match="`items` must be a list"):
+        client.get_json_page("/api/v1/jobs/page")

@@ -84,6 +84,10 @@ class MapElitesRecord:
     measures: Vector
     solution: Vector
     timestamp: float
+    objective: float | None = None
+    metric_value: float | None = None
+    metric_name: str | None = None
+    higher_is_better: bool | None = None
 
     @property
     def dimensions(self) -> int:

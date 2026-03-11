@@ -27,6 +27,7 @@ def render() -> None:
 
     nodes = graph.get("nodes") if isinstance(graph, dict) else []
     edges = graph.get("edges") if isinstance(graph, dict) else []
+    metric_name = graph.get("metric_name") if isinstance(graph, dict) else None
 
     st.caption(f"nodes={len(nodes) if isinstance(nodes, list) else 0} edges={len(edges) if isinstance(edges, list) else 0}")
 
@@ -41,12 +42,19 @@ def render() -> None:
 
     if isinstance(nodes, list) and nodes:
         df = pd.DataFrame([n for n in nodes if isinstance(n, dict)])
-        if not df.empty and {"created_at", "fitness"} <= set(df.columns):
+        value_column = "metric_value" if "metric_value" in df.columns else "fitness"
+        if not df.empty and {"created_at", value_column} <= set(df.columns):
             df = df.copy()
             df["created_at"] = pd.to_datetime(df["created_at"], errors="coerce", utc=True)
-            df["fitness"] = pd.to_numeric(df["fitness"], errors="coerce")
-            df = df.dropna(subset=["created_at", "fitness"])
-            fig = px.scatter(df, x="created_at", y="fitness", color="island_id", title="Fitness vs time (loaded nodes)")
+            df[value_column] = pd.to_numeric(df[value_column], errors="coerce")
+            df = df.dropna(subset=["created_at", value_column])
+            fig = px.scatter(
+                df,
+                x="created_at",
+                y=value_column,
+                color="island_id",
+                title=f"{metric_name or 'Metric'} vs time (loaded nodes)",
+            )
             st.plotly_chart(fig, width="stretch")
 
     st.subheader("Interactive network (PyVis)")
@@ -75,12 +83,15 @@ def render() -> None:
                 short = commit_hash[:8]
                 island = str(n.get("island_id") or "")
                 fitness = n.get("fitness")
+                objective = n.get("objective")
+                raw_metric = n.get("metric_value")
                 author = n.get("author")
                 message = (n.get("message") or "")
                 title = (
                     f"commit: {commit_hash}<br/>"
                     f"island: {island}<br/>"
-                    f"fitness: {fitness}<br/>"
+                    f"{metric_name or 'metric'}: {raw_metric if raw_metric is not None else fitness}<br/>"
+                    f"objective: {objective}<br/>"
                     f"author: {author}<br/>"
                     f"message: {message}"
                 )
@@ -127,5 +138,4 @@ def render() -> None:
 
     with st.expander("Raw graph JSON", expanded=False):
         st.json(graph)
-
 

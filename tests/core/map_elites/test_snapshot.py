@@ -337,6 +337,45 @@ def test_diff_archive_replace_skips_unchanged_rows_and_deletes_stale_cells() -> 
     ]
 
 
+def test_apply_archive_replace_does_not_load_existing_rows() -> None:
+    store = DatabaseSnapshotStore()
+    cells = (
+        SnapshotCellUpsert(
+            cell_index=0,
+            objective=1.0,
+            measures=(0.1, 0.2),
+            solution=(0.1, 0.2),
+            commit_hash="c0",
+            timestamp=10.0,
+        ),
+        SnapshotCellUpsert(
+            cell_index=2,
+            objective=0.75,
+            measures=(0.3, 0.4),
+            solution=(0.3, 0.4),
+            commit_hash="c2",
+            timestamp=20.0,
+        ),
+    )
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.statements: list[object] = []
+
+        def execute(self, stmt: object) -> None:
+            self.statements.append(stmt)
+            sql = str(stmt)
+            if "SELECT map_elites_archive_cells" in sql:
+                raise AssertionError("archive replace should not materialize existing rows")
+            return None
+
+    session = DummySession()
+
+    store._apply_archive_replace(session, island_id="main", cells=cells)  # type: ignore[arg-type]
+
+    assert any("DELETE FROM map_elites_archive_cells" in str(stmt) for stmt in session.statements)
+
+
 def test_prune_history_entries_deletes_rows_beyond_limit() -> None:
     store = DatabaseSnapshotStore()
 

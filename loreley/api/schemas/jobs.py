@@ -74,3 +74,7 @@ class JobArtifactsOut(OrmOutModel):
     evaluation_logs_url: str | None = None
 
 
+class JobPageOut(OrmOutModel):
+    items: list[JobOut] = Field(default_factory=list)
+    next_cursor: str | None = None
+

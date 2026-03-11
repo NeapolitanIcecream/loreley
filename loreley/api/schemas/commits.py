@@ -78,3 +78,7 @@ class CommitArtifactsOut(OrmOutModel):
     evaluation_logs_url: str | None = None
 
 
+class CommitPageOut(OrmOutModel):
+    items: list[CommitOut] = Field(default_factory=list)
+    next_cursor: str | None = None
+

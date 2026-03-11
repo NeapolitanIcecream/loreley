@@ -565,6 +565,59 @@ def test_jobs_requiring_ingestion_pages_through_failed_backlog(monkeypatch, tmp_
     assert [snap.result_commit_hash for snap in snapshots] == ["retryable"]
 
 
+def test_jobs_requiring_ingestion_uses_cursor_pagination_not_offset(monkeypatch, tmp_path) -> None:
+    ingestion = _make_ingestion(tmp_path)
+    now = datetime.now(timezone.utc)
+
+    class DummyJob:
+        def __init__(self, commit: str) -> None:
+            self.id = uuid4()
+            self.base_commit_hash = None
+            self.island_id = None
+            self.result_commit_hash = commit
+            self.completed_at = now
+            self.ingestion_status = None
+            self.ingestion_attempts = 0
+            self.ingestion_last_attempt_at = None
+
+    page_one = [DummyJob("c1")]
+    page_two = [DummyJob("c2")]
+
+    class DummyResult:
+        def __init__(self, rows: list[object]) -> None:
+            self._rows = rows
+
+        def scalars(self) -> list[object]:
+            return self._rows
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.statements: list[Any] = []
+
+        def execute(self, stmt: Any) -> DummyResult:
+            self.statements.append(stmt)
+            self.calls += 1
+            if self.calls == 1:
+                return DummyResult(page_one)
+            if self.calls == 2:
+                return DummyResult(page_two)
+            return DummyResult([])
+
+    session = DummySession()
+
+    @contextmanager
+    def fake_scope():
+        yield session
+
+    monkeypatch.setattr(ingestion_mod, "session_scope", fake_scope)
+
+    snapshots = ingestion._jobs_requiring_ingestion(limit=2)
+
+    assert [snap.result_commit_hash for snap in snapshots] == ["c1", "c2"]
+    assert all(getattr(stmt, "_offset_clause", None) is None for stmt in session.statements)
+
+
 def test_record_ingestion_state_clamps_long_reason(monkeypatch, tmp_path) -> None:
     ingestion = _make_ingestion(tmp_path)
 
