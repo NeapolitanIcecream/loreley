@@ -351,28 +351,27 @@ class DatabaseSnapshotStore:
         island_id: str,
         cells: Sequence[SnapshotCellUpsert],
     ) -> None:
-        existing_rows = list(
-            session.execute(
-                select(MapElitesArchiveCell)
-                .where(MapElitesArchiveCell.island_id == island_id)
-                .order_by(MapElitesArchiveCell.cell_index.asc())
-            )
-            .scalars()
-            .all()
-        )
-        stale_indices, upsert_values = self._diff_archive_replace(
-            island_id=island_id,
-            existing_rows=existing_rows,
-            cells=cells,
-        )
-        if stale_indices:
+        desired_indices = sorted({int(cell.cell_index) for cell in cells})
+        if desired_indices:
             session.execute(
                 delete(MapElitesArchiveCell).where(
                     MapElitesArchiveCell.island_id == island_id,
-                    MapElitesArchiveCell.cell_index.in_(stale_indices),
+                    MapElitesArchiveCell.cell_index.not_in(desired_indices),
                 )
             )
-        self._upsert_archive_cells(session, values=upsert_values)
+        else:
+            session.execute(
+                delete(MapElitesArchiveCell).where(
+                    MapElitesArchiveCell.island_id == island_id,
+                )
+            )
+        self._upsert_archive_cells(
+            session,
+            values=[
+                self._archive_cell_values(island_id=island_id, cell=cell)
+                for cell in cells
+            ],
+        )
 
     def _diff_archive_replace(
         self,

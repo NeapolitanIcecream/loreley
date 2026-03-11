@@ -96,7 +96,6 @@ class CommitCard(TimestampMixin, Base):
     commit_hash: Mapped[str] = mapped_column(
         String(64),
         nullable=False,
-        index=True,
     )
     parent_commit_hash: Mapped[str | None] = mapped_column(String(64))
     island_id: Mapped[str | None] = mapped_column(String(64))
@@ -348,10 +347,6 @@ class MapElitesArchiveCell(TimestampMixin, Base):
     __tablename__ = "map_elites_archive_cells"
     __table_args__ = (
         Index(
-            "ix_map_elites_archive_cells_island",
-            "island_id",
-        ),
-        Index(
             "ix_map_elites_archive_cells_commit_hash",
             "commit_hash",
         ),
@@ -456,12 +451,6 @@ class MapElitesRepoStateAggregate(TimestampMixin, Base):
     """
 
     __tablename__ = "map_elites_repo_state_aggregates"
-    __table_args__ = (
-        Index(
-            "ix_map_elites_repo_state_aggregates_commit",
-            "commit_hash",
-        ),
-    )
 
     commit_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
 

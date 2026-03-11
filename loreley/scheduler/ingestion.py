@@ -15,7 +15,7 @@ from uuid import UUID
 from git import Repo
 from loguru import logger
 from rich.console import Console
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session
 
 from loreley.config import Settings, resolve_default_island_id
@@ -46,6 +46,12 @@ class JobSnapshot:
     island_id: str | None
     result_commit_hash: str
     completed_at: datetime | None
+
+
+@dataclass(slots=True, frozen=True)
+class _JobPageCursor:
+    completed_at: datetime
+    job_id: UUID
 
 
 @dataclass(slots=True)
@@ -225,17 +231,17 @@ class MapElitesIngestion:
         seen_job_ids: set[UUID],
     ) -> list[JobSnapshot]:
         snapshots: list[JobSnapshot] = []
-        offset = 0
+        cursor: _JobPageCursor | None = None
         while len(snapshots) < limit:
             rows = self._load_jobs_requiring_ingestion_page(
                 session=session,
                 limit=page_size,
-                offset=offset,
+                after=cursor,
                 include_exact_failed=include_exact_failed,
             )
             if not rows:
                 break
-            offset += len(rows)
+            cursor = self._page_cursor(rows[-1])
             for job in rows:
                 snapshot = self._coerce_job_snapshot_for_ingestion(
                     job,
@@ -256,9 +262,10 @@ class MapElitesIngestion:
         *,
         session: Session,
         limit: int,
-        offset: int,
+        after: _JobPageCursor | None,
         include_exact_failed: bool,
     ) -> list[EvolutionJob]:
+        sort_completed_at = func.coalesce(EvolutionJob.completed_at, EvolutionJob.created_at)
         stmt = (
             select(EvolutionJob)
             .where(EvolutionJob.status == JobStatus.SUCCEEDED)
@@ -275,15 +282,38 @@ class MapElitesIngestion:
                     EvolutionJob.ingestion_status.not_in(("failed", "succeeded", "skipped")),
                 )
             )
+        if after is not None:
+            stmt = stmt.where(
+                or_(
+                    sort_completed_at > after.completed_at,
+                    and_(
+                        sort_completed_at == after.completed_at,
+                        EvolutionJob.id > after.job_id,
+                    ),
+                )
+            )
         stmt = (
             stmt.order_by(
-                EvolutionJob.completed_at.asc(),
+                sort_completed_at.asc(),
                 EvolutionJob.id.asc(),
             )
             .limit(limit)
-            .offset(offset)
         )
         return list(session.execute(stmt).scalars())
+
+    @staticmethod
+    def _page_cursor(job: EvolutionJob) -> _JobPageCursor:
+        completed_at = getattr(job, "completed_at", None)
+        if not isinstance(completed_at, datetime):
+            created_at = getattr(job, "created_at", None)
+            if isinstance(created_at, datetime):
+                completed_at = created_at
+            else:  # pragma: no cover - succeeded jobs should always have at least one timestamp
+                completed_at = datetime.min.replace(tzinfo=timezone.utc)
+        return _JobPageCursor(
+            completed_at=completed_at,
+            job_id=job.id,
+        )
 
     def _coerce_job_snapshot_for_ingestion(
         self,
