@@ -7,7 +7,7 @@ from typing import Any, cast
 import streamlit as st
 
 from loreley.ui.components.aggrid import render_table, selected_rows
-from loreley.ui.components.api import api_get_page_or_stop, api_get_or_stop
+from loreley.ui.components.api import api_get_or_stop
 from loreley.ui.state import API_BASE_URL_KEY, ISLAND_ID_KEY
 
 
@@ -59,29 +59,17 @@ def render() -> None:
         f"island={island_id} dims={dims} cells_per_dim={cells_per_dim} "
         f"entries={entry_count} page={page}/{max_page}"
     )
+    offset = (page - 1) * page_size
 
-    cursor: str | None = None
-    page_payload: dict[str, Any] = {"items": [], "next_cursor": None}
-    for _ in range(page):
-        current_params: dict[str, Any] = {
+    records = api_get_or_stop(
+        api_base_url,
+        "/api/v1/archive/records",
+        params={
             "island_id": island_id,
             "limit": page_size,
-        }
-        if cursor:
-            current_params["cursor"] = cursor
-        page_payload = api_get_page_or_stop(
-            api_base_url,
-            "/api/v1/archive/records/page",
-            params=current_params,
-        )
-        cursor = page_payload.get("next_cursor") if isinstance(page_payload, dict) else None
-        items = page_payload.get("items") if isinstance(page_payload, dict) else None
-        if not isinstance(items, list) or not items:
-            break
-
-    records = page_payload.get("items") if isinstance(page_payload, dict) else []
-    if not isinstance(records, list):
-        records = []
+            "offset": offset,
+        },
+    ) or []
     records_df = pd.DataFrame(records)
     if records_df.empty:
         st.info("No archive records yet.")

@@ -15,7 +15,7 @@ from loreley.api.artifacts import (
     artifact_path_column,
     build_artifact_urls,
 )
-from loreley.api.pagination import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT
+from loreley.api.pagination import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, PaginationCursorError
 from loreley.api.schemas.jobs import JobArtifactsOut, JobDetailOut, JobOut, JobPageOut
 from loreley.api.services.jobs import get_job, get_job_artifacts, list_jobs, list_jobs_page
 from loreley.db.models import JobStatus
@@ -39,7 +39,10 @@ def get_jobs_page(
     limit: int = Query(default=DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
     cursor: str | None = Query(default=None, description="Opaque pagination cursor."),
 ) -> JobPageOut:
-    page = list_jobs_page(status=status, limit=limit, cursor=cursor)
+    try:
+        page = list_jobs_page(status=status, limit=limit, cursor=cursor)
+    except PaginationCursorError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return JobPageOut(
         items=[JobOut.model_validate(row) for row in page.items],
         next_cursor=page.next_cursor,
@@ -86,4 +89,3 @@ def download_job_artifact(job_id: UUID, artifact_key: str):
         media_type=artifact_media_type(artifact_key),
         filename=artifact_filename(artifact_key),
     )
-

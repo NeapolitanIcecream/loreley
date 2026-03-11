@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 import loreley.api.routers.archive as archive_router
 import loreley.api.routers.commits as commits_router
 import loreley.api.routers.jobs as jobs_router
+from loreley.api.pagination import PaginationCursorError
 from loreley.api.routers.archive import router as archive_api_router
 from loreley.api.routers.commits import router as commits_api_router
 from loreley.api.routers.jobs import router as jobs_api_router
@@ -121,3 +122,48 @@ def test_archive_records_page_route_returns_items_and_next_cursor(monkeypatch) -
     assert response.status_code == 200
     assert response.json()["next_cursor"] == "next-record"
     assert response.json()["items"][0]["commit_hash"] == "abc"
+
+
+def test_jobs_page_route_rejects_invalid_cursor(monkeypatch) -> None:
+    monkeypatch.setattr(
+        jobs_router,
+        "list_jobs_page",
+        lambda **_kwargs: (_ for _ in ()).throw(PaginationCursorError("Jobs cursor is invalid.")),
+    )
+
+    client = _build_test_client()
+    response = client.get("/api/v1/jobs/page?cursor=bad")
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Jobs cursor is invalid."}
+
+
+def test_commits_page_route_rejects_invalid_cursor(monkeypatch) -> None:
+    monkeypatch.setattr(
+        commits_router,
+        "list_commits_page",
+        lambda **_kwargs: (_ for _ in ()).throw(PaginationCursorError("Commits cursor is invalid.")),
+    )
+
+    client = _build_test_client()
+    response = client.get("/api/v1/commits/page?cursor=bad")
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Commits cursor is invalid."}
+
+
+def test_archive_records_page_route_rejects_invalid_cursor(monkeypatch) -> None:
+    settings = Settings.model_validate({"mapelites_code_embedding_dimensions": 8})
+    monkeypatch.setattr(archive_router, "get_settings", lambda: settings)
+    monkeypatch.setattr(archive_router, "resolve_default_island_id", lambda _settings: "main")
+    monkeypatch.setattr(
+        archive_router,
+        "list_records_page",
+        lambda **_kwargs: (_ for _ in ()).throw(PaginationCursorError("Archive records cursor is invalid.")),
+    )
+
+    client = _build_test_client()
+    response = client.get("/api/v1/archive/records/page?cursor=bad")
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Archive records cursor is invalid."}

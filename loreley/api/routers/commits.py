@@ -7,7 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query
 
 from loreley.api.artifacts import build_artifact_urls
-from loreley.api.pagination import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT
+from loreley.api.pagination import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, PaginationCursorError
 from loreley.api.schemas.commits import CommitArtifactsOut, CommitDetailOut, CommitOut, CommitPageOut, MetricOut
 from loreley.api.services.commits import get_commit, list_commits, list_commits_page, list_metrics
 from loreley.api.services.jobs import get_job_artifacts
@@ -31,7 +31,10 @@ def get_commits_page(
     limit: int = Query(default=DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
     cursor: str | None = Query(default=None, description="Opaque pagination cursor."),
 ) -> CommitPageOut:
-    page = list_commits_page(island_id=island_id, limit=limit, cursor=cursor)
+    try:
+        page = list_commits_page(island_id=island_id, limit=limit, cursor=cursor)
+    except PaginationCursorError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return CommitPageOut(
         items=[CommitOut.model_validate(row) for row in page.items],
         next_cursor=page.next_cursor,
@@ -54,4 +57,3 @@ def get_commit_detail(
             artifacts = CommitArtifactsOut(**build_artifact_urls(job_id=job_id, row=artifacts_row))
     base = CommitOut.model_validate(commit)
     return CommitDetailOut(**base.model_dump(), metrics=metrics, artifacts=artifacts)
-

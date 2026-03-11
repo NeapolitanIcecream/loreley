@@ -8,7 +8,7 @@ from uuid import UUID
 
 from sqlalchemy import and_, func, or_, select
 
-from loreley.api.pagination import decode_cursor, encode_cursor, normalize_pagination
+from loreley.api.pagination import PaginationCursorError, decode_cursor, encode_cursor, normalize_pagination
 from loreley.db.base import session_scope
 from loreley.db.models import EvolutionJob, JobArtifacts, JobStatus
 
@@ -21,8 +21,11 @@ class JobPage:
 
 def _normalize_cursor_datetime(value: object) -> datetime:
     if not isinstance(value, str):
-        raise ValueError("jobs cursor is missing sort_ts")
-    parsed = datetime.fromisoformat(value)
+        raise PaginationCursorError("Jobs cursor is missing sort_ts.")
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise PaginationCursorError("Jobs cursor has an invalid timestamp.") from exc
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed
@@ -56,9 +59,12 @@ def list_jobs_page(
         if status is not None:
             stmt = stmt.where(EvolutionJob.status == status)
         if cursor:
-            payload = decode_cursor(cursor)
-            cursor_ts = _normalize_cursor_datetime(payload.get("sort_ts"))
-            cursor_job_id = UUID(str(payload.get("job_id")))
+            try:
+                payload = decode_cursor(cursor)
+                cursor_ts = _normalize_cursor_datetime(payload.get("sort_ts"))
+                cursor_job_id = UUID(str(payload.get("job_id")))
+            except (PaginationCursorError, ValueError) as exc:
+                raise PaginationCursorError("Jobs cursor is invalid.") from exc
             stmt = stmt.where(
                 or_(
                     sort_ts < cursor_ts,
@@ -112,4 +118,3 @@ def get_job_artifacts(*, job_id: UUID) -> JobArtifacts | None:
 
     with session_scope() as session:
         return session.get(JobArtifacts, job_id)
-

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query
 
-from loreley.api.pagination import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT
+from fastapi import HTTPException
+
+from loreley.api.pagination import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, PaginationCursorError
 from loreley.api.schemas.archive import ArchiveRecordOut, ArchiveRecordPageOut, ArchiveSnapshotMetaOut, IslandStatsOut
 from loreley.api.services.archive import (
     describe_island,
@@ -59,12 +61,15 @@ def get_records_page(
 ) -> ArchiveRecordPageOut:
     settings = get_settings()
     effective_island = island_id.strip() or resolve_default_island_id(settings)
-    page = list_records_page(
-        island_id=effective_island,
-        settings=settings,
-        limit=limit,
-        cursor=cursor,
-    )
+    try:
+        page = list_records_page(
+            island_id=effective_island,
+            settings=settings,
+            limit=limit,
+            cursor=cursor,
+        )
+    except PaginationCursorError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return ArchiveRecordPageOut(
         items=page.items,
         next_cursor=page.next_cursor,

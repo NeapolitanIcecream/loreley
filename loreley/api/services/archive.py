@@ -7,7 +7,7 @@ from typing import Any
 
 from sqlalchemy import func, select
 
-from loreley.api.pagination import decode_cursor, encode_cursor, normalize_pagination
+from loreley.api.pagination import PaginationCursorError, decode_cursor, encode_cursor, normalize_pagination
 from loreley.config import Settings, get_settings, resolve_default_island_id
 from loreley.core.map_elites.types import MapElitesRecord, materialize_solution
 from loreley.core.map_elites.snapshot import ensure_supported_snapshot_meta
@@ -181,8 +181,11 @@ def list_records_page(
             .order_by(MapElitesArchiveCell.cell_index.asc())
         )
         if cursor:
-            payload = decode_cursor(cursor)
-            last_cell_index = int(payload.get("cell_index"))
+            try:
+                payload = decode_cursor(cursor)
+                last_cell_index = int(payload.get("cell_index"))
+            except (PaginationCursorError, TypeError, ValueError) as exc:
+                raise PaginationCursorError("Archive records cursor is invalid.") from exc
             stmt = stmt.where(MapElitesArchiveCell.cell_index > last_cell_index)
         stmt = stmt.limit(limit + 1)
         rows = list(session.execute(stmt).scalars().all())

@@ -8,7 +8,7 @@ from uuid import UUID
 
 from sqlalchemy import and_, or_, select
 
-from loreley.api.pagination import decode_cursor, encode_cursor, normalize_pagination
+from loreley.api.pagination import PaginationCursorError, decode_cursor, encode_cursor, normalize_pagination
 from loreley.db.base import session_scope
 from loreley.db.models import CommitCard, Metric
 
@@ -21,8 +21,11 @@ class CommitPage:
 
 def _normalize_cursor_datetime(value: object) -> datetime:
     if not isinstance(value, str):
-        raise ValueError("commits cursor is missing created_at")
-    parsed = datetime.fromisoformat(value)
+        raise PaginationCursorError("Commits cursor is missing created_at.")
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise PaginationCursorError("Commits cursor has an invalid timestamp.") from exc
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed
@@ -54,9 +57,12 @@ def list_commits_page(
         if island_id:
             stmt = stmt.where(CommitCard.island_id == island_id)
         if cursor:
-            payload = decode_cursor(cursor)
-            cursor_ts = _normalize_cursor_datetime(payload.get("created_at"))
-            cursor_commit_id = UUID(str(payload.get("commit_id")))
+            try:
+                payload = decode_cursor(cursor)
+                cursor_ts = _normalize_cursor_datetime(payload.get("created_at"))
+                cursor_commit_id = UUID(str(payload.get("commit_id")))
+            except (PaginationCursorError, ValueError) as exc:
+                raise PaginationCursorError("Commits cursor is invalid.") from exc
             stmt = stmt.where(
                 or_(
                     CommitCard.created_at < cursor_ts,
@@ -112,4 +118,3 @@ def list_metrics(*, commit_card_id: UUID) -> list[Metric]:
             .order_by(Metric.name.asc())
         )
         return list(session.execute(stmt).scalars())
-
