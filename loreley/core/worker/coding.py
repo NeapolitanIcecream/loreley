@@ -26,7 +26,12 @@ from loreley.core.worker.agent import (
 )
 from loreley.core.worker.agent.backends import CodexCliBackend
 from loreley.core.worker.markdown import extract_markdown_summary
-from loreley.core.worker.planning import PlanDocument
+from loreley.core.worker.planning import (
+    CommitPlanningContext,
+    IterationContext,
+    PlanDocument,
+    render_shared_prompt_packet,
+)
 
 console = Console()
 log = logger.bind(module="worker.coding")
@@ -65,14 +70,14 @@ class CodingAgentRequest:
     goal: str
     plan: PlanDocument
     base_commit: str
-    constraints: Sequence[str] = field(default_factory=tuple)
-    acceptance_criteria: Sequence[str] = field(default_factory=tuple)
-    iteration_hint: str | None = None
+    base: CommitPlanningContext
+    inspirations: Sequence[CommitPlanningContext] = field(default_factory=tuple)
+    iteration_context: IterationContext | None = None
     additional_notes: Sequence[str] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
-        self.constraints = tuple(self.constraints or ())
-        self.acceptance_criteria = tuple(self.acceptance_criteria or ())
+        self.goal = (self.goal or "").strip()
+        self.inspirations = tuple(self.inspirations or ())
         self.additional_notes = tuple(self.additional_notes or ())
 
 
@@ -229,47 +234,35 @@ class CodingAgent(TruncationMixin):
         *,
         worktree: Path,
     ) -> str:
-        constraints = "\n".join(f"- {item}" for item in request.constraints) or "None"
-        acceptance = "\n".join(f"- {item}" for item in request.acceptance_criteria) or "None"
-        notes = "\n".join(f"- {item}" for item in request.additional_notes) or "None"
-        iteration_hint = request.iteration_hint or "None provided"
-
         plan_block = (request.plan.markdown or "").strip() or request.plan.summary.strip() or "N/A"
         plan_block = self._truncate(plan_block, limit=3000)
+        shared_packet = render_shared_prompt_packet(
+            goal=request.goal,
+            iteration_context=request.iteration_context,
+            base=request.base,
+            inspirations=request.inspirations,
+            truncate_limit=self._truncate_limit,
+            max_metrics=4,
+        )
 
         prompt = f"""
 You are the coding agent inside Loreley's evolution worker.
 Apply the plan to the repository at {worktree}, starting from base commit {request.base_commit}.
 
-Goal:
-{request.goal.strip()}
-
-Constraints:
-{constraints}
-
-Acceptance criteria:
-{acceptance}
-
-Iteration hint:
-{iteration_hint}
-
-Additional notes:
-{notes}
+{shared_packet}
 
 Plan (Markdown):
 {plan_block}
 
 Output requirements:
-- Apply the required changes.
-- Operate non-interactively: do not ask for clarification, approval, or confirmation; make reasonable assumptions and proceed.
-- If the goal or acceptance criteria explicitly constrain runtime, latency, throughput, memory, or similar operational properties of the final artifact, treat those as hard constraints in the implementation.
-- Distinguish final-artifact performance from offline optimization cost. Do not avoid expensive search, compilation, tuning, or preprocessing unless the task explicitly constrains those costs too.
-- Before finishing, ensure `git status --porcelain` is non-empty; if the worktree is still clean, keep editing until you have at least one meaningful tracked-file change.
-- Prefer the smallest relevant set of source-file edits needed to execute the plan; avoid unrelated documentation, config, or formatting churn unless it is directly required for correctness.
-- Do not delete or rename existing tracked files unless the plan explicitly requires it, and never leave a required tracked file absent or half-rewritten at the end of the attempt.
+- Execute the plan directly.
+- Make the smallest relevant set of source changes that materially improve the task.
+- Do not run Loreley's evaluator or any framework-managed benchmark flow.
+- You may run lightweight local checks only when they are cheap and obviously useful.
+- Before finishing, ensure the worktree contains meaningful tracked-file changes.
 - Do not create git commits or push branches; leave the repository in a modified state.
 - Return a single Markdown execution report.
-- Use '##' headings for these sections: Summary, Changes, Tests, Follow-ups (optional).
+- Use '##' headings for these sections: Summary, Changes, Checks, Notes (optional).
 - Mention file paths in backticks.
 - Avoid fenced code blocks.
 """
@@ -344,8 +337,19 @@ Output requirements:
                 "working_dir": str(worktree),
                 "goal": request.goal,
                 "base_commit": request.base_commit,
-                "constraints": list(request.constraints),
-                "acceptance_criteria": list(request.acceptance_criteria),
+                "iteration_context": {
+                    "seed_job": bool(request.iteration_context.seed_job)
+                    if request.iteration_context
+                    else False,
+                    "sampling_strategy": (
+                        request.iteration_context.sampling_strategy
+                        if request.iteration_context
+                        else None
+                    ),
+                    "facts": list(request.iteration_context.facts)
+                    if request.iteration_context
+                    else [],
+                },
                 "backend_command": list(invocation.command) if invocation else None,
                 "backend_duration_seconds": (
                     invocation.duration_seconds if invocation else None

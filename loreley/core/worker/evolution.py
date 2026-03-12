@@ -28,6 +28,7 @@ from loreley.core.worker.evaluator import (
 from loreley.core.worker.planning import (
     CommitMetric,
     CommitPlanningContext,
+    IterationContext,
     PlanningAgent,
     PlanningAgentRequest,
     PlanningAgentResponse,
@@ -95,6 +96,15 @@ class EvolutionWorkerResult:
     commit_message: str
 
 
+@dataclass(slots=True)
+class WorkerPromptContext:
+    """Shared task packet inputs reused across planning and coding."""
+
+    base: CommitPlanningContext
+    inspirations: tuple[CommitPlanningContext, ...]
+    iteration_context: IterationContext
+
+
 class EvolutionWorker:
     """Service-layer entry point for executing evolution jobs synchronously."""
 
@@ -153,8 +163,14 @@ class EvolutionWorker:
                 job_id=job_uuid,
                 base_commit=job_ctx.base_commit_hash,
             ) as checkout:
-                plan_response = self._run_planning(job_ctx, checkout)
-                coding_response = self._run_coding(job_ctx, plan_response, checkout)
+                prompt_context = self._build_prompt_context(job_ctx)
+                plan_response = self._run_planning(job_ctx, checkout, prompt_context)
+                coding_response = self._run_coding(
+                    job_ctx,
+                    plan_response,
+                    checkout,
+                    prompt_context,
+                )
                 commit_message = self._prepare_commit_message(
                     job_ctx=job_ctx,
                     plan=plan_response,
@@ -227,12 +243,6 @@ class EvolutionWorker:
             )
 
         iteration_hint = (locked_job.iteration_hint or "").strip() or None
-        if not iteration_hint and locked_job.sampling_radius_used is not None:
-            iteration_hint = (
-                f"MAP-Elites radius {locked_job.sampling_radius_used} "
-                f"(initial {locked_job.sampling_initial_radius})"
-            )
-
         is_seed_job = bool(getattr(locked_job, "is_seed_job", False))
         if not is_seed_job:
             root_hash = (self.settings.mapelites_experiment_root_commit or "").strip()
@@ -240,14 +250,6 @@ class EvolutionWorker:
                 root_hash
                 and base_commit_hash == root_hash
                 and not inspiration_commit_hashes
-            )
-        if is_seed_job and iteration_hint:
-            iteration_hint = (
-                f"{iteration_hint} | Seed job: cold-start population design, focus on diverse starting directions."
-            )
-        elif is_seed_job:
-            iteration_hint = (
-                "Seed job: cold-start population design, focus on diverse starting directions."
             )
 
         return JobContext(
@@ -268,11 +270,10 @@ class EvolutionWorker:
             sampling_fallback_inspirations=locked_job.sampling_fallback_inspirations,
         )
 
-    def _run_planning(
+    def _build_prompt_context(
         self,
         job_ctx: JobContext,
-        checkout: CheckoutContext,
-    ) -> PlanningAgentResponse:
+    ) -> WorkerPromptContext:
         planning_contexts = self._load_commit_planning_contexts(
             commit_hashes=(job_ctx.base_commit_hash, *job_ctx.inspiration_commit_hashes),
             island_id=job_ctx.island_id,
@@ -318,11 +319,10 @@ class EvolutionWorker:
                         )
                         ctx.trajectory_meta = {"error": str(exc)}
         inspirations = tuple(inspiration_contexts)
-        cold_start = False
 
         if job_ctx.is_seed_job:
-            # For seed jobs, hide historical metrics/highlights/evaluation details so the
-            # planning agent relies purely on the global objective and constraints.
+            # For seed jobs, hide historical metrics/evaluation details so the
+            # worker starts from the global objective and sampling context alone.
             base_context = CommitPlanningContext(
                 commit_hash=base_context.commit_hash,
                 subject=base_context.subject,
@@ -338,16 +338,25 @@ class EvolutionWorker:
                 map_elites_measures=base_context.map_elites_measures,
             )
             inspirations = ()
-            cold_start = True
 
-        request = PlanningAgentRequest(
+        return WorkerPromptContext(
             base=base_context,
             inspirations=inspirations,
+            iteration_context=self._build_iteration_context(job_ctx),
+        )
+
+    def _run_planning(
+        self,
+        job_ctx: JobContext,
+        checkout: CheckoutContext,
+        prompt_context: WorkerPromptContext,
+    ) -> PlanningAgentResponse:
+
+        request = PlanningAgentRequest(
+            base=prompt_context.base,
+            inspirations=prompt_context.inspirations,
             goal=job_ctx.goal,
-            constraints=job_ctx.constraints,
-            acceptance_criteria=job_ctx.acceptance_criteria,
-            iteration_hint=job_ctx.iteration_hint,
-            cold_start=cold_start,
+            iteration_context=prompt_context.iteration_context,
         )
         try:
             return self.planning_agent.plan(request, working_dir=checkout.worktree)
@@ -359,14 +368,15 @@ class EvolutionWorker:
         job_ctx: JobContext,
         plan: PlanningAgentResponse,
         checkout: CheckoutContext,
+        prompt_context: WorkerPromptContext,
     ) -> CodingAgentResponse:
         request = CodingAgentRequest(
             goal=job_ctx.goal,
             plan=plan.plan,
             base_commit=job_ctx.base_commit_hash,
-            constraints=job_ctx.constraints,
-            acceptance_criteria=job_ctx.acceptance_criteria,
-            iteration_hint=job_ctx.iteration_hint,
+            base=prompt_context.base,
+            inspirations=prompt_context.inspirations,
+            iteration_context=prompt_context.iteration_context,
             additional_notes=job_ctx.notes,
         )
         try:
@@ -578,8 +588,6 @@ class EvolutionWorker:
         change_summary = (getattr(card, "change_summary", None) or "").strip() or "N/A"
         key_files = tuple(getattr(card, "key_files", None) or ())
         highlights = tuple(getattr(card, "highlights", None) or ())
-        if not highlights:
-            highlights = ("No highlights available.",)
         evaluation_summary = getattr(card, "evaluation_summary", None)
         metrics = tuple(self._metric_from_row(row) for row in metric_rows)
 
@@ -609,6 +617,27 @@ class EvolutionWorker:
             unit=row.unit,
             higher_is_better=row.higher_is_better,
             summary=summary or None,
+        )
+
+    def _build_iteration_context(self, job_ctx: JobContext) -> IterationContext:
+        facts: list[str] = []
+        if job_ctx.sampling_radius_used is not None:
+            facts.append(f"radius_used: {job_ctx.sampling_radius_used}")
+        if job_ctx.sampling_initial_radius is not None:
+            facts.append(f"initial_radius: {job_ctx.sampling_initial_radius}")
+        if job_ctx.sampling_fallback_inspirations is not None:
+            facts.append(
+                f"fallback_inspirations: {job_ctx.sampling_fallback_inspirations}"
+            )
+        if job_ctx.iteration_hint:
+            facts.append(job_ctx.iteration_hint)
+        if job_ctx.is_seed_job:
+            facts.append("MAP-Elites archive is empty.")
+            facts.append("Prioritize diverse starting directions.")
+        return IterationContext(
+            seed_job=bool(job_ctx.is_seed_job),
+            sampling_strategy=job_ctx.sampling_strategy,
+            facts=tuple(facts),
         )
     def _coerce_uuid(self, value: str | UUID) -> UUID:
         if isinstance(value, UUID):

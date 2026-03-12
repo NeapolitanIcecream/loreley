@@ -256,14 +256,16 @@ def test_run_planning_batches_context_queries_for_base_and_inspirations_gh_n_plu
         base_commit="base",
         worktree=Path("."),
     )
-    worker._run_planning(job_ctx, checkout)
+    prompt_context = worker._build_prompt_context(job_ctx)
+    worker._run_planning(job_ctx, checkout, prompt_context)
 
     assert fake_session.query_count == 3
     assert len(planning_agent.requests) == 1
     request, _working_dir = planning_agent.requests[0]
     assert request.base.commit_hash == "base"
     assert tuple(ctx.commit_hash for ctx in request.inspirations) == ("insp-a", "insp-b")
-    assert request.inspirations[1].highlights == ("No highlights available.",)
+    assert request.inspirations[1].highlights == ()
+    assert request.iteration_context.seed_job is False
 
 
 def test_start_job_requires_non_empty_base_commit_hash(settings: Settings) -> None:
