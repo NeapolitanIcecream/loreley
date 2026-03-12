@@ -131,6 +131,12 @@ def _circle_metrics(circles: Sequence[Circle]) -> dict[str, float]:
     }
 
 
+def _evaluate_sample(pack_circles: Any, *, n: int) -> tuple[list[Circle], dict[str, float]]:
+    circles = _coerce_circles(pack_circles(n), n=n)
+    _validate(circles, n=n)
+    return circles, _circle_metrics(circles)
+
+
 def evaluate_repo(
     *,
     repo_root: Path,
@@ -145,9 +151,10 @@ def evaluate_repo(
 
     samples: dict[str, dict[str, float]] = {}
     for n in sample_ns:
-        circles = _coerce_circles(pack_circles(n), n=n)
-        _validate(circles, n=n)
-        samples[str(n)] = _circle_metrics(circles)
+        _circles, metrics = _evaluate_sample(pack_circles, n=n)
+        samples[str(n)] = metrics
+
+    target_metrics = samples.get(str(target_n))
 
     repeated_times_ms: list[float] = []
     repeated_sums: list[float] = []
@@ -159,25 +166,30 @@ def evaluate_repo(
 
     for _ in range(int(runs)):
         started = time.perf_counter()
-        circles = _coerce_circles(pack_circles(target_n), n=target_n)
+        circles, metrics = _evaluate_sample(pack_circles, n=target_n)
         repeated_times_ms.append((time.perf_counter() - started) * 1000.0)
-        _validate(circles, n=target_n)
         if baseline_output is None:
             baseline_output = circles
+            if target_metrics is None:
+                target_metrics = metrics
+                samples[str(target_n)] = metrics
         elif circles != baseline_output:
             deterministic = False
-        metrics = _circle_metrics(circles)
         repeated_sums.append(metrics["sum_radii"])
         repeated_densities.append(metrics["packing_density"])
         repeated_gaps.append(metrics["min_gap"])
         repeated_boundary.append(metrics["min_boundary_margin"])
+
+    if target_metrics is None:
+        _circles, target_metrics = _evaluate_sample(pack_circles, n=target_n)
+        samples[str(target_n)] = target_metrics
 
     return {
         "repo_root": str(Path(repo_root).expanduser().resolve()),
         "target_n": int(target_n),
         "runs": int(runs),
         "samples": samples,
-        "target_metrics": samples[str(target_n)],
+        "target_metrics": target_metrics,
         "repeated_runs": {
             "deterministic": deterministic,
             "time_ms": _stats(repeated_times_ms),

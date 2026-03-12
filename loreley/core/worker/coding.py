@@ -262,7 +262,8 @@ Plan (Markdown):
 Output requirements:
 - Apply the required changes.
 - Operate non-interactively: do not ask for clarification, approval, or confirmation; make reasonable assumptions and proceed.
-- Treat explicit speed or runtime requirements in the goal as hard constraints, not nice-to-haves; avoid shipping multi-second algorithms when the goal calls for fast execution.
+- If the goal or acceptance criteria explicitly constrain runtime, latency, throughput, memory, or similar operational properties of the final artifact, treat those as hard constraints in the implementation.
+- Distinguish final-artifact performance from offline optimization cost. Do not avoid expensive search, compilation, tuning, or preprocessing unless the task explicitly constrains those costs too.
 - Before finishing, ensure `git status --porcelain` is non-empty; if the worktree is still clean, keep editing until you have at least one meaningful tracked-file change.
 - Prefer the smallest relevant set of source-file edits needed to execute the plan; avoid unrelated documentation, config, or formatting churn unless it is directly required for correctness.
 - Do not delete or rename existing tracked files unless the plan explicitly requires it, and never leave a required tracked file absent or half-rewritten at the end of the attempt.

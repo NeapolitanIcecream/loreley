@@ -163,6 +163,32 @@ def test_codex_cli_backend_builds_noninteractive_command_and_reads_last_message(
     assert invocation.stdout == "## Summary\n- Completed safely."
 
 
+def test_codex_cli_backend_allows_omitting_model_and_skips_model_flag() -> None:
+    backend = CodexCliBackend(
+        bin="codex",
+        timeout_seconds=5,
+        extra_env={},
+        error_cls=RuntimeError,
+        profile="prof",
+    )
+
+    command = backend._build_command(  # noqa: SLF001 - spec-level assertion
+        output_last_message_path=None,
+    )
+
+    assert command[:1] == ["codex"]
+    assert "--model" not in command
+    assert command[1:7] == [
+        "--profile",
+        "prof",
+        "-a",
+        "never",
+        "--sandbox",
+        "read-only",
+    ]
+    assert command[7:] == ["exec", "--ephemeral", "--color", "never"]
+
+
 def test_codex_cli_backend_isolates_codex_home_for_read_only_without_config(
     tmp_path: Path,
     monkeypatch,

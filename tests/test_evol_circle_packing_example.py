@@ -320,6 +320,44 @@ def test_local_eval_reports_baseline_metrics(tmp_path: Path) -> None:
     assert payload["target_metrics"]["packing_density"] > 0.0
 
 
+def test_local_eval_computes_target_metrics_when_target_n_not_in_sample_ns(tmp_path: Path) -> None:
+    module = _load_module("test_circle_packing_local_eval_custom_target", LOCAL_EVAL_SCRIPT)
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / "solution.py").write_text(
+        "\n".join(
+            [
+                "from typing import Iterable, Tuple",
+                "",
+                "def pack_circles(n: int = 26) -> Iterable[Tuple[float, float, float]]:",
+                "    if n <= 0:",
+                "        raise ValueError('n must be positive')",
+                "    if n == 1:",
+                "        return [(0.5, 0.5, 0.5)]",
+                "    r = 1.0 / (4.0 * n)",
+                "    step = 1.0 - 2.0 * r",
+                "    circles = []",
+                "    for i in range(n):",
+                "        t = i / (n - 1)",
+                "        circles.append((r + t * step, r + t * step, r))",
+                "    return circles",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    payload = module.evaluate_repo(
+        repo_root=repo_root,
+        runs=3,
+        target_n=10,
+        sample_ns=(1, 2, 5),
+    )
+
+    assert set(payload["samples"]) == {"1", "2", "5", "10"}
+    assert payload["target_metrics"] == payload["samples"]["10"]
+    assert payload["target_metrics"]["sum_radii"] == pytest.approx(0.25)
+
+
 def test_load_local_eval_module_falls_back_to_main_repo_copy(tmp_path: Path) -> None:
     module = _load_module("test_circle_packing_local_eval_loader", EXAMPLE_SCRIPT)
     module.REPO_ROOT = tmp_path / "missing-circle-packing"

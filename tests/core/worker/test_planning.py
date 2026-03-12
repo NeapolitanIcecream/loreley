@@ -123,5 +123,6 @@ def test_planning_prompt_requests_markdown_deliverable(settings: Settings) -> No
     assert "Markdown plan document" in prompt
     assert "Output requirements" in prompt
     assert "Operate non-interactively" in prompt
-    assert "Treat explicit speed or runtime requirements" in prompt
+    assert "explicitly constrain runtime, latency, throughput, memory" in prompt
+    assert "Distinguish final-artifact performance constraints from offline optimization cost" in prompt
     assert "Use '##' headings" in prompt

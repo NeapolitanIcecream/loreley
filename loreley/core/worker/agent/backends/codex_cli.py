@@ -30,11 +30,11 @@ class CodexCliBackend:
     """
 
     bin: str
-    model: str | None
-    profile: str | None
     timeout_seconds: int
     extra_env: dict[str, str]
     error_cls: type[RuntimeError]
+    model: str | None = None
+    profile: str | None = None
     full_auto: bool = False
     approval_policy: str = "never"
     sandbox: str | None = None
