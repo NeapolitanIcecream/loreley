@@ -104,3 +104,17 @@ def test_config_dump_rejects_multiple_output_formats(
 
     assert code == 1
     assert "choose exactly one output format" in captured.out.lower()
+
+
+def test_settings_accept_loreley_llm_aliases(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.support import TestSettings
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    monkeypatch.setenv("LORELEY_LLM_API_KEY", "sk-alias")
+    monkeypatch.setenv("LORELEY_LLM_BASE_URL", "https://alias.example.com/v1")
+
+    settings = TestSettings()
+
+    assert settings.openai_api_key == "sk-alias"
+    assert settings.openai_base_url == "https://alias.example.com/v1"

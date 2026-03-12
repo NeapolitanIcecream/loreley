@@ -8,6 +8,7 @@ persist only their paths in the database.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -49,6 +50,14 @@ def _write_json(path: Path, payload: Any) -> None:
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
 
+def _worker_metadata() -> dict[str, Any]:
+    instance_id = (os.getenv("LORELEY_WORKER_INSTANCE_ID") or "").strip() or f"pid-{os.getpid()}"
+    return {
+        "instance_id": instance_id,
+        "pid": os.getpid(),
+    }
+
+
 def write_job_artifacts(
     *,
     job_id: UUID,
@@ -64,6 +73,7 @@ def write_job_artifacts(
 
     settings = settings or get_settings()
     root = _resolve_artifacts_dir(settings, job_id)
+    worker = _worker_metadata()
 
     paths: dict[str, str] = {}
 
@@ -79,6 +89,7 @@ def write_job_artifacts(
             "base_commit_hash": base_commit_hash,
             "candidate_commit_hash": candidate_commit_hash,
             "commit_message": commit_message,
+            "worker": worker,
             "plan": plan.plan.as_dict(),
             "backend": {
                 "command": list(plan.command),
@@ -104,6 +115,7 @@ def write_job_artifacts(
             "base_commit_hash": base_commit_hash,
             "candidate_commit_hash": candidate_commit_hash,
             "commit_message": commit_message,
+            "worker": worker,
             "report": coding.report.as_dict(),
             "backend": {
                 "command": list(coding.command),
@@ -126,6 +138,7 @@ def write_job_artifacts(
             "base_commit_hash": base_commit_hash,
             "candidate_commit_hash": candidate_commit_hash,
             "commit_message": commit_message,
+            "worker": worker,
             "summary": evaluation.summary,
             "metrics": [metric.as_dict() for metric in evaluation.metrics],
             "tests_executed": list(evaluation.tests_executed),
@@ -139,5 +152,4 @@ def write_job_artifacts(
 
     log.info("Wrote {} artifact file(s) for job {}", len(paths), job_id)
     return paths
-
 

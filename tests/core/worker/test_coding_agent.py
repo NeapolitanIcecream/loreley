@@ -122,6 +122,12 @@ def test_coding_prompt_includes_markdown_contract(tmp_path: Path, settings: Sett
 
     assert "Plan (Markdown):" in prompt
     assert "Output requirements:" in prompt
+    assert "Operate non-interactively" in prompt
+    assert "explicitly constrain runtime, latency, throughput, memory" in prompt
+    assert "Distinguish final-artifact performance from offline optimization cost" in prompt
+    assert "git status --porcelain" in prompt
+    assert "Prefer the smallest relevant set of source-file edits" in prompt
+    assert "Do not delete or rename existing tracked files" in prompt
     assert "Do not create git commits" in prompt
     assert "Commit message" not in prompt
 
@@ -189,4 +195,3 @@ def test_coding_agent_creates_debug_artifact_on_attempt(
     assert payload["goal"] == "goal"
     assert payload["base_commit"] == "abc123"
     assert payload["status"] == "ok"
-

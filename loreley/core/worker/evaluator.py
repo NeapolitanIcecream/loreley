@@ -138,6 +138,7 @@ class Evaluator:
         payload = self._execute_with_timeout(plugin, context)
         result = self._coerce_result(payload)
         duration = monotonic() - start
+        result.extra.setdefault("evaluator_duration_seconds", float(duration))
         console.log(
             f"[bold green]Evaluator[/] finished in {duration:.1f}s "
             f"metrics={len(result.metrics)}",
@@ -474,4 +475,3 @@ def _plugin_subprocess_entry(
                 },
             )
         )
-

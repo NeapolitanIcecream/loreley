@@ -92,6 +92,28 @@ def _resolve_logs_dir(settings: Settings, role: str) -> Path:
     return log_dir
 
 
+def _apply_dramatiq_prefetch_settings(*, settings: Settings, console: Console) -> None:
+    """Apply configured Dramatiq prefetch limits before worker construction."""
+
+    import dramatiq.worker as dramatiq_worker
+
+    queue_prefetch = max(0, int(settings.tasks_queue_prefetch))
+    delay_queue_prefetch = max(0, int(settings.tasks_delay_queue_prefetch))
+    dramatiq_worker.QUEUE_PREFETCH = queue_prefetch
+    dramatiq_worker.DELAY_QUEUE_PREFETCH = delay_queue_prefetch
+    console.log(
+        "[green]Dramatiq prefetch[/] queue={} delay={}".format(
+            queue_prefetch,
+            delay_queue_prefetch,
+        )
+    )
+    log.info(
+        "Applied Dramatiq prefetch settings queue_prefetch={} delay_queue_prefetch={}",
+        queue_prefetch,
+        delay_queue_prefetch,
+    )
+
+
 def configure_process_logging(
     *,
     settings: Settings,
@@ -152,8 +174,15 @@ def reset_database(*, console: Console, yes: bool) -> int:
 
     try:
         from loreley.db.base import reset_database_schema
+        from loreley.tasks.broker import reset_redis_namespace
 
         reset_database_schema(include_console_log=True)
+        deleted_keys = reset_redis_namespace()
+        console.print(
+            "[bold green]Redis namespace reset complete[/] deleted_keys={}".format(
+                deleted_keys,
+            )
+        )
     except Exception as exc:  # pragma: no cover - defensive
         console.print(f"[bold red]Failed to reset database schema[/] reason={exc}")
         log.exception("Database schema reset failed: {}", exc)
@@ -278,7 +307,7 @@ def run_worker(
         dramatiq_broker = setup_broker(settings=settings)
         ensure_database_schema(settings=settings)
         # Register the experiment-attached actor bound to the derived queue.
-        build_evolution_job_worker_actor(settings=settings)
+        build_evolution_job_worker_actor(settings=settings, broker=dramatiq_broker)
     except Exception as exc:  # pragma: no cover - defensive
         console.log(
             "[bold red]Failed to initialise worker dependencies[/] "
@@ -287,6 +316,7 @@ def run_worker(
         log.exception("Worker bootstrap failed")
         return 1
 
+    _apply_dramatiq_prefetch_settings(settings=settings, console=console)
     worker = Worker(dramatiq_broker, worker_threads=1)  # single-threaded worker
     stop_event = threading.Event()
     _install_worker_signal_handlers(worker, console=console, stop_event=stop_event)
@@ -675,4 +705,3 @@ def run_ui(
         if owns_api_proc and api_proc is not None:
             _stop_proc(api_proc, console=console, first_signal=signal.SIGINT)
         return 0
-

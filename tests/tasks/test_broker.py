@@ -1,41 +1,43 @@
 from __future__ import annotations
 
-import importlib
-import sys
-
-import dramatiq
-
-from tests.support import TestSettings
+import loreley.tasks.broker as broker_module
 
 
-def test_broker_import_has_no_side_effect(monkeypatch) -> None:
-    calls: list[object] = []
+class _DummyClient:
+    def __init__(self, keys: list[bytes]) -> None:
+        self._keys = list(keys)
+        self.deleted: tuple[bytes, ...] = ()
 
-    def _record(broker: object) -> None:
-        calls.append(broker)
+    def scan_iter(self, *, match: str):  # noqa: ANN001 - test double
+        assert match == "test.ns:*"
+        return iter(self._keys)
 
-    monkeypatch.setattr(dramatiq, "set_broker", _record)
-    sys.modules.pop("loreley.tasks.broker", None)
-
-    module = importlib.import_module("loreley.tasks.broker")
-
-    assert calls == []
-    assert module.broker is None
+    def delete(self, *keys: bytes) -> int:
+        self.deleted = tuple(keys)
+        return len(keys)
 
 
-def test_setup_broker_configures_dramatiq(monkeypatch) -> None:
-    calls: list[object] = []
+class _DummyBroker:
+    def __init__(self, keys: list[bytes]) -> None:
+        self.namespace = "test.ns"
+        self.client = _DummyClient(keys)
 
-    def _record(broker: object) -> None:
-        calls.append(broker)
 
-    monkeypatch.setattr(dramatiq, "set_broker", _record)
-    monkeypatch.setenv("EXPERIMENT_ID", "test")
-    sys.modules.pop("loreley.tasks.broker", None)
+def test_reset_redis_namespace_deletes_all_matching_keys(monkeypatch) -> None:
+    broker = _DummyBroker([b"test.ns:q.msgs", b"test.ns:__heartbeats__"])
+    monkeypatch.setattr(broker_module, "build_redis_broker", lambda settings=None: broker)
 
-    module = importlib.import_module("loreley.tasks.broker")
-    settings = TestSettings()
-    broker = module.setup_broker(settings=settings)
+    deleted = broker_module.reset_redis_namespace()
 
-    assert calls and calls[-1] is broker
-    assert module.broker is broker
+    assert deleted == 2
+    assert broker.client.deleted == (b"test.ns:q.msgs", b"test.ns:__heartbeats__")
+
+
+def test_reset_redis_namespace_is_noop_when_namespace_empty(monkeypatch) -> None:
+    broker = _DummyBroker([])
+    monkeypatch.setattr(broker_module, "build_redis_broker", lambda settings=None: broker)
+
+    deleted = broker_module.reset_redis_namespace()
+
+    assert deleted == 0
+    assert broker.client.deleted == ()

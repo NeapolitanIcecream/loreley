@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import time
 from math import hypot, isfinite, pi
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence, Tuple, TYPE_CHECKING
@@ -22,6 +24,8 @@ EPS = 1e-9
 
 # Default number of circles expected from the candidate solution.
 DEFAULT_NUM_CIRCLES = 26
+DEFAULT_RUNTIME_RUNS = 5
+DEFAULT_RUNTIME_BUDGET_MS = 250.0
 
 
 def _load_pack_circles(worktree: Path) -> Any:
@@ -141,6 +145,70 @@ def _compute_metrics(
     }
 
 
+def _mean(values: Sequence[float]) -> float | None:
+    if not values:
+        return None
+    return float(sum(values) / len(values))
+
+
+def _percentile(values: Sequence[float], percentile: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(float(item) for item in values)
+    if len(ordered) == 1:
+        return ordered[0]
+    rank = max(0.0, min(1.0, float(percentile))) * (len(ordered) - 1)
+    lower = int(rank)
+    upper = min(len(ordered) - 1, lower + 1)
+    if lower == upper:
+        return ordered[lower]
+    fraction = rank - lower
+    return ordered[lower] + (ordered[upper] - ordered[lower]) * fraction
+
+
+def _runtime_stats(values: Sequence[float]) -> Mapping[str, float | int | None]:
+    numeric = [float(item) for item in values]
+    if not numeric:
+        return {
+            "count": 0,
+            "mean": None,
+            "p50": None,
+            "p90": None,
+            "min": None,
+            "max": None,
+        }
+    return {
+        "count": len(numeric),
+        "mean": _mean(numeric),
+        "p50": _percentile(numeric, 0.50),
+        "p90": _percentile(numeric, 0.90),
+        "min": min(numeric),
+        "max": max(numeric),
+    }
+
+
+def _runtime_budget_ms() -> float:
+    raw = (os.getenv("CIRCLE_PACKING_RUNTIME_BUDGET_MS") or "").strip()
+    if not raw:
+        return float(DEFAULT_RUNTIME_BUDGET_MS)
+    try:
+        value = float(raw)
+    except ValueError:
+        return float(DEFAULT_RUNTIME_BUDGET_MS)
+    return float(value) if value > 0.0 else float(DEFAULT_RUNTIME_BUDGET_MS)
+
+
+def _runtime_runs() -> int:
+    raw = (os.getenv("CIRCLE_PACKING_RUNTIME_RUNS") or "").strip()
+    if not raw:
+        return DEFAULT_RUNTIME_RUNS
+    try:
+        value = int(raw)
+    except ValueError:
+        return DEFAULT_RUNTIME_RUNS
+    return value if value > 0 else DEFAULT_RUNTIME_RUNS
+
+
 def plugin(context: "EvaluationContext") -> Mapping[str, Any]:
     """
     Evaluation plugin for the circle-packing example.
@@ -152,17 +220,54 @@ def plugin(context: "EvaluationContext") -> Mapping[str, Any]:
     log.info("Starting circle-packing evaluation for worktree={}", worktree)
 
     pack_circles = _load_pack_circles(worktree)
-    raw_circles = list(pack_circles(DEFAULT_NUM_CIRCLES))
-    log.info("pack_circles() returned {} circle entries", len(raw_circles))
+    runtime_budget_ms = _runtime_budget_ms()
+    runtime_runs = _runtime_runs()
 
-    coerced: list[Tuple[float, float, float]] = []
-    for idx, entry in enumerate(raw_circles):
-        coerced.append(_coerce_circle(entry, idx))
+    runtime_measurements_ms: list[float] = []
+    baseline_circles: list[Tuple[float, float, float]] | None = None
+    metrics_values: Mapping[str, Any] | None = None
+    deterministic = True
 
-    _validate_bounds(coerced)
-    _validate_no_overlap(coerced)
+    for _ in range(runtime_runs):
+        started = time.perf_counter()
+        raw_circles = list(pack_circles(DEFAULT_NUM_CIRCLES))
+        runtime_measurements_ms.append((time.perf_counter() - started) * 1000.0)
+        log.info("pack_circles() returned {} circle entries", len(raw_circles))
 
-    metrics_values = _compute_metrics(coerced)
+        coerced: list[Tuple[float, float, float]] = []
+        for idx, entry in enumerate(raw_circles):
+            coerced.append(_coerce_circle(entry, idx))
+
+        _validate_bounds(coerced)
+        _validate_no_overlap(coerced)
+
+        current_metrics = _compute_metrics(coerced)
+        if baseline_circles is None:
+            baseline_circles = coerced
+            metrics_values = current_metrics
+        elif coerced != baseline_circles:
+            deterministic = False
+
+    if baseline_circles is None or metrics_values is None:
+        raise RuntimeError("Circle-packing evaluator did not capture any candidate output.")
+
+    runtime_stats = _runtime_stats(runtime_measurements_ms)
+    runtime_p50_ms = runtime_stats["p50"]
+    if not deterministic:
+        raise ValueError(
+            f"pack_circles({DEFAULT_NUM_CIRCLES}) is not deterministic across {runtime_runs} repeated runs.",
+        )
+    if runtime_p50_ms is not None and float(runtime_p50_ms) > runtime_budget_ms:
+        raise ValueError(
+            "pack_circles({}) violates runtime budget: budget={:.3f} ms observed p50={:.3f} ms across {} runs.".format(
+                DEFAULT_NUM_CIRCLES,
+                runtime_budget_ms,
+                float(runtime_p50_ms),
+                runtime_runs,
+            )
+        )
+
+    coerced = baseline_circles
     sum_radii = metrics_values["sum_radii"]
     density = metrics_values["packing_density"]
     num_circles = metrics_values["num_circles"]
@@ -175,7 +280,8 @@ def plugin(context: "EvaluationContext") -> Mapping[str, Any]:
 
     summary = (
         "Circle packing in unit square: "
-        f"sum_radii={sum_radii:.6f}, circles={num_circles}, density={density:.6f}"
+        f"sum_radii={sum_radii:.6f}, circles={num_circles}, density={density:.6f}, "
+        f"runtime_p50_ms={float(runtime_p50_ms or 0.0):.3f}"
     )
     log.info(summary)
 
@@ -202,12 +308,24 @@ def plugin(context: "EvaluationContext") -> Mapping[str, Any]:
             "unit": "count",
             "higher_is_better": True,
         },
+        {
+            "name": "runtime_p50_ms",
+            "value": float(runtime_p50_ms or 0.0),
+            "unit": "ms",
+            "higher_is_better": False,
+            "details": {
+                "budget_ms": runtime_budget_ms,
+                "runs": runtime_runs,
+            },
+        },
     ]
     tests_executed: Iterable[str] = [
         "type_check",
         "radius_positive_check",
         "bounds_check",
         "overlap_check",
+        "determinism_check",
+        "runtime_budget_check",
     ]
 
     logs: Iterable[str] = [
@@ -215,6 +333,8 @@ def plugin(context: "EvaluationContext") -> Mapping[str, Any]:
         f"Number of circles: {num_circles}",
         f"Sum of radii: {sum_radii:.6f}",
         f"Packing density: {density:.6f}",
+        f"Runtime p50 (ms): {float(runtime_p50_ms or 0.0):.3f}",
+        f"Runtime budget (ms): {runtime_budget_ms:.3f}",
     ]
 
     return {
@@ -224,6 +344,10 @@ def plugin(context: "EvaluationContext") -> Mapping[str, Any]:
         "logs": list(logs),
         "extra": {
             "circles": coerced,
+            "runtime_budget_ms": runtime_budget_ms,
+            "runtime_runs": runtime_runs,
+            "runtime_deterministic": deterministic,
+            "runtime_ms": dict(runtime_stats),
         },
     }
 
@@ -297,5 +421,4 @@ def _main() -> None:
 
 if __name__ == "__main__":
     _main()
-
 

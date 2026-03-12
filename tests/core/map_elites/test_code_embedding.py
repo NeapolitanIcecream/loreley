@@ -158,6 +158,26 @@ def test_embed_batch_aligns_vectors_by_response_index(settings: Settings) -> Non
     ]
 
 
+def test_embed_batch_supports_local_hash_model(
+    settings: Settings,
+    captured_logs: list[dict[str, Any]],
+) -> None:
+    settings.mapelites_code_embedding_model = "local-hash-v1"
+    embedder = CodeEmbedder(settings=settings, client=None)
+
+    vectors = embedder._embed_batch(["alpha", "beta"])
+
+    assert len(vectors) == 2
+    assert len(vectors[0]) == int(settings.mapelites_code_embedding_dimensions or 0)
+    assert vectors[0] != vectors[1]
+    warn_logs = [
+        record
+        for record in captured_logs
+        if record["module"] == "map_elites.code_embedding" and record["level"] == "WARNING"
+    ]
+    assert any("local-hash embeddings" in str(record["message"]) for record in warn_logs)
+
+
 # ---------------------------------------------------------------------------
 # Observability: failure signal tests
 # ---------------------------------------------------------------------------

@@ -7,7 +7,7 @@ from typing import Any, Literal
 from urllib.parse import quote_plus, urlparse, urlunparse
 
 from loguru import logger
-from pydantic import Field, PositiveInt, computed_field
+from pydantic import AliasChoices, Field, PositiveInt, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from rich.console import Console
 
@@ -77,10 +77,12 @@ class Settings(BaseSettings):
     openai_api_key: str | None = Field(
         default=None,
         alias="OPENAI_API_KEY",
+        validation_alias=AliasChoices("OPENAI_API_KEY", "LORELEY_LLM_API_KEY"),
     )
     openai_base_url: str | None = Field(
         default=None,
         alias="OPENAI_BASE_URL",
+        validation_alias=AliasChoices("OPENAI_BASE_URL", "LORELEY_LLM_BASE_URL"),
     )
     openai_api_spec: Literal["responses", "chat_completions"] = Field(
         default="responses",
@@ -106,6 +108,8 @@ class Settings(BaseSettings):
     tasks_redis_port: int = Field(default=6379, alias="TASKS_REDIS_PORT")
     tasks_redis_db: int = Field(default=0, alias="TASKS_REDIS_DB")
     tasks_redis_password: str | None = Field(default=None, alias="TASKS_REDIS_PASSWORD")
+    tasks_queue_prefetch: int = Field(default=1, alias="TASKS_QUEUE_PREFETCH")
+    tasks_delay_queue_prefetch: int = Field(default=1, alias="TASKS_DELAY_QUEUE_PREFETCH")
     tasks_worker_max_retries: int = Field(default=0, alias="TASKS_WORKER_MAX_RETRIES")
     tasks_worker_time_limit_seconds: int = Field(
         default=3600,
@@ -217,6 +221,10 @@ class Settings(BaseSettings):
         default=None,
         alias="WORKER_PLANNING_CODEX_PROFILE",
     )
+    worker_planning_codex_model: str | None = Field(
+        default=None,
+        alias="WORKER_PLANNING_CODEX_MODEL",
+    )
     worker_planning_max_attempts: int = Field(
         default=2,
         alias="WORKER_PLANNING_MAX_ATTEMPTS",
@@ -236,6 +244,10 @@ class Settings(BaseSettings):
     worker_coding_codex_profile: str | None = Field(
         default=None,
         alias="WORKER_CODING_CODEX_PROFILE",
+    )
+    worker_coding_codex_model: str | None = Field(
+        default=None,
+        alias="WORKER_CODING_CODEX_MODEL",
     )
     worker_coding_max_attempts: int = Field(
         default=2,
@@ -758,6 +770,8 @@ class Settings(BaseSettings):
                 f"{DEFAULT_TASKS_REDIS_NAMESPACE_PREFIX}.{exp_ns}" if exp_ns else None
             ),
             "tasks_queue_name": f"{DEFAULT_TASKS_QUEUE_PREFIX}.{exp_ns}" if exp_ns else None,
+            "tasks_queue_prefetch": self.tasks_queue_prefetch,
+            "tasks_delay_queue_prefetch": self.tasks_delay_queue_prefetch,
             "tasks_worker_max_retries": self.tasks_worker_max_retries,
             "tasks_worker_time_limit_seconds": self.tasks_worker_time_limit_seconds,
             "experiment_id": str(self.experiment_id) if self.experiment_id else None,
@@ -770,9 +784,11 @@ class Settings(BaseSettings):
             "worker_repo_enable_lfs": self.worker_repo_enable_lfs,
             "worker_repo_job_branch_ttl_hours": self.worker_repo_job_branch_ttl_hours,
             "worker_planning_backend": self.worker_planning_backend,
+            "worker_planning_codex_model": self.worker_planning_codex_model,
             "worker_planning_max_attempts": self.worker_planning_max_attempts,
             "worker_planning_timeout_seconds": self.worker_planning_timeout_seconds,
             "worker_coding_backend": self.worker_coding_backend,
+            "worker_coding_codex_model": self.worker_coding_codex_model,
             "worker_coding_max_attempts": self.worker_coding_max_attempts,
             "worker_coding_timeout_seconds": self.worker_coding_timeout_seconds,
             "worker_cursor_model": self.worker_cursor_model,

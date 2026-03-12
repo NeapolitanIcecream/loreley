@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 from pathlib import Path
 import sys
 from typing import Callable, Iterable, Sequence
@@ -76,18 +77,21 @@ class CodeEmbedder:
         self.settings = settings or get_settings()
         self._client: OpenAI | None = client
         self._client_factory: Callable[[], OpenAI] | None = None
-        if client is None:
-            client_kwargs: dict[str, object] = {}
-            if self.settings.openai_api_key:
-                client_kwargs["api_key"] = self.settings.openai_api_key
-            if self.settings.openai_base_url:
-                client_kwargs["base_url"] = self.settings.openai_base_url
-            self._client_factory = lambda: (
-                OpenAI(**client_kwargs)  # type: ignore[call-arg]
-                if client_kwargs
-                else OpenAI()
-            )
         self._model = self.settings.mapelites_code_embedding_model
+        self._use_local_hash = str(self._model or "").strip().lower().startswith("local-hash")
+        self._local_hash_warned = False
+        if client is None:
+            if not self._use_local_hash:
+                client_kwargs: dict[str, object] = {}
+                if self.settings.openai_api_key:
+                    client_kwargs["api_key"] = self.settings.openai_api_key
+                if self.settings.openai_base_url:
+                    client_kwargs["base_url"] = self.settings.openai_base_url
+                self._client_factory = lambda: (
+                    OpenAI(**client_kwargs)  # type: ignore[call-arg]
+                    if client_kwargs
+                    else OpenAI()
+                )
         self._dimensions = int(self.settings.mapelites_code_embedding_dimensions or 0)
         if self._dimensions <= 0:
             raise ValueError("MAPELITES_CODE_EMBEDDING_DIMENSIONS must be a positive integer.")
@@ -196,6 +200,15 @@ class CodeEmbedder:
     def _embed_batch(self, inputs: Sequence[str]) -> list[Vector]:
         if not inputs:
             return []
+        if self._use_local_hash:
+            if not self._local_hash_warned:
+                log.warning(
+                    "Using deterministic local-hash embeddings model={} dims={}",
+                    self._model,
+                    self._dimensions,
+                )
+                self._local_hash_warned = True
+            return [self._hash_vector(text) for text in inputs]
 
         payload = list(inputs)
         retryer = openai_retrying(
@@ -281,6 +294,11 @@ class CodeEmbedder:
 
         return file_embeddings
 
+    def _hash_vector(self, text: str) -> Vector:
+        digest = hashlib.sha256((text or "").encode("utf-8")).digest()
+        width = max(1, self._dimensions)
+        return tuple(((digest[index % len(digest)] / 255.0) * 2.0) - 1.0 for index in range(width))
+
     def _file_weight(self, file: ChunkedFile, chunks: Sequence[ChunkEmbedding]) -> float:
         if file.change_count > 0:
             return float(file.change_count)
@@ -360,4 +378,3 @@ def embed_chunked_files(
     """Convenience wrapper for :class:`CodeEmbedder`."""
     embedder = CodeEmbedder(settings=settings, client=client)
     return embedder.run(chunked_files)
-

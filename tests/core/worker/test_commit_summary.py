@@ -8,7 +8,11 @@ from openai import OpenAIError
 
 from loreley.config import Settings
 from loreley.core.worker.coding import ExecutionReport
-from loreley.core.worker.commit_summary import CommitSummarizer, CommitSummaryError
+from loreley.core.worker.commit_summary import (
+    CommitSummarizer,
+    CommitSummaryError,
+    CommitSummaryUnavailableError,
+)
 from loreley.core.worker.evolution import JobContext
 from loreley.core.worker.planning import PlanDocument
 
@@ -158,3 +162,22 @@ def test_extract_chat_completion_text_merges_parts() -> None:
     )
     text = CommitSummarizer._extract_chat_completion_text(response)
     assert text == "hello world"
+
+
+def test_generate_surfaces_client_initialization_failures_without_retry(
+    settings: Settings,
+) -> None:
+    calls = {"count": 0}
+    summarizer = CommitSummarizer(settings=settings)
+    summarizer._client_factory = lambda: (
+        calls.__setitem__("count", calls["count"] + 1),
+        (_ for _ in ()).throw(RuntimeError("missing key")),
+    )[1]  # type: ignore[method-assign]  # noqa: SLF001
+
+    with pytest.raises(CommitSummaryUnavailableError, match="missing key"):
+        summarizer.generate(
+            job=_make_job_context(),
+            plan=_make_plan(),
+            coding=_make_coding_execution(),
+        )
+    assert calls["count"] == 1

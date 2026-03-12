@@ -21,8 +21,14 @@ from loreley.core.worker.agent.backends import (
     CursorCliBackend,
     DEFAULT_CURSOR_MODEL,
     KilocodeCliBackend,
+    codex_coding_backend,
+    codex_planning_backend,
     cursor_backend,
+    cursor_coding_backend,
+    cursor_planning_backend,
     kilocode_backend,
+    kilocode_coding_backend,
+    kilocode_planning_backend,
 )
 from loreley.core.worker.agent.backends import codex_cli, cursor_cli, kilocode_cli
 
@@ -89,13 +95,17 @@ def test_load_agent_backend_requires_no_arg_factory() -> None:
         load_agent_backend("dummy_backend_mod_settings:backend_factory", label="test")
 
 
-def test_codex_cli_backend_builds_command_and_passes_stdin(tmp_path: Path, monkeypatch) -> None:
+def test_codex_cli_backend_builds_noninteractive_command_and_reads_last_message(
+    tmp_path: Path, monkeypatch
+) -> None:
     repo_dir = tmp_path / "repo"
     (repo_dir / ".git").mkdir(parents=True)
 
     captured: dict[str, Any] = {}
 
     def fake_run(command, cwd, env, input, text, capture_output, timeout, check):  # noqa: ANN001
+        output_path = Path(command[command.index("--output-last-message") + 1])
+        output_path.write_text("## Summary\n- Completed safely.\n", encoding="utf-8")
         captured.update(
             {
                 "command": command,
@@ -111,6 +121,7 @@ def test_codex_cli_backend_builds_command_and_passes_stdin(tmp_path: Path, monke
 
     backend = CodexCliBackend(
         bin="codex",
+        model="gpt-5.4",
         profile="prof",
         timeout_seconds=5,
         extra_env={"A": "1"},
@@ -126,13 +137,131 @@ def test_codex_cli_backend_builds_command_and_passes_stdin(tmp_path: Path, monke
     invocation = backend.run(task, working_dir=repo_dir)
 
     command_list = list(invocation.command)
-    assert command_list[:2] == ["codex", "exec"]
-    assert "--full-auto" in command_list
+    exec_index = command_list.index("exec")
+    assert command_list[:3] == ["codex", "--model", "gpt-5.4"]
+    assert command_list[exec_index - 6 : exec_index] == [
+        "--profile",
+        "prof",
+        "-a",
+        "never",
+        "--sandbox",
+        "workspace-write",
+    ]
+    assert "--full-auto" not in command_list
+    assert "--ephemeral" in command_list
+    assert "-a" in command_list and "never" in command_list
+    assert "--sandbox" in command_list and "workspace-write" in command_list
+    assert "--color" in command_list and "never" in command_list
+    assert "--output-last-message" in command_list
     assert "--profile" in command_list and "prof" in command_list
+    assert "--model" in command_list and "gpt-5.4" in command_list
     assert "--output-schema" not in command_list
     assert captured["cwd"] == str(repo_dir.resolve())
     assert captured["input"] == "do things"
     assert captured["env"] and captured["env"]["A"] == "1"
+    assert captured["env"]["CODEX_QUIET_MODE"] == "1"
+    assert invocation.stdout == "## Summary\n- Completed safely."
+
+
+def test_codex_cli_backend_allows_omitting_model_and_skips_model_flag() -> None:
+    backend = CodexCliBackend(
+        bin="codex",
+        timeout_seconds=5,
+        extra_env={},
+        error_cls=RuntimeError,
+        profile="prof",
+    )
+
+    command = backend._build_command(  # noqa: SLF001 - spec-level assertion
+        output_last_message_path=None,
+    )
+
+    assert command[:1] == ["codex"]
+    assert "--model" not in command
+    assert command[1:7] == [
+        "--profile",
+        "prof",
+        "-a",
+        "never",
+        "--sandbox",
+        "read-only",
+    ]
+    assert command[7:] == ["exec", "--ephemeral", "--color", "never"]
+
+
+def test_codex_cli_backend_isolates_codex_home_for_read_only_without_config(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    backend = CodexCliBackend(
+        bin="codex",
+        model="gpt-5.4",
+        profile=None,
+        timeout_seconds=5,
+        extra_env={},
+        error_cls=RuntimeError,
+    )
+    source_home = tmp_path / "source-home"
+    source_home.mkdir()
+    auth_path = source_home / "auth.json"
+    auth_path.write_text('{"token":"secret"}', encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(source_home))
+
+    env = {"CODEX_QUIET_MODE": "1"}
+    temp_dir = tmp_path / "temp"
+    temp_dir.mkdir()
+    worktree = tmp_path / "repo"
+    worktree.mkdir()
+
+    backend._prepare_isolated_home(  # noqa: SLF001 - spec-level assertion
+        env=env,
+        temp_dir=temp_dir,
+        worktree=worktree,
+    )
+
+    isolated_home = Path(env["CODEX_HOME"])
+    assert isolated_home != source_home
+    assert isolated_home.parent == temp_dir
+    assert (isolated_home / "auth.json").read_text(encoding="utf-8") == '{"token":"secret"}'
+    assert not (isolated_home / "config.toml").exists()
+
+
+def test_codex_cli_backend_marks_workspace_write_worktree_trusted(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    backend = CodexCliBackend(
+        bin="codex",
+        model="gpt-5.4",
+        profile=None,
+        timeout_seconds=5,
+        extra_env={},
+        error_cls=RuntimeError,
+        sandbox="workspace-write",
+    )
+    source_home = tmp_path / "source-home"
+    source_home.mkdir()
+    auth_path = source_home / "auth.json"
+    auth_path.write_text('{"token":"secret"}', encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(source_home))
+
+    env = {"CODEX_QUIET_MODE": "1"}
+    temp_dir = tmp_path / "temp"
+    temp_dir.mkdir()
+    worktree = tmp_path / "repo"
+    worktree.mkdir()
+
+    backend._prepare_isolated_home(  # noqa: SLF001 - spec-level assertion
+        env=env,
+        temp_dir=temp_dir,
+        worktree=worktree,
+    )
+
+    isolated_home = Path(env["CODEX_HOME"])
+    config_text = (isolated_home / "config.toml").read_text(encoding="utf-8")
+    assert "[projects." in config_text
+    assert str(worktree.resolve()) in config_text
+    assert "trust_level = \"trusted\"" in config_text
 
 
 def test_codex_cli_backend_raises_on_failure(tmp_path: Path, monkeypatch) -> None:
@@ -146,6 +275,7 @@ def test_codex_cli_backend_raises_on_failure(tmp_path: Path, monkeypatch) -> Non
 
     backend = CodexCliBackend(
         bin="codex",
+        model=None,
         profile=None,
         timeout_seconds=5,
         extra_env={},
@@ -160,6 +290,57 @@ def test_codex_cli_backend_raises_on_failure(tmp_path: Path, monkeypatch) -> Non
 
     with pytest.raises(RuntimeError):
         backend.run(task, working_dir=repo_dir)
+
+
+def test_codex_cli_backend_defaults_to_read_only_for_planning(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+
+    captured: dict[str, Any] = {}
+
+    def fake_run(command, cwd, env, input, text, capture_output, timeout, check):  # noqa: ANN001
+        captured["command"] = command
+        return types.SimpleNamespace(stdout="plan", stderr="", returncode=0)
+
+    monkeypatch.setattr(codex_cli.subprocess, "run", fake_run)
+
+    backend = CodexCliBackend(
+        bin="codex",
+        model=None,
+        profile=None,
+        timeout_seconds=5,
+        extra_env={},
+        error_cls=RuntimeError,
+        full_auto=False,
+    )
+
+    task = AgentTask(name="planning", prompt="plan")
+    backend.run(task, working_dir=repo_dir)
+
+    command_list = list(captured["command"])
+    assert "--sandbox" in command_list and "read-only" in command_list
+    assert "-a" in command_list and "never" in command_list
+
+
+def test_codex_backend_uses_env_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    from loreley.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("WORKER_PLANNING_CODEX_MODEL", "gpt-5.4")
+    monkeypatch.setenv("WORKER_CODING_CODEX_MODEL", "gpt-5.4")
+    get_settings.cache_clear()
+
+    planning = codex_planning_backend()
+    coding = codex_coding_backend()
+
+    assert planning.model == "gpt-5.4"
+    assert planning.sandbox == "read-only"
+    assert coding.model == "gpt-5.4"
+    assert coding.sandbox == "workspace-write"
+
+    get_settings.cache_clear()
 
 
 def test_cursor_cli_backend_builds_command(tmp_path: Path, monkeypatch) -> None:
@@ -327,16 +508,28 @@ def test_import_order_is_safe_for_agent_backends_without_reexports() -> None:
             "    CursorCliBackend,",
             "    DEFAULT_CURSOR_MODEL,",
             "    KilocodeCliBackend,",
+            "    codex_coding_backend,",
+            "    codex_planning_backend,",
             "    cursor_backend,",
+            "    cursor_coding_backend,",
+            "    cursor_planning_backend,",
             "    kilocode_backend,",
+            "    kilocode_coding_backend,",
+            "    kilocode_planning_backend,",
             ")",
             "import loreley.core.worker.agent as agent",
             "assert CodexCliBackend is backends.CodexCliBackend",
             "assert CursorCliBackend is backends.CursorCliBackend",
             "assert KilocodeCliBackend is backends.KilocodeCliBackend",
             "assert isinstance(DEFAULT_CURSOR_MODEL, str) and DEFAULT_CURSOR_MODEL",
+            "assert callable(codex_coding_backend)",
+            "assert callable(codex_planning_backend)",
             "assert callable(cursor_backend)",
+            "assert callable(cursor_coding_backend)",
+            "assert callable(cursor_planning_backend)",
             "assert callable(kilocode_backend)",
+            "assert callable(kilocode_coding_backend)",
+            "assert callable(kilocode_planning_backend)",
             "assert hasattr(agent, 'load_agent_backend')",
             "assert hasattr(agent, 'run_agent_task')",
             "assert hasattr(agent, 'AgentTask')",
@@ -519,6 +712,32 @@ def test_kilocode_backend_factory_uses_env_settings(monkeypatch: pytest.MonkeyPa
     get_settings.cache_clear()
 
 
+def test_codex_backend_factories_use_worker_safe_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    from loreley.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("WORKER_PLANNING_CODEX_BIN", "/usr/local/bin/codex-plan")
+    monkeypatch.setenv("WORKER_CODING_CODEX_BIN", "/usr/local/bin/codex-code")
+    monkeypatch.setenv("WORKER_PLANNING_CODEX_PROFILE", "planner")
+    monkeypatch.setenv("WORKER_CODING_CODEX_PROFILE", "coder")
+    get_settings.cache_clear()
+
+    planning_backend = codex_planning_backend()
+    coding_backend = codex_coding_backend()
+
+    assert isinstance(planning_backend, CodexCliBackend)
+    assert planning_backend.bin == "/usr/local/bin/codex-plan"
+    assert planning_backend.profile == "planner"
+    assert planning_backend.full_auto is False
+
+    assert isinstance(coding_backend, CodexCliBackend)
+    assert coding_backend.bin == "/usr/local/bin/codex-code"
+    assert coding_backend.profile == "coder"
+    assert coding_backend.full_auto is True
+
+    get_settings.cache_clear()
+
+
 @pytest.mark.parametrize(
     ("api_spec", "expected_provider_type"),
     [
@@ -603,4 +822,3 @@ def test_run_agent_task_retries_on_post_check(tmp_path: Path) -> None:
     assert backend.calls == 2
     assert debug_events[0][3] == "RuntimeError"
     assert debug_events[1][3] is None
-

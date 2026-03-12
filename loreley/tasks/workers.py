@@ -26,6 +26,7 @@ def _time_limit_ms(settings: Settings) -> int:
 def build_evolution_job_sender_actor(
     *,
     settings: Settings,
+    broker: dramatiq.Broker | None = None,
 ) -> dramatiq.Actor:
     """Build a scheduler-side actor used only for enqueueing messages.
 
@@ -33,11 +34,12 @@ def build_evolution_job_sender_actor(
     `.send(...)` can produce correctly-formed Dramatiq messages.
     """
 
-    setup_broker(settings=settings)
+    active_broker = broker or setup_broker(settings=settings)
     queue = tasks_queue_name(getattr(settings, "experiment_id", None))
     time_limit = _time_limit_ms(settings)
 
     @dramatiq.actor(
+        broker=active_broker,
         queue_name=queue,
         max_retries=settings.tasks_worker_max_retries,
         time_limit=time_limit or None,
@@ -54,6 +56,7 @@ def build_evolution_job_sender_actor(
 def build_evolution_job_worker_actor(
     *,
     settings: Settings,
+    broker: dramatiq.Broker | None = None,
 ) -> dramatiq.Actor:
     """Build an experiment-attached worker actor.
 
@@ -61,7 +64,7 @@ def build_evolution_job_worker_actor(
     single `EvolutionWorker` instance for the full process lifetime.
     """
 
-    setup_broker(settings=settings)
+    active_broker = broker or setup_broker(settings=settings)
     queue = tasks_queue_name(getattr(settings, "experiment_id", None))
     time_limit = _time_limit_ms(settings)
 
@@ -85,6 +88,7 @@ def build_evolution_job_worker_actor(
         )
 
     @dramatiq.actor(
+        broker=active_broker,
         queue_name=queue,
         max_retries=settings.tasks_worker_max_retries,
         time_limit=time_limit or None,
@@ -128,4 +132,3 @@ def build_evolution_job_worker_actor(
         _log_job_success(result)
 
     return run_evolution_job
-
