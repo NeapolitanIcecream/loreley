@@ -7,6 +7,7 @@ from loreley.core.worker.agent import AgentInvocation
 from loreley.core.worker.planning import (
     CommitMetric,
     CommitPlanningContext,
+    IterationContext,
     PlanDocument,
     PlanningAgent,
     PlanningAgentRequest,
@@ -18,23 +19,30 @@ class _DummyBackend:
         raise AssertionError("backend should not be invoked in these tests")
 
 
-def _make_request(goal: str) -> PlanningAgentRequest:
-    base = CommitPlanningContext(
+def _make_base() -> CommitPlanningContext:
+    return CommitPlanningContext(
         commit_hash="base",
         subject="Base subject",
         change_summary="base summary",
         highlights=("Touched files: foo.py",),
         metrics=(
             CommitMetric(name="quality", value=1.0),
-            CommitMetric(name="speed", value=2.0),
+            CommitMetric(name="runtime_ms", value=12.0, higher_is_better=False),
         ),
     )
+
+
+def _make_request(goal: str) -> PlanningAgentRequest:
+    base = _make_base()
     return PlanningAgentRequest(
         base=base,
         inspirations=(),
         goal=goal,
-        constraints=("guard",),
-        acceptance_criteria=("verify",),
+        iteration_context=IterationContext(
+            seed_job=False,
+            sampling_strategy="map_elites",
+            facts=("radius_used: 3", "initial_radius: 7"),
+        ),
     )
 
 
@@ -65,8 +73,13 @@ def test_coerce_plan_from_invocation_extracts_summary(settings: Settings) -> Non
     assert isinstance(plan, PlanDocument)
     assert plan.summary.startswith("Improve docs")
     assert plan.markdown.strip() == markdown.strip()
-    assert plan.guardrails == ("guard",)
-    assert plan.focus_metrics == ("quality", "speed")
+    assert plan.guardrails == (
+        "non_interactive_worker",
+        "framework_managed_evaluation",
+        "leave_modified_worktree",
+        "no_git_commits",
+    )
+    assert plan.focus_metrics == ("quality", "runtime_ms")
 
 
 def test_coerce_plan_from_invocation_unwraps_json_stdout(settings: Settings) -> None:
@@ -120,9 +133,53 @@ def test_planning_prompt_requests_markdown_deliverable(settings: Settings) -> No
 
     prompt = agent._render_prompt(request)  # type: ignore[attr-defined]
 
-    assert "Markdown plan document" in prompt
-    assert "Output requirements" in prompt
+    assert "Evolution Goal:" in prompt
+    assert "Worker Contract:" in prompt
+    assert "Iteration Context:" in prompt
+    assert "Base Commit Context:" in prompt
+    assert "Markdown document" in prompt
     assert "Operate non-interactively" in prompt
-    assert "explicitly constrain runtime, latency, throughput, memory" in prompt
-    assert "Distinguish final-artifact performance constraints from offline optimization cost" in prompt
-    assert "Use '##' headings" in prompt
+    assert "Do not run Loreley's evaluator" in prompt
+    assert "Constraints:" not in prompt
+    assert "Acceptance criteria:" not in prompt
+    assert "Use these sections" in prompt
+
+
+def test_planning_prompt_formats_inspirations_as_transfer_cards(settings: Settings) -> None:
+    agent = PlanningAgent(settings=settings, backend=_DummyBackend())
+    base = _make_base()
+    inspiration = CommitPlanningContext(
+        commit_hash="insp",
+        subject="Inspiration subject",
+        change_summary="switch to deterministic construction",
+        trajectory=(
+            "  - unique_steps_count: 3 (lca=abc123)",
+            "  - Earliest unique steps (raw, up to 2):",
+            "    - a1b2c3d4e5f6: introduce deterministic seed layout",
+            "  - Recent unique steps (raw, last 1):",
+            "    - b2c3d4e5f6a7: cache the final 26-circle arrangement",
+        ),
+        evaluation_summary="Higher quality with lower runtime.",
+        metrics=(
+            CommitMetric(name="quality", value=1.8, higher_is_better=True),
+            CommitMetric(name="runtime_ms", value=4.0, higher_is_better=False),
+        ),
+        key_files=("solver.py", "cache.py"),
+    )
+    request = PlanningAgentRequest(
+        base=base,
+        inspirations=(inspiration,),
+        goal="Improve docs",
+        iteration_context=IterationContext(seed_job=False, sampling_strategy="map_elites"),
+    )
+
+    prompt = agent._render_prompt(request)  # type: ignore[attr-defined]
+
+    assert "Inspiration #1" in prompt
+    assert "why_it_matters:" in prompt
+    assert "Improves `runtime_ms`" in prompt
+    assert "`quality`" in prompt
+    assert "distinctive_changes_vs_base:" in prompt
+    assert "introduce deterministic seed layout" in prompt
+    assert "cache the final 26-circle arrangement" in prompt
+    assert "No highlights available." not in prompt
