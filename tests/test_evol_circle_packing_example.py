@@ -13,7 +13,6 @@ ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE_SCRIPT = ROOT / "examples" / "evol_circle_packing.py"
 LOCAL_EVAL_SCRIPT = ROOT / "examples" / "circle_packing_env" / "local_eval.py"
 EVALUATE_SCRIPT = ROOT / "examples" / "circle_packing_env" / "evaluate.py"
-EXAMPLE_REPO = ROOT / "examples" / "circle-packing"
 
 
 def _load_module(name: str, path: Path):
@@ -288,10 +287,33 @@ def test_evaluate_main_expansion_stays_at_64_when_thresholds_fail() -> None:
     assert any("under 5 hours" in reason for reason in check.reasons)
 
 
-def test_local_eval_reports_baseline_metrics() -> None:
+def test_local_eval_reports_baseline_metrics(tmp_path: Path) -> None:
     module = _load_module("test_circle_packing_local_eval", LOCAL_EVAL_SCRIPT)
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / "solution.py").write_text(
+        "\n".join(
+            [
+                "from typing import Iterable, Tuple",
+                "",
+                "def pack_circles(n: int = 26) -> Iterable[Tuple[float, float, float]]:",
+                "    if n <= 0:",
+                "        raise ValueError('n must be positive')",
+                "    if n == 1:",
+                "        return [(0.5, 0.5, 0.5)]",
+                "    r = 1.0 / (4.0 * n)",
+                "    step = 1.0 - 2.0 * r",
+                "    circles = []",
+                "    for i in range(n):",
+                "        t = i / (n - 1)",
+                "        circles.append((r + t * step, r + t * step, r))",
+                "    return circles",
+            ]
+        ),
+        encoding="utf-8",
+    )
 
-    payload = module.evaluate_repo(repo_root=EXAMPLE_REPO, runs=3, target_n=26)
+    payload = module.evaluate_repo(repo_root=repo_root, runs=3, target_n=26)
 
     assert payload["repeated_runs"]["deterministic"] is True
     assert payload["target_metrics"]["sum_radii"] == pytest.approx(0.25)
