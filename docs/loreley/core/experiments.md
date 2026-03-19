@@ -21,7 +21,7 @@ Helpers for resolving repository identity and validating instance metadata in si
   - Chooses the repository root in this order: explicit `repo_root`, `Settings.scheduler_repo_root`, then `Settings.worker_repo_worktree`.
   - Validates that the chosen root is a git repository, logging and raising `ExperimentError` when it is not.
   - Resolves the canonical root commit from `MAPELITES_EXPERIMENT_ROOT_COMMIT` and pins repository‑root ignore rules by reading `.gitignore` + `.loreleyignore` from that commit.
-  - Stores the combined ignore text + SHA256 in `Settings` for the scheduler process lifetime (env-only settings model).
+  - Stores the canonical root commit and combined ignore text in `Settings` for the scheduler process lifetime (env-only settings model).
   - Validates the single-row `InstanceMetadata` marker (schema version, experiment id, root commit) and updates
     repository fields when available.
   - Returns `(RepositoryIdentity, Settings)` so callers can pass settings downstream consistently.
@@ -30,4 +30,3 @@ Helpers for resolving repository identity and validating instance metadata in si
 
 - All operations are logged through a `loguru` logger bound with `module="core.experiments"` plus a `rich` console.
 - Git and metadata failures are wrapped into `ExperimentError` with concise, user‑oriented messages.
-

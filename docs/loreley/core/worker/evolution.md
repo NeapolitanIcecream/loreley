@@ -8,7 +8,7 @@ Autonomous evolution worker that orchestrates planning, coding, evaluation, repo
   - `job_id`, `base_commit_hash`, optional `island_id`.
   - `inspiration_commit_hashes` (bounded list) used to load lightweight commit context.
   - size-bounded job spec fields: `goal`, `constraints`, `acceptance_criteria`, optional `iteration_hint`, free-form `notes`, and `tags`.
-  - a boolean `is_seed_job` flag indicating whether the job is a cold-start seed job.
+  - seed-job and sampling provenance fields: `is_seed_job`, `sampling_strategy`, optional radius metadata, and optional fallback-inspiration counts.
 - **`EvolutionWorkerResult`**: structured success payload returned from `EvolutionWorker.run()`, combining the `job_id`, `base_commit_hash`, resulting `candidate_commit_hash`, the full `PlanningAgentResponse`, `CodingAgentResponse`, `EvaluationResult`, `CheckoutContext`, and the final `commit_message` used for the worker commit.
 
 ## Public worker API
@@ -35,8 +35,8 @@ Autonomous evolution worker that orchestrates planning, coding, evaluation, repo
 - **`_start_job(job_id)`**: uses `EvolutionJobStore.start_job()` to lock the job row, validates its status, and constructs a `JobContext` by:
   - Reading the size-bounded job spec fields directly from the `EvolutionJob` row (no catch-all payload parsing).
   - Falling back to `Settings.worker_evolution_global_goal` only when the per-job `goal` is missing.
-- **`_run_planning(job_ctx, checkout)`**: batch-loads planning context for base + inspirations, builds a `PlanningAgentRequest` from those commit snapshots and job fields, invokes `PlanningAgent.plan()`, and wraps `PlanningError` into `EvolutionWorkerError`. For seed jobs, `_run_planning` clears metrics, highlights, and evaluation details from the base planning context, drops all inspirations, and passes `cold_start=True` so that the planning agent treats the request as a cold-start seed population design run.
-- **`_run_coding(job_ctx, plan, checkout)`**: builds a `CodingAgentRequest` from the plan and job context, runs `CodingAgent.implement()`, and wraps `CodingError` into `EvolutionWorkerError`.
+- **`_run_planning(job_ctx, checkout)`**: batch-loads planning context for base + inspirations, builds a `PlanningAgentRequest` from those commit snapshots plus the global goal and iteration context, invokes `PlanningAgent.plan()`, and wraps `PlanningError` into `EvolutionWorkerError`. Seed-job handling happens earlier in `_build_prompt_context()`: it strips historical metrics and evaluation details from the base context, drops inspirations entirely, and carries the seed-job state through `IterationContext.seed_job` and related facts.
+- **`_run_coding(job_ctx, plan, checkout)`**: builds a `CodingAgentRequest` from the plan, base commit, prompt context (`base`, `inspirations`, `iteration_context`), and job notes, runs `CodingAgent.implement()`, and wraps `CodingError` into `EvolutionWorkerError`.
 - **`_prepare_commit_message(job_ctx, plan, coding)`**: delegates to `CommitSummarizer.generate()` to generate an LLM-backed git subject line; if summarisation fails, falls back to the coding report `summary`, plan `summary`, or a generic `"Evolution job <id>"` string.
 - **`_create_commit(checkout, commit_message)`**: ensures the checkout is on a branch and that the job worktree contains changes, stages everything, creates a commit, and pushes the per-job branch using `force-with-lease`.
 - **`_run_evaluation(job_ctx, checkout, plan, candidate_commit)`**: constructs an `EvaluationContext` payload that includes only bounded job and plan fields (no raw prompts/JSON dumps), then calls `Evaluator.evaluate()` and wraps `EvaluationError` into `EvolutionWorkerError`.
@@ -47,5 +47,4 @@ Autonomous evolution worker that orchestrates planning, coding, evaluation, repo
 
 - **`_load_commit_planning_contexts(commit_hashes, ...)`**: fetches `CommitCard`, `Metric`, and optional `MapElitesArchiveCell` rows in batch for all requested commit hashes, then rebuilds bounded `CommitPlanningContext` instances in input order.
 - **`_load_commit_planning_context(commit_hash, ...)`**: compatibility wrapper for single-commit call sites, delegating to the batch loader.
-
 

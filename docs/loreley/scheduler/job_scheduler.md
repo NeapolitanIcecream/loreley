@@ -29,15 +29,22 @@ from loreley.scheduler.job_scheduler import JobScheduler
 
 ### Scheduling new jobs
 
-- **`schedule_jobs(unfinished_jobs: int, *, total_scheduled_jobs: int) -> int`**:
+- **`schedule_jobs(unfinished_jobs: int, *, total_jobs: int) -> int`**:
   - Enforces `SCHEDULER_MAX_UNFINISHED_JOBS` as an upper bound across
     `PENDING`/`QUEUED`/`RUNNING` jobs.
-  - Respects the optional `SCHEDULER_MAX_TOTAL_JOBS` global cap using the
-    `total_scheduled_jobs` counter maintained by `EvolutionScheduler`.
+  - Enforces the required `SCHEDULER_MAX_TOTAL_JOBS` global cap using the
+    current database job count supplied by `EvolutionScheduler`.
   - Requests new work from MAP-Elites via `MapElitesSampler.schedule_job()`.
-  - Immediately transitions any newly created jobs to `QUEUED` and pushes them
-    to Dramatiq using the private `_enqueue_jobs(...)` helper.
+  - Enqueues job messages first and then marks the successfully sent jobs as
+    `QUEUED` using the private `_enqueue_jobs(...)` helper.
   - Returns the number of jobs scheduled during this tick.
+
+- **`create_seed_jobs(base_commit_hash, count, island_id=None) -> int`**:
+  - Creates cold-start seed jobs from the root commit while the archive is still
+    warming up.
+  - Requires `WORKER_EVOLUTION_GLOBAL_GOAL`, because seed jobs still need a
+    concrete optimization objective.
+  - Uses the same send-first queueing flow as regular jobs.
 
 If the sampler indicates that no archive cell currently wants new work, the
 console logs a short `[yellow]Sampler returned no job[/]` message and no rows
@@ -52,9 +59,9 @@ are touched in the database.
     2. `scheduled_at` (ascending),
     3. `created_at` (ascending),
     so that higher-priority and older jobs drain first.
-  - Uses a `SELECT ... FOR UPDATE` window to safely promote eligible jobs to
-    `QUEUED` and stamp their `scheduled_at` time.
-  - Sends each queued job id to the Dramatiq `run_evolution_job` actor.
+  - Uses a `SELECT ... FOR UPDATE` window to safely select eligible jobs.
+  - Sends each selected job id to the Dramatiq `run_evolution_job` actor, then
+    marks successfully submitted rows as `QUEUED` and stamps `scheduled_at`.
   - Returns the number of jobs successfully dispatched this tick.
 
 Any failures while enqueuing individual jobs are logged with Loguru and
@@ -73,5 +80,3 @@ dispatched.
 This separation keeps the scheduler loop simple and makes it easier to test
 and evolve the job pipeline independently of the rest of the orchestration
 logic.
-
-

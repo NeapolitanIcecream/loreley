@@ -13,4 +13,6 @@ Helpers for configuring the Dramatiq Redis broker used by Loreley workers.
 - **`broker`**  
   A module-level reference to the most recently configured `RedisBroker`. It is set when `setup_broker()` is called; importing `loreley.tasks.broker` does not configure Dramatiq on its own.
 
+- **`reset_redis_namespace(settings: Settings | None = None) -> int`**  
+  Deletes Redis keys under the current experiment namespace. `loreley reset-db --yes` uses this helper after recreating the database schema so stale Dramatiq keys do not survive a reset.
 

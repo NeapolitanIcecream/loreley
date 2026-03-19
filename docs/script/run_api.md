@@ -1,4 +1,4 @@
-## Running the UI API
+# Running the UI API
 
 This command starts the **read-only** UI API based on FastAPI.
 
@@ -22,11 +22,12 @@ This command requires `DATABASE_URL` to point at a Loreley database with an inst
 - `--port`: bind port (default: `8000`)
 - `--log-level`: global option (pass before the subcommand) that overrides `LOG_LEVEL` for this invocation
 - `--reload`: enable auto-reload (development only)
+- `--no-preflight`: skip preflight validation
+- `--preflight-timeout-seconds`: network timeout used for DB connectivity checks
 
 ## Logs
 
 Logs are written to:
 
 - `logs/{experiment_namespace}/ui_api/ui_api-YYYYMMDD-HHMMSS.log`
-
 

@@ -1,4 +1,4 @@
-## Benchmarking
+# Benchmarking
 
 This repository includes an **optional** benchmark suite under `benchmarks/`.
 Benchmarks are **not** collected by default when running `pytest` (CI runs `pytest` with `testpaths=["tests"]`), so you must invoke them explicitly.
@@ -38,6 +38,5 @@ uv run pytest benchmarks --benchmark-compare=0001 --benchmark-compare-fail=mean:
 For advanced comparisons across multiple saved runs, use the `pytest-benchmark` CLI:
 
 ```bash
-pytest-benchmark compare 'Linux-CPython-3.13-64bit/*'
+uv run pytest-benchmark compare 'Linux-CPython-3.13-64bit/*'
 ```
-

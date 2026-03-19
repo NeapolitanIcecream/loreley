@@ -6,7 +6,7 @@ Persistence adapter for the evolution worker, responsible for locking jobs, stor
 
 - **`EvolutionWorkerError`**: base runtime error used when the worker cannot complete or persist a job due to configuration, database, or repository issues.
 - **`JobLockConflict`**: raised when `start_job()` fails to obtain a NOWAIT lock on a job row, indicating that another worker is already processing the same job.
-- **`JobPreconditionError`**: raised when a job cannot start because preconditions are not satisfied (missing row, unsupported status, missing `base_commit_hash`, etc.).
+- **`JobPreconditionError`**: raised when a job cannot start because preconditions are not satisfied (for example, a missing row or an unsupported status).
 - **`LockedJob`**: dataclass snapshot of the locked `EvolutionJob` row containing the `job_id`, `base_commit_hash`, optional `island_id`, the bounded job spec fields, and the tuple of `inspiration_commit_hashes`. This is used by `EvolutionWorker` to build its `JobContext`.
 
 ## Artifacts
@@ -25,13 +25,13 @@ Large, audit/debug oriented payloads (prompts, raw outputs, logs) are written to
   - Acquires a row-level lock on the `EvolutionJob` using `SELECT ... FOR UPDATE NOWAIT`.
   - Validates that the job exists, that `base_commit_hash` is present, and that the current `status` is in `{PENDING, QUEUED}`.
   - Marks the job as `RUNNING`, records `started_at`, clears any `last_error`, and returns a `LockedJob` snapshot.
-  - Wraps SQL errors into `JobLockConflict` when they indicate a lock-not-available condition, or `EvolutionWorkerError` otherwise.
+  - Raises `EvolutionWorkerError` when `base_commit_hash` is missing, and wraps SQL errors into `JobLockConflict` when they indicate a lock-not-available condition, or `EvolutionWorkerError` otherwise.
 
 - **`persist_success(job_ctx, plan, coding, evaluation, commit_hash, commit_message)`**:
   - Updates the `EvolutionJob` row to `SUCCEEDED`, sets `completed_at`, stores `plan_summary`, sets `result_commit_hash`, clears `last_error`, and resets ingestion tracking fields.
   - Inserts a new `CommitCard` row representing the produced commit, with bounded `subject`, `change_summary`, `key_files`, `highlights`, and optional `evaluation_summary`.
   - Inserts one `Metric` row per evaluation metric for the new commit, copying numeric `value`, `unit`, `higher_is_better`, and any structured `details`.
-  - Writes planning/coding/evaluation artifacts to disk and upserts a `JobArtifacts` row containing the corresponding filesystem paths.
+  - Writes planning/coding/evaluation artifacts to disk and inserts a `JobArtifacts` row containing the corresponding filesystem paths when artifact writing succeeds.
   - Wraps SQLAlchemy errors into `EvolutionWorkerError` so the caller can surface persistence failures cleanly.
 
 - **`mark_job_failed(job_id, message)`**:
@@ -49,5 +49,4 @@ Large, audit/debug oriented payloads (prompts, raw outputs, logs) are written to
 ## Time helpers
 
 - **`_utc_now()`**: returns the current UTC `datetime` and is used consistently when stamping `started_at`, `completed_at`, and worker metadata timestamps.
-
 

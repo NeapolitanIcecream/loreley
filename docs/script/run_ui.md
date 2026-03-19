@@ -1,4 +1,4 @@
-## Running the Streamlit UI
+# Running the Streamlit UI
 
 The Streamlit UI is a read-only dashboard that calls the UI API.
 
@@ -32,5 +32,6 @@ uv run loreley ui --api-base-url http://127.0.0.1:8000
 - `--host`: Streamlit bind host (default: `127.0.0.1`)
 - `--port`: Streamlit bind port (default: `8501`)
 - `--headless`: run without opening a browser
-
+- `--no-preflight`: skip preflight validation
+- `--preflight-timeout-seconds`: network timeout used for UI/API reachability checks
 

@@ -1,6 +1,5 @@
 # Loreley
 
-
 > Whole-repository Quality-Diversity optimization for real git codebases.
 
 Loreley is an automated Quality-Diversity optimization system that **evolves entire git repositories**, not just single files or scripts. It continuously samples promising commits, asks external agents to plan and implement changes, evaluates them, and archives the best-performing and most diverse variants for later reuse.
@@ -91,7 +90,7 @@ docker compose up -d postgres redis
 
 ### Configure
 
-All runtime configuration is provided via environment variables and loaded by `loreley.config.Settings`. Start with:
+All runtime configuration is provided via environment variables and loaded by `loreley.config.Settings`.
 
 Copy the example env file:
 
@@ -103,10 +102,11 @@ cp env.example .env
 - `DATABASE_URL`
 - `TASKS_REDIS_URL`, `EXPERIMENT_ID` (UUID or slug)
 - `OPENAI_API_KEY`
+- `MAPELITES_CODE_EMBEDDING_DIMENSIONS`
 - `MAPELITES_EXPERIMENT_ROOT_COMMIT`
 - `SCHEDULER_MAX_TOTAL_JOBS`, `SCHEDULER_REPO_ROOT`, `WORKER_REPO_REMOTE_URL`
 - `WORKER_EVALUATOR_PLUGIN`
-- (recommended) `WORKER_EVOLUTION_GLOBAL_GOAL`
+- `WORKER_EVOLUTION_GLOBAL_GOAL`
 - (optional) `WORKER_PLANNING_BACKEND`, `WORKER_CODING_BACKEND`
 - (optional) `WORKER_KILOCODE_BIN`, `WORKER_KILOCODE_AGENT` when using the default Kilocode CLI backend (`kilo`)
 
@@ -167,7 +167,7 @@ Loreley runs a long-lived loop with:
 - a scheduler that ingests completed jobs, samples base commits, and enqueues new jobs,
 - a Redis/Dramatiq worker fleet that runs planning/coding/evaluation per job,
 - a PostgreSQL-backed store for experiments, commits, metrics, and archive state,
-- explicit lifecycle controls (max unfinished jobs, optional total job caps, seed population, best-candidate branch export).
+- explicit lifecycle controls (max unfinished jobs, required total job cap, seed population, best-candidate branch export).
 
 You can run a long optimisation campaign on a repository, scaling workers horizontally, while keeping the evolution process reproducible and observable.
 
@@ -227,15 +227,20 @@ Use this index as a quick map of the rest of the documentation:
 
 - **Configuration**
   - [Global settings](loreley/config.md)
+- **Experiments**
+  - [Repository and experiment helpers](loreley/core/experiments.md)
 - **Database**
   - [Engine and sessions](loreley/db/base.md)
   - [ORM models](loreley/db/models.md)
-- **Instance**
-  - [Repository & instance helpers](loreley/core/experiments.md)
 - **Core contracts**
   - [Hot-path contracts](loreley/core/contracts.md)
+- **Scheduler**
+  - [Scheduler overview](loreley/scheduler/main.md)
+  - [Job scheduling](loreley/scheduler/job_scheduler.md)
+  - [Ingestion](loreley/scheduler/ingestion.md)
 - **MAP-Elites core**
   - [Overview & archive](loreley/core/map-elites/map-elites.md)
+  - [Repository embeddings](loreley/core/map-elites/repository_embedding.md)
   - [Preprocessing](loreley/core/map-elites/preprocess.md)
   - [Chunking](loreley/core/map-elites/chunk.md)
   - [Code embeddings](loreley/core/map-elites/code_embedding.md)
@@ -243,7 +248,9 @@ Use this index as a quick map of the rest of the documentation:
   - [Sampler](loreley/core/map-elites/sampler.md)
   - [Snapshots](loreley/core/map-elites/snapshot.md)
 - **Worker pipeline**
+  - [Worker repository](loreley/core/worker/repository.md)
   - [Planning agent](loreley/core/worker/planning.md)
+  - [Agent backends and runner](loreley/core/worker/agent.md)
   - [Coding agent](loreley/core/worker/coding.md)
   - [Evaluator](loreley/core/worker/evaluator.md)
   - [Evolution loop](loreley/core/worker/evolution.md)
@@ -251,9 +258,7 @@ Use this index as a quick map of the rest of the documentation:
   - [Commit summaries](loreley/core/worker/commit_summary.md)
   - [Artifacts](loreley/core/worker/artifacts.md)
   - [Job store](loreley/core/worker/job_store.md)
-  - [Worker repository](loreley/core/worker/repository.md)
-- **Scheduler & tasks**
-  - [Scheduler](loreley/scheduler/main.md)
+- **Tasks**
   - [Tasks broker](loreley/tasks/broker.md)
   - [Tasks workers](loreley/tasks/workers.md)
 - **UI (optional)**
@@ -270,6 +275,8 @@ Use this index as a quick map of the rest of the documentation:
   - [Running the UI](script/run_ui.md)
   - [Resetting the database](script/reset_db.md)
   - [Benchmarking](script/benchmarks.md)
+- **Architecture decisions**
+  - [ADR index](adr/index.md)
 
 ---
 

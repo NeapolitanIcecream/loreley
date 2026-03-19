@@ -1,0 +1,91 @@
+file,issue_type,authoritative_source,proposed_fix,severity,owner,status
+README.md,entrypoint_map;config_drift,docs/index.md; loreley/config.py; examples/circle_packing_env/README.md,Refresh top-level doc links and required environment variables for quickstarts.,medium,main,fixed
+docs/index.md,doc_map_drift;config_drift,docs/loreley/**; docs/script/**; loreley/config.py,"Update the documentation map, scheduler/task references, and required configuration checklist.",high,main,fixed
+docs/loreley/api.md,endpoint_inventory_drift,loreley/api/**,"Document paginated jobs, commits, and archive endpoints and normalize headings.",medium,platform,fixed
+docs/loreley/config.md,config_key_drift;terminology,loreley/config.py,Align queue prefetch settings and CLI terminology with the current settings model.,medium,platform,fixed
+docs/loreley/core/contracts.md,type_contract_drift,loreley/core/contracts.py,Clarify that ArtifactRef stores bounded path strings and does not enforce absolute paths.,low,core,fixed
+docs/loreley/core/experiments.md,bootstrap_behavior_drift,loreley/core/experiments.py,Remove the stale ignore-hash claim and describe the actual settings fields copied at bootstrap.,medium,core,fixed
+docs/loreley/core/map-elites/chunk.md,audit_only,manual_audit,No change required.,none,core,no_change
+docs/loreley/core/map-elites/code_embedding.md,audit_only,manual_audit,No change required.,none,core,no_change
+docs/loreley/core/map-elites/dimension_reduction.md,audit_only,manual_audit,No change required.,none,core,no_change
+docs/loreley/core/map-elites/map-elites.md,audit_only,manual_audit,No change required.,none,core,no_change
+docs/loreley/core/map-elites/preprocess.md,audit_only,manual_audit,No change required.,none,core,no_change
+docs/loreley/core/map-elites/repository_embedding.md,audit_only,manual_audit,No change required.,none,core,no_change
+docs/loreley/core/map-elites/sampler.md,audit_only,manual_audit,No change required.,none,core,no_change
+docs/loreley/core/map-elites/snapshot.md,audit_only,manual_audit,No change required.,none,core,no_change
+docs/loreley/core/worker/agent.md,audit_only,manual_audit,No change required.,none,core,no_change
+docs/loreley/core/worker/artifacts.md,persistence_flow_drift,loreley/core/worker/artifacts.py; loreley/core/worker/job_store.py,Describe write_job_artifacts() as file output only and move DB persistence details to persist_success().,medium,core,fixed
+docs/loreley/core/worker/coding.md,request_shape_drift;backend_resolution,loreley/core/worker/coding.py; loreley/config.py,Update CodingAgentRequest fields and explain current backend resolution and prompt inputs.,high,core,fixed
+docs/loreley/core/worker/commit_card.md,audit_only,manual_audit,No change required.,none,core,no_change
+docs/loreley/core/worker/commit_summary.md,error_surface_drift;prompt_drift,loreley/core/worker/commit_summary.py,Add CommitSummaryUnavailableError and describe the current prompt inputs and retry behavior.,medium,core,fixed
+docs/loreley/core/worker/evaluator.md,audit_only,manual_audit,No change required.,none,core,no_change
+docs/loreley/core/worker/evolution.md,seed_job_flow_drift;request_shape_drift,loreley/core/worker/evolution.py,Document sanitized seed-job prompt context and the actual planning/coding request payloads.,high,core,fixed
+docs/loreley/core/worker/job_store.md,exception_mapping_drift;persistence_flow_drift,loreley/core/worker/job_store.py,Correct error classes for missing base commits and describe artifact persistence as an insert.,medium,core,fixed
+docs/loreley/core/worker/planning.md,request_shape_drift;backend_resolution,loreley/core/worker/planning.py; loreley/config.py,Update PlanningAgentRequest and IterationContext docs and describe backend resolution accurately.,high,core,fixed
+docs/loreley/core/worker/repository.md,audit_only,manual_audit,No change required.,none,core,no_change
+docs/loreley/db/base.md,audit_only,manual_audit,No change required.,none,platform,no_change
+docs/loreley/db/models.md,audit_only,manual_audit,No change required.,none,platform,no_change
+docs/loreley/scheduler/ingestion.md,constructor_drift,loreley/scheduler/ingestion.py,Refresh IngestionCoordinator constructor arguments and collaborators.,medium,platform,fixed
+docs/loreley/scheduler/job_scheduler.md,api_drift;state_transition_drift,loreley/scheduler/job_scheduler.py,"Document create_seed_jobs(), current schedule_jobs() signature, and send-then-queue dispatch semantics.",high,platform,fixed
+docs/loreley/scheduler/main.md,dispatch_flow_drift,loreley/scheduler/main.py; loreley/tasks/broker.py,Describe the sender actor setup and current send-before-QUEUED flow.,medium,platform,fixed
+docs/loreley/tasks/broker.md,api_surface_drift,loreley/tasks/broker.py,Add reset_redis_namespace() to the documented broker helpers.,low,platform,fixed
+docs/loreley/tasks/workers.md,audit_only,manual_audit,No change required.,none,platform,no_change
+docs/loreley/ui.md,heading_cleanup,manual_audit,Normalize heading depth and keep the page aligned with the rest of the module docs.,low,platform,fixed
+docs/script/archive_stats.md,audit_only,manual_audit,No change required.,none,ops,no_change
+docs/script/benchmarks.md,command_drift;heading_cleanup,uv run pytest-benchmark --help,Replace the stale compare command and normalize the page heading.,low,ops,fixed
+docs/script/config_dump.md,flag_drift,uv run loreley config dump --help,Document the mask-secrets flag pair and default masking behavior.,medium,ops,fixed
+docs/script/doctor.md,command_behavior_drift,uv run loreley doctor --help; loreley/preflight.py,Align backend checks and role-specific examples with the current doctor command.,medium,ops,fixed
+docs/script/reset_db.md,command_behavior_drift;warning_gap,uv run loreley reset-db --help; loreley/tasks/broker.py,Clarify that reset-db is a CLI command and that it also clears the experiment Redis namespace.,high,ops,fixed
+docs/script/run_api.md,flag_drift;heading_cleanup,uv run loreley api --help,Add the preflight control flags and normalize the heading.,medium,ops,fixed
+docs/script/run_scheduler.md,config_drift,uv run loreley scheduler --help; loreley/config.py,"Refresh required settings, including embedding dimensions and conditional OpenAI requirements.",high,ops,fixed
+docs/script/run_ui.md,flag_drift;heading_cleanup,uv run loreley ui --help,Add the preflight control flags and normalize the heading.,medium,ops,fixed
+docs/script/run_worker.md,config_drift,uv run loreley worker --help; loreley/config.py,"Refresh required settings, including global goal and conditional OpenAI requirements.",high,ops,fixed
+docs/script/status.md,audit_only,manual_audit,No change required.,none,ops,no_change
+docs/adr/0001-incremental-repo-state-embedding.md,audit_only,manual_audit,No change required.,none,adr-a,no_change
+docs/adr/0002-repo-state-commit-hash-only.md,audit_only,manual_audit,No change required.,none,adr-a,no_change
+docs/adr/0003-experiment-config-locking-and-dispatch.md,audit_only,manual_audit,No change required.,none,adr-a,no_change
+docs/adr/0004-loreleyignore-for-embedding-scope.md,audit_only,manual_audit,No change required.,none,adr-a,no_change
+docs/adr/0005-remove-summary-embedding-flow.md,storage_model_drift,loreley/db/models.py; docs/adr/0030-db-only-repo-state-embeddings-and-explicit-bootstrap.md,Replace the stale storage_backend detail with the current table-based persistence model.,medium,adr-a,fixed
+docs/adr/0006-auto-start-ui-api-from-ui.md,audit_only,manual_audit,No change required.,none,adr-a,no_change
+docs/adr/0007-vectorized-occupied-cell-neighborhood-sampling.md,audit_only,manual_audit,No change required.,none,adr-a,no_change
+docs/adr/0008-single-scheduler-per-experiment-lock.md,audit_only,manual_audit,No change required.,none,adr-a,no_change
+docs/adr/0009-immutable-file-embedding-cache.md,audit_only,manual_audit,No change required.,none,adr-a,no_change
+docs/adr/0010-incremental-only-repo-state-embeddings.md,audit_only,manual_audit,No change required.,none,adr-a,no_change
+docs/adr/0011-remove-max-files-cap-add-startup-approval.md,audit_only,manual_audit,No change required.,none,adr-a,no_change
+docs/adr/0012-pin-repo-state-ignore-rules.md,filename_drift;content_drift,docs/adr/index.md; loreley/core/experiments.py,Rename the file to match the title and remove the stale ignore-hash claim.,low,adr-a,renamed_and_fixed
+docs/adr/0013-remove-filter-and-prompt-signatures.md,audit_only,manual_audit,No change required.,none,adr-a,no_change
+docs/adr/0014-experiment-scoped-file-embedding-cache.md,audit_only,manual_audit,No change required.,none,adr-a,no_change
+docs/adr/0015-experiment-attached-workers-and-per-experiment-queues.md,audit_only,manual_audit,No change required.,none,adr-a,no_change
+docs/adr/0016-typer-unified-cli.md,audit_only,manual_audit,No change required.,none,adr-a,no_change
+docs/adr/0017-tenacity-openai-retries.md,audit_only,manual_audit,No change required.,none,adr-a,no_change
+docs/adr/0018-remove-legacy-script-wrappers.md,audit_only,manual_audit,No change required.,none,adr-a,no_change
+docs/adr/0019-pathspec-gitignore-matching.md,audit_only,manual_audit,No change required.,none,adr-a,no_change
+docs/adr/0020-split-agent-backends-and-extract-runner.md,audit_only,manual_audit,No change required.,none,adr-a,no_change
+docs/adr/0021-httpx-internal-http-client.md,audit_only,manual_audit,No change required.,none,adr-a,no_change
+docs/adr/0022-ui-api-client-connection-reuse.md,audit_only,manual_audit,No change required.,none,adr-a,no_change
+docs/adr/0023-lock-experiment-behavior-keyset-and-settings-injection.md,audit_only,manual_audit,No change required.,none,adr-a,no_change
+docs/adr/0024-env-only-settings-no-experiment-snapshot.md,audit_only,manual_audit,No change required.,none,adr-a,no_change
+docs/adr/0025-explicit-experiment-id-env-only-and-drop-legacy-snapshot.md,tenancy_model_drift,docs/adr/0027-single-tenant-db-and-instance-metadata.md,Clarify that separate experiments require separate databases and that EXPERIMENT_ID is only a namespace.,medium,adr-a,fixed
+docs/adr/0026-experiment-id-as-naming-namespace.md,audit_only,manual_audit,No change required.,none,adr-a,no_change
+docs/adr/0027-single-tenant-db-and-instance-metadata.md,audit_only,manual_audit,No change required.,none,adr-a,no_change
+docs/adr/0028-unify-git-commit-availability-and-fail-fast-best-branch.md,audit_only,manual_audit,No change required.,none,adr-a,no_change
+docs/adr/0029-pydantic-from-attributes-ui-api-schemas.md,adr_number_conflict,git_history; docs/adr/index.md,Renumber the later duplicate 0022 ADR to 0029 and align the document title and references.,high,main,renamed_and_fixed
+docs/adr/0030-db-only-repo-state-embeddings-and-explicit-bootstrap.md,audit_only,manual_audit,No change required.,none,adr-b,no_change
+docs/adr/0031-scheduler-ingestion-fail-soft-and-backoff.md,audit_only,manual_audit,No change required.,none,adr-b,no_change
+docs/adr/0032-simplify-worker-prompts-freeform-default.md,title_drift,docs/adr/index.md,Align the ADR title with the file name and current index entry.,low,adr-b,fixed
+docs/adr/0033-remove-schema-validation-and-simplify-agent-outputs.md,audit_only,manual_audit,No change required.,none,adr-b,no_change
+docs/adr/0034-kilocode-cli-agent-backend.md,title_drift;binary_naming_drift,docs/adr/index.md; loreley/config.py,Normalize the ADR title format and use the current Kilocode naming while keeping the `kilo` binary explicit.,low,adr-b,fixed
+docs/adr/0035-default-agent-backend-kilocode.md,binary_naming_drift,docs/adr/0034-kilocode-cli-agent-backend.md; loreley/config.py,Use the current Kilocode CLI naming in the ADR text.,low,adr-b,fixed
+docs/adr/0036-single-source-of-truth-for-worker-commits.md,audit_only,manual_audit,No change required.,none,adr-b,no_change
+docs/adr/0037-sampler-lightweight-cell-commit-sampling.md,audit_only,manual_audit,No change required.,none,adr-b,no_change
+docs/adr/0038-worker-planning-context-batch-db-loading.md,audit_only,manual_audit,No change required.,none,adr-b,no_change
+docs/adr/0039-pca-epochs-and-archive-rebuild-on-refit.md,audit_only,manual_audit,No change required.,none,adr-b,no_change
+docs/adr/0040-delay-map-elites-archive-until-initial-pca-fit.md,audit_only,manual_audit,No change required.,none,adr-b,no_change
+docs/adr/0041-map-elites-manager-module-split.md,audit_only,manual_audit,No change required.,none,adr-b,no_change
+docs/adr/0042-sampled-ingest-logs-and-tty-progress.md,audit_only,manual_audit,No change required.,none,adr-b,no_change
+docs/adr/0043-cache-pca-history-matrix.md,audit_only,manual_audit,No change required.,none,adr-b,no_change
+docs/adr/0044-repo-state-embedding-must-not-truncate-cache-misses.md,audit_only,manual_audit,No change required.,none,adr-b,no_change
+docs/adr/0045-config-profiles-for-large-repo-campaigns.md,audit_only,manual_audit,No change required.,none,adr-b,no_change
+docs/adr/index.md,discoverability;reference_sync,docs/adr/*.md,Add an ADR index page and keep links aligned with the renumbered and renamed ADRs.,medium,main,added
+examples/circle-packing/README.md,evaluation_contract_drift;heading_cleanup,examples/circle-packing/evaluate.py; examples/circle-packing/runner.py,"Document determinism, runtime budget defaults, and the actual helper-file layout.",medium,entry,fixed
+examples/circle_packing_env/README.md,evaluation_contract_drift;usage_drift,examples/circle_packing_env/evaluate.py; examples/circle_packing_env/local_eval.py,"Explain the fixed evaluation target, runtime budget behavior, and the correct local-eval entrypoint.",medium,entry,fixed

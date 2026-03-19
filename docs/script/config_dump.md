@@ -14,4 +14,4 @@ It prints the active configuration to standard output (JSON by default), includi
 
 - `--json`: Print effective settings as JSON (default).
 - `--yaml`: Print effective settings as YAML.
-- `--no-mask-secrets`: Disable automatic redaction of credentials, URLs, and API keys. Use with caution.
+- `--mask-secrets` / `--no-mask-secrets`: Enable or disable automatic redaction of credentials, URLs, and API keys. Masking is enabled by default.

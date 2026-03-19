@@ -17,8 +17,13 @@ Minimum required settings for a functional worker are:
 - `MAPELITES_EXPERIMENT_ROOT_COMMIT`
 - `WORKER_REPO_REMOTE_URL`
 - `WORKER_EVALUATOR_PLUGIN`
+- `WORKER_EVOLUTION_GLOBAL_GOAL`
 
 You also need database and Redis connectivity (`DATABASE_URL`, `TASKS_REDIS_URL`), and a planning/coding backend binary (defaults to the Kilocode CLI via `kilo` on `PATH`).
+
+If `MAPELITES_CODE_EMBEDDING_MODEL` is not a `local-hash` variant, or trajectory
+summarization is enabled, preflight also requires `OPENAI_API_KEY` or
+`LORELEY_LLM_API_KEY`.
 
 ## Options
 

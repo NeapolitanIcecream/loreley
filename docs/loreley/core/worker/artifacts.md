@@ -26,7 +26,7 @@ Where `<base>` is `<LOGS_BASE_DIR>` when set, and `<cwd>` otherwise. The experim
 - `evaluation.json`
 - `evaluation_logs.txt`
 
-It returns a dict of absolute paths which the worker upserts into the `job_artifacts` table.
+It returns a dict of absolute paths. `EvolutionJobStore.persist_success()` later persists those paths by inserting a `JobArtifacts` row with `session.add(...)`.
 
 ## API access (optional UI API)
 
@@ -49,5 +49,4 @@ Supported keys:
 ## Failure handling
 
 Writing artifacts is best-effort: if the artifact store fails, the worker still persists the hot-path job result and logs a warning.
-
 

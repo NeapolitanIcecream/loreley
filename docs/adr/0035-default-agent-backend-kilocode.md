@@ -1,4 +1,4 @@
-# ADR 0035 — Default planning/coding backend is Kilocode
+# ADR 0035: Default planning/coding backend is Kilocode
 
 ## Status
 
@@ -14,5 +14,5 @@ Default `WORKER_PLANNING_BACKEND` and `WORKER_CODING_BACKEND` to the worker-awar
 
 ## Consequences
 
-- `kilocode` is required by default; other backends remain opt-in via `WORKER_*_BACKEND`.
+- The Kilocode CLI (`kilo`) is required by default; other backends remain opt-in via `WORKER_*_BACKEND`.
 - Debug artifacts preserve raw stdout/stderr while the persisted plan/report uses the extracted Markdown payload.

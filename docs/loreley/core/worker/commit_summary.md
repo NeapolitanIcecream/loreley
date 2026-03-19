@@ -5,6 +5,7 @@ Commit summarisation utilities used by the evolution worker to derive concise gi
 ## Domain types and errors
 
 - **`CommitSummaryError`**: runtime error raised when the summariser cannot produce a subject line (for example, due to API errors, empty model output, or repeated failures across retries).
+- **`CommitSummaryUnavailableError`**: runtime error raised when the summariser cannot initialise its OpenAI client before any request is sent.
 
 ## CommitSummarizer
 
@@ -26,12 +27,13 @@ Commit summarisation utilities used by the evolution worker to derive concise gi
 - **`generate(job, plan, coding)`**:
   - Constructs a concise prompt that includes:
     - The global job `goal`.
+    - The planning summary.
     - The coding execution summary.
-    - Up to five per-step outcomes (step IDs, statuses, summaries) when available.
-  - Calls the `OpenAI` responses API with the configured model, temperature, and token limit, plus an `instructions` string that asks for a single imperative git subject bounded by `WORKER_EVOLUTION_COMMIT_SUBJECT_MAX_CHARS` (minimum 32; enforced both in the prompt and when normalising the final subject).
+    - A truncated excerpt of the coding report Markdown.
+  - Calls the configured OpenAI API surface (`responses` or `chat_completions`) with the configured model, temperature, and token limit, plus an `instructions` string that asks for a single imperative git subject bounded by `WORKER_EVOLUTION_COMMIT_SUBJECT_MAX_CHARS` (minimum 32; enforced both in the prompt and when normalising the final subject).
   - Retries up to `_max_retries` times on `OpenAIError` or `CommitSummaryError`, waiting for `retry_backoff * attempt` seconds between attempts, regardless of whether Responses or Chat Completions is selected.
   - On success, strips and normalises whitespace, then enforces the subject character limit via `_normalise_subject()`, logging the attempt count via `loguru`.
-  - On exhausting retries, raises `CommitSummaryError` with a descriptive message including the number of attempts.
+  - Raises `CommitSummaryUnavailableError` if the OpenAI client cannot be initialised, and `CommitSummaryError` if request attempts are exhausted.
 
 ### Normalisation helpers
 
@@ -42,6 +44,5 @@ Commit summarisation utilities used by the evolution worker to derive concise gi
   - Collapses consecutive whitespace to single spaces and trims leading/trailing spaces.
   - If the cleaned subject exceeds `_subject_limit`, truncates it and appends an ellipsis to signal truncation.
 - **`_build_prompt(job, plan, coding)`** / **`_truncate(text, limit=None)`**:
-  - Internal helpers which format the compact prompt while bounding long summaries and step descriptions, ensuring the most relevant context is preserved for the LLM.
-
+  - Internal helpers which format the compact prompt while bounding long summaries and coding-report excerpts, ensuring the most relevant context is preserved for the LLM.
 

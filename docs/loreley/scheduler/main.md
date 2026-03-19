@@ -14,7 +14,7 @@ Central orchestration loop that keeps the Loreley evolution pipeline moving by c
   - counts unfinished jobs in the database,
   - enforces `SCHEDULER_MAX_UNFINISHED_JOBS` and the required `SCHEDULER_MAX_TOTAL_JOBS` cap,
   - calls `MapElitesSampler.schedule_job()` to produce new work, and
-  - marks rows as `QUEUED` and sends them to the `run_evolution_job` actor in priority order.
+  - sends job messages to the `run_evolution_job` actor and only then marks the corresponding rows as `QUEUED`, which avoids stuck-`QUEUED` rows when broker submission fails.
 - **MAP-Elites maintenance**: ingestion of succeeded jobs is handled by `loreley.scheduler.ingestion.MapElitesIngestion`, which:
   - scans for `SUCCEEDED` jobs that have not yet been fully ingested,
   - reads `result_commit_hash` and ensures the corresponding git commit is available locally (fetching from remotes when needed),
@@ -55,11 +55,10 @@ uv run python -m loreley.scheduler.main --once
 
 For usage and operational details, see `docs/script/run_scheduler.md`.
 
-Running the module imports `loreley.tasks.workers`, so the Dramatiq broker is configured before the first dispatch. Rich console output summarises each tick, while Loguru records detailed diagnostics for ingestion, scheduling, and dispatching via the dedicated `job_scheduler` and `ingestion` helper classes. This makes the scheduler easy to supervise either interactively or under a process manager.
+`JobScheduler` builds a sender actor for the experiment-scoped queue, and that sender path calls `loreley.tasks.broker.setup_broker(...)` before the first dispatch. Rich console output summarises each tick, while Loguru records detailed diagnostics for ingestion, scheduling, and dispatching via the dedicated `job_scheduler` and `ingestion` helper classes. This makes the scheduler easy to supervise either interactively or under a process manager.
 
 For more detailed information about these helper modules, see:
 
 - `loreley.scheduler.job_scheduler.JobScheduler` — job production and dispatch pipeline.
 - `loreley.scheduler.ingestion.MapElitesIngestion` — result ingestion, root-commit initialisation, and MAP-Elites maintenance.
-
 

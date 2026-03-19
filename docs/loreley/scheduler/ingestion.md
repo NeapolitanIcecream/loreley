@@ -19,9 +19,9 @@ from loreley.scheduler.ingestion import MapElitesIngestion
 - **Construction**: created by `EvolutionScheduler` with:
   - the shared `Settings` instance,
   - the interactive `rich` console,
-  - a `git.Repo` handle for the scheduler's repository root,
-  - the experiment-scoped `MapElitesManager`,
-  - the current `experiment` and its `repository`.
+  - the scheduler `repo_root` path,
+  - a `git.Repo` handle for that repository root,
+  - the experiment-scoped `MapElitesManager`.
 
 ### Ingesting succeeded jobs
 
@@ -97,5 +97,4 @@ pipeline:
 Separating this logic into `MapElitesIngestion` keeps the main scheduler loop
 small and clarifies the boundary between **job lifecycle** and **archive
 maintenance**.
-
 

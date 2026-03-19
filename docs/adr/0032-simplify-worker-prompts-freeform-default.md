@@ -1,4 +1,4 @@
-# ADR 0032: Simplify worker prompts; standardize on Markdown deliverables
+# ADR 0032: Simplify worker prompts; make freeform Markdown the default
 
 Date: 2026-02-03
 

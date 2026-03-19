@@ -18,9 +18,14 @@ Minimum required settings for a functional scheduler are:
 
 - `EXPERIMENT_ID`
 - `MAPELITES_EXPERIMENT_ROOT_COMMIT`
+- `MAPELITES_CODE_EMBEDDING_DIMENSIONS`
 - `SCHEDULER_MAX_TOTAL_JOBS`
+- `WORKER_EVOLUTION_GLOBAL_GOAL`
 
 You also need database and Redis connectivity (`DATABASE_URL`, `TASKS_REDIS_URL`), and a repository checkout (`SCHEDULER_REPO_ROOT`, or it falls back to `WORKER_REPO_WORKTREE` / the current directory).
+
+If `MAPELITES_CODE_EMBEDDING_MODEL` is not a `local-hash` variant, preflight also requires
+`OPENAI_API_KEY` or `LORELEY_LLM_API_KEY` for embeddings.
 
 On first start the scheduler performs a repo-state root scan at `MAPELITES_EXPERIMENT_ROOT_COMMIT`
 and requires operator approval. In non-interactive environments, pass `--yes` or set

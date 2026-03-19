@@ -10,8 +10,8 @@ This command performs quick preflight checks to reduce onboarding friction befor
 - For workers:
   - `WORKER_REPO_REMOTE_URL` is set.
   - `WORKER_EVALUATOR_PLUGIN` is set and importable (after applying `WORKER_EVALUATOR_PYTHON_PATHS`).
-  - Planning/coding backend binaries are present when using the default Kilocode CLI backend (`WORKER_KILOCODE_BIN`).
-  - Warns if `cursor-agent` is missing (only required if you use the Cursor backend).
+  - Planning/coding backend binaries are present for built-in backends (`kilo`, `codex`, `cursor-agent`).
+  - Unknown backend types fall back to a warning because binary checks are skipped.
 - For UI/API:
   - Warns if UI extras (`fastapi`, `uvicorn`, `streamlit`) are not installed.
 
@@ -26,6 +26,7 @@ Validate only one component:
 ```bash
 uv run loreley doctor --role scheduler
 uv run loreley doctor --role worker
+uv run loreley doctor --role api
 uv run loreley doctor --role ui
 ```
 
@@ -46,5 +47,4 @@ uv run loreley doctor --role all --json
 - `0`: all checks passed (warnings allowed).
 - `1`: one or more failures.
 - `2`: warnings present and `--strict` was provided.
-
 

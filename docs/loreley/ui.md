@@ -1,4 +1,4 @@
-## Streamlit UI (loreley.ui)
+# Streamlit UI (loreley.ui)
 
 Loreley ships an optional **read-only** Streamlit dashboard for observability.
 It calls the [UI API](api.md) and renders tables, charts, and commit lineage graphs.

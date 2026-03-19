@@ -25,7 +25,7 @@ This module defines Pydantic models for **consumable** fields. They are not ORM 
     - `key_files`: up to 20 paths (each max 256 chars).
     - `highlights`: 1–8 lines (each max 200 chars).
 - **`ArtifactRef`**: filesystem references to cold-path artifacts (prompts, raw outputs, logs).
-  - Stores optional absolute paths (max 1024 chars each).
+  - Stores optional bounded path strings (max 1024 chars each); the model does not validate that they are absolute.
 - **`EvolutionJobSpec`**: size-bounded job specification used by the scheduler/worker boundary.
   - Includes `goal` plus bounded lists (`constraints`, `acceptance_criteria`, `notes`, `tags`) and sampling provenance (`sampling_strategy`, radius stats, etc.).
 
@@ -34,5 +34,4 @@ This module defines Pydantic models for **consumable** fields. They are not ORM 
 - `loreley.db.models.CommitCard` stores bounded commit metadata used by the UI and planning context.
 - `loreley.db.models.JobArtifacts` stores artifact file paths produced by a worker job.
 - `loreley.db.models.EvolutionJob` stores job spec fields and ingestion tracking fields without embedding large JSON payloads.
-
 

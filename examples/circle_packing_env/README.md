@@ -1,4 +1,4 @@
-## Circle Packing Environment
+# Circle Packing Environment
 
 This directory provides the **evaluation environment** and integration glue for the
 circle packing benchmark used by Loreley.
@@ -40,20 +40,25 @@ At a high level the plugin will:
 1. Locate `solution.py` at the root of the evaluated git worktree.
 2. Load the `pack_circles()` function directly from that file using `importlib`.
 3. Call `pack_circles(26)` to obtain the list of circles.
-4. Perform geometric validity checks:
+4. Repeat the call 5 times by default to enforce determinism and measure runtime
+   (`CIRCLE_PACKING_RUNTIME_RUNS` can override the repeat count).
+5. Perform geometric validity checks:
    - All elements are length-3 iterables of real numbers.
    - `r > 0` for every circle.
    - Circles stay within the unit square: `r <= x <= 1 - r` and `r <= y <= 1 - r`.
    - No two circles overlap: the distance between any pair of centres is at least
      the sum of their radii (within a small numerical tolerance).
-5. Compute:
+6. Reject non-deterministic implementations and enforce a default p50 runtime budget
+   of 250 ms (`CIRCLE_PACKING_RUNTIME_BUDGET_MS` can override the threshold).
+7. Compute:
    - `sum_radii` – main objective (higher is better).
    - `packing_density` – total area of all circles inside the unit square (secondary metric).
    - `num_circles` – number of circles (for sanity checking, higher is better).
-6. Return an `EvaluationResult`-compatible mapping with:
+   - `runtime_p50_ms` – median wall-clock runtime across repeated runs (lower is better).
+8. Return an `EvaluationResult`-compatible mapping with:
    - A human-readable `summary`.
-   - The two metrics above.
-   - A list of `tests_executed`.
+   - The metrics above.
+   - A list of `tests_executed`, including determinism and runtime-budget checks.
    - Textual `logs` describing what happened.
 
 Logging uses **Loguru** for structured logs and **Rich** for coloured console output,
@@ -94,8 +99,13 @@ project) without starting the full worker:
 uv run python examples/circle_packing_env/evaluate.py
 ```
 
-This will treat `examples/circle-packing` (or whichever worktree you configure) as the
-candidate repository, load its current `solution.py`, and print a summary of the
-computed metrics to the console using Rich formatting.
+This command always evaluates `examples/circle-packing` as the candidate repository.
+If you want to point at a different worktree, use:
 
+```bash
+uv run python examples/circle_packing_env/local_eval.py --repo-root /abs/path/to/repo
+```
+
+Both entrypoints load `solution.py`, run the geometric checks, and print a summary of
+the computed metrics to the console.
 

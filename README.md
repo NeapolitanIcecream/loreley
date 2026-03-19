@@ -1,8 +1,8 @@
 ## Loreley
 
-> Whole-repository Quality‑Diversity optimization for real git codebases.
+> Whole-repository Quality-Diversity optimization for real git codebases.
 
-Loreley is a distributed system that **evolves entire git repositories** (the unit of search is a git commit). It continuously samples base commits, asks external planning/coding agents to implement repo-wide changes, evaluates the result with your evaluator, and stores metrics plus a MAP‑Elites archive in Postgres for later sampling and reuse.
+Loreley is a distributed system that **evolves entire git repositories** (the unit of search is a git commit). It continuously samples base commits, asks external planning and coding agents to implement repo-wide changes, evaluates the result with your evaluator, and stores metrics plus a MAP-Elites archive in Postgres for later sampling and reuse.
 
 ![](./docs/assets/loreley.svg)
 
@@ -31,15 +31,14 @@ cp env.example .env
 # - EXPERIMENT_ID=<uuid or slug>
 # - SCHEDULER_MAX_TOTAL_JOBS=<positive integer>
 # - OPENAI_API_KEY
+# - MAPELITES_CODE_EMBEDDING_DIMENSIONS=<positive integer>
 # - MAPELITES_EXPERIMENT_ROOT_COMMIT=<git commit hash>
 # - WORKER_REPO_REMOTE_URL=<git remote URL with push access>
 # - WORKER_EVALUATOR_PLUGIN=module:callable
-#
-# Recommended:
-# - SCHEDULER_REPO_ROOT=/abs/path/to/your/target-git-checkout
 # - WORKER_EVOLUTION_GLOBAL_GOAL="..."
 #
 # Optional:
+# - SCHEDULER_REPO_ROOT=/abs/path/to/your/target-git-checkout
 # - WORKER_KILOCODE_BIN=kilo
 # - WORKER_KILOCODE_AGENT=<agent name>
 # - WORKER_EVALUATOR_PYTHON_PATHS=["/abs/path/to/plugin_dir"]
@@ -62,7 +61,8 @@ uv run loreley ui
 
 ### Documentation
 
-- [`docs/index.md`](docs/index.md) (local)
-- [Online docs](https://NeapolitanIcecream.github.io/loreley/)
-- Key guides: [`docs/loreley/config.md`](docs/loreley/config.md), [`docs/script/run_scheduler.md`](docs/script/run_scheduler.md), [`docs/script/run_worker.md`](docs/script/run_worker.md)
-
+- Local overview: [`docs/index.md`](docs/index.md)
+- Online docs: [NeapolitanIcecream.github.io/loreley](https://NeapolitanIcecream.github.io/loreley/)
+- Quickstart guides: [`docs/loreley/config.md`](docs/loreley/config.md), [`docs/script/run_scheduler.md`](docs/script/run_scheduler.md), [`docs/script/run_worker.md`](docs/script/run_worker.md)
+- Operational commands: [`docs/script/status.md`](docs/script/status.md), [`docs/script/config_dump.md`](docs/script/config_dump.md), [`docs/script/archive_stats.md`](docs/script/archive_stats.md)
+- Architecture decisions: [`docs/adr/index.md`](docs/adr/index.md)

@@ -7,7 +7,6 @@ Status: Superseded by ADR 0025.
 Decision
 
 Loreley pins repo-root ignore rules at scheduler startup (from the configured root
-commit) and stores the ignore text + hash in process-local `Settings` for the
+commit) and stores the ignore text in process-local `Settings` for the
 lifetime of the scheduler process. The database does not persist ignore rules as
 an experiment settings snapshot.
-

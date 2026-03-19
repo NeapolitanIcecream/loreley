@@ -42,5 +42,5 @@ The simplest and most legible model is:
 
 - Operators must keep environment variables consistent across scheduler/worker/UI processes that share the same database.
 - Schema changes are applied via destructive resets (dev/upgrade workflow): `uv run loreley reset-db --yes`.
-- Multiple experiments for the same repository are supported by choosing different `EXPERIMENT_ID` values (explicit namespaces).
-
+- A single database still represents a single experiment. To run multiple experiments for the same repository, use separate Postgres databases.
+- `EXPERIMENT_ID` namespaces processes and external resources within that single-tenant database; it does not multiplex multiple experiments inside one DB.

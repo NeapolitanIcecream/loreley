@@ -1,4 +1,4 @@
-## UI API (FastAPI)
+# UI API (FastAPI)
 
 Loreley ships an optional **read-only** HTTP API used by the Streamlit dashboard.
 The implementation lives in `loreley/api` and is intentionally scoped to observability:
@@ -51,13 +51,16 @@ FastAPI also exposes OpenAPI docs by default:
 - `GET /health`
 - `GET /instance`
 - `GET /jobs`
+- `GET /jobs/page`
 - `GET /jobs/{job_id}`
 - `GET /jobs/{job_id}/artifacts`
 - `GET /jobs/{job_id}/artifacts/{artifact_key}`
 - `GET /commits`
+- `GET /commits/page`
 - `GET /commits/{commit_hash}`
 - `GET /archive/islands`
 - `GET /archive/records`
+- `GET /archive/records/page`
 - `GET /archive/snapshot_meta`
 - `GET /graphs/commit_lineage`
 - `GET /logs`
@@ -71,4 +74,3 @@ FastAPI also exposes OpenAPI docs by default:
   - `GET /jobs/{job_id}/artifacts` as an index of available URLs
   - `GET /jobs/{job_id}/artifacts/{artifact_key}` for direct downloads
   Supported keys: `planning_prompt`, `planning_raw_output`, `planning_plan_json`, `coding_prompt`, `coding_raw_output`, `coding_execution_json`, `evaluation_json`, `evaluation_logs`.
-
