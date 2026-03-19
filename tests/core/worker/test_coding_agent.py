@@ -147,6 +147,38 @@ def test_coding_agent_unwraps_json_stdout_and_preserves_markdown(
     assert response.raw_output.strip().startswith("{")
 
 
+def test_coding_agent_unwraps_jsonl_stdout_and_preserves_markdown(
+    tmp_path: Path,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    markdown = """## Summary
+- Implemented the change.
+
+## Changes
+- Updated `file.py`
+"""
+    backend = _DummyBackend(
+        "\n".join(
+            [
+                json.dumps({"event": "started", "message": "coding"}),
+                json.dumps({"event": "completed", "output": markdown}),
+            ]
+        )
+    )
+    agent = CodingAgent(settings=settings, backend=backend)
+
+    states = iter([("clean",), ("dirty",)])
+    monkeypatch.setattr(agent, "_snapshot_worktree_state", lambda _w: next(states, ("dirty",)))
+    monkeypatch.setattr(agent, "_dump_debug_artifact", lambda **_kwargs: None)
+
+    request = _make_request()
+    response = agent.implement(request, working_dir=tmp_path)
+
+    assert response.report.markdown.strip() == markdown.strip()
+    assert response.raw_output.strip().startswith('{"event"')
+
+
 def test_coding_agent_raises_when_no_changes_after_attempts(
     tmp_path: Path,
     settings: Settings,

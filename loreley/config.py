@@ -278,15 +278,27 @@ class Settings(BaseSettings):
         alias="WORKER_CURSOR_FORCE",
     )
     worker_kilocode_bin: str = Field(
-        default="kilocode",
+        default="kilo",
         alias="WORKER_KILOCODE_BIN",
     )
     worker_kilocode_mode: str | None = Field(
         default=None,
         alias="WORKER_KILOCODE_MODE",
     )
+    worker_kilocode_agent: str | None = Field(
+        default=None,
+        alias="WORKER_KILOCODE_AGENT",
+    )
+    worker_kilocode_model: str | None = Field(
+        default=None,
+        alias="WORKER_KILOCODE_MODEL",
+    )
+    worker_kilocode_variant: str | None = Field(
+        default=None,
+        alias="WORKER_KILOCODE_VARIANT",
+    )
     worker_kilocode_json_output: bool = Field(
-        default=True,
+        default=False,
         alias="WORKER_KILOCODE_JSON_OUTPUT",
     )
     worker_kilocode_openai_api_spec: Literal["responses", "chat_completions"] | None = Field(
@@ -793,6 +805,9 @@ class Settings(BaseSettings):
             "worker_coding_timeout_seconds": self.worker_coding_timeout_seconds,
             "worker_cursor_model": self.worker_cursor_model,
             "worker_kilocode_mode": self.worker_kilocode_mode,
+            "worker_kilocode_agent": self.worker_kilocode_agent,
+            "worker_kilocode_model": self.worker_kilocode_model,
+            "worker_kilocode_variant": self.worker_kilocode_variant,
             "worker_kilocode_json_output": self.worker_kilocode_json_output,
             "worker_kilocode_openai_api_spec": self.worker_kilocode_openai_api_spec,
             "worker_kilocode_openai_base_url": _maybe_url(self.worker_kilocode_openai_base_url),

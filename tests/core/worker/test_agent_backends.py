@@ -546,8 +546,10 @@ def test_import_order_is_safe_for_agent_backends_without_reexports() -> None:
     assert result.returncode == 0, result.stderr or result.stdout
 
 
-def test_kilocode_cli_backend_builds_auto_command(tmp_path: Path, monkeypatch) -> None:
-    """KilocodeCliBackend constructs ``kilocode --auto`` with prompt as positional arg."""
+def test_kilocode_cli_backend_builds_run_command_with_passthrough_flags(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """KilocodeCliBackend constructs ``kilo run --auto`` with prompt as positional arg."""
     repo_dir = tmp_path / "repo"
     (repo_dir / ".git").mkdir(parents=True)
 
@@ -560,8 +562,10 @@ def test_kilocode_cli_backend_builds_auto_command(tmp_path: Path, monkeypatch) -
     monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
 
     backend = KilocodeCliBackend(
-        bin="kilocode",
-        mode="code",
+        bin="kilo",
+        model="openai/gpt-5.4",
+        agent="architect",
+        variant="high",
         timeout_seconds=60,
         extra_env={"KEY": "val"},
         json_output=True,
@@ -572,10 +576,12 @@ def test_kilocode_cli_backend_builds_auto_command(tmp_path: Path, monkeypatch) -
     invocation = backend.run(task, working_dir=repo_dir)
 
     command_list = list(invocation.command)
-    assert command_list[0] == "kilocode"
+    assert command_list[:3] == ["kilo", "run", "--auto"]
     assert "--auto" in command_list
-    assert "--json" in command_list
-    assert "--mode" in command_list and "code" in command_list
+    assert "--format" in command_list and "json" in command_list
+    assert "--agent" in command_list and "architect" in command_list
+    assert "--model" in command_list and "openai/gpt-5.4" in command_list
+    assert "--variant" in command_list and "high" in command_list
     assert "implement feature X" in command_list
     assert captured["cwd"] == str(repo_dir.resolve())
     assert captured["env"] and captured["env"]["KEY"] == "val"
@@ -585,7 +591,7 @@ def test_kilocode_cli_backend_builds_auto_command(tmp_path: Path, monkeypatch) -
 def test_kilocode_cli_backend_omits_optional_flags_when_disabled(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """Omits --json and --mode when not configured."""
+    """Omits optional passthrough flags when not configured."""
     repo_dir = tmp_path / "repo"
     (repo_dir / ".git").mkdir(parents=True)
 
@@ -595,8 +601,7 @@ def test_kilocode_cli_backend_omits_optional_flags_when_disabled(
     monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
 
     backend = KilocodeCliBackend(
-        bin="kilocode",
-        mode=None,
+        bin="kilo",
         timeout_seconds=60,
         extra_env={},
         json_output=False,
@@ -607,24 +612,33 @@ def test_kilocode_cli_backend_omits_optional_flags_when_disabled(
     invocation = backend.run(task, working_dir=repo_dir)
 
     command_list = list(invocation.command)
-    assert "--json" not in command_list
-    assert "--mode" not in command_list
+    assert command_list[:3] == ["kilo", "run", "--auto"]
+    assert "--format" not in command_list
+    assert "--agent" not in command_list
+    assert "--model" not in command_list
+    assert "--variant" not in command_list
     assert "--auto" in command_list
     assert "plan something" in command_list
 
 
-def test_kilocode_cli_backend_raises_on_nonzero_exit(tmp_path: Path, monkeypatch) -> None:
-    """Non-zero exit code from kilocode produces an error with stderr context."""
+def test_kilocode_cli_backend_raises_on_nonzero_exit_with_stdout_and_stderr_context(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Non-zero exit code from kilo includes both stderr and stdout snippets."""
     repo_dir = tmp_path / "repo"
     (repo_dir / ".git").mkdir(parents=True)
 
     def fake_run(*_args, **_kwargs):  # noqa: ANN001, ANN002
-        return types.SimpleNamespace(stdout="", stderr="connection failed", returncode=1)
+        return types.SimpleNamespace(
+            stdout='{"event":"error","message":"permission denied"}',
+            stderr="connection failed",
+            returncode=1,
+        )
 
     monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
 
     backend = KilocodeCliBackend(
-        bin="kilocode",
+        bin="kilo",
         timeout_seconds=10,
         extra_env={},
         error_cls=RuntimeError,
@@ -632,8 +646,12 @@ def test_kilocode_cli_backend_raises_on_nonzero_exit(tmp_path: Path, monkeypatch
 
     task = AgentTask(name="coding", prompt="run")
 
-    with pytest.raises(RuntimeError, match="exit code 1"):
+    with pytest.raises(RuntimeError, match="exit code 1") as exc_info:
         backend.run(task, working_dir=repo_dir)
+
+    message = str(exc_info.value)
+    assert "stderr: connection failed" in message
+    assert 'stdout: {"event":"error","message":"permission denied"}' in message
 
 
 def test_kilocode_cli_backend_raises_on_timeout(tmp_path: Path, monkeypatch) -> None:
@@ -647,7 +665,7 @@ def test_kilocode_cli_backend_raises_on_timeout(tmp_path: Path, monkeypatch) -> 
     monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
 
     backend = KilocodeCliBackend(
-        bin="kilocode",
+        bin="kilo",
         timeout_seconds=5,
         extra_env={},
         error_cls=RuntimeError,
@@ -672,7 +690,7 @@ def test_kilocode_cli_backend_warns_on_empty_stdout(
     monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
 
     backend = KilocodeCliBackend(
-        bin="kilocode",
+        bin="kilo",
         timeout_seconds=10,
         extra_env={},
         error_cls=RuntimeError,
@@ -691,8 +709,10 @@ def test_kilocode_backend_factory_uses_env_settings(monkeypatch: pytest.MonkeyPa
 
     get_settings.cache_clear()
     monkeypatch.setenv("WORKER_KILOCODE_BIN", "/usr/local/bin/kilo")
-    monkeypatch.setenv("WORKER_KILOCODE_MODE", "architect")
-    monkeypatch.setenv("WORKER_KILOCODE_JSON_OUTPUT", "false")
+    monkeypatch.setenv("WORKER_KILOCODE_AGENT", "architect")
+    monkeypatch.setenv("WORKER_KILOCODE_MODEL", "openai/gpt-5.4")
+    monkeypatch.setenv("WORKER_KILOCODE_VARIANT", "high")
+    monkeypatch.setenv("WORKER_KILOCODE_JSON_OUTPUT", "true")
     monkeypatch.setenv("WORKER_KILOCODE_OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("WORKER_KILOCODE_OPENAI_BASE_URL", "https://example.invalid/v1")
     monkeypatch.setenv("WORKER_KILOCODE_OPENAI_MODEL", "gpt-4o-mini")
@@ -702,12 +722,78 @@ def test_kilocode_backend_factory_uses_env_settings(monkeypatch: pytest.MonkeyPa
 
     assert isinstance(backend, KilocodeCliBackend)
     assert backend.bin == "/usr/local/bin/kilo"
-    assert backend.mode == "architect"
-    assert backend.json_output is False
+    assert backend.agent == "architect"
+    assert backend.model == "openai/gpt-5.4"
+    assert backend.variant == "high"
+    assert backend.json_output is True
     assert backend.extra_env["KILO_PROVIDER_TYPE"] == "openai"
     assert backend.extra_env["KILO_OPENAI_API_KEY"] == "sk-test"
     assert backend.extra_env["KILO_OPENAI_BASE_URL"] == "https://example.invalid/v1"
     assert backend.extra_env["KILO_OPENAI_MODEL_ID"] == "gpt-4o-mini"
+
+    get_settings.cache_clear()
+
+
+def test_kilocode_backend_factory_falls_back_to_global_openai_aliases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Global OPENAI/LORELEY aliases feed the Kilo provider env when worker-specific values are absent."""
+    from loreley.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.delenv("WORKER_KILOCODE_OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("WORKER_KILOCODE_OPENAI_BASE_URL", raising=False)
+    monkeypatch.delenv("WORKER_KILOCODE_OPENAI_API_SPEC", raising=False)
+    monkeypatch.setenv("LORELEY_LLM_API_KEY", "sk-alias")
+    monkeypatch.setenv("LORELEY_LLM_BASE_URL", "https://alias.example.com/v1")
+    monkeypatch.setenv("OPENAI_API_SPEC", "chat_completions")
+    get_settings.cache_clear()
+
+    backend = kilocode_backend()
+
+    assert backend.extra_env["KILO_PROVIDER_TYPE"] == "openai"
+    assert backend.extra_env["KILO_OPENAI_API_KEY"] == "sk-alias"
+    assert backend.extra_env["KILO_OPENAI_BASE_URL"] == "https://alias.example.com/v1"
+
+    get_settings.cache_clear()
+
+
+def test_kilocode_backend_factory_prefers_worker_specific_openai_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Worker-specific Kilo config wins over the global OpenAI-compatible aliases."""
+    from loreley.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("LORELEY_LLM_API_KEY", "sk-global")
+    monkeypatch.setenv("LORELEY_LLM_BASE_URL", "https://global.example.com/v1")
+    monkeypatch.setenv("WORKER_KILOCODE_OPENAI_API_KEY", "sk-worker")
+    monkeypatch.setenv("WORKER_KILOCODE_OPENAI_BASE_URL", "https://worker.example.com/v1")
+    monkeypatch.setenv("WORKER_KILOCODE_OPENAI_API_SPEC", "responses")
+    get_settings.cache_clear()
+
+    backend = kilocode_backend()
+
+    assert backend.extra_env["KILO_PROVIDER_TYPE"] == "openai-responses"
+    assert backend.extra_env["KILO_OPENAI_API_KEY"] == "sk-worker"
+    assert backend.extra_env["KILO_OPENAI_BASE_URL"] == "https://worker.example.com/v1"
+
+    get_settings.cache_clear()
+
+
+def test_kilocode_backend_factory_maps_legacy_mode_to_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """WORKER_KILOCODE_MODE remains a backward-compatible alias for the agent selector."""
+    from loreley.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("WORKER_KILOCODE_MODE", "debug")
+    get_settings.cache_clear()
+
+    backend = kilocode_backend()
+
+    assert backend.agent == "debug"
 
     get_settings.cache_clear()
 

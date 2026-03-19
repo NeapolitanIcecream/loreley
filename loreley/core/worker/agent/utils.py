@@ -90,11 +90,6 @@ def coerce_agent_stdout_text(stdout: str) -> str:
     if not raw.startswith(("{", "[")):
         return raw
 
-    try:
-        payload: Any = json.loads(raw)
-    except Exception:
-        return raw
-
     def _score(candidate: str) -> int:
         text = (candidate or "").strip()
         if not text:
@@ -128,6 +123,29 @@ def coerce_agent_stdout_text(stdout: str) -> str:
         "answer",
     )
 
+    def _parse_payload(text: str) -> Any | None:
+        try:
+            return json.loads(text)
+        except Exception:
+            pass
+
+        parsed_lines: list[Any] = []
+        for line in text.splitlines():
+            candidate = line.strip()
+            if not candidate or not candidate.startswith(("{", "[")):
+                continue
+            try:
+                parsed_lines.append(json.loads(candidate))
+            except Exception:
+                continue
+        if parsed_lines:
+            return parsed_lines
+        return None
+
+    payload = _parse_payload(raw)
+    if payload is None:
+        return raw
+
     def _best_text(value: Any, *, depth: int) -> str:
         if depth <= 0:
             return ""
@@ -159,7 +177,18 @@ def coerce_agent_stdout_text(stdout: str) -> str:
         return ""
 
     extracted = _best_text(payload, depth=7).strip()
+    if isinstance(payload, list):
+        fragments: list[str] = []
+        last_fragment = ""
+        for item in payload:
+            fragment = _best_text(item, depth=6).strip()
+            if not fragment or fragment == last_fragment:
+                continue
+            fragments.append(fragment)
+            last_fragment = fragment
+        joined_fragments = "\n".join(fragments).strip()
+        if _score(joined_fragments) > _score(extracted):
+            extracted = joined_fragments
     if extracted and _score(extracted) >= 0:
         return extracted
     return raw
-
