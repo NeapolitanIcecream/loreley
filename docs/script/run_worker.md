@@ -18,7 +18,9 @@ Minimum required settings for a functional worker are:
 - `WORKER_REPO_REMOTE_URL`
 - `WORKER_EVALUATOR_PLUGIN`
 
-You also need database and Redis connectivity (`DATABASE_URL`, `TASKS_REDIS_URL`), and a planning/coding backend binary (defaults to the Kilocode CLI via `kilocode` on `PATH`).
+You also need database and Redis connectivity (`DATABASE_URL`, `TASKS_REDIS_URL`), a non-empty evolution goal (the code ships a generic default, but real runs should set `WORKER_EVOLUTION_GLOBAL_GOAL` explicitly), and a planning/coding backend binary (current default: the Kilo CLI via `kilo` on `PATH`, configurable with `WORKER_KILOCODE_BIN`).
+
+Under the default embedding / trajectory settings, worker preflight also expects `OPENAI_API_KEY`. That requirement is lifted only when you switch to local-hash embeddings and disable trajectory summaries with `WORKER_PLANNING_TRAJECTORY_MAX_CHUNKS=0`.
 
 ## Options
 

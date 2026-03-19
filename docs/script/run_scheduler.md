@@ -18,13 +18,20 @@ Minimum required settings for a functional scheduler are:
 
 - `EXPERIMENT_ID`
 - `MAPELITES_EXPERIMENT_ROOT_COMMIT`
+- `MAPELITES_CODE_EMBEDDING_DIMENSIONS`
 - `SCHEDULER_MAX_TOTAL_JOBS`
 
-You also need database and Redis connectivity (`DATABASE_URL`, `TASKS_REDIS_URL`), and a repository checkout (`SCHEDULER_REPO_ROOT`, or it falls back to `WORKER_REPO_WORKTREE` / the current directory).
+You also need database and Redis connectivity (`DATABASE_URL`, `TASKS_REDIS_URL`), a non-empty evolution goal (the code ships a generic default, but real runs should set `WORKER_EVOLUTION_GLOBAL_GOAL` explicitly), and a repository checkout. In practice, set `SCHEDULER_REPO_ROOT` explicitly on first cold start: if it is unset, the scheduler falls back to `WORKER_REPO_WORKTREE`, which often is not a git repo yet before any worker prepares a base clone.
+
+Under the default embedding settings, scheduler preflight also expects `OPENAI_API_KEY`. That requirement is lifted when you switch to a `local-hash...` embedding model.
 
 On first start the scheduler performs a repo-state root scan at `MAPELITES_EXPERIMENT_ROOT_COMMIT`
 and requires operator approval. In non-interactive environments, pass `--yes` or set
 `SCHEDULER_STARTUP_APPROVE=true`.
+
+At the end of a bounded run, the scheduler force-updates a **local** branch
+`evolution/best/<experiment>` inside `SCHEDULER_REPO_ROOT`. It does not auto-push
+that branch to the remote.
 
 ## Options
 

@@ -5,7 +5,7 @@ Central orchestration loop that keeps the Loreley evolution pipeline moving by c
 ## EvolutionScheduler
 
 - **Purpose**: continuously monitors unfinished jobs (`pending`, `queued`, `running`), schedules new work from the MAP-Elites archive when capacity allows, dispatches pending jobs to the Dramatiq `run_evolution_job` actor, and backfills the archive with freshly evaluated commits.
-- **Construction**: `EvolutionScheduler(settings=None)` loads `loreley.config.Settings`, resolves the target repository root (preferring `SCHEDULER_REPO_ROOT` and falling back to `WORKER_REPO_WORKTREE`), initialises a `git` repository handle, bootstraps the instance via `loreley.core.experiments.bootstrap_instance()` (pins repo-root ignore rules for the scheduler lifetime and validates `InstanceMetadata`), and acquires a Postgres advisory lock derived from `EXPERIMENT_ID`. It performs a startup scan of eligible repo-state files at the experiment root commit and requires **interactive operator approval** (y/n), wires `MapElitesManager` plus `MapElitesSampler`, and delegates root-commit registration, repo-state bootstrap, and baseline evaluation to `loreley.scheduler.ingestion.MapElitesIngestion`.
+- **Construction**: `EvolutionScheduler(settings=None)` loads `loreley.config.Settings`, resolves the target repository root (preferring `SCHEDULER_REPO_ROOT` and falling back to `WORKER_REPO_WORKTREE`), initialises a `git` repository handle, bootstraps the instance via `loreley.core.experiments.bootstrap_instance()` (pins repo-root ignore rules for the scheduler lifetime and validates `InstanceMetadata`), and acquires a Postgres advisory lock derived from `EXPERIMENT_ID`. In practice, operators should set `SCHEDULER_REPO_ROOT` explicitly on first cold start because the fallback `WORKER_REPO_WORKTREE` path often is not yet a git repository before any worker prepares a base clone. It performs a startup scan of eligible repo-state files at the experiment root commit and requires **interactive operator approval** (y/n), wires `MapElitesManager` plus `MapElitesSampler`, and delegates root-commit registration, repo-state bootstrap, and baseline evaluation to `loreley.scheduler.ingestion.MapElitesIngestion`.
 - **Lifecycle**:
   1. `tick()` runs the ingest → dispatch → measure → seed → schedule pipeline and logs a concise summary for observability. Ingestion is isolated per job so failed ingestions are recorded and do not abort the scheduler loop.
   2. `run_forever()` installs `SIGINT`/`SIGTERM` handlers, runs `tick()` at the configured poll interval, and keeps looping until interrupted.
@@ -26,10 +26,10 @@ Central orchestration loop that keeps the Loreley evolution pipeline moving by c
 The scheduler consumes the following `Settings` fields (all exposed as environment variables):
 
 - `EXPERIMENT_ID`: required experiment id (UUID or slug) used for task queue naming and the scheduler advisory lock. The database itself is single-tenant and identified by `DATABASE_URL` plus `InstanceMetadata`.
-- `SCHEDULER_REPO_ROOT`: optional path to a read-only clone of the evolved repository; defaults to `WORKER_REPO_WORKTREE`.
+- `SCHEDULER_REPO_ROOT`: optional path to a read-only clone of the evolved repository; defaults to `WORKER_REPO_WORKTREE`. In practice, set it explicitly on first cold start.
 - `SCHEDULER_POLL_INTERVAL_SECONDS`: delay between scheduler ticks (default: `30` seconds).
 - `SCHEDULER_MAX_UNFINISHED_JOBS`: hard cap on the number of jobs that are not yet finished (`pending`, `queued`, `running`).
-- `SCHEDULER_MAX_TOTAL_JOBS`: **required** cap on the total number of `EvolutionJob` rows in the database. The scheduler stops once the cap is reached and all jobs are finished, then updates the best-fitness branch deliverable.
+- `SCHEDULER_MAX_TOTAL_JOBS`: **required** cap on the total number of `EvolutionJob` rows in the database. The scheduler stops once the cap is reached and all jobs are finished, then updates the best-fitness branch deliverable as a **local** branch `evolution/best/<experiment>` inside `SCHEDULER_REPO_ROOT` (not auto-pushed).
 - `SCHEDULER_SCHEDULE_BATCH_SIZE`: maximum number of new jobs sampled from MAP-Elites per tick (bounded by the unused capacity).
 - `SCHEDULER_DISPATCH_BATCH_SIZE`: number of pending jobs promoted to `QUEUED` and sent to Dramatiq per tick.
 - `SCHEDULER_INGEST_BATCH_SIZE`: number of newly succeeded jobs ingested into MAP-Elites per tick.
@@ -61,5 +61,4 @@ For more detailed information about these helper modules, see:
 
 - `loreley.scheduler.job_scheduler.JobScheduler` — job production and dispatch pipeline.
 - `loreley.scheduler.ingestion.MapElitesIngestion` — result ingestion, root-commit initialisation, and MAP-Elites maintenance.
-
 

@@ -102,11 +102,16 @@ cp env.example .env
 - `APP_NAME`, `APP_ENV`, `LOG_LEVEL`
 - `DATABASE_URL`
 - `TASKS_REDIS_URL`, `EXPERIMENT_ID` (UUID or slug)
-- `OPENAI_API_KEY`
 - `MAPELITES_EXPERIMENT_ROOT_COMMIT`
-- `SCHEDULER_MAX_TOTAL_JOBS`, `SCHEDULER_REPO_ROOT`, `WORKER_REPO_REMOTE_URL`
-- `WORKER_EVALUATOR_PLUGIN`, `WORKER_EVOLUTION_GLOBAL_GOAL`
-- (optional) `WORKER_PLANNING_BACKEND`, `WORKER_CODING_BACKEND` (defaults to the Kilocode CLI backend)
+- `MAPELITES_CODE_EMBEDDING_DIMENSIONS`
+- `SCHEDULER_MAX_TOTAL_JOBS`
+- `SCHEDULER_REPO_ROOT` (strongly recommended on first cold start)
+- `WORKER_REPO_REMOTE_URL`
+- `WORKER_EVALUATOR_PLUGIN`
+- `WORKER_EVOLUTION_GLOBAL_GOAL` (current code has a generic default; real runs should override it)
+- `MAPELITES_FITNESS_METRIC` and `MAPELITES_FITNESS_HIGHER_IS_BETTER` if your evaluator's primary metric is not the default `composite_score`
+- `OPENAI_API_KEY` under the default embedding / trajectory settings (omit only when using local-hash embeddings with trajectory summaries disabled)
+- (optional) `WORKER_PLANNING_BACKEND`, `WORKER_CODING_BACKEND` (current default is the Kilo CLI backend via `kilo`)
 
 See: [Configuration](loreley/config.md)
 
@@ -125,6 +130,10 @@ uv run loreley scheduler
 uv run loreley worker
 uv run loreley status
 ```
+
+At the end of a bounded run, the scheduler force-updates a **local** branch
+`evolution/best/<experiment>` inside `SCHEDULER_REPO_ROOT`. It does not auto-push
+that branch to the remote.
 
 See: [Running the scheduler](script/run_scheduler.md), [Running the worker](script/run_worker.md)
 

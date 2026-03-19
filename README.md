@@ -15,9 +15,9 @@ Loreley is a distributed system that **evolves entire git repositories** (the un
 
 ### Quick start (local)
 
-**Requirements**: Python 3.11+, [`uv`](https://github.com/astral-sh/uv), Git (worktrees), PostgreSQL, Redis, and an OpenAI-compatible API for embeddings and some summaries (`OPENAI_API_KEY`). You also need:
+**Requirements**: Python 3.11+, [`uv`](https://github.com/astral-sh/uv), Git (worktrees), PostgreSQL, Redis, and, under the default embedding / trajectory settings, an OpenAI-compatible API (`OPENAI_API_KEY`). You also need:
 
-- **Planning/coding backend**: default is the `kilocode` CLI on `PATH` (override via `WORKER_PLANNING_BACKEND` / `WORKER_CODING_BACKEND`).
+- **Planning/coding backend**: current code defaults to the Kilo CLI backend (`kilo` on `PATH`, configurable via `WORKER_KILOCODE_BIN`; override the backend via `WORKER_PLANNING_BACKEND` / `WORKER_CODING_BACKEND`).
 - **Evaluator plugin**: `WORKER_EVALUATOR_PLUGIN=module:callable` that runs unattended and returns structured metrics.
 
 ```bash
@@ -30,14 +30,21 @@ cp env.example .env
 # Minimal required vars (in addition to defaults in env.example):
 # - EXPERIMENT_ID=<uuid or slug>
 # - SCHEDULER_MAX_TOTAL_JOBS=<positive integer>
-# - OPENAI_API_KEY
 # - MAPELITES_EXPERIMENT_ROOT_COMMIT=<git commit hash>
+# - MAPELITES_CODE_EMBEDDING_DIMENSIONS=<positive integer>
 # - WORKER_REPO_REMOTE_URL=<git remote URL with push access>
 # - WORKER_EVALUATOR_PLUGIN=module:callable
 #
-# Recommended:
+# Required under the default embedding / trajectory settings:
+# - OPENAI_API_KEY
+#
+# Strongly recommended / effectively required on first cold start:
 # - SCHEDULER_REPO_ROOT=/abs/path/to/your/target-git-checkout
+#
+# Recommended for meaningful runs:
 # - WORKER_EVOLUTION_GLOBAL_GOAL="..."
+# - MAPELITES_FITNESS_METRIC=<metric name emitted by your evaluator>
+# - MAPELITES_FITNESS_HIGHER_IS_BETTER=true  # set false if lower is better
 #
 # Optional:
 # - WORKER_EVALUATOR_PYTHON_PATHS=["/abs/path/to/plugin_dir"]
@@ -48,6 +55,10 @@ uv run loreley scheduler
 uv run loreley worker
 uv run loreley status
 ```
+
+At the end of a bounded run, the scheduler force-updates a **local** branch
+`evolution/best/<experiment>` inside `SCHEDULER_REPO_ROOT`. It does not auto-push
+that branch to your remote.
 
 ### Optional UI (read-only)
 
@@ -63,5 +74,4 @@ uv run loreley ui
 - [`docs/index.md`](docs/index.md) (local)
 - [Online docs](https://NeapolitanIcecream.github.io/loreley/)
 - Key guides: [`docs/loreley/config.md`](docs/loreley/config.md), [`docs/script/run_scheduler.md`](docs/script/run_scheduler.md), [`docs/script/run_worker.md`](docs/script/run_worker.md)
-
 
