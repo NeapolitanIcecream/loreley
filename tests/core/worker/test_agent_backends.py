@@ -726,7 +726,7 @@ def test_kilocode_backend_factory_uses_env_settings(monkeypatch: pytest.MonkeyPa
     assert backend.model == "openai/gpt-5.4"
     assert backend.variant == "high"
     assert backend.json_output is True
-    assert backend.extra_env["KILO_PROVIDER_TYPE"] == "openai"
+    assert backend.extra_env["KILO_PROVIDER_TYPE"] == "openai-responses"
     assert backend.extra_env["KILO_OPENAI_API_KEY"] == "sk-test"
     assert backend.extra_env["KILO_OPENAI_BASE_URL"] == "https://example.invalid/v1"
     assert backend.extra_env["KILO_OPENAI_MODEL_ID"] == "gpt-4o-mini"
@@ -776,6 +776,28 @@ def test_kilocode_backend_factory_prefers_worker_specific_openai_config(
 
     assert backend.extra_env["KILO_PROVIDER_TYPE"] == "openai-responses"
     assert backend.extra_env["KILO_OPENAI_API_KEY"] == "sk-worker"
+    assert backend.extra_env["KILO_OPENAI_BASE_URL"] == "https://worker.example.com/v1"
+
+    get_settings.cache_clear()
+
+
+def test_kilocode_backend_factory_keeps_global_api_spec_under_partial_worker_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Partial worker-specific provider overrides still inherit the global API spec."""
+    from loreley.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("OPENAI_API_SPEC", "responses")
+    monkeypatch.setenv("LORELEY_LLM_API_KEY", "sk-global")
+    monkeypatch.setenv("WORKER_KILOCODE_OPENAI_BASE_URL", "https://worker.example.com/v1")
+    monkeypatch.delenv("WORKER_KILOCODE_OPENAI_API_SPEC", raising=False)
+    get_settings.cache_clear()
+
+    backend = kilocode_backend()
+
+    assert backend.extra_env["KILO_PROVIDER_TYPE"] == "openai-responses"
+    assert backend.extra_env["KILO_OPENAI_API_KEY"] == "sk-global"
     assert backend.extra_env["KILO_OPENAI_BASE_URL"] == "https://worker.example.com/v1"
 
     get_settings.cache_clear()

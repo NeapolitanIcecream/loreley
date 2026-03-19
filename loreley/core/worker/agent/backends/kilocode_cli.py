@@ -165,12 +165,7 @@ def _build_kilocode_openai_env(settings) -> dict[str, str]:
     api_key = worker_api_key or (getattr(settings, "openai_api_key", None) or "").strip()
     base_url = worker_base_url or (getattr(settings, "openai_base_url", None) or "").strip()
     model = worker_model
-    has_worker_specific_provider_config = bool(
-        worker_api_key or worker_base_url or worker_model or worker_api_spec
-    )
-    api_spec = worker_api_spec
-    if api_spec is None and not has_worker_specific_provider_config:
-        api_spec = getattr(settings, "openai_api_spec", None)
+    api_spec = worker_api_spec or getattr(settings, "openai_api_spec", None)
 
     env: dict[str, str] = {}
     provider_type: str | None = None
