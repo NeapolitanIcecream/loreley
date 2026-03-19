@@ -10,7 +10,7 @@ from loguru import logger
 
 from loreley.config import get_settings
 from loreley.core.worker.agent.contracts import AgentInvocation, AgentTask
-from loreley.core.worker.agent.utils import validate_workdir
+from loreley.core.worker.agent.utils import truncate_text, validate_workdir
 
 log = logger.bind(module="worker.agent.backends.kilocode_cli")
 
@@ -19,17 +19,20 @@ log = logger.bind(module="worker.agent.backends.kilocode_cli")
 class KilocodeCliBackend:
     """AgentBackend implementation that delegates to the Kilocode CLI.
 
-    Uses Kilocode's autonomous (non-interactive) mode via the ``--auto`` flag,
-    suitable for automated CI/CD pipelines and headless agent orchestration.
-    The prompt is passed as a positional argument; ``--json`` enables structured
-    output for downstream parsing.
+    Uses Kilo's non-interactive ``run --auto`` flow for headless worker
+    orchestration. Loreley defaults to plain-text output because the CLI's
+    structured ``--format json`` mode emits raw events that are not guaranteed
+    to be a single final Markdown document.
     """
 
-    bin: str = "kilocode"
+    bin: str = "kilo"
     mode: str | None = None
+    agent: str | None = None
+    model: str | None = None
+    variant: str | None = None
     timeout_seconds: int = 1800
     extra_env: dict[str, str] = field(default_factory=dict)
-    json_output: bool = True
+    json_output: bool = False
     error_cls: type[RuntimeError] = RuntimeError
 
     def run(
@@ -44,15 +47,7 @@ class KilocodeCliBackend:
             agent_name=task.name or "Agent",
         )
 
-        command: list[str] = [self.bin, "--auto"]
-
-        if self.json_output:
-            command.append("--json")
-
-        if self.mode:
-            command.extend(["--mode", self.mode])
-
-        command.append(task.prompt)
+        command = self._build_command(task.prompt)
         command_for_log = command[:-1] + [f"<prompt:{len(task.prompt)} chars>"]
 
         env = os.environ.copy()
@@ -77,7 +72,7 @@ class KilocodeCliBackend:
             )
         except subprocess.TimeoutExpired as exc:
             raise self.error_cls(
-                f"kilocode timed out after {self.timeout_seconds}s.",
+                f"kilo run timed out after {self.timeout_seconds}s.",
             ) from exc
 
         duration = monotonic() - start
@@ -92,9 +87,14 @@ class KilocodeCliBackend:
         )
 
         if result.returncode != 0:
+            details: list[str] = []
+            for label, payload in (("stderr", stderr), ("stdout", stdout)):
+                snippet = truncate_text(payload, limit=400)
+                if snippet:
+                    details.append(f"{label}: {snippet}")
+            detail_suffix = f" {' '.join(details)}" if details else ""
             raise self.error_cls(
-                f"kilocode failed with exit code {result.returncode}. "
-                f"stderr: {stderr or 'N/A'}",
+                f"kilo run failed with exit code {result.returncode}.{detail_suffix}",
             )
 
         if not stdout:
@@ -111,11 +111,38 @@ class KilocodeCliBackend:
             duration_seconds=duration,
         )
 
+    def _build_command(self, prompt: str) -> list[str]:
+        command: list[str] = [self.bin, "run", "--auto"]
+
+        if self.json_output:
+            command.extend(["--format", "json"])
+
+        selected_agent = (self.agent or self.mode or "").strip()
+        if selected_agent:
+            command.extend(["--agent", selected_agent])
+
+        selected_model = (self.model or "").strip()
+        if selected_model:
+            command.extend(["--model", selected_model])
+
+        selected_variant = (self.variant or "").strip()
+        if selected_variant:
+            command.extend(["--variant", selected_variant])
+
+        command.append(prompt)
+        return command
+
 
 def _build_kilocode_openai_env(settings) -> dict[str, str]:
-    """Translate WORKER_KILOCODE_OPENAI_* settings into Kilo Code CLI env config.
+    """Translate Loreley settings into Kilo Code CLI provider env config.
 
-    Kilo Code CLI supports env-only provider configuration. For OpenAI-compatible
+    Worker-specific ``WORKER_KILOCODE_OPENAI_*`` values take precedence. When
+    absent, Loreley falls back to the global OpenAI-compatible settings so the
+    same gateway credentials can drive both internal SDK calls and the spawned
+    Kilo subprocess.
+
+    Kilo Code CLI supports provider configuration through environment variables.
+    For OpenAI-compatible
     endpoints, use:
     - ``KILO_PROVIDER_TYPE=openai`` (Chat Completions)
     - ``KILO_PROVIDER_TYPE=openai-responses`` (Responses)
@@ -130,10 +157,15 @@ def _build_kilocode_openai_env(settings) -> dict[str, str]:
     Reference: ``cli/docs/ENVIRONMENT_VARIABLES.md`` in the upstream Kilocode repo.
     """
 
-    api_key = (getattr(settings, "worker_kilocode_openai_api_key", None) or "").strip()
-    base_url = (getattr(settings, "worker_kilocode_openai_base_url", None) or "").strip()
-    model = (getattr(settings, "worker_kilocode_openai_model", None) or "").strip()
-    api_spec = getattr(settings, "worker_kilocode_openai_api_spec", None)
+    worker_api_key = (getattr(settings, "worker_kilocode_openai_api_key", None) or "").strip()
+    worker_base_url = (getattr(settings, "worker_kilocode_openai_base_url", None) or "").strip()
+    worker_model = (getattr(settings, "worker_kilocode_openai_model", None) or "").strip()
+    worker_api_spec = getattr(settings, "worker_kilocode_openai_api_spec", None)
+
+    api_key = worker_api_key or (getattr(settings, "openai_api_key", None) or "").strip()
+    base_url = worker_base_url or (getattr(settings, "openai_base_url", None) or "").strip()
+    model = worker_model
+    api_spec = worker_api_spec or getattr(settings, "openai_api_spec", None)
 
     env: dict[str, str] = {}
     provider_type: str | None = None
@@ -160,13 +192,19 @@ def kilocode_backend() -> KilocodeCliBackend:
     """Factory to build a Kilocode backend using env-only settings."""
 
     settings = get_settings()
-    bin_value = getattr(settings, "worker_kilocode_bin", "kilocode")
+    bin_value = getattr(settings, "worker_kilocode_bin", "kilo")
     mode_value = getattr(settings, "worker_kilocode_mode", None)
-    json_output_value = getattr(settings, "worker_kilocode_json_output", True)
+    agent_value = getattr(settings, "worker_kilocode_agent", None) or mode_value
+    model_value = getattr(settings, "worker_kilocode_model", None)
+    variant_value = getattr(settings, "worker_kilocode_variant", None)
+    json_output_value = getattr(settings, "worker_kilocode_json_output", False)
     extra_env = _build_kilocode_openai_env(settings)
     return KilocodeCliBackend(
         bin=str(bin_value),
         mode=str(mode_value) if mode_value else None,
+        agent=str(agent_value) if agent_value else None,
+        model=str(model_value) if model_value else None,
+        variant=str(variant_value) if variant_value else None,
         json_output=bool(json_output_value),
         extra_env=extra_env,
     )
@@ -182,13 +220,19 @@ def kilocode_planning_backend() -> KilocodeCliBackend:
     from loreley.core.worker.planning import PlanningError
 
     settings = get_settings()
-    bin_value = getattr(settings, "worker_kilocode_bin", "kilocode")
+    bin_value = getattr(settings, "worker_kilocode_bin", "kilo")
     mode_value = getattr(settings, "worker_kilocode_mode", None)
-    json_output_value = getattr(settings, "worker_kilocode_json_output", True)
+    agent_value = getattr(settings, "worker_kilocode_agent", None) or mode_value
+    model_value = getattr(settings, "worker_kilocode_model", None)
+    variant_value = getattr(settings, "worker_kilocode_variant", None)
+    json_output_value = getattr(settings, "worker_kilocode_json_output", False)
     extra_env = _build_kilocode_openai_env(settings)
     return KilocodeCliBackend(
         bin=str(bin_value),
         mode=str(mode_value) if mode_value else None,
+        agent=str(agent_value) if agent_value else None,
+        model=str(model_value) if model_value else None,
+        variant=str(variant_value) if variant_value else None,
         json_output=bool(json_output_value),
         extra_env=extra_env,
         error_cls=PlanningError,
@@ -205,13 +249,19 @@ def kilocode_coding_backend() -> KilocodeCliBackend:
     from loreley.core.worker.coding import CodingError
 
     settings = get_settings()
-    bin_value = getattr(settings, "worker_kilocode_bin", "kilocode")
+    bin_value = getattr(settings, "worker_kilocode_bin", "kilo")
     mode_value = getattr(settings, "worker_kilocode_mode", None)
-    json_output_value = getattr(settings, "worker_kilocode_json_output", True)
+    agent_value = getattr(settings, "worker_kilocode_agent", None) or mode_value
+    model_value = getattr(settings, "worker_kilocode_model", None)
+    variant_value = getattr(settings, "worker_kilocode_variant", None)
+    json_output_value = getattr(settings, "worker_kilocode_json_output", False)
     extra_env = _build_kilocode_openai_env(settings)
     return KilocodeCliBackend(
         bin=str(bin_value),
         mode=str(mode_value) if mode_value else None,
+        agent=str(agent_value) if agent_value else None,
+        model=str(model_value) if model_value else None,
+        variant=str(variant_value) if variant_value else None,
         json_output=bool(json_output_value),
         extra_env=extra_env,
         error_cls=CodingError,

@@ -108,6 +108,37 @@ def test_coerce_plan_from_invocation_unwraps_json_stdout(settings: Settings) -> 
     assert plan.summary.startswith("Improve docs")
 
 
+def test_coerce_plan_from_invocation_unwraps_jsonl_stdout(settings: Settings) -> None:
+    agent = PlanningAgent(settings=settings, backend=_DummyBackend())
+    request = _make_request("Improve docs")
+    markdown = """## Summary
+- Improve docs and defaults.
+
+## Steps
+1. Update config
+2. Update docs
+"""
+    invocation = AgentInvocation(
+        command=("echo",),
+        stdout="\n".join(
+            [
+                json.dumps({"event": "started", "message": "planning"}),
+                json.dumps({"event": "completed", "output": markdown}),
+            ]
+        ),
+        stderr="",
+        duration_seconds=1.0,
+    )
+
+    plan = agent._coerce_plan_from_invocation(  # type: ignore[attr-defined]
+        request=request,
+        invocation=invocation,
+    )
+
+    assert plan.markdown.strip() == markdown.strip()
+    assert plan.summary.startswith("Improve docs")
+
+
 def test_coerce_plan_from_invocation_falls_back_to_goal(settings: Settings) -> None:
     agent = PlanningAgent(settings=settings, backend=_DummyBackend())
     request = _make_request("Ship the feature")

@@ -12,7 +12,8 @@ Execution engine for Loreley's autonomous worker, responsible for driving a conf
 ## Markdown contract
 
 - Coding relies on `loreley.core.worker.agent` for shared backend abstractions (`AgentBackend`, `AgentTask`, `AgentInvocation`) and a shared retry loop (`run_agent_task()`).
-- Backends return plain-text output (typically Markdown). The worker requests a simple Markdown structure (Summary / Changes / Tests) and extracts a short summary on a best-effort basis.
+- Backends may return plain-text Markdown directly or structured JSON/JSONL output that wraps the final Markdown payload. The worker unwraps those common formats on a best-effort basis before extracting a short summary.
+- The worker requests a simple Markdown structure using `##` headings for Summary / Changes / Checks, with Notes optional.
 
 ## Coding agent
 
@@ -27,4 +28,3 @@ Execution engine for Loreley's autonomous worker, responsible for driving a conf
 
 - **`_extract_summary()`** and **`_truncate()`**: utilities that keep prompts bounded and extract best-effort structured fields from Markdown output.
   Debug artifacts are written under `logs/<experiment_namespace>/worker/coding` (or `logs/worker/coding` when no experiment namespace is available).
-

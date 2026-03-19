@@ -32,7 +32,8 @@ unique path `LCA(base,inspiration) -> inspiration` and rendering a bounded summa
 ## Markdown contract
 
 - Planning relies on `loreley.core.worker.agent` for shared backend abstractions (`AgentBackend`, `AgentTask`, `AgentInvocation`) and a shared retry loop (`run_agent_task()`).
-- Backends return plain-text output (typically Markdown). The worker requests a simple Markdown structure (Summary / Steps / Validation) and extracts a short summary on a best-effort basis.
+- Backends may return plain-text Markdown directly or structured JSON/JSONL output that wraps the final Markdown payload. The worker unwraps those common formats on a best-effort basis before extracting a short summary.
+- The worker requests a simple Markdown structure using `##` headings for Summary / Steps / Validation, with Notes optional.
 
 ## Planning agent
 
@@ -46,4 +47,3 @@ unique path `LCA(base,inspiration) -> inspiration` and rendering a bounded summa
 
 - **`PlanningError`**: custom runtime error raised when the backend returns an error, the working directory is not a git repository, or retries are exhausted.
 - **`_truncate()`**, **`_format_commit_block()`**, and **`_format_metrics()`**: internal utilities that format commit context and metrics into human-readable sections for the prompt while enforcing length limits and providing clear fallbacks when no metrics or highlights are available.
-
