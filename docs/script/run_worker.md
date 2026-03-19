@@ -18,7 +18,7 @@ Minimum required settings for a functional worker are:
 - `WORKER_REPO_REMOTE_URL`
 - `WORKER_EVALUATOR_PLUGIN`
 
-You also need database and Redis connectivity (`DATABASE_URL`, `TASKS_REDIS_URL`), and a planning/coding backend binary (defaults to the Kilocode CLI via `kilocode` on `PATH`).
+You also need database and Redis connectivity (`DATABASE_URL`, `TASKS_REDIS_URL`), and a planning/coding backend binary (defaults to the Kilocode CLI via `kilo` on `PATH`).
 
 ## Options
 

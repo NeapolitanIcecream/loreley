@@ -17,7 +17,7 @@ Loreley is a distributed system that **evolves entire git repositories** (the un
 
 **Requirements**: Python 3.11+, [`uv`](https://github.com/astral-sh/uv), Git (worktrees), PostgreSQL, Redis, and an OpenAI-compatible API for embeddings and some summaries (`OPENAI_API_KEY`). You also need:
 
-- **Planning/coding backend**: default is the `kilocode` CLI on `PATH` (override via `WORKER_PLANNING_BACKEND` / `WORKER_CODING_BACKEND`).
+- **Planning/coding backend**: default is the Kilocode CLI (`kilo`) on `PATH` (override via `WORKER_PLANNING_BACKEND` / `WORKER_CODING_BACKEND`).
 - **Evaluator plugin**: `WORKER_EVALUATOR_PLUGIN=module:callable` that runs unattended and returns structured metrics.
 
 ```bash
@@ -40,6 +40,8 @@ cp env.example .env
 # - WORKER_EVOLUTION_GLOBAL_GOAL="..."
 #
 # Optional:
+# - WORKER_KILOCODE_BIN=kilo
+# - WORKER_KILOCODE_AGENT=<agent name>
 # - WORKER_EVALUATOR_PYTHON_PATHS=["/abs/path/to/plugin_dir"]
 # - SCHEDULER_STARTUP_APPROVE=true  # skip interactive startup approval
 
@@ -63,5 +65,4 @@ uv run loreley ui
 - [`docs/index.md`](docs/index.md) (local)
 - [Online docs](https://NeapolitanIcecream.github.io/loreley/)
 - Key guides: [`docs/loreley/config.md`](docs/loreley/config.md), [`docs/script/run_scheduler.md`](docs/script/run_scheduler.md), [`docs/script/run_worker.md`](docs/script/run_worker.md)
-
 
