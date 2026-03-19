@@ -42,8 +42,8 @@ from loreley.scheduler.job_scheduler import JobScheduler
 - **`create_seed_jobs(base_commit_hash, count, island_id=None) -> int`**:
   - Creates cold-start seed jobs from the root commit while the archive is still
     warming up.
-  - Requires `WORKER_EVOLUTION_GLOBAL_GOAL`, because seed jobs still need a
-    concrete optimization objective.
+  - Requires a non-empty global optimization objective. `Settings` provides a
+    default, and operators can override it via `WORKER_EVOLUTION_GLOBAL_GOAL`.
   - Uses the same send-first queueing flow as regular jobs.
 
 If the sampler indicates that no archive cell currently wants new work, the

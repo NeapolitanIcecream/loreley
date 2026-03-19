@@ -35,6 +35,8 @@ cp env.example .env
 # - MAPELITES_EXPERIMENT_ROOT_COMMIT=<git commit hash>
 # - WORKER_REPO_REMOTE_URL=<git remote URL with push access>
 # - WORKER_EVALUATOR_PLUGIN=module:callable
+#
+# Recommended to customize:
 # - WORKER_EVOLUTION_GLOBAL_GOAL="..."
 #
 # Optional:
