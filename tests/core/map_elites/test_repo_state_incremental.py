@@ -93,6 +93,7 @@ class _RepoStateSessionRecorder:
         self.dimensions = int(dimensions)
         self.aggregates = dict(aggregates or {})
         self.file_cache = dict(file_cache or {})
+        self.info: dict[object, object] = {}
         self.fail_persist = fail_persist
         self.scope_entries = 0
         self.execute_calls = 0
@@ -417,6 +418,55 @@ def test_file_cache_metadata_reuses_memory_cache_for_repeated_blob_queries(
     assert session.scope_entries == 2
     assert session.file_cache_selects == 2
     assert session.loaded_blob_batches == [["sha-a"], ["sha-b"]]
+
+
+def test_session_persisted_aggregate_stays_transaction_local_until_commit(
+    tmp_path: Path,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = _build_test_cache()
+    writer_session = _RepoStateSessionRecorder(
+        embedding_model=cache.embedding_model,
+        dimensions=cache.requested_dimensions,
+    )
+    reader_session = _RepoStateSessionRecorder(
+        embedding_model=cache.embedding_model,
+        dimensions=cache.requested_dimensions,
+    )
+
+    @contextmanager
+    def _reader_scope():  # type: ignore[no-untyped-def]
+        yield reader_session
+
+    monkeypatch.setattr(repo_state_mod, "session_scope", _reader_scope)
+
+    embedder = RepositoryStateEmbedder(settings=settings, cache=cache)
+    persisted = embedder._persist_aggregate(
+        commit_hash="child",
+        repo_root=tmp_path,
+        sum_vector=(0.3, 0.4),
+        file_count=1,
+        session=writer_session,
+    )
+
+    in_tx = embedder._load_aggregate(
+        commit_hash="child",
+        repo_root=tmp_path,
+        session=writer_session,
+    )
+    outside_tx = embedder._load_aggregate(
+        commit_hash="child",
+        repo_root=tmp_path,
+    )
+
+    assert persisted.commit_hash == "child"
+    assert in_tx is not None
+    assert in_tx.commit_hash == "child"
+    assert outside_tx is None
+    assert embedder._cached_aggregate("child") is None
+    assert writer_session.aggregate_selects == 0
+    assert reader_session.aggregate_selects == 1
 
 
 def test_load_aggregate_keeps_dimension_mismatch_error_semantics(

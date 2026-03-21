@@ -24,7 +24,7 @@ from git import Repo
 from git.exc import GitCommandError
 from loguru import logger
 import numpy as np
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -48,6 +48,7 @@ Vector = tuple[float, ...]
 T = TypeVar("T")
 _AGGREGATE_CACHE_LIMIT = 256
 _FILE_METADATA_CACHE_LIMIT = 4096
+_SESSION_AGGREGATE_CACHE_KEY = "map_elites.repo_state.aggregate_cache"
 
 
 class RepoStateEmbeddingError(RuntimeError):
@@ -421,13 +422,22 @@ class RepositoryStateEmbedder:
                 "Repo-state embedding requires a positive embedding dimension."
             )
         try:
-            cached = self._cached_aggregate(commit_hash)
-            if cached is not None:
-                return self._validate_aggregate_row(
-                    row=cached,
-                    commit_hash=commit_hash,
-                    requested_dims=requested_dims,
-                )
+            if session is not None:
+                cached = self._cached_session_aggregate(session, commit_hash)
+                if cached is not None:
+                    return self._validate_aggregate_row(
+                        row=cached,
+                        commit_hash=commit_hash,
+                        requested_dims=requested_dims,
+                    )
+            else:
+                cached = self._cached_aggregate(commit_hash)
+                if cached is not None:
+                    return self._validate_aggregate_row(
+                        row=cached,
+                        commit_hash=commit_hash,
+                        requested_dims=requested_dims,
+                    )
             if session is None:
                 with session_scope() as owned_session:
                     stmt = select(MapElitesRepoStateAggregate).where(
@@ -450,7 +460,10 @@ class RepositoryStateEmbedder:
             requested_dims=requested_dims,
         )
         if validated is not None:
-            self._remember_aggregate(validated)
+            if session is not None:
+                self._remember_session_aggregate(session, validated)
+            else:
+                self._remember_aggregate(validated)
         return validated
 
     def _persist_aggregate(
@@ -509,7 +522,10 @@ class RepositoryStateEmbedder:
             commit_hash=commit_hash,
             requested_dims=requested_dims,
         )
-        self._remember_aggregate(validated)
+        if session is not None:
+            self._remember_session_aggregate(session, validated)
+        else:
+            self._remember_aggregate(validated)
         return validated
 
     @dataclass(frozen=True, slots=True)
@@ -935,6 +951,66 @@ class RepositoryStateEmbedder:
         while len(self._aggregate_cache) > _AGGREGATE_CACHE_LIMIT:
             self._aggregate_cache.popitem(last=False)
 
+    def _session_aggregate_bucket(
+        self,
+        session: Session,
+        *,
+        create: bool,
+    ) -> OrderedDict[str, MapElitesRepoStateAggregate] | None:
+        info = getattr(session, "info", None)
+        if not isinstance(info, dict):
+            return None
+        per_session = info.get(_SESSION_AGGREGATE_CACHE_KEY)
+        if per_session is None:
+            if not create:
+                return None
+            per_session = {}
+            info[_SESSION_AGGREGATE_CACHE_KEY] = per_session
+        if not isinstance(per_session, dict):
+            return None
+        bucket = per_session.get(self)
+        if bucket is None:
+            if not create:
+                return None
+            bucket = OrderedDict()
+            per_session[self] = bucket
+        if not isinstance(bucket, OrderedDict):
+            return None
+        return bucket
+
+    def _cached_session_aggregate(
+        self,
+        session: Session,
+        commit_hash: str,
+    ) -> MapElitesRepoStateAggregate | None:
+        bucket = self._session_aggregate_bucket(session, create=False)
+        if bucket is None:
+            return None
+        key = str(commit_hash).strip()
+        if not key:
+            return None
+        row = bucket.get(key)
+        if row is None:
+            return None
+        bucket.move_to_end(key)
+        return row
+
+    def _remember_session_aggregate(
+        self,
+        session: Session,
+        row: MapElitesRepoStateAggregate,
+    ) -> None:
+        bucket = self._session_aggregate_bucket(session, create=True)
+        if bucket is None:
+            return
+        key = str(getattr(row, "commit_hash", "") or "").strip()
+        if not key:
+            return
+        bucket[key] = row
+        bucket.move_to_end(key)
+        while len(bucket) > _AGGREGATE_CACHE_LIMIT:
+            bucket.popitem(last=False)
+
     def _load_missing_blob_metadata_from_memory(
         self,
         blob_shas: Sequence[str],
@@ -1111,6 +1187,30 @@ def bootstrap_repository_state_aggregate(
         repo_root=repo_root,
         session=session,
     )
+
+
+@event.listens_for(Session, "after_commit")
+def _promote_session_aggregate_cache(session: Session) -> None:
+    info = getattr(session, "info", None)
+    if not isinstance(info, dict):
+        return
+    cached = info.pop(_SESSION_AGGREGATE_CACHE_KEY, None)
+    if not isinstance(cached, dict):
+        return
+    for embedder, bucket in cached.items():
+        if not isinstance(embedder, RepositoryStateEmbedder):
+            continue
+        if not isinstance(bucket, OrderedDict):
+            continue
+        for row in bucket.values():
+            embedder._remember_aggregate(row)
+
+
+@event.listens_for(Session, "after_soft_rollback")
+def _clear_session_aggregate_cache(session: Session, _previous_transaction: object) -> None:
+    info = getattr(session, "info", None)
+    if isinstance(info, dict):
+        info.pop(_SESSION_AGGREGATE_CACHE_KEY, None)
 
 
 @dataclass(frozen=True, slots=True)
