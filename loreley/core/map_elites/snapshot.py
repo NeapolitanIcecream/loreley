@@ -170,12 +170,28 @@ class DatabaseSnapshotStore:
         now = float(update.history_seen_at) if update.history_seen_at is not None else time.time()
 
         if session is not None:
-            self._apply_update_within_savepoint(
-                session,
-                island_id=island_id,
-                update=update,
-                now=now,
-            )
+            in_nested = bool(getattr(session, "in_nested_transaction", lambda: False)())
+            if in_nested:
+                try:
+                    self._apply_update_in_session(
+                        session,
+                        island_id=island_id,
+                        update=update,
+                        now=now,
+                    )
+                except ValueError:
+                    raise
+                except SQLAlchemyError as exc:
+                    self._raise_store_error(action="persist", island_id=island_id, exc=exc)
+                except Exception as exc:  # pragma: no cover - defensive
+                    self._raise_store_error(action="persisting", island_id=island_id, exc=exc)
+            else:
+                self._apply_update_within_savepoint(
+                    session,
+                    island_id=island_id,
+                    update=update,
+                    now=now,
+                )
             return
 
         try:

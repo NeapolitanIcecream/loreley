@@ -43,7 +43,11 @@ from .rebuild import (
     rebuild_after_refit,
     seed_after_initial_fit,
 )
-from .repository_state_embedding import RepoStateEmbeddingStats, embed_repository_state_incremental
+from .repository_state_embedding import (
+    RepoStateEmbeddingStats,
+    RepositoryStateEmbedder,
+    embed_repository_state_incremental,
+)
 from .snapshot import DatabaseSnapshotStore, SnapshotCellUpsert, SnapshotUpdate, apply_snapshot, to_list
 from .types import (
     CommitEmbeddingArtifacts,
@@ -88,6 +92,8 @@ class MapElitesManager:
         self._snapshot_store = DatabaseSnapshotStore()
         self._ingest_info_log_every = int(self.settings.mapelites_ingest_info_log_every)
         self._ingest_invocations = 0
+        self._repo_state_embedder: RepositoryStateEmbedder | None = None
+        self._repo_state_embedder_root: Path | None = None
 
     @staticmethod
     def _infer_snapshot_target_dims(snapshot: Mapping[str, Any]) -> int | None:
@@ -173,10 +179,13 @@ class MapElitesManager:
             )
 
         try:
+            repo_state_embedder = self._get_repo_state_embedder(working_dir)
             code_embedding, repo_stats = embed_repository_state_incremental(
                 commit_hash=commit_hash,
                 repo_root=working_dir,
                 settings=self.settings,
+                embedder=repo_state_embedder,
+                session=snapshot_session,
             )
             source = str(getattr(repo_stats, "source", "unknown") or "unknown").strip()
             if source == "aggregate_hit":
@@ -781,6 +790,18 @@ class MapElitesManager:
             int(len(getattr(archive, "dims", self._grid_shape))),
         )
         return state
+
+    def _get_repo_state_embedder(self, repo_root: Path) -> RepositoryStateEmbedder:
+        resolved_root = Path(repo_root).resolve()
+        if (
+            self._repo_state_embedder is None
+            or self._repo_state_embedder_root != resolved_root
+        ):
+            self._repo_state_embedder = RepositoryStateEmbedder(
+                settings=self.settings,
+            )
+            self._repo_state_embedder_root = resolved_root
+        return self._repo_state_embedder
 
     def _build_feature_bounds(self, *, target_dims: int | None = None) -> tuple[np.ndarray, np.ndarray]:
         dims = int(target_dims) if target_dims is not None else int(self._target_dims)
