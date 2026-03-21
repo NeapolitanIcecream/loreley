@@ -14,7 +14,7 @@ from loreley.config import Settings
 from loreley.core.map_elites.code_embedding import CommitCodeEmbedding
 from loreley.core.map_elites.dimension_reduction import FinalEmbedding, PCAProjection, PcaHistoryEntry
 from loreley.core.map_elites.map_elites import MapElitesManager, MapElitesRecord
-from loreley.core.map_elites.repository_state_embedding import RepoStateEmbeddingStats
+from loreley.core.map_elites.repository_state_embedding import RepoStateEmbeddingStats, RepositoryStateEmbedder
 
 
 def test_manager_lazy_loads_persisted_snapshot_for_stats_and_records(settings: Settings) -> None:
@@ -264,6 +264,96 @@ def test_ingest_info_logs_are_sampled(
         and record.get("message") == "MAP-Elites ingest stage metrics"
     ]
     assert len(stage_logs) == 2
+
+
+def test_manager_reuses_repo_state_embedder_across_ingests(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    settings.mapelites_ingest_info_log_every = 10_000
+    stats = RepoStateEmbeddingStats(
+        commit_hash="abc",
+        eligible_files=0,
+        files_embedded=0,
+        files_aggregated=0,
+        unique_blobs=0,
+        cache_hits=0,
+        cache_misses=0,
+        skipped_empty_after_preprocess=0,
+        skipped_failed_embedding=0,
+    )
+    seen_embedders: list[object] = []
+
+    def _fake_embed_repository_state_incremental(*args, **kwargs):  # type: ignore[no-untyped-def]
+        seen_embedders.append(kwargs.get("embedder"))
+        return None, stats
+
+    monkeypatch.setattr(
+        map_elites_module,
+        "embed_repository_state_incremental",
+        _fake_embed_repository_state_incremental,
+    )
+
+    manager = MapElitesManager(settings=settings, repo_root=Path("."))
+
+    class NullSnapshotStore:
+        def load(self, island_id: str, *, history_limit: int | None = None) -> dict[str, object] | None:
+            return None
+
+        def apply_update(self, island_id: str, *, update: object, session: object | None = None) -> None:
+            return None
+
+    manager._snapshot_store = NullSnapshotStore()  # type: ignore[attr-defined]
+    _ = manager.ingest(commit_hash="c1")
+    _ = manager.ingest(commit_hash="c2")
+
+    assert len(seen_embedders) == 2
+    assert isinstance(seen_embedders[0], RepositoryStateEmbedder)
+    assert seen_embedders[0] is seen_embedders[1]
+
+
+def test_manager_passes_snapshot_session_into_repo_state_incremental(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    settings.mapelites_ingest_info_log_every = 10_000
+    stats = RepoStateEmbeddingStats(
+        commit_hash="abc",
+        eligible_files=0,
+        files_embedded=0,
+        files_aggregated=0,
+        unique_blobs=0,
+        cache_hits=0,
+        cache_misses=0,
+        skipped_empty_after_preprocess=0,
+        skipped_failed_embedding=0,
+    )
+    seen_sessions: list[object | None] = []
+
+    def _fake_embed_repository_state_incremental(*args, **kwargs):  # type: ignore[no-untyped-def]
+        seen_sessions.append(kwargs.get("session"))
+        return None, stats
+
+    monkeypatch.setattr(
+        map_elites_module,
+        "embed_repository_state_incremental",
+        _fake_embed_repository_state_incremental,
+    )
+
+    manager = MapElitesManager(settings=settings, repo_root=Path("."))
+    snapshot_session = object()
+
+    class NullSnapshotStore:
+        def load(self, island_id: str, *, history_limit: int | None = None) -> dict[str, object] | None:
+            return None
+
+        def apply_update(self, island_id: str, *, update: object, session: object | None = None) -> None:
+            return None
+
+    manager._snapshot_store = NullSnapshotStore()  # type: ignore[attr-defined]
+    _ = manager.ingest(commit_hash="c1", snapshot_session=snapshot_session)
+
+    assert seen_sessions == [snapshot_session]
 
 
 def test_ingest_builds_record_with_stubbed_dependencies(
@@ -797,15 +887,10 @@ def test_ingest_rebuilds_archive_when_pca_projection_refits(
     assert after["c1"] == pytest.approx((0.5, 0.5))
 
 
-def test_add_single_updates_mappings_when_retrieval_fails(
-    captured_logs: list[dict[str, Any]],
-) -> None:
-    """Regression: successful inserts must keep bookkeeping consistent even if retrieval fails."""
+def test_add_single_updates_mappings_without_retrieval_round_trip() -> None:
+    """Regression: successful single inserts should not re-query the archive."""
 
     class DummyArchive:
-        def __init__(self) -> None:
-            self._payload: dict[str, object] | None = None
-
         def index_of(self, measures: np.ndarray) -> np.ndarray:
             batch = np.asarray(measures, dtype=np.float64)
             assert batch.shape[0] == 1
@@ -820,24 +905,13 @@ def test_add_single_updates_mappings_when_retrieval_fails(
             commit_hash: np.ndarray,
             timestamp: np.ndarray,
         ) -> Mapping[str, np.ndarray]:
-            self._payload = {
-                "index": np.asarray([0], dtype=np.int64),
-                "objective": np.asarray(objective),
-                "measures": np.asarray(measures),
-                "solution": np.asarray(solution),
-                "commit_hash": np.asarray(commit_hash),
-                "timestamp": np.asarray(timestamp),
-            }
             return {
                 "status": np.asarray([1], dtype=np.int64),
                 "value": np.asarray([0.1], dtype=np.float64),
             }
 
         def retrieve_single(self, measures: np.ndarray) -> tuple[bool, dict[str, object]]:
-            return False, {}
-
-        def data(self) -> Mapping[str, object]:
-            raise AssertionError("archive.data() should not be called when retrieval fails")
+            raise AssertionError("retrieve_single() should not be called on successful single inserts")
 
     state = map_elites_module.IslandState(
         archive=DummyArchive(),  # type: ignore[arg-type]
@@ -865,22 +939,6 @@ def test_add_single_updates_mappings_when_retrieval_fails(
     assert state.index_to_commit == {0: "c1"}
     assert state.commit_to_index == {"c1": 0}
     assert commit_to_island == {"c1": "main"}
-
-    retrieval_logs: list[dict[str, Any]] = []
-    for entry in captured_logs:
-        if entry.get("module") != "map_elites.archive_ops":
-            continue
-        extra = entry.get("extra")
-        if not isinstance(extra, dict):
-            continue
-        if extra.get("event") != "mapelites.archive.retrieve_single_failed":
-            continue
-        retrieval_logs.append(entry)
-
-    assert retrieval_logs
-    extra = retrieval_logs[-1].get("extra")
-    assert isinstance(extra, dict)
-    assert extra.get("reason") == "not_occupied"
 
 
 def test_add_batch_to_archive_uses_status_value_to_update_mappings(settings: Settings) -> None:

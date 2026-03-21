@@ -15,6 +15,17 @@ uv sync --locked --all-extras
 uv run pytest benchmarks
 ```
 
+### Run Postgres-backed hot-path benchmarks
+
+The DB-backed repo-state / steady-ingest benchmarks are opt-in and skip unless
+`DATABASE_URL` is set. A simple local setup is:
+
+```bash
+docker compose up -d postgres
+export DATABASE_URL=postgresql+psycopg://loreley:loreley@localhost:5432/loreley
+uv run pytest benchmarks/test_repo_state_db_hot_path.py benchmarks/test_manager_ingest_steady_db.py
+```
+
 ### Save a baseline run
 
 ```bash

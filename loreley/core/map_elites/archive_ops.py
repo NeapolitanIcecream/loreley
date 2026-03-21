@@ -6,15 +6,12 @@ import time
 from typing import Any, Mapping, Sequence, cast
 
 import numpy as np
-from loguru import logger
 from ribs.archives import GridArchive
 
 from loreley.config import Settings
 
 from .snapshot import SnapshotCellUpsert, to_list
 from .types import IslandState, MapElitesRecord, Vector, compact_solution, materialize_solution
-
-log = logger.bind(module="map_elites.archive_ops")
 
 __all__ = [
     "build_feature_bounds",
@@ -128,46 +125,16 @@ def add_single(
     if status <= 0:
         return status, delta, None
 
-    record: MapElitesRecord | None = None
-    retrieve_reason = ""
-    retrieve_error: Exception | None = None
-    try:
-        occupied, data = archive.retrieve_single(measures)
-        if occupied:
-            record = record_from_scalar_row(
-                cast(Mapping[str, Any], data),
-                island_id,
-            )
-        else:
-            retrieve_reason = "not_occupied"
-    except Exception as exc:  # pragma: no cover - defensive
-        retrieve_reason = "exception"
-        retrieve_error = exc
-
-    if record is None:
-        bound = log.bind(
-            event="mapelites.archive.retrieve_single_failed",
-            reason=retrieve_reason or "unknown",
-            island_id=island_id,
-            cell_index=int(cell_index),
-            commit_hash=str(commit_hash),
-        )
-        if retrieve_error is not None:
-            bound = bound.opt(exception=retrieve_error)
-        bound.error(
-            "Archive add succeeded but retrieve_single() failed; returning synthetic record.",
-        )
-
-        vector = to_vector(measures)
-        record = MapElitesRecord(
-            commit_hash=str(commit_hash),
-            island_id=island_id,
-            cell_index=int(cell_index),
-            fitness=float(fitness),
-            measures=vector,
-            solution=vector,
-            timestamp=float(ts_value),
-        )
+    vector = to_vector(measures)
+    record = MapElitesRecord(
+        commit_hash=str(commit_hash),
+        island_id=island_id,
+        cell_index=int(cell_index),
+        fitness=float(fitness),
+        measures=vector,
+        solution=vector,
+        timestamp=float(ts_value),
+    )
 
     state.index_to_commit[cell_index] = commit_hash
     state.commit_to_index[commit_hash] = cell_index

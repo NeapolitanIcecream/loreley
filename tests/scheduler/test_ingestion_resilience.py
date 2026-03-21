@@ -165,8 +165,8 @@ def test_ingest_completed_jobs_uses_prefetch_session_only_for_metrics_prefetch(
     )
 
     assert ingestion.ingest_completed_jobs() == 2
-    assert len(created_sessions) == 1
-    assert seen_sessions == [None, None]
+    assert len(created_sessions) == 2
+    assert seen_sessions == [created_sessions[1], created_sessions[1]]
 
 
 def test_ingest_completed_jobs_prefetches_metrics_with_canonical_hashes(
@@ -409,6 +409,159 @@ def test_ingest_snapshot_records_failed_when_manager_raises(monkeypatch, tmp_pat
     )
     assert ingestion._ingest_snapshot(snapshot) is False
     assert recorded == [("failed", "manager failed")]
+
+
+def test_ingest_snapshot_wraps_batch_session_work_in_savepoint(monkeypatch, tmp_path) -> None:
+    ingestion = _make_ingestion(tmp_path)
+    snapshot = JobSnapshot(
+        job_id=uuid4(),
+        base_commit_hash=None,
+        island_id=None,
+        result_commit_hash="cafebabe",
+        completed_at=None,
+    )
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_ensure_commit_available",
+        lambda _self, commit_hash: commit_hash,
+    )
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_load_metrics_payload_for_commit",
+        lambda _self, _commit_hash: [],
+    )
+
+    class DummyNested:
+        def __init__(self, owner: "DummySession") -> None:
+            self.owner = owner
+
+        def __enter__(self) -> "DummyNested":
+            self.owner.begin_nested_calls += 1
+            self.owner._in_nested = True
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            self.owner._in_nested = False
+            return False
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.begin_nested_calls = 0
+            self._in_nested = False
+
+        def begin_nested(self) -> DummyNested:
+            return DummyNested(self)
+
+        def in_nested_transaction(self) -> bool:
+            return self._in_nested
+
+    batch_session = DummySession()
+
+    class DummyManager:
+        def ingest(self, *args: Any, **kwargs: Any) -> Any:
+            assert kwargs.get("snapshot_session") is batch_session
+            return cast(
+                Any,
+                type(
+                    "DummyInsertion",
+                    (),
+                    {
+                        "record": None,
+                        "delta": 0.0,
+                        "status": 0,
+                        "message": "unchanged",
+                        "inserted": False,
+                    },
+                )(),
+            )
+
+    ingestion.manager = DummyManager()  # type: ignore[assignment]
+
+    recorded_sessions: list[Any] = []
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_record_ingestion_state",
+        lambda _self, _snapshot, *, session=None, **_kwargs: recorded_sessions.append(session),
+    )
+
+    assert ingestion._ingest_snapshot(snapshot, snapshot_session=batch_session) is False
+    assert batch_session.begin_nested_calls == 1
+    assert recorded_sessions == [batch_session]
+
+
+def test_record_ingestion_state_reuses_provided_session(monkeypatch, tmp_path) -> None:
+    ingestion = _make_ingestion(tmp_path)
+
+    job_id = uuid4()
+    snapshot = JobSnapshot(
+        job_id=job_id,
+        base_commit_hash=None,
+        island_id=None,
+        result_commit_hash="abc123",
+        completed_at=None,
+    )
+
+    class DummyJob:
+        def __init__(self) -> None:
+            self.ingestion_attempts = 0
+            self.ingestion_status = None
+            self.ingestion_last_attempt_at = None
+            self.ingestion_reason = None
+            self.ingestion_delta = None
+            self.ingestion_status_code = None
+            self.ingestion_message = None
+            self.ingestion_cell_index = None
+
+    dummy_job = DummyJob()
+
+    class DummyNested:
+        def __init__(self, owner: "DummySession") -> None:
+            self.owner = owner
+
+        def __enter__(self) -> "DummyNested":
+            self.owner.begin_nested_calls += 1
+            self.owner._in_nested = True
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            self.owner._in_nested = False
+            return False
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.begin_nested_calls = 0
+            self._in_nested = False
+
+        def begin_nested(self) -> DummyNested:
+            return DummyNested(self)
+
+        def in_nested_transaction(self) -> bool:
+            return self._in_nested
+
+        def get(self, _model: Any, key: Any) -> Any:
+            if key == job_id:
+                return dummy_job
+            return None
+
+    session = DummySession()
+
+    @contextmanager
+    def fake_scope():
+        raise AssertionError("session_scope() should not be used when a session is provided")
+        yield session
+
+    monkeypatch.setattr(ingestion_mod, "session_scope", fake_scope)
+
+    ingestion._record_ingestion_state(
+        snapshot,
+        status="failed",
+        reason="boom",
+        session=session,
+    )
+
+    assert session.begin_nested_calls == 1
+    assert dummy_job.ingestion_attempts == 1
+    assert dummy_job.ingestion_reason == "boom"
 
 
 def test_backoff_computation_skips_recent_failures(tmp_path) -> None:

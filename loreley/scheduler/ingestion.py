@@ -103,24 +103,30 @@ class MapElitesIngestion:
                     session=prefetch_session,
                 )
 
-            for snapshot in snapshots:
-                try:
-                    if self._ingest_snapshot(snapshot):
-                        ingested += 1
-                except Exception as exc:
-                    raw_reason = normalize_single_line(str(exc))
-                    reason = clamp_text(raw_reason, _INGESTION_REASON_MAX_CHARS) or None
-                    reason_display = reason or raw_reason or exc.__class__.__name__
-                    self.console.log(
-                        f"[bold red]Unhandled ingestion error[/] job={snapshot.job_id} commit={snapshot.result_commit_hash} reason={reason_display}",
-                    )
-                    log.exception(
-                        "Unhandled ingestion error for job {} commit {}: {}",
-                        snapshot.job_id,
-                        snapshot.result_commit_hash,
-                        reason_display,
-                    )
-                    self._record_ingestion_state(snapshot, status="failed", reason=reason_display)
+            with session_scope() as batch_session:
+                for snapshot in snapshots:
+                    try:
+                        if self._ingest_snapshot(snapshot, snapshot_session=batch_session):
+                            ingested += 1
+                    except Exception as exc:
+                        raw_reason = normalize_single_line(str(exc))
+                        reason = clamp_text(raw_reason, _INGESTION_REASON_MAX_CHARS) or None
+                        reason_display = reason or raw_reason or exc.__class__.__name__
+                        self.console.log(
+                            f"[bold red]Unhandled ingestion error[/] job={snapshot.job_id} commit={snapshot.result_commit_hash} reason={reason_display}",
+                        )
+                        log.exception(
+                            "Unhandled ingestion error for job {} commit {}: {}",
+                            snapshot.job_id,
+                            snapshot.result_commit_hash,
+                            reason_display,
+                        )
+                        self._record_ingestion_state(
+                            snapshot,
+                            status="failed",
+                            reason=reason_display,
+                            session=batch_session,
+                        )
         finally:
             self._prefetched_metrics_payload_by_commit = None
             self._prefetched_metrics_errors_by_commit = None
@@ -419,13 +425,32 @@ class MapElitesIngestion:
         else:
             metrics_payload = self._load_metrics_payload_for_commit(commit_hash)
         try:
-            insertion = self.manager.ingest(
-                commit_hash=commit_hash,
-                metrics=metrics_payload,
-                island_id=snapshot.island_id,
-                repo_root=self.repo_root,
-                snapshot_session=snapshot_session,
-            )
+            if snapshot_session is not None:
+                with snapshot_session.begin_nested():
+                    insertion = self.manager.ingest(
+                        commit_hash=commit_hash,
+                        metrics=metrics_payload,
+                        island_id=snapshot.island_id,
+                        repo_root=self.repo_root,
+                        snapshot_session=snapshot_session,
+                    )
+                    self._record_ingestion_state(
+                        snapshot,
+                        status="succeeded" if insertion.inserted else "skipped",
+                        delta=insertion.delta,
+                        status_code=insertion.status,
+                        message=insertion.message,
+                        record=insertion.record,
+                        session=snapshot_session,
+                    )
+            else:
+                insertion = self.manager.ingest(
+                    commit_hash=commit_hash,
+                    metrics=metrics_payload,
+                    island_id=snapshot.island_id,
+                    repo_root=self.repo_root,
+                    snapshot_session=snapshot_session,
+                )
         except Exception as exc:
             raw_reason = normalize_single_line(str(exc))
             reason = clamp_text(raw_reason, _INGESTION_REASON_MAX_CHARS) or None
@@ -443,6 +468,7 @@ class MapElitesIngestion:
                 snapshot,
                 status="failed",
                 reason=reason_display,
+                session=snapshot_session,
             )
             return False
         if insertion.record:
@@ -454,14 +480,15 @@ class MapElitesIngestion:
             self.console.log(
                 f"[yellow]Archive unchanged[/] job={snapshot.job_id} commit={commit_hash} status={insertion.status}",
             )
-        self._record_ingestion_state(
-            snapshot,
-            status="succeeded" if insertion.inserted else "skipped",
-            delta=insertion.delta,
-            status_code=insertion.status,
-            message=insertion.message,
-            record=insertion.record,
-        )
+        if snapshot_session is None:
+            self._record_ingestion_state(
+                snapshot,
+                status="succeeded" if insertion.inserted else "skipped",
+                delta=insertion.delta,
+                status_code=insertion.status,
+                message=insertion.message,
+                record=insertion.record,
+            )
         return bool(insertion.record)
 
     def _load_metrics_payload_batch(
@@ -563,11 +590,12 @@ class MapElitesIngestion:
         status_code: int | None = None,
         message: str | None = None,
         record: Any | None = None,
+        session: Session | None = None,
     ) -> None:
         clamped_reason = self._clamp_ingestion_text(reason, max_chars=_INGESTION_REASON_MAX_CHARS)
         clamped_message = self._clamp_ingestion_text(message, max_chars=_INGESTION_MESSAGE_MAX_CHARS)
-        with session_scope() as session:
-            job = session.get(EvolutionJob, snapshot.job_id)
+        def _apply(target_session: Session) -> None:
+            job = target_session.get(EvolutionJob, snapshot.job_id)
             if not job:
                 return
             job.ingestion_attempts = int(getattr(job, "ingestion_attempts", 0) or 0) + 1
@@ -581,6 +609,18 @@ class MapElitesIngestion:
                 job.ingestion_cell_index = int(getattr(record, "cell_index"))
             else:
                 job.ingestion_cell_index = None
+
+        if session is not None:
+            in_nested = bool(getattr(session, "in_nested_transaction", lambda: False)())
+            if in_nested or not hasattr(session, "begin_nested"):
+                _apply(session)
+            else:
+                with session.begin_nested():
+                    _apply(session)
+            return
+
+        with session_scope() as owned_session:
+            _apply(owned_session)
 
     @staticmethod
     def _clamp_ingestion_text(value: str | None, *, max_chars: int) -> str | None:
