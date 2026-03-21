@@ -225,6 +225,8 @@ From these, you can forecast:
 
 Use this index as a quick map of the rest of the documentation:
 
+- **Releases**
+  - [v0.7.7-alpha](releases/v0.7.7-alpha.md)
 - **Configuration**
   - [Global settings](loreley/config.md)
 - **Experiments**

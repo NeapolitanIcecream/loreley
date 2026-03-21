@@ -6,6 +6,8 @@ theme:
 
 nav:
   - Home: index.md
+  - Releases:
+      - v0.7.7-alpha: releases/v0.7.7-alpha.md
   - Loreley:
       - Configuration: loreley/config.md
       - Experiments: loreley/core/experiments.md
