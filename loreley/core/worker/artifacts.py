@@ -22,10 +22,15 @@ from loreley.core.worker.planning import PlanningAgentResponse
 
 log = logger.bind(module="worker.artifacts")
 
-__all__ = ["write_job_artifacts"]
+__all__ = ["resolve_worker_instance_id", "worker_runtime_metadata", "write_job_artifacts"]
 
 
-def _resolve_artifacts_dir(settings: Settings, job_id: UUID) -> Path:
+def _resolve_artifacts_dir(
+    settings: Settings,
+    job_id: UUID,
+    *,
+    run_token: UUID | None = None,
+) -> Path:
     if settings.logs_base_dir:
         base_dir = Path(settings.logs_base_dir).expanduser()
     else:
@@ -35,6 +40,8 @@ def _resolve_artifacts_dir(settings: Settings, job_id: UUID) -> Path:
     exp_ns = safe_namespace_or_none(getattr(settings, "experiment_id", None))
     logs_root = (base_dir / "logs" / exp_ns) if exp_ns else (base_dir / "logs")
     root = logs_root / "worker" / "artifacts" / str(job_id)
+    if run_token is not None:
+        root = root / str(run_token)
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -50,8 +57,16 @@ def _write_json(path: Path, payload: Any) -> None:
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
 
-def _worker_metadata() -> dict[str, Any]:
-    instance_id = (os.getenv("LORELEY_WORKER_INSTANCE_ID") or "").strip() or f"pid-{os.getpid()}"
+def resolve_worker_instance_id() -> str:
+    """Return a stable worker instance identifier for logs, leases, and artifacts."""
+
+    return (os.getenv("LORELEY_WORKER_INSTANCE_ID") or "").strip() or f"pid-{os.getpid()}"
+
+
+def worker_runtime_metadata() -> dict[str, Any]:
+    """Return non-sensitive runtime metadata for diagnostics."""
+
+    instance_id = resolve_worker_instance_id()
     return {
         "instance_id": instance_id,
         "pid": os.getpid(),
@@ -61,6 +76,7 @@ def _worker_metadata() -> dict[str, Any]:
 def write_job_artifacts(
     *,
     job_id: UUID,
+    run_token: UUID | None = None,
     plan: PlanningAgentResponse,
     coding: CodingAgentResponse,
     evaluation: EvaluationResult,
@@ -72,8 +88,8 @@ def write_job_artifacts(
     """Write artifacts to disk and return a dict of absolute paths."""
 
     settings = settings or get_settings()
-    root = _resolve_artifacts_dir(settings, job_id)
-    worker = _worker_metadata()
+    root = _resolve_artifacts_dir(settings, job_id, run_token=run_token)
+    worker = worker_runtime_metadata()
 
     paths: dict[str, str] = {}
 
@@ -152,4 +168,3 @@ def write_job_artifacts(
 
     log.info("Wrote {} artifact file(s) for job {}", len(paths), job_id)
     return paths
-

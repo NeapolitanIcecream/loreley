@@ -120,6 +120,7 @@ class _FakeSession:
 def _make_job_context() -> JobContext:
     return JobContext(
         job_id=uuid.uuid4(),
+        run_token=uuid.uuid4(),
         base_commit_hash="base",
         island_id="island-1",
         inspiration_commit_hashes=("insp-a", "insp-b"),

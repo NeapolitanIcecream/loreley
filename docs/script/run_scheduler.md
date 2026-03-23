@@ -46,6 +46,10 @@ Logs are written to:
 
 - `logs/{experiment_namespace}/scheduler/scheduler-YYYYMMDD-HHMMSS.log`
 
+Each tick log also includes `reclaimed_pending` and `reclaimed_failed`, which show how many stale `RUNNING` jobs were recovered or failed during that tick.
+
+For lease recovery triage and manual retry steps, see [Job lease recovery](job_leases.md).
+
 ## Exit codes
 
 - `0`: success

@@ -151,6 +151,10 @@ class EvolutionScheduler:
 
         stats: dict[str, int] = {}
         stats["ingested"] = self.ingestion.ingest_completed_jobs()
+        reclaim_fn = getattr(self.job_scheduler, "reclaim_stale_running_jobs", None)
+        reclaimed = reclaim_fn() if callable(reclaim_fn) else None
+        stats["reclaimed_pending"] = int(getattr(reclaimed, "requeued", 0) or 0)
+        stats["reclaimed_failed"] = int(getattr(reclaimed, "failed", 0) or 0)
         stats["dispatched"] = self.job_scheduler.dispatch_pending_jobs()
         unfinished = self.job_scheduler.count_unfinished_jobs()
         stats["seed_scheduled"] = self._maybe_schedule_seed_jobs(unfinished_jobs=unfinished)
@@ -174,8 +178,9 @@ class EvolutionScheduler:
         remaining_total_str = f" remaining_total={remaining_total}/{max_total}"
 
         self.console.log(
-            "[bold magenta]Scheduler tick[/] ingested={ingested} dispatched={dispatched} "
-            "seed_scheduled={seed_scheduled} scheduled={scheduled} unfinished={unfinished}{remaining_total}".format(
+            "[bold magenta]Scheduler tick[/] ingested={ingested} reclaimed_pending={reclaimed_pending} "
+            "reclaimed_failed={reclaimed_failed} dispatched={dispatched} seed_scheduled={seed_scheduled} "
+            "scheduled={scheduled} unfinished={unfinished}{remaining_total}".format(
                 **stats,
                 remaining_total=remaining_total_str,
             ),

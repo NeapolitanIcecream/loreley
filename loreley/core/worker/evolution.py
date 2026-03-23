@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import threading
 from typing import Sequence
 from uuid import UUID
 
@@ -43,6 +44,7 @@ from loreley.core.worker.trajectory import build_inspiration_trajectory_rollup
 from loreley.core.worker.job_store import (
     EvolutionJobStore,
     EvolutionWorkerError,
+    JobLeaseLost,
     JobLockConflict,
     JobPreconditionError,
 )
@@ -66,6 +68,7 @@ class JobContext:
     """Loaded job information used across the worker stages."""
 
     job_id: UUID
+    run_token: UUID
     base_commit_hash: str
     island_id: str | None
     inspiration_commit_hashes: tuple[str, ...]
@@ -103,6 +106,75 @@ class WorkerPromptContext:
     base: CommitPlanningContext
     inspirations: tuple[CommitPlanningContext, ...]
     iteration_context: IterationContext
+
+
+class _JobLeaseHeartbeat:
+    """Renew a job lease in the background while long-running stages execute."""
+
+    def __init__(
+        self,
+        *,
+        job_store: EvolutionJobStore,
+        job_id: UUID,
+        run_token: UUID,
+        settings: Settings,
+    ) -> None:
+        self._job_store = job_store
+        self._job_id = job_id
+        self._run_token = run_token
+        interval = max(1, int(settings.worker_job_heartbeat_interval_seconds))
+        ttl = max(1, int(settings.worker_job_lease_ttl_seconds))
+        self._interval_seconds = min(interval, max(1, ttl // 2))
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run,
+            name=f"job-lease-{str(job_id)[:8]}",
+            daemon=True,
+        )
+        self._lease_lost: JobLeaseLost | None = None
+
+    def __enter__(self) -> _JobLeaseHeartbeat:
+        self._thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self._stop.set()
+        self._thread.join(timeout=max(1.0, float(self._interval_seconds) * 2.0))
+
+    def raise_if_lease_lost(self) -> None:
+        if self._lease_lost is not None:
+            raise self._lease_lost
+
+    def _run(self) -> None:
+        while not self._stop.wait(float(self._interval_seconds)):
+            try:
+                lease_expires_at = self._job_store.renew_job_lease(
+                    self._job_id,
+                    self._run_token,
+                )
+                log.debug(
+                    "Renewed lease for job {} run_token={} expires_at={}",
+                    self._job_id,
+                    self._run_token,
+                    lease_expires_at,
+                )
+            except JobLeaseLost as exc:
+                self._lease_lost = exc
+                log.warning(
+                    "Lease lost for job {} run_token={}: {}",
+                    self._job_id,
+                    self._run_token,
+                    exc,
+                )
+                self._stop.set()
+                return
+            except Exception as exc:  # pragma: no cover - defensive / transient DB failures
+                log.warning(
+                    "Lease heartbeat failed for job {} run_token={}: {}",
+                    self._job_id,
+                    self._run_token,
+                    exc,
+                )
 
 
 class EvolutionWorker:
@@ -144,8 +216,14 @@ class EvolutionWorker:
             )
             log.warning("Job {} skipped due to precondition failure: {}", job_uuid, exc)
             raise
+        except JobLeaseLost as exc:
+            console.log(
+                f"[yellow]Evolution worker[/] job={job_uuid} lost lease before start: {exc}",
+            )
+            log.warning("Job {} lost lease before start: {}", job_uuid, exc)
+            raise
         except Exception as exc:
-            self._mark_job_failed(job_uuid, exc)
+            self._mark_job_failed(job_uuid, None, exc)
             raise
         checkout: CheckoutContext | None = None
         plan_response: PlanningAgentResponse | None = None
@@ -159,42 +237,56 @@ class EvolutionWorker:
             f"base={job_ctx.base_commit_hash}",
         )
         try:
-            with self.repository.checkout_lease_for_job(
+            with _JobLeaseHeartbeat(
+                job_store=self.job_store,
                 job_id=job_uuid,
-                base_commit=job_ctx.base_commit_hash,
-            ) as checkout:
-                prompt_context = self._build_prompt_context(job_ctx)
-                plan_response = self._run_planning(job_ctx, checkout, prompt_context)
-                coding_response = self._run_coding(
-                    job_ctx,
-                    plan_response,
-                    checkout,
-                    prompt_context,
-                )
-                commit_message = self._prepare_commit_message(
-                    job_ctx=job_ctx,
-                    plan=plan_response,
-                    coding=coding_response,
-                )
-                candidate_commit = self._create_commit(
-                    checkout=checkout,
-                    commit_message=commit_message,
-                )
-                evaluation_result = self._run_evaluation(
-                    job_ctx=job_ctx,
-                    checkout=checkout,
-                    plan=plan_response,
-                    candidate_commit=candidate_commit,
-                )
-                self.job_store.persist_success(
-                    job_ctx=job_ctx,
-                    plan=plan_response,
-                    coding=coding_response,
-                    evaluation=evaluation_result,
-                    worktree=checkout.worktree,
-                    commit_hash=candidate_commit,
-                    commit_message=commit_message,
-                )
+                run_token=job_ctx.run_token,
+                settings=self.settings,
+            ) as heartbeat:
+                with self.repository.checkout_lease_for_job(
+                    job_id=job_uuid,
+                    base_commit=job_ctx.base_commit_hash,
+                    attempt_token=job_ctx.run_token,
+                ) as checkout:
+                    heartbeat.raise_if_lease_lost()
+                    prompt_context = self._build_prompt_context(job_ctx)
+                    heartbeat.raise_if_lease_lost()
+                    plan_response = self._run_planning(job_ctx, checkout, prompt_context)
+                    heartbeat.raise_if_lease_lost()
+                    coding_response = self._run_coding(
+                        job_ctx,
+                        plan_response,
+                        checkout,
+                        prompt_context,
+                    )
+                    heartbeat.raise_if_lease_lost()
+                    commit_message = self._prepare_commit_message(
+                        job_ctx=job_ctx,
+                        plan=plan_response,
+                        coding=coding_response,
+                    )
+                    heartbeat.raise_if_lease_lost()
+                    candidate_commit = self._create_commit(
+                        checkout=checkout,
+                        commit_message=commit_message,
+                    )
+                    heartbeat.raise_if_lease_lost()
+                    evaluation_result = self._run_evaluation(
+                        job_ctx=job_ctx,
+                        checkout=checkout,
+                        plan=plan_response,
+                        candidate_commit=candidate_commit,
+                    )
+                    heartbeat.raise_if_lease_lost()
+                    self.job_store.persist_success(
+                        job_ctx=job_ctx,
+                        plan=plan_response,
+                        coding=coding_response,
+                        evaluation=evaluation_result,
+                        worktree=checkout.worktree,
+                        commit_hash=candidate_commit,
+                        commit_message=commit_message,
+                    )
 
             self._prune_job_branches()
             console.log(
@@ -211,8 +303,12 @@ class EvolutionWorker:
                 checkout=checkout,
                 commit_message=commit_message,
             )
+        except JobLeaseLost as exc:
+            console.log(f"[yellow]Evolution worker[/] job={job_uuid} lost lease: {exc}")
+            log.warning("Job {} lost lease during execution: {}", job_uuid, exc)
+            raise
         except Exception as exc:
-            self._mark_job_failed(job_uuid, exc)
+            self._mark_job_failed(job_uuid, job_ctx.run_token, exc)
             raise
 
     # Internal orchestration helpers -------------------------------------
@@ -254,6 +350,7 @@ class EvolutionWorker:
 
         return JobContext(
             job_id=locked_job.job_id,
+            run_token=locked_job.run_token,
             base_commit_hash=base_commit_hash,
             island_id=locked_job.island_id,
             inspiration_commit_hashes=inspiration_commit_hashes,
@@ -492,10 +589,16 @@ class EvolutionWorker:
         except RepositoryError as exc:
             log.warning("Skipping job branch pruning: {}", exc)
 
-    def _mark_job_failed(self, job_id: UUID, exc: Exception) -> None:
+    def _mark_job_failed(self, job_id: UUID, run_token: UUID | None, exc: Exception) -> None:
         message = str(exc)
         console.log(f"[bold red]Evolution worker[/] job={job_id} failed: {message}")
-        self.job_store.mark_job_failed(job_id, message)
+        recorded = self.job_store.mark_job_failed(job_id, message, run_token=run_token)
+        if not recorded and run_token is not None:
+            log.warning(
+                "Skipped failure persistence for job {} because run_token={} is no longer active.",
+                job_id,
+                run_token,
+            )
 
     # Data extraction utilities -------------------------------------------
 

@@ -16,7 +16,7 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from loreley.config import Settings, get_settings
 from loreley.db.instance import ensure_instance_marker, seed_instance_marker
 
-INSTANCE_SCHEMA_VERSION = 3
+INSTANCE_SCHEMA_VERSION = 4
 _REDUNDANT_INDEX_NAMES = (
     "ix_commit_cards_commit_hash",
     "ix_map_elites_archive_cells_island",

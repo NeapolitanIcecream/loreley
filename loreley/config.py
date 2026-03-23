@@ -171,6 +171,14 @@ class Settings(BaseSettings):
         default=False,
         alias="SCHEDULER_STARTUP_APPROVE",
     )
+    scheduler_stale_running_reclaim_batch_size: int = Field(
+        default=32,
+        alias="SCHEDULER_STALE_RUNNING_RECLAIM_BATCH_SIZE",
+    )
+    scheduler_stale_running_max_recovery_attempts: int = Field(
+        default=3,
+        alias="SCHEDULER_STALE_RUNNING_MAX_RECOVERY_ATTEMPTS",
+    )
 
     worker_repo_remote_url: str | None = Field(
         default=None,
@@ -211,6 +219,14 @@ class Settings(BaseSettings):
     worker_repo_job_branch_ttl_hours: int = Field(
         default=168,
         alias="WORKER_REPO_JOB_BRANCH_TTL_HOURS",
+    )
+    worker_job_lease_ttl_seconds: int = Field(
+        default=1800,
+        alias="WORKER_JOB_LEASE_TTL_SECONDS",
+    )
+    worker_job_heartbeat_interval_seconds: int = Field(
+        default=60,
+        alias="WORKER_JOB_HEARTBEAT_INTERVAL_SECONDS",
     )
 
     worker_planning_codex_bin: str = Field(
@@ -795,6 +811,8 @@ class Settings(BaseSettings):
             "worker_repo_fetch_depth": self.worker_repo_fetch_depth,
             "worker_repo_enable_lfs": self.worker_repo_enable_lfs,
             "worker_repo_job_branch_ttl_hours": self.worker_repo_job_branch_ttl_hours,
+            "worker_job_lease_ttl_seconds": self.worker_job_lease_ttl_seconds,
+            "worker_job_heartbeat_interval_seconds": self.worker_job_heartbeat_interval_seconds,
             "worker_planning_backend": self.worker_planning_backend,
             "worker_planning_codex_model": self.worker_planning_codex_model,
             "worker_planning_max_attempts": self.worker_planning_max_attempts,
@@ -829,6 +847,12 @@ class Settings(BaseSettings):
             "scheduler_ingest_batch_size": self.scheduler_ingest_batch_size,
             "scheduler_max_total_jobs": self.scheduler_max_total_jobs,
             "scheduler_startup_approve": self.scheduler_startup_approve,
+            "scheduler_stale_running_reclaim_batch_size": (
+                self.scheduler_stale_running_reclaim_batch_size
+            ),
+            "scheduler_stale_running_max_recovery_attempts": (
+                self.scheduler_stale_running_max_recovery_attempts
+            ),
         }
 
 
