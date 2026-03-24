@@ -1,14 +1,21 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import os
+from pathlib import Path
+import subprocess
 import uuid
 from typing import Any, cast
 
 import pytest
 
+import loreley.core.worker.repository as repository_module
 from loreley.config import Settings
-from loreley.core.git import sanitize_value, wrap_git_error
+from git import Repo
+
+from loreley.core.git import require_commit, sanitize_value, wrap_git_error
 from loreley.core.worker.repository import RepositoryError, WorkerRepository
+from loreley.db.models import JobStatus
 from loreley.naming import worker_job_branch_prefix
 
 
@@ -38,10 +45,49 @@ class _FakeRepo:
         self.git = git
 
 
+class _FakeQueryResult:
+    def __init__(self, rows: list[object]) -> None:
+        self._rows = rows
+
+    def all(self) -> list[object]:
+        return list(self._rows)
+
+    def __iter__(self):
+        return iter(self._rows)
+
+
+class _PruneGit:
+    def __init__(self, refs_output: str, head_by_ref: dict[str, str]) -> None:
+        self._refs_output = refs_output
+        self._head_by_ref = head_by_ref
+        self.rev_parse_calls: list[str] = []
+
+    def for_each_ref(self, *args: str) -> str:
+        return self._refs_output
+
+    def rev_parse(self, ref_name: str) -> str:
+        self.rev_parse_calls.append(ref_name)
+        return self._head_by_ref[ref_name]
+
+
 def _make_repo(settings: Settings, tmp_path) -> WorkerRepository:
     settings.worker_repo_remote_url = "https://example.invalid/repo.git"
     settings.worker_repo_worktree = str(tmp_path / "repo")
     return WorkerRepository(settings=settings)
+
+
+def _git(cwd: Path, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    full_env = None
+    if env is not None:
+        full_env = {**os.environ, **env}
+    return subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        text=True,
+        capture_output=True,
+        env=full_env,
+    )
 
 
 def test_sanitize_value_masks_credentials() -> None:
@@ -230,3 +276,177 @@ def test_prepare_base_repo_for_checkout_skips_full_upstream_sync(
         "ensure_commit_available:abc123",
         "prune_worktrees",
     ]
+
+
+def test_load_protected_job_branch_state_collects_archive_and_job_refs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    settings: Settings,
+) -> None:
+    repo = _make_repo(settings, tmp_path)
+    prefix = repo.job_branch_prefix
+    archived_branch = f"{prefix}/archived-job"
+    pending_ingestion_branch = f"{prefix}/pending-ingestion"
+
+    class _FakeSession:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def execute(self, _stmt: Any) -> _FakeQueryResult:
+            self.calls += 1
+            if self.calls == 1:
+                return _FakeQueryResult([("archive-commit",), ("",)])
+            if self.calls == 2:
+                return _FakeQueryResult(
+                    [
+                        (
+                            "base-commit",
+                            "result-commit",
+                            "candidate-commit",
+                            archived_branch,
+                            ["insp-1", "insp-2", ""],
+                            JobStatus.RUNNING,
+                            None,
+                        ),
+                        (
+                            "pending-base",
+                            "pending-result",
+                            "pending-candidate",
+                            pending_ingestion_branch,
+                            ["pending-insp"],
+                            JobStatus.SUCCEEDED,
+                            None,
+                        ),
+                        (
+                            "ignored-base",
+                            "ignored-result",
+                            "ignored-candidate",
+                            "other/prefix",
+                            ["ignored-insp"],
+                            JobStatus.SUCCEEDED,
+                            "succeeded",
+                        ),
+                    ]
+                )
+            raise AssertionError("unexpected query count")
+
+    @contextmanager
+    def _session_scope():
+        yield _FakeSession()
+
+    monkeypatch.setattr(repository_module, "session_scope", _session_scope, raising=False)
+
+    protected_commits, protected_branches = repo._load_protected_job_branch_state()
+
+    assert protected_commits >= {
+        "archive-commit",
+        "base-commit",
+        "result-commit",
+        "candidate-commit",
+        "insp-1",
+        "insp-2",
+        "pending-base",
+        "pending-result",
+        "pending-candidate",
+        "pending-insp",
+    }
+    assert "ignored-result" not in protected_commits
+    assert protected_branches == {archived_branch, pending_ingestion_branch}
+
+
+def test_prune_stale_job_branches_skips_protected_commits(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    settings: Settings,
+) -> None:
+    repo = _make_repo(settings, tmp_path)
+    repo.job_branch_ttl_hours = 1
+
+    @contextmanager
+    def _noop_lock():
+        yield
+
+    branch_name = repo._format_job_branch(uuid.uuid4())
+    ref_name = f"refs/remotes/origin/{branch_name}"
+    head_commit = "a" * 40
+    git = _PruneGit(f"{ref_name} 1", {ref_name: head_commit})
+    deleted: list[str] = []
+
+    monkeypatch.setattr(repo, "_repo_lock", _noop_lock)
+    monkeypatch.setattr(repo, "_get_repo", lambda: _FakeRepo(cast(Any, git)))
+    monkeypatch.setattr(repo, "_fetch", lambda *, repo=None, refspecs=None: None)
+    monkeypatch.setattr(repo, "delete_remote_branch", lambda branch: deleted.append(branch))
+    monkeypatch.setattr(
+        repo,
+        "_load_protected_job_branch_state",
+        lambda: ({head_commit}, set()),
+        raising=False,
+    )
+
+    assert repo.prune_stale_job_branches() == 0
+    assert deleted == []
+    assert git.rev_parse_calls == [ref_name]
+
+
+def test_prune_stale_job_branches_preserves_last_ref_for_protected_commit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    settings: Settings,
+) -> None:
+    remote = tmp_path / "remote.git"
+    remote_uri = remote.as_uri()
+    source = tmp_path / "source"
+    fresh = tmp_path / "fresh"
+
+    _git(tmp_path, "init", "--bare", str(remote))
+    _git(tmp_path, "clone", "--no-local", remote_uri, str(source))
+    _git(source, "config", "user.email", "test@example.com")
+    _git(source, "config", "user.name", "Test User")
+
+    tracked = source / "tracked.txt"
+    tracked.write_text("root\n", encoding="utf-8")
+    _git(source, "add", "tracked.txt")
+    _git(source, "commit", "-m", "root")
+    _git(source, "branch", "-M", "main")
+    _git(source, "push", "origin", "main")
+
+    repo = _make_repo(settings, tmp_path)
+    repo.remote_url = remote_uri
+    repo.worktree = tmp_path / "worker"
+    repo._repo = None
+    repo._lock_path = repo._resolve_lock_path()
+    repo.enable_lfs = False
+    repo.job_branch_ttl_hours = 1
+    repo.prepare()
+
+    branch_name = repo._format_job_branch(uuid.uuid4())
+    tracked.write_text("candidate\n", encoding="utf-8")
+    _git(source, "checkout", "-b", branch_name)
+    _git(
+        source,
+        "commit",
+        "-am",
+        "candidate",
+        env={
+            "GIT_AUTHOR_DATE": "2020-01-01T00:00:00Z",
+            "GIT_COMMITTER_DATE": "2020-01-01T00:00:00Z",
+        },
+    )
+    protected_commit = _git(source, "rev-parse", "HEAD").stdout.strip()
+    _git(source, "push", "origin", branch_name)
+
+    monkeypatch.setattr(
+        repo,
+        "_load_protected_job_branch_state",
+        lambda: ({protected_commit}, set()),
+        raising=False,
+    )
+
+    assert repo.prune_stale_job_branches() == 0
+
+    _git(remote, "reflog", "expire", "--expire=now", "--all")
+    _git(remote, "gc", "--prune=now")
+    _git(tmp_path, "clone", "--no-local", remote_uri, str(fresh))
+
+    resolved = require_commit(Repo(fresh), protected_commit)
+    assert resolved == protected_commit

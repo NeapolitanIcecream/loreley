@@ -17,9 +17,12 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from git import Repo
 from git.exc import GitCommandError, InvalidGitRepositoryError, NoSuchPathError
+from sqlalchemy import and_, or_, select
 
 from loreley.config import Settings, get_settings
 from loreley.core.git import RepositoryError, fetch_origin, require_commit, wrap_git_error
+from loreley.db.base import session_scope
+from loreley.db.models import EvolutionJob, JobStatus, MapElitesArchiveCell
 from loreley.naming import worker_job_branch_prefix
 
 console = Console()
@@ -407,6 +410,12 @@ class WorkerRepository:
             log.warning("Skipping job branch pruning; fetch failed: {}", exc)
             return 0
 
+        try:
+            protected_commits, protected_branches = self._load_protected_job_branch_state()
+        except Exception as exc:
+            log.warning("Skipping job branch pruning; protected ref lookup failed: {}", exc)
+            return 0
+
         pattern = f"refs/remotes/origin/{prefix}/*"
         try:
             output = repo.git.for_each_ref(
@@ -434,6 +443,17 @@ class WorkerRepository:
             branch = ref_name.replace("refs/remotes/origin/", "", 1)
             if not branch.startswith(prefix):
                 continue
+            if branch in protected_branches:
+                log.debug("Skipping protected job branch {}", branch)
+                continue
+            try:
+                head_commit = str(repo.git.rev_parse(ref_name)).strip()
+            except GitCommandError as exc:
+                log.warning("Skipping stale job branch {} because its head commit could not be resolved: {}", branch, exc)
+                continue
+            if self._commit_matches_protected_commit(head_commit, protected_commits):
+                log.debug("Skipping protected job branch {} at {}", branch, head_commit)
+                continue
             try:
                 self.delete_remote_branch(branch)
                 pruned += 1
@@ -451,6 +471,106 @@ class WorkerRepository:
                 ttl_hours,
             )
         return pruned
+
+    def _load_protected_job_branch_state(self) -> tuple[set[str], set[str]]:
+        """Return commit hashes and branch names that must not lose their last ref."""
+
+        protected_commits: set[str] = set()
+        protected_branches: set[str] = set()
+        prefix = self.job_branch_prefix.strip("/")
+        unfinished_statuses = (
+            JobStatus.PENDING,
+            JobStatus.QUEUED,
+            JobStatus.RUNNING,
+        )
+
+        def _remember_commit(raw_value: str | None) -> None:
+            commit = str(raw_value or "").strip()
+            if commit:
+                protected_commits.add(commit)
+
+        def _remember_branch(raw_value: str | None) -> None:
+            branch = str(raw_value or "").strip()
+            if not branch:
+                return
+            if prefix and not branch.startswith(f"{prefix}/") and branch != prefix:
+                return
+            protected_branches.add(branch)
+
+        ingestion_pending = or_(
+            EvolutionJob.ingestion_status.is_(None),
+            EvolutionJob.ingestion_status == "",
+            EvolutionJob.ingestion_status.not_in(("succeeded", "skipped")),
+        )
+
+        with session_scope() as session:
+            archive_rows = session.execute(
+                select(MapElitesArchiveCell.commit_hash).where(
+                    MapElitesArchiveCell.commit_hash.is_not(None),
+                    MapElitesArchiveCell.commit_hash != "",
+                )
+            ).all()
+            for (commit_hash,) in archive_rows:
+                _remember_commit(commit_hash)
+
+            job_rows = session.execute(
+                select(
+                    EvolutionJob.base_commit_hash,
+                    EvolutionJob.result_commit_hash,
+                    EvolutionJob.candidate_commit_hash,
+                    EvolutionJob.candidate_branch_name,
+                    EvolutionJob.inspiration_commit_hashes,
+                    EvolutionJob.status,
+                    EvolutionJob.ingestion_status,
+                ).where(
+                    or_(
+                        EvolutionJob.status.in_(unfinished_statuses),
+                        and_(
+                            EvolutionJob.status == JobStatus.SUCCEEDED,
+                            ingestion_pending,
+                        ),
+                    )
+                )
+            ).all()
+
+        for (
+            base_commit_hash,
+            result_commit_hash,
+            candidate_commit_hash,
+            candidate_branch_name,
+            inspiration_commit_hashes,
+            status,
+            ingestion_status,
+        ) in job_rows:
+            normalized_ingestion_status = str(ingestion_status or "").strip().lower()
+            if status not in unfinished_statuses and not (
+                status == JobStatus.SUCCEEDED
+                and normalized_ingestion_status not in {"succeeded", "skipped"}
+            ):
+                continue
+            _remember_commit(base_commit_hash)
+            _remember_commit(result_commit_hash)
+            _remember_commit(candidate_commit_hash)
+            _remember_branch(candidate_branch_name)
+            for commit_hash in inspiration_commit_hashes or ():
+                _remember_commit(commit_hash)
+
+        return protected_commits, protected_branches
+
+    @staticmethod
+    def _commit_matches_protected_commit(head_commit: str, protected_commits: set[str]) -> bool:
+        """Return True when `head_commit` matches a protected full or short hash."""
+
+        normalized_head = str(head_commit or "").strip().lower()
+        if not normalized_head:
+            return False
+        for protected in protected_commits:
+            candidate = str(protected or "").strip().lower()
+            if not candidate:
+                continue
+            if normalized_head == candidate or normalized_head.startswith(candidate) or candidate.startswith(normalized_head):
+                return True
+        return False
 
     # Internal helpers -----------------------------------------------------
 
