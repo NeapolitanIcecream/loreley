@@ -250,6 +250,16 @@ class _FakeJobStoreForPublishFailure:
         )
 
 
+def _patch_empty_planning_context_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_session = _FakeSession(cards={}, metrics={}, cells={})
+
+    @contextmanager
+    def fake_session_scope() -> Any:
+        yield fake_session
+
+    monkeypatch.setattr(evolution_module, "session_scope", fake_session_scope)
+
+
 def _make_job_context() -> JobContext:
     return JobContext(
         job_id=uuid.uuid4(),
@@ -447,12 +457,14 @@ def test_start_job_requires_non_empty_base_commit_hash(settings: Settings) -> No
 
 def test_run_records_candidate_before_push_when_persist_success_fails_gh_candidate_orphan(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     settings: Settings,
 ) -> None:
     """Regression: worker must durably record the candidate before publishing it."""
 
     job_id = uuid.uuid4()
     events: list[str] = []
+    _patch_empty_planning_context_session(monkeypatch)
     store = _FakeJobStoreForPublishFailure(
         job_id=job_id,
         events=events,
@@ -478,12 +490,14 @@ def test_run_records_candidate_before_push_when_persist_success_fails_gh_candida
 
 def test_run_keeps_candidate_metadata_when_post_push_persistence_fails_gh_candidate_orphan(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     settings: Settings,
 ) -> None:
     """Regression: a pushed candidate must remain discoverable after post-push failure."""
 
     job_id = uuid.uuid4()
     events: list[str] = []
+    _patch_empty_planning_context_session(monkeypatch)
     store = _FakeJobStoreForPublishFailure(
         job_id=job_id,
         events=events,
