@@ -194,26 +194,26 @@ def bootstrap_instance(
     settings = settings or get_settings()
     root_candidate = repo_root or settings.scheduler_repo_root or settings.worker_repo_worktree
     root = Path(root_candidate).expanduser().resolve()
-
-    try:
-        repo_obj = Repo(root)
-    except (InvalidGitRepositoryError, NoSuchPathError) as exc:
-        message = f"Scheduler repo {root} is not a git repository."
-        log.error("{}: {}", message, exc)
-        raise ExperimentError(message) from exc
-
-    repository = _resolve_repository_identity(repo=repo_obj, root=root)
     root_ref = (settings.mapelites_experiment_root_commit or "").strip()
     if not root_ref:
         raise ExperimentError(
             "MAPELITES_EXPERIMENT_ROOT_COMMIT is required for scheduler startup.",
         )
+
     try:
         with repo_lock(root):
+            try:
+                repo_obj = Repo(root)
+            except (InvalidGitRepositoryError, NoSuchPathError) as exc:
+                message = f"Scheduler repo {root} is not a git repository."
+                log.error("{}: {}", message, exc)
+                raise ExperimentError(message) from exc
+
+            repository = _resolve_repository_identity(repo=repo_obj, root=root)
             canonical_root = require_commit(repo_obj, root_ref, console=console)
+            ignore_text = _load_root_ignore_text_from_commit(repo=repo_obj, commit_hash=canonical_root)
     except RepositoryError as exc:
         raise ExperimentError(str(exc)) from exc
-    ignore_text = _load_root_ignore_text_from_commit(repo=repo_obj, commit_hash=canonical_root)
 
     settings = settings.model_copy(
         update={
@@ -240,4 +240,3 @@ def bootstrap_instance(
         repository.slug,
     )
     return repository, settings
-

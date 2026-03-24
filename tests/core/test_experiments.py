@@ -61,6 +61,35 @@ def _hold_repo_lock(lock_path: str, hold_seconds: float, ready_queue) -> None:
         fh.close()
 
 
+def _init_repo_while_holding_lock(
+    repo_root: str,
+    lock_path: str,
+    hold_seconds: float,
+    ready_queue,
+) -> None:
+    import fcntl
+
+    root = Path(repo_root)
+    path = Path(lock_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fh = open(path, "a+", encoding="utf-8")
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        ready_queue.put("locked")
+        time.sleep(hold_seconds / 2)
+        root.mkdir(parents=True, exist_ok=True)
+        subprocess.check_call(["git", "init"], cwd=root)
+        subprocess.check_call(["git", "config", "user.email", "test@example.com"], cwd=root)
+        subprocess.check_call(["git", "config", "user.name", "Test User"], cwd=root)
+        (root / "README.md").write_text("hello\n", encoding="utf-8")
+        subprocess.check_call(["git", "add", "README.md"], cwd=root)
+        subprocess.check_call(["git", "commit", "-m", "init"], cwd=root)
+        time.sleep(hold_seconds / 2)
+    finally:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        fh.close()
+
+
 @pytest.mark.skipif(
     os.name != "posix",
     reason="Shared repo lock coordination tests require POSIX flock semantics.",
@@ -110,3 +139,45 @@ def test_bootstrap_instance_waits_for_shared_worker_repo_lock(
             proc.terminate()
             proc.join(timeout=5)
 
+
+@pytest.mark.skipif(
+    os.name != "posix",
+    reason="Shared repo lock coordination tests require POSIX flock semantics.",
+)
+def test_bootstrap_instance_waits_for_repo_initialization_under_shared_worker_lock(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    settings,
+) -> None:
+    """Regression: scheduler bootstrap must wait until the locked shared repo becomes a valid git repository."""
+
+    repo_root = tmp_path / "shared-repo"
+    test_settings = settings.model_copy(
+        update={
+            "mapelites_experiment_root_commit": "HEAD",
+        }
+    )
+    monkeypatch.setattr(experiments, "_update_instance_metadata", lambda **_kwargs: None)
+
+    hold_seconds = 0.5
+    lock_path = repo_root.parent / f".{repo_root.name}.lock"
+    ctx = get_context("spawn")
+    ready_queue = ctx.Queue()
+    proc = ctx.Process(
+        target=_init_repo_while_holding_lock,
+        args=(str(repo_root), str(lock_path), hold_seconds, ready_queue),
+    )
+    proc.start()
+    try:
+        assert ready_queue.get(timeout=5) == "locked"
+        started = time.perf_counter()
+        repository, resolved_settings = bootstrap_instance(settings=test_settings, repo_root=repo_root)
+        elapsed = time.perf_counter() - started
+        assert repository.root_path == str(repo_root.resolve())
+        assert len(resolved_settings.mapelites_experiment_root_commit or "") == 40
+        assert elapsed >= hold_seconds * 0.8
+    finally:
+        proc.join(timeout=5)
+        if proc.is_alive():
+            proc.terminate()
+            proc.join(timeout=5)
