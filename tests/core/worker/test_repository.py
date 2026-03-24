@@ -450,3 +450,84 @@ def test_prune_stale_job_branches_preserves_last_ref_for_protected_commit(
 
     resolved = require_commit(Repo(fresh), protected_commit)
     assert resolved == protected_commit
+
+
+def test_prune_stale_job_branches_preserves_protected_ancestor_commit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    settings: Settings,
+) -> None:
+    remote = tmp_path / "remote.git"
+    remote_uri = remote.as_uri()
+    source = tmp_path / "source"
+    fresh = tmp_path / "fresh"
+
+    _git(tmp_path, "init", "--bare", str(remote))
+    _git(tmp_path, "clone", "--no-local", remote_uri, str(source))
+    _git(source, "config", "user.email", "test@example.com")
+    _git(source, "config", "user.name", "Test User")
+
+    tracked = source / "tracked.txt"
+    tracked.write_text("root\n", encoding="utf-8")
+    _git(source, "add", "tracked.txt")
+    _git(source, "commit", "-m", "root")
+    _git(source, "branch", "-M", "main")
+    _git(source, "push", "origin", "main")
+
+    repo = _make_repo(settings, tmp_path)
+    repo.remote_url = remote_uri
+    repo.worktree = tmp_path / "worker"
+    repo._repo = None
+    repo._lock_path = repo._resolve_lock_path()
+    repo.enable_lfs = False
+    repo.job_branch_ttl_hours = 1
+    repo.prepare()
+
+    protected_branch = repo._format_job_branch(uuid.uuid4())
+    tracked.write_text("protected\n", encoding="utf-8")
+    _git(source, "checkout", "-b", protected_branch)
+    _git(
+        source,
+        "commit",
+        "-am",
+        "protected",
+        env={
+            "GIT_AUTHOR_DATE": "2020-01-01T00:00:00Z",
+            "GIT_COMMITTER_DATE": "2020-01-01T00:00:00Z",
+        },
+    )
+    protected_commit = _git(source, "rev-parse", "HEAD").stdout.strip()
+    _git(source, "push", "origin", protected_branch)
+
+    descendant_branch = repo._format_job_branch(uuid.uuid4())
+    tracked.write_text("descendant\n", encoding="utf-8")
+    _git(source, "checkout", "-b", descendant_branch)
+    _git(
+        source,
+        "commit",
+        "-am",
+        "descendant",
+        env={
+            "GIT_AUTHOR_DATE": "2020-01-02T00:00:00Z",
+            "GIT_COMMITTER_DATE": "2020-01-02T00:00:00Z",
+        },
+    )
+    _git(source, "push", "origin", descendant_branch)
+
+    _git(source, "push", "origin", f":{protected_branch}")
+
+    monkeypatch.setattr(
+        repo,
+        "_load_protected_job_branch_state",
+        lambda: ({protected_commit}, set()),
+        raising=False,
+    )
+
+    assert repo.prune_stale_job_branches() == 0
+
+    _git(remote, "reflog", "expire", "--expire=now", "--all")
+    _git(remote, "gc", "--prune=now")
+    _git(tmp_path, "clone", "--no-local", remote_uri, str(fresh))
+
+    resolved = require_commit(Repo(fresh), protected_commit)
+    assert resolved == protected_commit

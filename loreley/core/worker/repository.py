@@ -451,7 +451,11 @@ class WorkerRepository:
             except GitCommandError as exc:
                 log.warning("Skipping stale job branch {} because its head commit could not be resolved: {}", branch, exc)
                 continue
-            if self._commit_matches_protected_commit(head_commit, protected_commits):
+            if self._branch_contains_protected_commit(
+                repo=repo,
+                head_commit=head_commit,
+                protected_commits=protected_commits,
+            ):
                 log.debug("Skipping protected job branch {} at {}", branch, head_commit)
                 continue
             try:
@@ -571,6 +575,50 @@ class WorkerRepository:
             if normalized_head == candidate or normalized_head.startswith(candidate) or candidate.startswith(normalized_head):
                 return True
         return False
+
+    @classmethod
+    def _branch_contains_protected_commit(
+        cls,
+        *,
+        repo: Repo,
+        head_commit: str,
+        protected_commits: set[str],
+    ) -> bool:
+        """Return True when a branch head preserves any protected commit."""
+
+        normalized_head = str(head_commit or "").strip()
+        if not normalized_head:
+            return False
+        if cls._commit_matches_protected_commit(normalized_head, protected_commits):
+            return True
+
+        for protected in protected_commits:
+            ancestor = str(protected or "").strip()
+            if not ancestor:
+                continue
+            try:
+                if cls._is_commit_ancestor(repo=repo, ancestor=ancestor, rev=normalized_head):
+                    return True
+            except GitCommandError as exc:
+                log.warning(
+                    "Skipping protected ancestor check ancestor={} head={} because ancestry could not be resolved: {}",
+                    ancestor,
+                    normalized_head,
+                    exc,
+                )
+        return False
+
+    @staticmethod
+    def _is_commit_ancestor(*, repo: Repo, ancestor: str, rev: str) -> bool:
+        """Return True when `ancestor` is reachable from `rev`."""
+
+        try:
+            repo.git.merge_base(ancestor, rev, is_ancestor=True)
+        except GitCommandError as exc:
+            if exc.status == 1:
+                return False
+            raise
+        return True
 
     # Internal helpers -----------------------------------------------------
 
