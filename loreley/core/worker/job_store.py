@@ -100,6 +100,9 @@ class EvolutionJobStore:
                 job.status = JobStatus.RUNNING
                 job.started_at = _utc_now()
                 job.last_error = None
+                job.candidate_commit_hash = None
+                job.candidate_branch_name = None
+                job.candidate_published_at = None
 
                 return LockedJob(
                     job_id=job.id,
@@ -122,6 +125,42 @@ class EvolutionJobStore:
             if self._is_lock_conflict(exc):
                 raise JobLockConflict(f"Evolution job {job_id} is locked by another worker.") from exc
             raise EvolutionWorkerError(f"Failed to start job {job_id}: {exc}") from exc
+
+    def record_candidate_commit(
+        self,
+        job_id: UUID,
+        commit_hash: str,
+        branch_name: str,
+        *,
+        published: bool = False,
+    ) -> None:
+        """Persist candidate commit metadata before or after remote publication."""
+
+        candidate_hash = str(commit_hash or "").strip()
+        if not candidate_hash:
+            raise EvolutionWorkerError("Candidate commit hash must be provided.")
+        candidate_branch = str(branch_name or "").strip()
+        if not candidate_branch:
+            raise EvolutionWorkerError("Candidate branch name must be provided.")
+
+        try:
+            with session_scope() as session:
+                job = session.get(EvolutionJob, job_id)
+                if not job:
+                    raise EvolutionWorkerError(
+                        f"Evolution job {job_id} disappeared while recording candidate metadata.",
+                    )
+                if job.status in {JobStatus.SUCCEEDED, JobStatus.CANCELLED}:
+                    raise EvolutionWorkerError(
+                        f"Evolution job {job_id} cannot record a candidate in status {job.status}.",
+                    )
+                job.candidate_commit_hash = candidate_hash
+                job.candidate_branch_name = candidate_branch
+                job.candidate_published_at = _utc_now() if published else None
+        except SQLAlchemyError as exc:
+            raise EvolutionWorkerError(
+                f"Failed to record candidate metadata for job {job_id}: {exc}",
+            ) from exc
 
     def persist_success(
         self,
@@ -192,6 +231,7 @@ class EvolutionJobStore:
                 job.status = JobStatus.SUCCEEDED
                 job.completed_at = _utc_now()
                 job.plan_summary = plan.plan.summary
+                job.candidate_commit_hash = job.candidate_commit_hash or commit_hash
                 job.result_commit_hash = commit_hash
                 job.last_error = None
                 job.ingestion_status = None
@@ -277,4 +317,3 @@ class EvolutionJobStore:
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
-

@@ -37,6 +37,9 @@ class JobOut(OrmOutModel):
 
 
 class JobDetailOut(JobOut):
+    candidate_commit_hash: str | None = None
+    candidate_branch_name: str | None = None
+    candidate_published_at: datetime | None = None
     inspiration_commit_hashes: list[str] = Field(default_factory=list)
     goal: str | None = None
     constraints: list[str] = Field(default_factory=list)
@@ -77,4 +80,3 @@ class JobArtifactsOut(OrmOutModel):
 class JobPageOut(OrmOutModel):
     items: list[JobOut] = Field(default_factory=list)
     next_cursor: str | None = None
-

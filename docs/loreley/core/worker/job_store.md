@@ -24,11 +24,18 @@ Large, audit/debug oriented payloads (prompts, raw outputs, logs) are written to
 - **`start_job(job_id)`**:
   - Acquires a row-level lock on the `EvolutionJob` using `SELECT ... FOR UPDATE NOWAIT`.
   - Validates that the job exists, that `base_commit_hash` is present, and that the current `status` is in `{PENDING, QUEUED}`.
-  - Marks the job as `RUNNING`, records `started_at`, clears any `last_error`, and returns a `LockedJob` snapshot.
+  - Marks the job as `RUNNING`, records `started_at`, clears any `last_error`, resets stale candidate metadata from prior attempts, and returns a `LockedJob` snapshot.
   - Raises `EvolutionWorkerError` when `base_commit_hash` is missing, and wraps SQL errors into `JobLockConflict` when they indicate a lock-not-available condition, or `EvolutionWorkerError` otherwise.
+
+- **`record_candidate_commit(job_id, commit_hash, branch_name, published=False)`**:
+  - Stores the latest candidate commit hash and branch name on the `EvolutionJob` row before or after remote publication.
+  - When `published=False`, records the candidate pointer while leaving `candidate_published_at` unset.
+  - When `published=True`, stamps `candidate_published_at` so post-push failures still leave a durable recovery pointer.
+  - Raises `EvolutionWorkerError` if the job disappears, is already terminal, or a database error prevents recording the candidate metadata.
 
 - **`persist_success(job_ctx, plan, coding, evaluation, commit_hash, commit_message)`**:
   - Updates the `EvolutionJob` row to `SUCCEEDED`, sets `completed_at`, stores `plan_summary`, sets `result_commit_hash`, clears `last_error`, and resets ingestion tracking fields.
+  - Preserves the already-recorded candidate metadata so successful jobs still retain an auditable publication pointer.
   - Inserts a new `CommitCard` row representing the produced commit, with bounded `subject`, `change_summary`, `key_files`, `highlights`, and optional `evaluation_summary`.
   - Inserts one `Metric` row per evaluation metric for the new commit, copying numeric `value`, `unit`, `higher_is_better`, and any structured `details`.
   - Writes planning/coding/evaluation artifacts to disk and inserts a `JobArtifacts` row containing the corresponding filesystem paths when artifact writing succeeds.
@@ -37,7 +44,7 @@ Large, audit/debug oriented payloads (prompts, raw outputs, logs) are written to
 - **`mark_job_failed(job_id, message)`**:
   - Best-effort helper that records a failure reason on an `EvolutionJob` row.
   - If the job no longer exists or has already reached `SUCCEEDED` or `CANCELLED`, the call becomes a no-op.
-  - Otherwise sets `status` to `FAILED`, stamps `completed_at`, and stores the latest `last_error` message.
+  - Otherwise sets `status` to `FAILED`, stamps `completed_at`, stores the latest `last_error` message, and intentionally leaves any previously recorded candidate metadata intact for debugging/recovery.
   - Swallows and logs any SQL errors rather than propagating them, to avoid masking the original worker exception.
 
 ## Lock conflict detection
@@ -49,4 +56,3 @@ Large, audit/debug oriented payloads (prompts, raw outputs, logs) are written to
 ## Time helpers
 
 - **`_utc_now()`**: returns the current UTC `datetime` and is used consistently when stamping `started_at`, `completed_at`, and worker metadata timestamps.
-

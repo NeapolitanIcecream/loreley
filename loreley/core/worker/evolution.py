@@ -180,6 +180,19 @@ class EvolutionWorker:
                     checkout=checkout,
                     commit_message=commit_message,
                 )
+                self.job_store.record_candidate_commit(
+                    job_uuid,
+                    candidate_commit,
+                    checkout.branch_name or "",
+                    published=False,
+                )
+                self._publish_candidate_commit(checkout)
+                self.job_store.record_candidate_commit(
+                    job_uuid,
+                    candidate_commit,
+                    checkout.branch_name or "",
+                    published=True,
+                )
                 evaluation_result = self._run_evaluation(
                     job_ctx=job_ctx,
                     checkout=checkout,
@@ -423,16 +436,28 @@ class EvolutionWorker:
             raise EvolutionWorkerError("Coding agent produced no changes to commit.")
         self.repository.stage_all(worktree=checkout.worktree)
         commit_hash = self.repository.commit(commit_message, worktree=checkout.worktree)
+        console.log(
+            f"[green]Created local worker commit[/] hash={commit_hash} "
+            f"branch={checkout.branch_name or 'detached'}",
+        )
+        return commit_hash
+
+    def _publish_candidate_commit(
+        self,
+        checkout: CheckoutContext,
+    ) -> None:
+        if not checkout.branch_name:
+            raise EvolutionWorkerError(
+                "Checkout context is detached; cannot publish commit without a branch.",
+            )
         self.repository.push_branch(
             checkout.branch_name,
             worktree=checkout.worktree,
             force_with_lease=True,
         )
         console.log(
-            f"[green]Created worker commit[/] hash={commit_hash} "
-            f"branch={checkout.branch_name or 'detached'}",
+            f"[green]Published worker branch[/] branch={checkout.branch_name}",
         )
-        return commit_hash
 
     def _run_evaluation(
         self,

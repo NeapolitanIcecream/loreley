@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
@@ -70,6 +71,9 @@ def test_start_job_marks_running_and_returns_snapshot(
             self.sampling_fallback_inspirations = None
             self.status = JobStatus.PENDING
             self.started_at = None
+            self.candidate_commit_hash = "oldcandidate"
+            self.candidate_branch_name = "exp/old-branch"
+            self.candidate_published_at = datetime.now(timezone.utc)
             self.last_error = "previous"
 
     dummy_job = DummyJob()
@@ -100,10 +104,63 @@ def test_start_job_marks_running_and_returns_snapshot(
     locked = store.start_job(job_id)
     assert dummy_job.status is JobStatus.RUNNING
     assert dummy_job.started_at is not None
+    assert dummy_job.candidate_commit_hash is None
+    assert dummy_job.candidate_branch_name is None
+    assert dummy_job.candidate_published_at is None
     assert dummy_job.last_error is None
     assert locked.job_id == job_id
     assert locked.base_commit_hash == dummy_job.base_commit_hash
     assert locked.inspiration_commit_hashes == tuple(dummy_job.inspiration_commit_hashes)
+
+
+def test_record_candidate_commit_updates_job_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    job_id = uuid.uuid4()
+
+    class DummyJob:
+        def __init__(self) -> None:
+            self.id = job_id
+            self.status = JobStatus.RUNNING
+            self.candidate_commit_hash = None
+            self.candidate_branch_name = None
+            self.candidate_published_at = None
+
+    job_row = DummyJob()
+
+    class DummySession:
+        def get(self, model: Any, key: Any) -> Any:
+            if model is EvolutionJob and key == job_id:
+                return job_row
+            return None
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    monkeypatch.setattr(job_store, "session_scope", fake_scope)
+    store = EvolutionJobStore(settings=settings)
+
+    store.record_candidate_commit(
+        job_id,
+        "cand123",
+        "exp/job-branch",
+        published=False,
+    )
+    assert job_row.candidate_commit_hash == "cand123"
+    assert job_row.candidate_branch_name == "exp/job-branch"
+    assert job_row.candidate_published_at is None
+
+    store.record_candidate_commit(
+        job_id,
+        "cand123",
+        "exp/job-branch",
+        published=True,
+    )
+    assert job_row.candidate_commit_hash == "cand123"
+    assert job_row.candidate_branch_name == "exp/job-branch"
+    assert job_row.candidate_published_at is not None
 
 
 def test_start_job_rejects_missing_or_invalid_jobs(
@@ -173,6 +230,9 @@ def test_persist_success_updates_job_and_records_metadata(
             self.status = JobStatus.PENDING
             self.plan_summary: str | None = None
             self.completed_at = None
+            self.candidate_commit_hash = None
+            self.candidate_branch_name = None
+            self.candidate_published_at = None
             self.last_error = "err"
             self.island_id = "island"
             self.base_commit_hash = "base"
@@ -280,4 +340,3 @@ def test_persist_success_updates_job_and_records_metadata(
     assert metadata[0].commit_hash == "newcommit"
     assert len(metrics) == 1
     assert metrics[0].name == "score"
-
