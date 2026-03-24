@@ -15,6 +15,7 @@ from rich.console import Console
 from loreley.config import Settings, get_settings
 from loreley.core.git import RepositoryError, require_commit
 from loreley.core.map_elites.repository_files import ROOT_IGNORE_FILES
+from loreley.core.repo_lock import repo_lock
 from loreley.db.base import INSTANCE_SCHEMA_VERSION, session_scope
 from loreley.db.instance import InstanceMetadataError, validate_instance_marker
 
@@ -208,7 +209,8 @@ def bootstrap_instance(
             "MAPELITES_EXPERIMENT_ROOT_COMMIT is required for scheduler startup.",
         )
     try:
-        canonical_root = require_commit(repo_obj, root_ref, console=console)
+        with repo_lock(root):
+            canonical_root = require_commit(repo_obj, root_ref, console=console)
     except RepositoryError as exc:
         raise ExperimentError(str(exc)) from exc
     ignore_text = _load_root_ignore_text_from_commit(repo=repo_obj, commit_hash=canonical_root)
@@ -238,5 +240,4 @@ def bootstrap_instance(
         repository.slug,
     )
     return repository, settings
-
 
