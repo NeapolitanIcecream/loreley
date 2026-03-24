@@ -20,6 +20,7 @@ from loreley.core.experiments import ExperimentError, bootstrap_instance
 from loreley.core.git import RepositoryError, require_commit, wrap_git_error
 from loreley.core.map_elites.map_elites import MapElitesManager
 from loreley.core.map_elites.sampler import MapElitesSampler
+from loreley.core.repo_lock import repo_lock
 from loreley.db.base import ensure_database_schema, get_engine, session_scope
 from loreley.db.locks import (
     AdvisoryLock,
@@ -302,7 +303,8 @@ class EvolutionScheduler:
             )
         auto_approve = bool(getattr(self.settings, "scheduler_startup_approve", False))
         try:
-            canonical = require_commit(self._repo, root_commit, console=self.console)
+            with repo_lock(self.repo_root):
+                canonical = require_commit(self._repo, root_commit, console=self.console)
         except RepositoryError as exc:
             raise SchedulerError(f"Cannot resolve root commit {root_commit!r} for repo-state scan: {exc}") from exc
 
@@ -629,16 +631,16 @@ class EvolutionScheduler:
     ) -> str:
         """Create or update a stable branch pointing at the best-fitness commit."""
 
-        try:
-            canonical = require_commit(self._repo, best_commit_hash, console=self.console)
-        except RepositoryError as exc:
-            raise SchedulerError(str(exc)) from exc
-
         experiment_suffix = resolve_experiment_namespace(self.settings.experiment_id)
         branch_name = f"evolution/best/{experiment_suffix}"
+
         try:
-            # Keep the deliverable stable across restarts by force-updating the branch.
-            self._repo.git.branch("-f", branch_name, canonical)
+            with repo_lock(self.repo_root):
+                canonical = require_commit(self._repo, best_commit_hash, console=self.console)
+                # Keep the deliverable stable across restarts by force-updating the branch.
+                self._repo.git.branch("-f", branch_name, canonical)
+        except RepositoryError as exc:
+            raise SchedulerError(str(exc)) from exc
         except GitCommandError as exc:
             wrapped = wrap_git_error(exc, f"Failed to update best-fitness branch {branch_name}")
             raise SchedulerError(str(wrapped)) from exc

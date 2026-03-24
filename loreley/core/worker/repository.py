@@ -21,6 +21,7 @@ from sqlalchemy import and_, or_, select
 
 from loreley.config import Settings, get_settings
 from loreley.core.git import RepositoryError, fetch_origin, require_commit, wrap_git_error
+from loreley.core.repo_lock import file_lock, resolve_repo_lock_path
 from loreley.db.base import session_scope
 from loreley.db.models import EvolutionJob, JobStatus, MapElitesArchiveCell
 from loreley.naming import worker_job_branch_prefix
@@ -789,7 +790,7 @@ class WorkerRepository:
     def _resolve_lock_path(self) -> Path:
         # Keep lock adjacent to the base worktree so multiple worker processes
         # sharing WORKER_REPO_WORKTREE coordinate without additional services.
-        return self.worktree.parent / f".{self.worktree.name}.lock"
+        return resolve_repo_lock_path(self.worktree)
 
     @contextmanager
     def _repo_lock(self) -> Iterator[None]:
@@ -799,35 +800,8 @@ class WorkerRepository:
         fetch/sync, and worktree add/remove/prune. Planning/coding/evaluation
         happens in per-job worktrees and should not be performed under this lock.
         """
-        self._lock_path.parent.mkdir(parents=True, exist_ok=True)
-        fh = open(self._lock_path, "a+", encoding="utf-8")
-        try:
-            if os.name == "posix":
-                import fcntl
-
-                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-            else:  # pragma: no cover - Windows fallback
-                import msvcrt
-
-                fh.seek(0)
-                if fh.tell() == 0:
-                    fh.write("\n")
-                    fh.flush()
-                msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+        with file_lock(self._lock_path):
             yield
-        finally:
-            try:
-                if os.name == "posix":
-                    import fcntl
-
-                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-                else:  # pragma: no cover - Windows fallback
-                    import msvcrt
-
-                    msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
-            except Exception:
-                pass
-            fh.close()
 
     def _open_repo(self, worktree: Path) -> Repo:
         """Open a Repo instance for the given worktree path."""

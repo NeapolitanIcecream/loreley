@@ -21,7 +21,8 @@ Minimum required settings for a functional scheduler are:
 - `MAPELITES_CODE_EMBEDDING_DIMENSIONS`
 - `SCHEDULER_MAX_TOTAL_JOBS`
 
-You also need database and Redis connectivity (`DATABASE_URL`, `TASKS_REDIS_URL`), and a repository checkout (`SCHEDULER_REPO_ROOT`, or it falls back to `WORKER_REPO_WORKTREE` / the current directory).
+You also need database and Redis connectivity (`DATABASE_URL`, `TASKS_REDIS_URL`), and a writable repository checkout (`SCHEDULER_REPO_ROOT`, or it falls back to `WORKER_REPO_WORKTREE` / the current directory).
+When the scheduler shares `WORKER_REPO_WORKTREE`, its git fetch/branch-update paths coordinate with the worker through the same cross-process repo lock.
 `WORKER_EVOLUTION_GLOBAL_GOAL` defaults to a generic improvement objective, but
 you will usually want to override it with a repository-specific goal.
 

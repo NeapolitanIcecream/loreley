@@ -22,6 +22,7 @@ from loreley.config import Settings, resolve_default_island_id
 from loreley.core.contracts import clamp_text, normalize_single_line
 from loreley.core.git import RepositoryError as GitRepositoryError, require_commit
 from loreley.core.map_elites.map_elites import MapElitesManager
+from loreley.core.repo_lock import repo_lock
 from loreley.core.worker.evaluator import EvaluationContext, EvaluationError, Evaluator
 from loreley.core.worker.repository import RepositoryError, WorkerRepository
 from loreley.db.base import session_scope
@@ -635,7 +636,8 @@ class MapElitesIngestion:
 
     def _ensure_commit_available(self, commit_hash: str) -> str:
         try:
-            return require_commit(self.repo, commit_hash, console=self.console)
+            with repo_lock(self.repo_root):
+                return require_commit(self.repo, commit_hash, console=self.console)
         except GitRepositoryError as exc:
             raise IngestionError(str(exc)) from exc
 
