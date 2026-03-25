@@ -32,10 +32,13 @@ def file_lock(lock_path: Path | str) -> Iterator[None]:
         else:  # pragma: no cover - Windows fallback
             import msvcrt
 
-            fh.seek(0)
+            # Lock a stable sentinel byte so every process coordinates on the
+            # same file region instead of its own append position.
+            fh.seek(0, os.SEEK_END)
             if fh.tell() == 0:
-                fh.write("\n")
+                fh.write("\0")
                 fh.flush()
+            fh.seek(0)
             msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
         yield
     finally:
@@ -47,6 +50,7 @@ def file_lock(lock_path: Path | str) -> Iterator[None]:
             else:  # pragma: no cover - Windows fallback
                 import msvcrt
 
+                fh.seek(0)
                 msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
         except Exception:
             pass

@@ -507,6 +507,12 @@ class WorkerRepository:
             EvolutionJob.ingestion_status == "",
             EvolutionJob.ingestion_status.not_in(("succeeded", "skipped")),
         )
+        failed_published_candidate = and_(
+            EvolutionJob.status == JobStatus.FAILED,
+            EvolutionJob.candidate_published_at.is_not(None),
+            EvolutionJob.candidate_branch_name.is_not(None),
+            EvolutionJob.candidate_branch_name != "",
+        )
 
         with session_scope() as session:
             archive_rows = session.execute(
@@ -527,6 +533,7 @@ class WorkerRepository:
                     EvolutionJob.inspiration_commit_hashes,
                     EvolutionJob.status,
                     EvolutionJob.ingestion_status,
+                    EvolutionJob.candidate_published_at,
                 ).where(
                     or_(
                         EvolutionJob.status.in_(unfinished_statuses),
@@ -534,6 +541,7 @@ class WorkerRepository:
                             EvolutionJob.status == JobStatus.SUCCEEDED,
                             ingestion_pending,
                         ),
+                        failed_published_candidate,
                     )
                 )
             ).all()
@@ -546,19 +554,25 @@ class WorkerRepository:
             inspiration_commit_hashes,
             status,
             ingestion_status,
+            candidate_published_at,
         ) in job_rows:
             normalized_ingestion_status = str(ingestion_status or "").strip().lower()
-            if status not in unfinished_statuses and not (
+            protects_full_job_lineage = status in unfinished_statuses or (
                 status == JobStatus.SUCCEEDED
                 and normalized_ingestion_status not in {"succeeded", "skipped"}
-            ):
+            )
+            if protects_full_job_lineage:
+                _remember_commit(base_commit_hash)
+                _remember_commit(result_commit_hash)
+                _remember_commit(candidate_commit_hash)
+                _remember_branch(candidate_branch_name)
+                for commit_hash in inspiration_commit_hashes or ():
+                    _remember_commit(commit_hash)
                 continue
-            _remember_commit(base_commit_hash)
-            _remember_commit(result_commit_hash)
-            _remember_commit(candidate_commit_hash)
-            _remember_branch(candidate_branch_name)
-            for commit_hash in inspiration_commit_hashes or ():
-                _remember_commit(commit_hash)
+
+            if status == JobStatus.FAILED and candidate_published_at is not None:
+                _remember_commit(candidate_commit_hash)
+                _remember_branch(candidate_branch_name)
 
         return protected_commits, protected_branches
 

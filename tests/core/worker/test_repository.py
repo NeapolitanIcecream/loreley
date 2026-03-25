@@ -307,6 +307,7 @@ def test_load_protected_job_branch_state_collects_archive_and_job_refs(
                             ["insp-1", "insp-2", ""],
                             JobStatus.RUNNING,
                             None,
+                            None,
                         ),
                         (
                             "pending-base",
@@ -315,6 +316,7 @@ def test_load_protected_job_branch_state_collects_archive_and_job_refs(
                             pending_ingestion_branch,
                             ["pending-insp"],
                             JobStatus.SUCCEEDED,
+                            None,
                             None,
                         ),
                         (
@@ -325,6 +327,7 @@ def test_load_protected_job_branch_state_collects_archive_and_job_refs(
                             ["ignored-insp"],
                             JobStatus.SUCCEEDED,
                             "succeeded",
+                            None,
                         ),
                     ]
                 )
@@ -352,6 +355,53 @@ def test_load_protected_job_branch_state_collects_archive_and_job_refs(
     }
     assert "ignored-result" not in protected_commits
     assert protected_branches == {archived_branch, pending_ingestion_branch}
+
+
+def test_load_protected_job_branch_state_keeps_failed_published_candidate_refs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    settings: Settings,
+) -> None:
+    """Regression: post-push failures must keep their published candidate branch discoverable."""
+
+    repo = _make_repo(settings, tmp_path)
+    failed_branch = f"{repo.job_branch_prefix}/failed-published"
+
+    class _FakeSession:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def execute(self, _stmt: Any) -> _FakeQueryResult:
+            self.calls += 1
+            if self.calls == 1:
+                return _FakeQueryResult([])
+            if self.calls == 2:
+                return _FakeQueryResult(
+                    [
+                        (
+                            "failed-base",
+                            None,
+                            "failed-candidate",
+                            failed_branch,
+                            [],
+                            JobStatus.FAILED,
+                            None,
+                            object(),
+                        ),
+                    ]
+                )
+            raise AssertionError("unexpected query count")
+
+    @contextmanager
+    def _session_scope():
+        yield _FakeSession()
+
+    monkeypatch.setattr(repository_module, "session_scope", _session_scope, raising=False)
+
+    protected_commits, protected_branches = repo._load_protected_job_branch_state()
+
+    assert protected_commits == {"failed-candidate"}
+    assert protected_branches == {failed_branch}
 
 
 def test_prune_stale_job_branches_skips_protected_commits(
