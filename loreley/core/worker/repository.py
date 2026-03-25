@@ -101,6 +101,7 @@ class WorkerRepository:
         job_id: str | UUID | None,
         base_commit: str,
         create_branch: bool = True,
+        attempt_token: str | UUID | None = None,
         keep_worktree_on_failure: bool | None = None,
     ) -> Iterator[CheckoutContext]:
         """Yield an isolated git worktree for a single job.
@@ -131,6 +132,7 @@ class WorkerRepository:
             worktree_path = self._allocate_job_worktree_path(
                 job_id=job_uuid,
                 base_commit=base_commit,
+                attempt_token=attempt_token,
             )
             self._ensure_worktree_path_available(worktree_path, repo=base_repo)
 
@@ -147,7 +149,7 @@ class WorkerRepository:
         job_label = str(job_uuid) if job_uuid is not None else "N/A"
         try:
             if create_branch and job_uuid is not None:
-                branch_name = self._format_job_branch(job_uuid)
+                branch_name = self._format_job_branch(job_uuid, attempt_token=attempt_token)
                 job_repo.git.checkout("-B", branch_name, base_commit)
             else:
                 job_repo.git.checkout("--detach", base_commit)
@@ -236,6 +238,7 @@ class WorkerRepository:
         job_id: str | UUID | None,
         base_commit: str,
         create_branch: bool = True,
+        attempt_token: str | UUID | None = None,
     ) -> CheckoutContext:
         """Checkout the requested base commit and optionally create a job branch.
 
@@ -258,6 +261,7 @@ class WorkerRepository:
             worktree_path = self._allocate_job_worktree_path(
                 job_id=job_uuid,
                 base_commit=base_commit,
+                attempt_token=attempt_token,
             )
             self._ensure_worktree_path_available(worktree_path, repo=base_repo)
             try:
@@ -272,7 +276,7 @@ class WorkerRepository:
         branch_name: str | None = None
         try:
             if create_branch and job_uuid is not None:
-                branch_name = self._format_job_branch(job_uuid)
+                branch_name = self._format_job_branch(job_uuid, attempt_token=attempt_token)
                 job_repo.git.checkout("-B", branch_name, base_commit)
             else:
                 job_repo.git.checkout("--detach", base_commit)
@@ -744,10 +748,19 @@ class WorkerRepository:
         except GitCommandError as exc:
             log.warning("Git LFS sync skipped: {}", exc)
 
-    def _format_job_branch(self, job_id: str | UUID) -> str:
+    def _format_job_branch(
+        self,
+        job_id: str | UUID,
+        *,
+        attempt_token: str | UUID | None = None,
+    ) -> str:
         raw = str(job_id)
         safe = re.sub(r"[^A-Za-z0-9._-]+", "-", raw).strip("-")
         safe = safe or "job"
+        if attempt_token is not None:
+            suffix = re.sub(r"[^A-Za-z0-9._-]+", "-", str(attempt_token)).strip("-")
+            suffix = suffix[:8] or "attempt"
+            safe = f"{safe}-{suffix}"
         prefix = self.job_branch_prefix
         if prefix:
             return f"{prefix}/{safe}"
@@ -832,7 +845,13 @@ class WorkerRepository:
             repo.git.update_environment(**self._git_env)
         return repo
 
-    def _allocate_job_worktree_path(self, *, job_id: UUID | None, base_commit: str) -> Path:
+    def _allocate_job_worktree_path(
+        self,
+        *,
+        job_id: UUID | None,
+        base_commit: str,
+        attempt_token: str | UUID | None = None,
+    ) -> Path:
         root = self.job_worktrees_root
         if job_id is not None:
             name = str(job_id)
@@ -840,6 +859,10 @@ class WorkerRepository:
             suffix = uuid.uuid4().hex[:8]
             short = base_commit[:12] if base_commit else "commit"
             name = f"detached-{short}-{suffix}"
+        if attempt_token is not None:
+            attempt_suffix = re.sub(r"[^A-Za-z0-9._-]+", "-", str(attempt_token)).strip("-")
+            attempt_suffix = attempt_suffix[:8] or "attempt"
+            name = f"{name}-{attempt_suffix}"
         safe = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-") or "job"
         return root / safe
 

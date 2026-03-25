@@ -17,6 +17,7 @@ from loreley.core.worker.planning import PlanDocument, PlanningAgentResponse
 def test_write_job_artifacts_includes_worker_metadata(settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     settings.logs_base_dir = str(tmp_path)
     monkeypatch.setenv("LORELEY_WORKER_INSTANCE_ID", "worker-03")
+    run_token = uuid.uuid4()
 
     plan = PlanningAgentResponse(
         plan=PlanDocument(
@@ -52,6 +53,7 @@ def test_write_job_artifacts_includes_worker_metadata(settings, tmp_path: Path, 
 
     paths = write_job_artifacts(
         job_id=uuid.uuid4(),
+        run_token=run_token,
         plan=plan,
         coding=coding,
         evaluation=evaluation,
@@ -71,3 +73,4 @@ def test_write_job_artifacts_includes_worker_metadata(settings, tmp_path: Path, 
     assert planning_payload["worker"]["pid"] == os.getpid()
     assert coding_payload["worker"]["pid"] == os.getpid()
     assert evaluation_payload["worker"]["pid"] == os.getpid()
+    assert str(run_token) in paths["planning_plan_json_path"]

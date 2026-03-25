@@ -14,7 +14,7 @@ from uuid import UUID
 
 from loguru import logger
 from rich.console import Console
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from loreley.config import Settings, resolve_default_island_id
 from loreley.core.map_elites.sampler import MapElitesSampler, SamplingSnapshot, ScheduledSamplerJob
@@ -23,6 +23,23 @@ from loreley.db.models import EvolutionJob, JobStatus
 from loreley.tasks.workers import build_evolution_job_sender_actor
 
 log = logger.bind(module="scheduler.job_scheduler")
+
+
+def _db_utc_now(session: Any) -> datetime:
+    value = session.execute(select(func.now())).scalar_one()
+    if not isinstance(value, datetime):
+        raise RuntimeError(f"Database current timestamp returned unsupported value: {value!r}")
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+@dataclass(frozen=True, slots=True)
+class JobLeaseReclaimResult:
+    """Summary of stale RUNNING jobs reclaimed during a scheduler tick."""
+
+    requeued: int = 0
+    failed: int = 0
 
 
 @dataclass(slots=True)
@@ -68,6 +85,91 @@ class JobScheduler:
         with session_scope() as session:
             stmt = select(func.count(EvolutionJob.id))
             return int(session.execute(stmt).scalar_one())
+
+    def reclaim_stale_running_jobs(
+        self,
+        *,
+        now: datetime | None = None,
+    ) -> JobLeaseReclaimResult:
+        """Recover RUNNING jobs whose lease expired and are no longer heartbeating."""
+
+        batch = max(0, int(self.settings.scheduler_stale_running_reclaim_batch_size))
+        if batch == 0:
+            return JobLeaseReclaimResult()
+
+        requeued = 0
+        failed = 0
+        max_recoveries = max(0, int(self.settings.scheduler_stale_running_max_recovery_attempts))
+
+        with session_scope() as session:
+            current_time = now or _db_utc_now(session)
+            stmt = (
+                select(EvolutionJob)
+                .where(
+                    EvolutionJob.status == JobStatus.RUNNING,
+                    or_(
+                        EvolutionJob.run_token.is_(None),
+                        EvolutionJob.worker_id.is_(None),
+                        EvolutionJob.lease_expires_at.is_(None),
+                        EvolutionJob.lease_expires_at < current_time,
+                    ),
+                )
+                .order_by(
+                    EvolutionJob.lease_expires_at.asc().nullsfirst(),
+                    EvolutionJob.started_at.asc(),
+                    EvolutionJob.created_at.asc(),
+                )
+                .limit(batch)
+                .with_for_update(skip_locked=True)
+            )
+            for job in session.execute(stmt).scalars():
+                attempts = int(getattr(job, "recovery_count", 0) or 0)
+                next_attempt = attempts + 1
+                missing_lease = (
+                    getattr(job, "run_token", None) is None
+                    or getattr(job, "worker_id", None) is None
+                    or getattr(job, "lease_expires_at", None) is None
+                )
+                message = (
+                    "Lease metadata missing for RUNNING job; "
+                    f"recovered by scheduler (attempt={next_attempt})."
+                    if missing_lease
+                    else "Lease expired after missing heartbeat; "
+                    f"recovered by scheduler (attempt={next_attempt})."
+                )
+                job.recovery_count = next_attempt
+                job.run_token = None
+                job.worker_id = None
+                job.heartbeat_at = None
+                job.lease_expires_at = None
+                job.last_error = message
+                if attempts >= max_recoveries:
+                    job.status = JobStatus.FAILED
+                    job.completed_at = current_time
+                    failed += 1
+                    self.console.log(
+                        f"[yellow]Failed stale running job[/] id={job.id} recovery_count={next_attempt}",
+                    )
+                    log.warning(
+                        "Job {} failed after stale lease reclaim (recovery_count={})",
+                        job.id,
+                        next_attempt,
+                    )
+                    continue
+                job.status = JobStatus.PENDING
+                job.started_at = None
+                job.completed_at = None
+                job.scheduled_at = current_time
+                requeued += 1
+                self.console.log(
+                    f"[yellow]Requeued stale running job[/] id={job.id} recovery_count={job.recovery_count}",
+                )
+                log.warning(
+                    "Job {} requeued after stale lease reclaim (recovery_count={})",
+                    job.id,
+                    job.recovery_count,
+                )
+        return JobLeaseReclaimResult(requeued=requeued, failed=failed)
 
     # Scheduling ------------------------------------------------------------
 

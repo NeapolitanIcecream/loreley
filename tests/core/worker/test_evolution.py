@@ -151,7 +151,14 @@ class _FakeRepositoryForRun:
         self._events = events
 
     @contextmanager
-    def checkout_lease_for_job(self, *, job_id: Any, base_commit: str, create_branch: bool = True) -> Any:  # noqa: ANN401
+    def checkout_lease_for_job(
+        self,
+        *,
+        job_id: Any,
+        base_commit: str,
+        create_branch: bool = True,
+        attempt_token: Any = None,
+    ) -> Any:  # noqa: ANN401
         self._events.append("repo.checkout")
         yield CheckoutContext(
             job_id=str(job_id),
@@ -201,6 +208,8 @@ class _FakeJobStoreForPublishFailure:
             (),
             {
                 "job_id": job_id,
+                "run_token": uuid.uuid4(),
+                "worker_id": "worker-01",
                 "base_commit_hash": "base123",
                 "island_id": "island-1",
                 "inspiration_commit_hashes": (),
@@ -224,6 +233,7 @@ class _FakeJobStoreForPublishFailure:
         commit_hash: str,
         branch_name: str,
         *,
+        run_token: uuid.UUID | None = None,
         published: bool = False,
     ) -> None:
         self._events.append(f"store.record_candidate[published={published}]")
@@ -232,6 +242,7 @@ class _FakeJobStoreForPublishFailure:
                 "job_id": job_id,
                 "commit_hash": commit_hash,
                 "branch_name": branch_name,
+                "run_token": run_token,
                 "published": published,
             }
         )
@@ -240,12 +251,19 @@ class _FakeJobStoreForPublishFailure:
         self._events.append("store.persist_success")
         raise self._persist_error
 
-    def mark_job_failed(self, job_id: uuid.UUID, message: str) -> None:
+    def mark_job_failed(
+        self,
+        job_id: uuid.UUID,
+        message: str,
+        *,
+        run_token: uuid.UUID | None = None,
+    ) -> None:
         self._events.append("store.mark_job_failed")
         self.failures.append(
             {
                 "job_id": job_id,
                 "message": message,
+                "run_token": run_token,
             }
         )
 
@@ -263,6 +281,7 @@ def _patch_empty_planning_context_session(monkeypatch: pytest.MonkeyPatch) -> No
 def _make_job_context() -> JobContext:
     return JobContext(
         job_id=uuid.uuid4(),
+        run_token=uuid.uuid4(),
         base_commit_hash="base",
         island_id="island-1",
         inspiration_commit_hashes=("insp-a", "insp-b"),
@@ -521,12 +540,14 @@ def test_run_keeps_candidate_metadata_when_post_push_persistence_fails_gh_candid
             "job_id": job_id,
             "commit_hash": "candidate123",
             "branch_name": "exp/job-branch",
+            "run_token": store.recorded_candidates[0]["run_token"],
             "published": False,
         },
         {
             "job_id": job_id,
             "commit_hash": "candidate123",
             "branch_name": "exp/job-branch",
+            "run_token": store.recorded_candidates[1]["run_token"],
             "published": True,
         },
     ]
@@ -534,5 +555,6 @@ def test_run_keeps_candidate_metadata_when_post_push_persistence_fails_gh_candid
         {
             "job_id": job_id,
             "message": "simulated persistence failure",
+            "run_token": store.recorded_candidates[1]["run_token"],
         }
     ]

@@ -36,6 +36,7 @@ def _make_coding_execution() -> ExecutionReport:
 def _make_job_context() -> JobContext:
     return JobContext(
         job_id=uuid4(),
+        run_token=uuid4(),
         base_commit_hash="abc",
         island_id=None,
         inspiration_commit_hashes=(),

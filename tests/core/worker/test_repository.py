@@ -108,6 +108,15 @@ def test_format_job_branch_applies_prefix_and_sanitises(tmp_path, settings: Sett
     assert "!" not in branch
 
 
+def test_format_job_branch_includes_attempt_token(tmp_path, settings: Settings) -> None:
+    repo = _make_repo(settings, tmp_path)
+    attempt_token = uuid.uuid4()
+
+    branch = repo._format_job_branch("job-123", attempt_token=attempt_token)
+
+    assert str(attempt_token)[:8] in branch
+
+
 def test_wrap_git_error_sanitises_command() -> None:
     exc = _DummyGitError(
         ["git", "clone", "https://user:pw@example.com/repo.git"],
@@ -146,18 +155,28 @@ def test_checkout_for_job_creates_branch(monkeypatch: pytest.MonkeyPatch, tmp_pa
     )
     monkeypatch.setattr(repo, "_remove_worktree", lambda path: base_git.worktree("remove", "--force", str(path)))
     monkeypatch.setattr(repo, "_open_repo", lambda path: job_repo)
-    monkeypatch.setattr(repo, "_allocate_job_worktree_path", lambda job_id, base_commit: worktree_path)
+    monkeypatch.setattr(
+        repo,
+        "_allocate_job_worktree_path",
+        lambda job_id, base_commit, attempt_token=None: worktree_path,
+    )
     monkeypatch.setattr(repo, "_ensure_worktree_path_available", lambda path, repo: None)
+    attempt_token = uuid.uuid4()
 
-    with repo.checkout_lease_for_job(job_id=job_id, base_commit="abc123", create_branch=True) as ctx:
+    with repo.checkout_lease_for_job(
+        job_id=job_id,
+        base_commit="abc123",
+        create_branch=True,
+        attempt_token=attempt_token,
+    ) as ctx:
         assert ctx.worktree == worktree_path
-        expected_branch = repo._format_job_branch(job_id)
+        expected_branch = repo._format_job_branch(job_id, attempt_token=attempt_token)
         assert ctx.branch_name == expected_branch
         assert ctx.job_id == str(job_id)
 
     assert ("add", "--detach", str(worktree_path), "abc123") in base_git.worktree_calls
     assert ("remove", "--force", str(worktree_path)) in base_git.worktree_calls
-    assert job_git.checkout_calls[0] == ("-B", repo._format_job_branch(job_id), "abc123")
+    assert job_git.checkout_calls[0] == ("-B", repo._format_job_branch(job_id, attempt_token=attempt_token), "abc123")
 
 
 def test_checkout_for_job_detaches_when_branch_not_requested(
@@ -186,7 +205,11 @@ def test_checkout_for_job_detaches_when_branch_not_requested(
     )
     monkeypatch.setattr(repo, "_remove_worktree", lambda path: base_git.worktree("remove", "--force", str(path)))
     monkeypatch.setattr(repo, "_open_repo", lambda path: job_repo)
-    monkeypatch.setattr(repo, "_allocate_job_worktree_path", lambda job_id, base_commit: worktree_path)
+    monkeypatch.setattr(
+        repo,
+        "_allocate_job_worktree_path",
+        lambda job_id, base_commit, attempt_token=None: worktree_path,
+    )
     monkeypatch.setattr(repo, "_ensure_worktree_path_available", lambda path, repo: None)
 
     with repo.checkout_lease_for_job(job_id=None, base_commit="def456", create_branch=False) as ctx:
@@ -225,7 +248,11 @@ def test_checkout_lease_preserves_worktree_on_failure(
     )
     monkeypatch.setattr(repo, "_remove_worktree", lambda path: base_git.worktree("remove", "--force", str(path)))
     monkeypatch.setattr(repo, "_open_repo", lambda path: job_repo)
-    monkeypatch.setattr(repo, "_allocate_job_worktree_path", lambda job_id, base_commit: worktree_path)
+    monkeypatch.setattr(
+        repo,
+        "_allocate_job_worktree_path",
+        lambda job_id, base_commit, attempt_token=None: worktree_path,
+    )
     monkeypatch.setattr(repo, "_ensure_worktree_path_available", lambda path, repo: None)
 
     with pytest.raises(RuntimeError, match="boom"):

@@ -48,6 +48,8 @@ Logs are written to:
 
 - `logs/{experiment_namespace}/worker/worker-YYYYMMDD-HHMMSS.log`
 
+If a worker loses its lease or dies mid-job, the scheduler will eventually reclaim that `RUNNING` row. Use `uv run loreley status` and the [Job lease recovery](job_leases.md) runbook to inspect the current state and recover stuck jobs.
+
 ## Exit codes
 
 - `0`: success (clean shutdown)
