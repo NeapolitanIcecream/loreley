@@ -278,6 +278,50 @@ def test_prepare_base_repo_for_checkout_skips_full_upstream_sync(
     ]
 
 
+def test_prepare_holds_shared_repo_lock_during_base_repo_mutations(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    settings: Settings,
+) -> None:
+    """Regression: prepare() must serialise clone/fetch/reset on the shared base repo."""
+
+    repo = _make_repo(settings, tmp_path)
+    events: list[str] = []
+    lock_state = {"held": False}
+
+    @contextmanager
+    def _tracking_lock():
+        assert lock_state["held"] is False
+        lock_state["held"] = True
+        events.append("lock.enter")
+        try:
+            yield
+        finally:
+            events.append("lock.exit")
+            lock_state["held"] = False
+
+    def _ensure_worktree_ready() -> None:
+        assert lock_state["held"] is True
+        events.append("ensure_worktree_ready")
+
+    def _sync_upstream() -> None:
+        assert lock_state["held"] is True
+        events.append("sync_upstream")
+
+    monkeypatch.setattr(repo, "_repo_lock", _tracking_lock)
+    monkeypatch.setattr(repo, "_ensure_worktree_ready", _ensure_worktree_ready)
+    monkeypatch.setattr(repo, "_sync_upstream", _sync_upstream)
+
+    repo.prepare()
+
+    assert events == [
+        "lock.enter",
+        "ensure_worktree_ready",
+        "sync_upstream",
+        "lock.exit",
+    ]
+
+
 def test_load_protected_job_branch_state_collects_archive_and_job_refs(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,

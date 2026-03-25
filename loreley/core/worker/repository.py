@@ -202,11 +202,14 @@ class WorkerRepository:
             ("Syncing upstream repository", self._sync_upstream),
         )
 
-        with self._progress() as progress:
-            for description, action in steps:
-                task_id = progress.add_task(description, total=1)
-                action()
-                progress.update(task_id, completed=1)
+        # `prepare()` mutates the shared base clone (clone/fetch/reset/checkout),
+        # so it must serialize against other worker/scheduler base-repo access.
+        with self._repo_lock():
+            with self._progress() as progress:
+                for description, action in steps:
+                    task_id = progress.add_task(description, total=1)
+                    action()
+                    progress.update(task_id, completed=1)
 
     def _prepare_base_repo_for_checkout(self, *, base_commit: str) -> Repo:
         """Prepare the shared base clone for a commit-specific checkout.
