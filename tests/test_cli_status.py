@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -20,6 +21,13 @@ def _make_settings() -> TestSettings:
     )
 
 
+def _patch_cli_db_now(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "loreley.cli._db_utc_now",
+        lambda _session: datetime(2026, 3, 25, 8, 0, tzinfo=timezone.utc),
+    )
+
+
 def test_status_json_includes_job_lease_health(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -27,6 +35,7 @@ def test_status_json_includes_job_lease_health(
     settings = _make_settings()
     monkeypatch.setattr("loreley.cli.get_settings", lambda: settings)
     monkeypatch.setattr("loreley.cli._configure_logging_or_exit", lambda **_kwargs: None)
+    _patch_cli_db_now(monkeypatch)
     monkeypatch.setattr(
         "loreley.cli._load_archive_stats_or_exit",
         lambda **_kwargs: {"island_id": "main", "occupied": 1, "cells": 4, "coverage": 0.25},
@@ -85,6 +94,7 @@ def test_status_table_prints_job_lease_health_section(
     settings = _make_settings()
     monkeypatch.setattr("loreley.cli.get_settings", lambda: settings)
     monkeypatch.setattr("loreley.cli._configure_logging_or_exit", lambda **_kwargs: None)
+    _patch_cli_db_now(monkeypatch)
     monkeypatch.setattr(
         "loreley.cli._load_archive_stats_or_exit",
         lambda **_kwargs: {"island_id": "main", "occupied": 1, "cells": 4, "coverage": 0.25},

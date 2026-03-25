@@ -114,6 +114,17 @@ def _job_status_value(value: object) -> str:
     return str(status_value or "").strip().lower()
 
 
+def _db_utc_now(session: Any) -> datetime:
+    from sqlalchemy import func, select
+
+    value = session.execute(select(func.now())).scalar_one()
+    if not isinstance(value, datetime):
+        raise RuntimeError(f"Database current timestamp returned unsupported value: {value!r}")
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _job_lease_payload(*, job: Any, now: datetime) -> dict[str, object]:
     lease_expires_at = getattr(job, "lease_expires_at", None)
     run_token = getattr(job, "run_token", None)
@@ -161,11 +172,16 @@ def _failed_stale_job_conditions(
     func: Any,
     max_recovery_attempts: int,
 ) -> tuple[Any, ...]:
+    from sqlalchemy import or_
+
     lease_error_norm = func.lower(func.trim(func.coalesce(EvolutionJob.last_error, "")))
     return (
         EvolutionJob.status == JobStatus.FAILED,
         EvolutionJob.recovery_count > int(max_recovery_attempts),
-        lease_error_norm.like("lease expired after missing heartbeat;%"),
+        or_(
+            lease_error_norm.like("lease expired after missing heartbeat;%"),
+            lease_error_norm.like("lease metadata missing for running job;%"),
+        ),
     )
 
 
@@ -549,7 +565,7 @@ def status(
                 .where(commit_norm != "")
             )
             pending_ingestion_jobs = int(session.execute(stmt_pending_ingest).scalar_one())
-            current_time = datetime.now(timezone.utc)
+            current_time = _db_utc_now(session)
 
             stmt_running = select(func.count(EvolutionJob.id)).where(
                 EvolutionJob.status == JobStatus.RUNNING,
@@ -577,15 +593,18 @@ def status(
             )
             running_without_lease_jobs = int(session.execute(stmt_running_without_lease).scalar_one())
 
-            lease_error_norm = func.lower(func.trim(func.coalesce(EvolutionJob.last_error, "")))
             stmt_recovery_exhausted = (
                 select(func.count(EvolutionJob.id))
-                .where(EvolutionJob.status == JobStatus.FAILED)
                 .where(
-                    EvolutionJob.recovery_count
-                    > int(settings.scheduler_stale_running_max_recovery_attempts),
+                    *_failed_stale_job_conditions(
+                        EvolutionJob=EvolutionJob,
+                        JobStatus=JobStatus,
+                        func=func,
+                        max_recovery_attempts=int(
+                            settings.scheduler_stale_running_max_recovery_attempts,
+                        ),
+                    )
                 )
-                .where(lease_error_norm.like("lease expired after missing heartbeat;%"))
             )
             recovery_exhausted_failed_jobs = int(session.execute(stmt_recovery_exhausted).scalar_one())
 
@@ -803,7 +822,6 @@ def retry_job(
         from loreley.db.base import session_scope
         from loreley.db.models import EvolutionJob, JobStatus
 
-        now = datetime.now(timezone.utc)
         with session_scope() as session:
             if raw_job_id:
                 try:
@@ -815,6 +833,7 @@ def retry_job(
                 if job is None:
                     console.print(f"[bold red]Job not found[/] id={job_uuid}")
                     raise typer.Exit(code=1)
+                now = _db_utc_now(session)
                 retryable, lease_state = _job_retry_state(job=job, now=now)
                 if not retryable:
                     console.print(
@@ -846,6 +865,7 @@ def retry_job(
                 if not retry_all and limit is not None:
                     stmt = stmt.limit(int(limit))
                 rows = list(session.execute(stmt).scalars())
+                now = _db_utc_now(session)
                 retried_jobs = [_retry_job_row(job=row, reason=reason, now=now) for row in rows]
                 payload = {
                     "filters": {
@@ -914,7 +934,7 @@ def inspect_job(
                 console.print(f"[bold red]Job not found[/] id={job_uuid}")
                 raise typer.Exit(code=1)
 
-            now = datetime.now(timezone.utc)
+            now = _db_utc_now(session)
             payload = {
                 **_job_summary_payload(job=job, now=now),
                 "scheduled_at": _iso_or_none(getattr(job, "scheduled_at", None)),
@@ -1012,7 +1032,7 @@ def list_jobs(
                 .limit(int(limit))
             )
             rows = list(session.execute(stmt).scalars())
-            now = datetime.now(timezone.utc)
+            now = _db_utc_now(session)
             jobs = [_job_summary_payload(job=row, now=now) for row in rows]
     except Exception as exc:  # pragma: no cover - defensive
         console.print(f"[bold red]Failed to list jobs[/] reason={exc}")
