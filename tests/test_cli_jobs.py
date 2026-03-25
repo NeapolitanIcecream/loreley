@@ -1,0 +1,373 @@
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+import json
+import uuid
+from contextlib import contextmanager
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+
+from loreley.cli import main
+from loreley.db.models import JobStatus
+from tests.support import TestSettings
+
+
+def _make_settings() -> TestSettings:
+    return TestSettings()
+
+
+def test_jobs_retry_requeues_failed_job_and_resets_lease_state(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    settings = _make_settings()
+    monkeypatch.setattr("loreley.cli.get_settings", lambda: settings)
+    monkeypatch.setattr("loreley.cli._configure_logging_or_exit", lambda **_kwargs: None)
+
+    job_id = uuid.uuid4()
+    job = SimpleNamespace(
+        id=job_id,
+        status=JobStatus.FAILED,
+        scheduled_at=None,
+        started_at=object(),
+        completed_at=object(),
+        heartbeat_at=object(),
+        lease_expires_at=object(),
+        run_token=uuid.uuid4(),
+        worker_id="worker-01",
+        recovery_count=4,
+        result_commit_hash="deadbeef",
+        last_error="Lease expired after missing heartbeat",
+    )
+
+    class DummySession:
+        def get(self, _model: Any, key: Any) -> Any:
+            if key == job_id:
+                return job
+            return None
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    monkeypatch.setattr("loreley.db.base.session_scope", fake_scope)
+
+    code = main(["jobs", "retry", str(job_id), "--json"])
+    captured = capsys.readouterr()
+
+    assert code == 0
+    payload = json.loads(captured.out)
+    assert payload["job_id"] == str(job_id)
+    assert payload["previous_status"] == "failed"
+    assert payload["new_status"] == "pending"
+    assert payload["recovery_count_reset_from"] == 4
+    assert job.status is JobStatus.PENDING
+    assert job.scheduled_at is not None
+    assert job.started_at is None
+    assert job.completed_at is None
+    assert job.heartbeat_at is None
+    assert job.lease_expires_at is None
+    assert job.run_token is None
+    assert job.worker_id is None
+    assert job.recovery_count == 0
+    assert job.result_commit_hash is None
+
+
+def test_jobs_retry_rejects_non_failed_jobs(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    settings = _make_settings()
+    monkeypatch.setattr("loreley.cli.get_settings", lambda: settings)
+    monkeypatch.setattr("loreley.cli._configure_logging_or_exit", lambda **_kwargs: None)
+
+    job_id = uuid.uuid4()
+    job = SimpleNamespace(
+        id=job_id,
+        status=JobStatus.RUNNING,
+        recovery_count=1,
+        last_error=None,
+    )
+
+    class DummySession:
+        def get(self, _model: Any, key: Any) -> Any:
+            if key == job_id:
+                return job
+            return None
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    monkeypatch.setattr("loreley.db.base.session_scope", fake_scope)
+
+    code = main(["jobs", "retry", str(job_id)])
+    captured = capsys.readouterr()
+
+    assert code == 1
+    assert "only failed jobs can be retried" in captured.out.lower()
+    assert job.status is JobStatus.RUNNING
+
+
+def test_jobs_inspect_json_reports_stale_lease_state(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    settings = _make_settings()
+    monkeypatch.setattr("loreley.cli.get_settings", lambda: settings)
+    monkeypatch.setattr("loreley.cli._configure_logging_or_exit", lambda **_kwargs: None)
+
+    now = datetime.now(timezone.utc)
+    job_id = uuid.uuid4()
+    run_token = uuid.uuid4()
+    job = SimpleNamespace(
+        id=job_id,
+        status=JobStatus.RUNNING,
+        base_commit_hash="abc123",
+        island_id="main",
+        created_at=now - timedelta(hours=2),
+        scheduled_at=now - timedelta(hours=1, minutes=55),
+        started_at=now - timedelta(hours=1, minutes=50),
+        heartbeat_at=now - timedelta(minutes=40),
+        lease_expires_at=now - timedelta(minutes=10),
+        run_token=run_token,
+        worker_id="worker-02",
+        recovery_count=2,
+        result_commit_hash=None,
+        last_error="still running",
+    )
+
+    class DummySession:
+        def get(self, _model: Any, key: Any) -> Any:
+            if key == job_id:
+                return job
+            return None
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    monkeypatch.setattr("loreley.db.base.session_scope", fake_scope)
+
+    code = main(["jobs", "inspect", str(job_id), "--json"])
+    captured = capsys.readouterr()
+
+    assert code == 0
+    payload = json.loads(captured.out)
+    assert payload["job_id"] == str(job_id)
+    assert payload["status"] == "running"
+    assert payload["lease"]["state"] == "stale"
+    assert payload["lease"]["worker_id"] == "worker-02"
+    assert payload["lease"]["run_token"] == str(run_token)
+    assert payload["recovery_count"] == 2
+
+
+def test_jobs_inspect_table_preserves_zero_recovery_count(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    settings = _make_settings()
+    monkeypatch.setattr("loreley.cli.get_settings", lambda: settings)
+    monkeypatch.setattr("loreley.cli._configure_logging_or_exit", lambda **_kwargs: None)
+
+    now = datetime.now(timezone.utc)
+    job_id = uuid.uuid4()
+    job = SimpleNamespace(
+        id=job_id,
+        status=JobStatus.RUNNING,
+        base_commit_hash="abc123",
+        island_id="main",
+        created_at=now - timedelta(hours=2),
+        scheduled_at=now - timedelta(hours=1, minutes=55),
+        started_at=now - timedelta(hours=1, minutes=50),
+        heartbeat_at=now - timedelta(minutes=1),
+        lease_expires_at=now + timedelta(minutes=10),
+        run_token=uuid.uuid4(),
+        worker_id="worker-02",
+        recovery_count=0,
+        result_commit_hash=None,
+        last_error=None,
+    )
+
+    class DummySession:
+        def get(self, _model: Any, key: Any) -> Any:
+            if key == job_id:
+                return job
+            return None
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    monkeypatch.setattr("loreley.db.base.session_scope", fake_scope)
+
+    code = main(["jobs", "inspect", str(job_id)])
+    captured = capsys.readouterr()
+
+    assert code == 0
+    assert any("recovery_count" in line and "0" in line for line in captured.out.splitlines())
+
+
+def test_jobs_inspect_rejects_missing_job(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    settings = _make_settings()
+    monkeypatch.setattr("loreley.cli.get_settings", lambda: settings)
+    monkeypatch.setattr("loreley.cli._configure_logging_or_exit", lambda **_kwargs: None)
+
+    class DummySession:
+        def get(self, _model: Any, _key: Any) -> Any:
+            return None
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    monkeypatch.setattr("loreley.db.base.session_scope", fake_scope)
+
+    code = main(["jobs", "inspect", str(uuid.uuid4())])
+    captured = capsys.readouterr()
+
+    assert code == 1
+    assert "job not found" in captured.out.lower()
+
+
+def test_jobs_ls_failed_stale_json_filters_to_recovery_exhausted_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    settings = _make_settings()
+    settings.scheduler_stale_running_max_recovery_attempts = 3
+    monkeypatch.setattr("loreley.cli.get_settings", lambda: settings)
+    monkeypatch.setattr("loreley.cli._configure_logging_or_exit", lambda **_kwargs: None)
+
+    now = datetime.now(timezone.utc)
+    matching = SimpleNamespace(
+        id=uuid.uuid4(),
+        status=JobStatus.FAILED,
+        base_commit_hash="base-a",
+        island_id="main",
+        recovery_count=4,
+        last_error="Lease expired after missing heartbeat; recovered by scheduler (attempt=4).",
+        completed_at=now,
+        created_at=now - timedelta(hours=1),
+    )
+
+    class DummyExecuteResult:
+        def __init__(self, rows: list[object]) -> None:
+            self._rows = rows
+
+        def scalars(self) -> list[object]:
+            return list(self._rows)
+
+    class DummySession:
+        def execute(self, _stmt: Any) -> DummyExecuteResult:
+            return DummyExecuteResult([matching])
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    monkeypatch.setattr("loreley.db.base.session_scope", fake_scope)
+
+    code = main(["jobs", "ls", "--failed-stale", "--json"])
+    captured = capsys.readouterr()
+
+    assert code == 0
+    payload = json.loads(captured.out)
+    assert payload["filters"] == {"failed_stale": True}
+    assert len(payload["jobs"]) == 1
+    assert payload["jobs"][0]["job_id"] == str(matching.id)
+    assert payload["jobs"][0]["status"] == "failed"
+    assert payload["jobs"][0]["recovery_count"] == 4
+
+
+def test_jobs_retry_failed_stale_limit_requeues_multiple_jobs(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    settings = _make_settings()
+    settings.scheduler_stale_running_max_recovery_attempts = 3
+    monkeypatch.setattr("loreley.cli.get_settings", lambda: settings)
+    monkeypatch.setattr("loreley.cli._configure_logging_or_exit", lambda **_kwargs: None)
+
+    jobs = [
+        SimpleNamespace(
+            id=uuid.uuid4(),
+            status=JobStatus.FAILED,
+            scheduled_at=None,
+            started_at=object(),
+            completed_at=object(),
+            heartbeat_at=object(),
+            lease_expires_at=object(),
+            run_token=uuid.uuid4(),
+            worker_id="worker-a",
+            recovery_count=4,
+            result_commit_hash="c1",
+            last_error="Lease expired after missing heartbeat; recovered by scheduler (attempt=4).",
+        ),
+        SimpleNamespace(
+            id=uuid.uuid4(),
+            status=JobStatus.FAILED,
+            scheduled_at=None,
+            started_at=object(),
+            completed_at=object(),
+            heartbeat_at=object(),
+            lease_expires_at=object(),
+            run_token=uuid.uuid4(),
+            worker_id="worker-b",
+            recovery_count=5,
+            result_commit_hash="c2",
+            last_error="Lease expired after missing heartbeat; recovered by scheduler (attempt=5).",
+        ),
+    ]
+
+    class DummyExecuteResult:
+        def __init__(self, rows: list[object]) -> None:
+            self._rows = rows
+
+        def scalars(self) -> list[object]:
+            return list(self._rows)
+
+    class DummySession:
+        def execute(self, _stmt: Any) -> DummyExecuteResult:
+            return DummyExecuteResult(jobs)
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    monkeypatch.setattr("loreley.db.base.session_scope", fake_scope)
+
+    code = main(["jobs", "retry", "--failed-stale", "--limit", "2", "--json"])
+    captured = capsys.readouterr()
+
+    assert code == 0
+    payload = json.loads(captured.out)
+    assert payload["filters"] == {"all": False, "failed_stale": True, "limit": 2}
+    assert payload["count"] == 2
+    assert [item["job_id"] for item in payload["retried_jobs"]] == [str(job.id) for job in jobs]
+    for job in jobs:
+        assert job.status is JobStatus.PENDING
+        assert job.recovery_count == 0
+        assert job.run_token is None
+        assert job.worker_id is None
+        assert job.result_commit_hash is None
+
+
+def test_jobs_retry_failed_stale_requires_all_or_limit(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    settings = _make_settings()
+    monkeypatch.setattr("loreley.cli.get_settings", lambda: settings)
+    monkeypatch.setattr("loreley.cli._configure_logging_or_exit", lambda **_kwargs: None)
+
+    code = main(["jobs", "retry", "--failed-stale"])
+    captured = capsys.readouterr()
+
+    assert code == 1
+    assert "use --all or --limit with --failed-stale" in captured.out.lower()

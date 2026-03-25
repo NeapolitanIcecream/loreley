@@ -6,7 +6,12 @@ from rich.console import Console
 
 from loreley.config import Settings
 from loreley.core.worker.evolution import EvolutionWorker, EvolutionWorkerResult
-from loreley.core.worker.job_store import EvolutionWorkerError, JobLockConflict, JobPreconditionError
+from loreley.core.worker.job_store import (
+    EvolutionWorkerError,
+    JobLeaseLost,
+    JobLockConflict,
+    JobPreconditionError,
+)
 from loreley.naming import tasks_queue_name
 from loreley.tasks.broker import setup_broker
 
@@ -115,6 +120,12 @@ def build_evolution_job_worker_actor(
                 f"[yellow]Evolution job skipped[/] id={job_id_str} reason={exc}",
             )
             log.warning("Job {} skipped: {}", job_id_str, exc)
+            return
+        except JobLeaseLost as exc:
+            console.log(
+                f"[yellow]Evolution job lease lost[/] id={job_id_str} reason={exc}",
+            )
+            log.warning("Job {} lease lost: {}", job_id_str, exc)
             return
         except EvolutionWorkerError as exc:
             console.log(

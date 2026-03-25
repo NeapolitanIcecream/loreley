@@ -7,11 +7,13 @@ This CLI is designed to:
 - run preflight checks before starting long-running processes
 """
 
+from datetime import datetime, timezone
 import os
 import sys
 import json
 from enum import Enum
-from typing import Sequence
+from typing import Any, Sequence
+import uuid
 
 import click
 import typer
@@ -34,7 +36,9 @@ from loreley.preflight import (
 console = Console()
 app = typer.Typer(add_completion=False, help="Loreley unified CLI.")
 config_app = typer.Typer(help="Inspect effective Loreley configuration.")
+jobs_app = typer.Typer(help="Inspect and repair evolution jobs.")
 app.add_typer(config_app, name="config")
+app.add_typer(jobs_app, name="jobs")
 archive_app = typer.Typer(help="Inspect MAP-Elites archives.")
 app.add_typer(archive_app, name="archive")
 
@@ -90,6 +94,104 @@ def _load_archive_stats_or_exit(*, settings: Settings, island_id: str) -> dict[s
             f"island={island_id} reason={exc}",
         )
         raise typer.Exit(code=1) from exc
+
+
+def _iso_or_none(value: object) -> str | None:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return None
+
+
+def _display_or_na(value: object) -> str:
+    if value is None:
+        return "n/a"
+    text = str(value)
+    return text if text else "n/a"
+
+
+def _job_status_value(value: object) -> str:
+    status_value = getattr(value, "value", value)
+    return str(status_value or "").strip().lower()
+
+
+def _job_lease_payload(*, job: Any, now: datetime) -> dict[str, object]:
+    lease_expires_at = getattr(job, "lease_expires_at", None)
+    run_token = getattr(job, "run_token", None)
+    worker_id = getattr(job, "worker_id", None)
+    status = _job_status_value(getattr(job, "status", None))
+
+    if status == "running":
+        if run_token is None or worker_id is None or lease_expires_at is None:
+            state = "missing"
+        elif isinstance(lease_expires_at, datetime) and lease_expires_at < now:
+            state = "stale"
+        else:
+            state = "active"
+    else:
+        state = "none"
+
+    return {
+        "state": state,
+        "heartbeat_at": _iso_or_none(getattr(job, "heartbeat_at", None)),
+        "lease_expires_at": _iso_or_none(lease_expires_at),
+        "run_token": str(run_token) if run_token is not None else None,
+        "worker_id": str(worker_id) if worker_id is not None else None,
+    }
+
+
+def _job_summary_payload(*, job: Any, now: datetime) -> dict[str, object]:
+    return {
+        "job_id": str(getattr(job, "id", "")),
+        "status": _job_status_value(getattr(job, "status", None)),
+        "base_commit_hash": getattr(job, "base_commit_hash", None),
+        "island_id": getattr(job, "island_id", None),
+        "recovery_count": int(getattr(job, "recovery_count", 0) or 0),
+        "result_commit_hash": getattr(job, "result_commit_hash", None),
+        "last_error": getattr(job, "last_error", None),
+        "created_at": _iso_or_none(getattr(job, "created_at", None)),
+        "completed_at": _iso_or_none(getattr(job, "completed_at", None)),
+        "lease_state": str(_job_lease_payload(job=job, now=now)["state"]),
+    }
+
+
+def _failed_stale_job_conditions(
+    *,
+    EvolutionJob: Any,
+    JobStatus: Any,
+    func: Any,
+    max_recovery_attempts: int,
+) -> tuple[Any, ...]:
+    lease_error_norm = func.lower(func.trim(func.coalesce(EvolutionJob.last_error, "")))
+    return (
+        EvolutionJob.status == JobStatus.FAILED,
+        EvolutionJob.recovery_count > int(max_recovery_attempts),
+        lease_error_norm.like("lease expired after missing heartbeat;%"),
+    )
+
+
+def _retry_job_row(*, job: Any, reason: str, now: datetime) -> dict[str, object]:
+    previous_status = _job_status_value(getattr(job, "status", None))
+    previous_recovery_count = int(getattr(job, "recovery_count", 0) or 0)
+    from loreley.db.models import JobStatus
+
+    job.status = JobStatus.PENDING
+    job.scheduled_at = now
+    job.started_at = None
+    job.completed_at = None
+    job.heartbeat_at = None
+    job.lease_expires_at = None
+    job.run_token = None
+    job.worker_id = None
+    job.recovery_count = 0
+    job.result_commit_hash = None
+    job.last_error = str(reason or "").strip() or "manual retry requested via CLI"
+    return {
+        "job_id": str(getattr(job, "id", "")),
+        "previous_status": previous_status,
+        "new_status": _job_status_value(getattr(job, "status", None)),
+        "recovery_count_reset_from": previous_recovery_count,
+        "reason": job.last_error,
+    }
 
 
 def _run_doctor(
@@ -402,7 +504,7 @@ def status(
         return raw[:12] if len(raw) > 12 else raw
 
     try:
-        from sqlalchemy import func, select
+        from sqlalchemy import func, or_, select
 
         from loreley.db.base import session_scope
         from loreley.db.models import CommitCard, EvolutionJob, InstanceMetadata, JobStatus, Metric
@@ -434,6 +536,45 @@ def status(
                 .where(commit_norm != "")
             )
             pending_ingestion_jobs = int(session.execute(stmt_pending_ingest).scalar_one())
+            current_time = datetime.now(timezone.utc)
+
+            stmt_running = select(func.count(EvolutionJob.id)).where(
+                EvolutionJob.status == JobStatus.RUNNING,
+            )
+            running_jobs = int(session.execute(stmt_running).scalar_one())
+
+            stmt_stale_running = (
+                select(func.count(EvolutionJob.id))
+                .where(EvolutionJob.status == JobStatus.RUNNING)
+                .where(EvolutionJob.lease_expires_at.is_not(None))
+                .where(EvolutionJob.lease_expires_at < current_time)
+            )
+            stale_running_jobs = int(session.execute(stmt_stale_running).scalar_one())
+
+            stmt_running_without_lease = (
+                select(func.count(EvolutionJob.id))
+                .where(EvolutionJob.status == JobStatus.RUNNING)
+                .where(
+                    or_(
+                        EvolutionJob.run_token.is_(None),
+                        EvolutionJob.worker_id.is_(None),
+                        EvolutionJob.lease_expires_at.is_(None),
+                    )
+                )
+            )
+            running_without_lease_jobs = int(session.execute(stmt_running_without_lease).scalar_one())
+
+            lease_error_norm = func.lower(func.trim(func.coalesce(EvolutionJob.last_error, "")))
+            stmt_recovery_exhausted = (
+                select(func.count(EvolutionJob.id))
+                .where(EvolutionJob.status == JobStatus.FAILED)
+                .where(
+                    EvolutionJob.recovery_count
+                    > int(settings.scheduler_stale_running_max_recovery_attempts),
+                )
+                .where(lease_error_norm.like("lease expired after missing heartbeat;%"))
+            )
+            recovery_exhausted_failed_jobs = int(session.execute(stmt_recovery_exhausted).scalar_one())
 
             best_commit: dict[str, object] | None = None
             metric_name = str(settings.mapelites_fitness_metric or "").strip()
@@ -483,6 +624,15 @@ def status(
                 "unfinished": unfinished_jobs,
                 "pending_ingestion": pending_ingestion_jobs,
             }
+            lease_payload: dict[str, int] = {
+                "lease_ttl_seconds": int(settings.worker_job_lease_ttl_seconds),
+                "heartbeat_interval_seconds": int(settings.worker_job_heartbeat_interval_seconds),
+                "max_recovery_attempts": int(settings.scheduler_stale_running_max_recovery_attempts),
+                "running": running_jobs,
+                "stale_running": stale_running_jobs,
+                "running_without_lease": running_without_lease_jobs,
+                "recovery_exhausted_failed": recovery_exhausted_failed_jobs,
+            }
     except typer.Exit:
         raise
     except Exception as exc:  # pragma: no cover - defensive
@@ -494,6 +644,7 @@ def status(
     payload: dict[str, object] = {
         "instance": instance_payload,
         "jobs": jobs_payload,
+        "job_leases": lease_payload,
         "archive": archive_stats,
         "best_commit": best_commit,
     }
@@ -520,6 +671,15 @@ def status(
     table.add_section()
     table.add_row("unfinished_jobs", str(unfinished_jobs))
     table.add_row("pending_ingestion", str(pending_ingestion_jobs))
+
+    table.add_section()
+    table.add_row("running_jobs", str(lease_payload["running"]))
+    table.add_row("stale_running", str(lease_payload["stale_running"]))
+    table.add_row("running_without_lease", str(lease_payload["running_without_lease"]))
+    table.add_row("recovery_exhausted_failed", str(lease_payload["recovery_exhausted_failed"]))
+    table.add_row("lease_ttl_seconds", str(lease_payload["lease_ttl_seconds"]))
+    table.add_row("heartbeat_interval_seconds", str(lease_payload["heartbeat_interval_seconds"]))
+    table.add_row("max_recovery_attempts", str(lease_payload["max_recovery_attempts"]))
 
     table.add_section()
     table.add_row("island_id", str(archive_stats.get("island_id") or effective_island))
@@ -563,6 +723,313 @@ def status(
     else:
         table.add_row("best_commit", "n/a")
 
+    console.print(table)
+
+
+@jobs_app.command("retry")
+def retry_job(
+    ctx: typer.Context,
+    job_id: str | None = typer.Argument(None, help="Evolution job UUID to retry."),
+    failed_stale: bool = typer.Option(
+        False,
+        "--failed-stale",
+        help="Retry FAILED jobs that exhausted the stale-lease recovery budget.",
+        show_default=True,
+    ),
+    retry_all: bool = typer.Option(
+        False,
+        "--all",
+        help="When used with --failed-stale, retry all matching jobs.",
+        show_default=True,
+    ),
+    limit: int | None = typer.Option(
+        None,
+        "--limit",
+        min=1,
+        help="When used with --failed-stale, retry up to N matching jobs.",
+        show_default=False,
+    ),
+    reason: str = typer.Option(
+        "manual retry requested via CLI",
+        "--reason",
+        help="Reason written to last_error while the job is requeued.",
+        show_default=True,
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Print the retry result as JSON.",
+        show_default=True,
+    ),
+) -> None:
+    """Move a failed evolution job back to PENDING."""
+    settings = _load_settings_or_exit()
+    _configure_logging_or_exit(settings=settings, role="jobs", override_level=_get_log_level(ctx))
+
+    raw_job_id = str(job_id or "").strip()
+    if raw_job_id and failed_stale:
+        console.print("[bold red]Choose either a job id or --failed-stale[/]")
+        raise typer.Exit(code=1)
+    if raw_job_id and (retry_all or limit is not None):
+        console.print("[bold red]Do not combine a job id with --all or --limit[/]")
+        raise typer.Exit(code=1)
+    if not raw_job_id and not failed_stale:
+        console.print("[bold red]Provide a job id or use --failed-stale[/]")
+        raise typer.Exit(code=1)
+    if failed_stale:
+        if retry_all and limit is not None:
+            console.print("[bold red]Choose either --all or --limit with --failed-stale[/]")
+            raise typer.Exit(code=1)
+        if not retry_all and limit is None:
+            console.print("[bold red]Use --all or --limit with --failed-stale[/]")
+            raise typer.Exit(code=1)
+
+    try:
+        from sqlalchemy import select
+
+        from loreley.db.base import session_scope
+        from loreley.db.models import EvolutionJob, JobStatus
+
+        now = datetime.now(timezone.utc)
+        with session_scope() as session:
+            if raw_job_id:
+                try:
+                    job_uuid = uuid.UUID(raw_job_id)
+                except ValueError as exc:
+                    console.print(f"[bold red]Invalid job id[/] value={raw_job_id}")
+                    raise typer.Exit(code=1) from exc
+                job = session.get(EvolutionJob, job_uuid)
+                if job is None:
+                    console.print(f"[bold red]Job not found[/] id={job_uuid}")
+                    raise typer.Exit(code=1)
+                if job.status != JobStatus.FAILED:
+                    console.print(
+                        "[bold red]Only failed jobs can be retried[/] "
+                        f"id={job_uuid} status={job.status}",
+                    )
+                    raise typer.Exit(code=1)
+                payload = _retry_job_row(job=job, reason=reason, now=now)
+            else:
+                from sqlalchemy import func
+
+                stmt = (
+                    select(EvolutionJob)
+                    .where(
+                        *_failed_stale_job_conditions(
+                            EvolutionJob=EvolutionJob,
+                            JobStatus=JobStatus,
+                            func=func,
+                            max_recovery_attempts=int(
+                                settings.scheduler_stale_running_max_recovery_attempts,
+                            ),
+                        )
+                    )
+                    .order_by(
+                        EvolutionJob.completed_at.desc().nullslast(),
+                        EvolutionJob.created_at.desc(),
+                    )
+                )
+                if not retry_all and limit is not None:
+                    stmt = stmt.limit(int(limit))
+                rows = list(session.execute(stmt).scalars())
+                retried_jobs = [_retry_job_row(job=row, reason=reason, now=now) for row in rows]
+                payload = {
+                    "filters": {
+                        "failed_stale": True,
+                        "all": bool(retry_all),
+                        "limit": None if retry_all else int(limit or 0),
+                    },
+                    "count": len(retried_jobs),
+                    "retried_jobs": retried_jobs,
+                }
+    except typer.Exit:
+        raise
+    except Exception as exc:  # pragma: no cover - defensive
+        target = raw_job_id or "failed_stale"
+        console.print(f"[bold red]Failed to retry job[/] target={target} reason={exc}")
+        raise typer.Exit(code=1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return
+
+    if raw_job_id:
+        console.print(
+            "[bold green]Retried job[/] "
+            f"id={payload['job_id']} status={payload['previous_status']}->{payload['new_status']} "
+            f"recovery_count_reset_from={payload['recovery_count_reset_from']}",
+        )
+        return
+
+    console.print(
+        "[bold green]Retried jobs[/] "
+        f"count={payload['count']} failed_stale=true all={payload['filters']['all']} "
+        f"limit={payload['filters']['limit']}",
+    )
+
+
+@jobs_app.command("inspect")
+def inspect_job(
+    ctx: typer.Context,
+    job_id: str = typer.Argument(..., help="Evolution job UUID to inspect."),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Print the job payload as JSON.",
+        show_default=True,
+    ),
+) -> None:
+    """Print detailed status and lease information for one evolution job."""
+    settings = _load_settings_or_exit()
+    _configure_logging_or_exit(settings=settings, role="jobs", override_level=_get_log_level(ctx))
+
+    raw_job_id = str(job_id).strip()
+    try:
+        job_uuid = uuid.UUID(raw_job_id)
+    except ValueError as exc:
+        console.print(f"[bold red]Invalid job id[/] value={raw_job_id}")
+        raise typer.Exit(code=1) from exc
+
+    try:
+        from loreley.db.base import session_scope
+        from loreley.db.models import EvolutionJob
+
+        with session_scope() as session:
+            job = session.get(EvolutionJob, job_uuid)
+            if job is None:
+                console.print(f"[bold red]Job not found[/] id={job_uuid}")
+                raise typer.Exit(code=1)
+
+            now = datetime.now(timezone.utc)
+            payload = {
+                **_job_summary_payload(job=job, now=now),
+                "scheduled_at": _iso_or_none(getattr(job, "scheduled_at", None)),
+                "started_at": _iso_or_none(getattr(job, "started_at", None)),
+                "heartbeat_at": _iso_or_none(getattr(job, "heartbeat_at", None)),
+                "lease_expires_at": _iso_or_none(getattr(job, "lease_expires_at", None)),
+                "lease": _job_lease_payload(job=job, now=now),
+            }
+    except typer.Exit:
+        raise
+    except Exception as exc:  # pragma: no cover - defensive
+        console.print(f"[bold red]Failed to inspect job[/] id={job_uuid} reason={exc}")
+        raise typer.Exit(code=1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return
+
+    from rich.table import Table
+
+    table = Table(title=f"Evolution job {payload['job_id']}")
+    table.add_column("field", style="bold")
+    table.add_column("value")
+    for key in (
+        "status",
+        "base_commit_hash",
+        "island_id",
+        "recovery_count",
+        "result_commit_hash",
+        "created_at",
+        "scheduled_at",
+        "started_at",
+        "completed_at",
+        "last_error",
+    ):
+        table.add_row(str(key), _display_or_na(payload.get(key)))
+    table.add_section()
+    lease = payload["lease"]
+    for key in ("state", "worker_id", "run_token", "heartbeat_at", "lease_expires_at"):
+        table.add_row(f"lease.{key}", _display_or_na(lease.get(key)))
+    console.print(table)
+
+
+@jobs_app.command("ls")
+def list_jobs(
+    ctx: typer.Context,
+    failed_stale: bool = typer.Option(
+        False,
+        "--failed-stale",
+        help="Only show FAILED jobs that exhausted the stale-lease recovery budget.",
+        show_default=True,
+    ),
+    limit: int = typer.Option(
+        20,
+        "--limit",
+        min=1,
+        help="Maximum number of jobs to return.",
+        show_default=True,
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Print the job list as JSON.",
+        show_default=True,
+    ),
+) -> None:
+    """List recent evolution jobs, with optional stale-failure filtering."""
+    settings = _load_settings_or_exit()
+    _configure_logging_or_exit(settings=settings, role="jobs", override_level=_get_log_level(ctx))
+
+    try:
+        from sqlalchemy import func, select
+
+        from loreley.db.base import session_scope
+        from loreley.db.models import EvolutionJob, JobStatus
+
+        with session_scope() as session:
+            stmt = select(EvolutionJob)
+            if failed_stale:
+                stmt = stmt.where(
+                    *_failed_stale_job_conditions(
+                        EvolutionJob=EvolutionJob,
+                        JobStatus=JobStatus,
+                        func=func,
+                        max_recovery_attempts=int(
+                            settings.scheduler_stale_running_max_recovery_attempts,
+                        ),
+                    )
+                )
+            stmt = (
+                stmt.order_by(
+                    EvolutionJob.completed_at.desc().nullslast(),
+                    EvolutionJob.created_at.desc(),
+                )
+                .limit(int(limit))
+            )
+            rows = list(session.execute(stmt).scalars())
+            now = datetime.now(timezone.utc)
+            jobs = [_job_summary_payload(job=row, now=now) for row in rows]
+    except Exception as exc:  # pragma: no cover - defensive
+        console.print(f"[bold red]Failed to list jobs[/] reason={exc}")
+        raise typer.Exit(code=1) from exc
+
+    payload = {
+        "filters": {"failed_stale": bool(failed_stale)},
+        "jobs": jobs,
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return
+
+    from rich.table import Table
+
+    table = Table(title="Evolution jobs")
+    table.add_column("job_id", style="bold")
+    table.add_column("status")
+    table.add_column("lease")
+    table.add_column("recovery")
+    table.add_column("base_commit")
+    table.add_column("completed_at")
+    for job in jobs:
+        table.add_row(
+            str(job["job_id"]),
+            str(job["status"]),
+            str(job["lease_state"]),
+            str(job["recovery_count"]),
+            str(job["base_commit_hash"] or "n/a"),
+            str(job["completed_at"] or "n/a"),
+        )
     console.print(table)
 
 
@@ -635,4 +1102,3 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main(sys.argv[1:]))
-
