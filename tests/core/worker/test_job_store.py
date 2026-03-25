@@ -145,11 +145,16 @@ def test_record_candidate_commit_updates_job_metadata(
 
     job_row = DummyJob()
 
+    class DummyResult:
+        def __init__(self, obj: Any) -> None:
+            self.obj = obj
+
+        def scalar_one_or_none(self) -> Any:
+            return self.obj
+
     class DummySession:
-        def get(self, model: Any, key: Any) -> Any:
-            if model is EvolutionJob and key == job_id:
-                return job_row
-            return None
+        def execute(self, _stmt: Any) -> DummyResult:
+            return DummyResult(job_row)
 
     @contextmanager
     def fake_scope() -> Any:
@@ -200,11 +205,16 @@ def test_record_candidate_commit_rejects_stale_run_token(
 
     job_row = DummyJob()
 
+    class DummyResult:
+        def __init__(self, obj: Any) -> None:
+            self.obj = obj
+
+        def scalar_one_or_none(self) -> Any:
+            return self.obj
+
     class DummySession:
-        def get(self, model: Any, key: Any) -> Any:
-            if model is EvolutionJob and key == job_id:
-                return job_row
-            return None
+        def execute(self, _stmt: Any) -> DummyResult:
+            return DummyResult(None)
 
     @contextmanager
     def fake_scope() -> Any:
@@ -345,14 +355,19 @@ def test_persist_success_updates_job_and_records_metadata(
     job_row = DummyJob()
     added: list[Any] = []
 
+    class DummyResult:
+        def __init__(self, obj: Any) -> None:
+            self.obj = obj
+
+        def scalar_one_or_none(self) -> Any:
+            return self.obj
+
     class DummySession:
         def __init__(self) -> None:
             self.added = added
 
-        def get(self, model: Any, key: Any) -> Any:
-            if model is EvolutionJob and key == job_id:
-                return job_row
-            return None
+        def execute(self, _stmt: Any) -> DummyResult:
+            return DummyResult(job_row)
 
         def add(self, obj: Any) -> None:
             self.added.append(obj)
@@ -477,11 +492,16 @@ def test_persist_success_rejects_stale_run_token(
     job_row = DummyJob()
     added: list[Any] = []
 
+    class DummyResult:
+        def __init__(self, obj: Any) -> None:
+            self.obj = obj
+
+        def scalar_one_or_none(self) -> Any:
+            return self.obj
+
     class DummySession:
-        def get(self, model: Any, key: Any) -> Any:
-            if model is EvolutionJob and key == job_id:
-                return job_row
-            return None
+        def execute(self, _stmt: Any) -> DummyResult:
+            return DummyResult(None)
 
         def add(self, obj: Any) -> None:
             added.append(obj)
@@ -549,3 +569,82 @@ def test_persist_success_rejects_stale_run_token(
         )
 
     assert added == []
+
+
+def test_mark_job_failed_updates_running_job_when_run_token_matches(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    job_id = uuid.uuid4()
+    run_token = uuid.uuid4()
+
+    class DummyJob:
+        def __init__(self) -> None:
+            self.id = job_id
+            self.status = JobStatus.RUNNING
+            self.completed_at = None
+            self.run_token = run_token
+            self.worker_id = "worker-01"
+            self.heartbeat_at = datetime.now(timezone.utc)
+            self.lease_expires_at = datetime.now(timezone.utc)
+            self.last_error = None
+
+    job_row = DummyJob()
+
+    class DummyResult:
+        def __init__(self, obj: Any) -> None:
+            self.obj = obj
+
+        def scalar_one_or_none(self) -> Any:
+            return self.obj
+
+    class DummySession:
+        def execute(self, _stmt: Any) -> DummyResult:
+            return DummyResult(job_row)
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    monkeypatch.setattr(job_store, "session_scope", fake_scope)
+    store = EvolutionJobStore(settings=settings)
+
+    recorded = store.mark_job_failed(job_id, "boom", run_token=run_token)
+
+    assert recorded is True
+    assert job_row.status is JobStatus.FAILED
+    assert job_row.completed_at is not None
+    assert job_row.run_token is None
+    assert job_row.worker_id is None
+    assert job_row.heartbeat_at is None
+    assert job_row.lease_expires_at is None
+    assert job_row.last_error == "boom"
+
+
+def test_mark_job_failed_rejects_stale_run_token_without_overwriting_state(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    job_id = uuid.uuid4()
+
+    class DummyResult:
+        def __init__(self, obj: Any) -> None:
+            self.obj = obj
+
+        def scalar_one_or_none(self) -> Any:
+            return self.obj
+
+    class DummySession:
+        def execute(self, _stmt: Any) -> DummyResult:
+            return DummyResult(None)
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    monkeypatch.setattr(job_store, "session_scope", fake_scope)
+    store = EvolutionJobStore(settings=settings)
+
+    recorded = store.mark_job_failed(job_id, "boom", run_token=uuid.uuid4())
+
+    assert recorded is False

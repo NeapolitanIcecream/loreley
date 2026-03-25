@@ -163,24 +163,20 @@ class EvolutionJobStore:
 
         try:
             with session_scope() as session:
-                job = session.get(EvolutionJob, job_id)
-                if not job:
-                    raise EvolutionWorkerError(
-                        f"Evolution job {job_id} disappeared while recording candidate metadata.",
-                    )
                 if run_token is not None:
-                    active_run_token = getattr(job, "run_token", None)
-                    if job.status != JobStatus.RUNNING or active_run_token != run_token:
-                        raise JobLeaseLost(
-                            "Evolution job {} lease was lost before recording candidate metadata "
-                            "(expected_run_token={} actual_run_token={} status={}).".format(
-                                job_id,
-                                run_token,
-                                active_run_token,
-                                getattr(job, "status", None),
-                            )
+                    job = self._lock_active_job_for_run(
+                        session=session,
+                        job_id=job_id,
+                        run_token=run_token,
+                        action="recording candidate metadata",
+                    )
+                else:
+                    job = session.get(EvolutionJob, job_id)
+                    if not job:
+                        raise EvolutionWorkerError(
+                            f"Evolution job {job_id} disappeared while recording candidate metadata.",
                         )
-                elif job.status in {JobStatus.SUCCEEDED, JobStatus.CANCELLED}:
+                if run_token is None and job.status in {JobStatus.SUCCEEDED, JobStatus.CANCELLED}:
                     raise EvolutionWorkerError(
                         f"Evolution job {job_id} cannot record a candidate in status {job.status}.",
                     )
@@ -282,12 +278,12 @@ class EvolutionJobStore:
 
         try:
             with session_scope() as session:
-                job = session.get(EvolutionJob, job_ctx.job_id)
-                if not job:
-                    raise EvolutionWorkerError(
-                        f"Evolution job {job_ctx.job_id} disappeared during persistence.",
-                    )
-                self._require_active_lease(job=job, job_ctx=job_ctx)
+                job = self._lock_active_job_for_run(
+                    session=session,
+                    job_id=job_ctx.job_id,
+                    run_token=job_ctx.run_token,
+                    action="persisting success",
+                )
                 job.status = JobStatus.SUCCEEDED
                 job.completed_at = _utc_now()
                 job.heartbeat_at = None
@@ -363,14 +359,21 @@ class EvolutionJobStore:
 
         try:
             with session_scope() as session:
-                job = session.get(EvolutionJob, job_id)
-                if not job:
-                    return False
-                if job.status in {JobStatus.SUCCEEDED, JobStatus.CANCELLED}:
-                    return False
                 if run_token is not None:
-                    active_run_token = getattr(job, "run_token", None)
-                    if job.status != JobStatus.RUNNING or active_run_token != run_token:
+                    try:
+                        job = self._lock_active_job_for_run(
+                            session=session,
+                            job_id=job_id,
+                            run_token=run_token,
+                            action="marking failure",
+                        )
+                    except JobLeaseLost:
+                        return False
+                else:
+                    job = session.get(EvolutionJob, job_id)
+                    if not job:
+                        return False
+                    if job.status in {JobStatus.SUCCEEDED, JobStatus.CANCELLED}:
                         return False
                 job.status = JobStatus.FAILED
                 job.completed_at = _utc_now()
@@ -389,21 +392,29 @@ class EvolutionJobStore:
         return timedelta(seconds=ttl_seconds)
 
     @staticmethod
-    def _require_active_lease(*, job: EvolutionJob, job_ctx: JobContext) -> None:
-        expected = getattr(job_ctx, "run_token", None)
-        actual = getattr(job, "run_token", None)
-        if expected is None:
-            raise JobLeaseLost(f"Evolution job {job_ctx.job_id} is missing a run_token.")
-        if job.status != JobStatus.RUNNING or actual != expected:
-            raise JobLeaseLost(
-                "Evolution job {} lease was lost before persistence "
-                "(expected_run_token={} actual_run_token={} status={}).".format(
-                    job_ctx.job_id,
-                    expected,
-                    actual,
-                    getattr(job, "status", None),
-                )
+    def _lock_active_job_for_run(
+        *,
+        session: Any,
+        job_id: UUID,
+        run_token: UUID,
+        action: str,
+    ) -> EvolutionJob:
+        stmt = (
+            select(EvolutionJob)
+            .where(
+                EvolutionJob.id == job_id,
+                EvolutionJob.status == JobStatus.RUNNING,
+                EvolutionJob.run_token == run_token,
             )
+            .with_for_update()
+        )
+        job = session.execute(stmt).scalar_one_or_none()
+        if not job:
+            raise JobLeaseLost(
+                f"Evolution job {job_id} lease was lost before {action} "
+                f"(expected_run_token={run_token}).",
+            )
+        return job
 
     @staticmethod
     def _is_lock_conflict(exc: SQLAlchemyError) -> bool:
