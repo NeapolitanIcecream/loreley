@@ -232,6 +232,109 @@ def test_reclaim_stale_running_jobs_requeues_expired_attempts(
     assert "lease expired" in str(job_row.last_error).lower()
 
 
+def test_reclaim_stale_running_jobs_requeues_running_jobs_missing_lease_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    sender = DummySenderActor()
+    monkeypatch.setattr(
+        job_scheduler,
+        "build_evolution_job_sender_actor",
+        lambda **_kwargs: sender,
+    )
+    settings.scheduler_stale_running_reclaim_batch_size = 10
+    settings.scheduler_stale_running_max_recovery_attempts = 3
+    scheduler = cast(Any, JobScheduler)(
+        settings=settings,
+        console=Console(record=True),
+        sampler=cast(MapElitesSampler, object()),
+    )
+    now = datetime.now(timezone.utc)
+    job_row = SimpleNamespace(
+        id=uuid.uuid4(),
+        status=JobStatus.RUNNING,
+        recovery_count=0,
+        run_token=None,
+        worker_id=None,
+        lease_expires_at=None,
+        heartbeat_at=None,
+        started_at=now - timedelta(hours=1),
+        completed_at=None,
+        scheduled_at=None,
+        last_error=None,
+    )
+
+    class DummyExecuteResult:
+        def __init__(self, rows: list[object]) -> None:
+            self._rows = rows
+
+        def scalars(self) -> list[object]:
+            return list(self._rows)
+
+    class DummySession:
+        def execute(self, _stmt: Any) -> DummyExecuteResult:
+            return DummyExecuteResult([job_row])
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    monkeypatch.setattr(job_scheduler, "session_scope", fake_scope)
+
+    reclaimed = scheduler.reclaim_stale_running_jobs(now=now)
+
+    assert reclaimed == JobLeaseReclaimResult(requeued=1, failed=0)
+    assert job_row.status is JobStatus.PENDING
+    assert job_row.run_token is None
+    assert job_row.worker_id is None
+    assert "lease metadata missing" in str(job_row.last_error).lower()
+
+
+def test_reclaim_stale_running_jobs_uses_database_time_when_now_omitted(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    sender = DummySenderActor()
+    monkeypatch.setattr(
+        job_scheduler,
+        "build_evolution_job_sender_actor",
+        lambda **_kwargs: sender,
+    )
+    settings.scheduler_stale_running_reclaim_batch_size = 10
+    scheduler = cast(Any, JobScheduler)(
+        settings=settings,
+        console=Console(record=True),
+        sampler=cast(MapElitesSampler, object()),
+    )
+    db_now = datetime(2026, 3, 25, 8, 30, tzinfo=timezone.utc)
+    captured_stmt: list[Any] = []
+
+    class DummyExecuteResult:
+        def __init__(self) -> None:
+            self._rows: list[object] = []
+
+        def scalars(self) -> list[object]:
+            return list(self._rows)
+
+    class DummySession:
+        def execute(self, stmt: Any) -> DummyExecuteResult:
+            captured_stmt.append(stmt)
+            return DummyExecuteResult()
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    monkeypatch.setattr(job_scheduler, "session_scope", fake_scope)
+    monkeypatch.setattr(job_scheduler, "_db_utc_now", lambda _session: db_now)
+
+    scheduler.reclaim_stale_running_jobs()
+
+    stmt = captured_stmt[0]
+    params = stmt.compile().params
+    assert db_now in params.values()
+
+
 def test_reclaim_stale_running_jobs_fails_after_recovery_budget_and_logs_signal(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,

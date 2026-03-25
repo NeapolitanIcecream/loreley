@@ -169,6 +169,19 @@ def _failed_stale_job_conditions(
     )
 
 
+def _job_retry_state(*, job: Any, now: datetime) -> tuple[bool, str | None]:
+    from loreley.db.models import JobStatus
+
+    status = getattr(job, "status", None)
+    if status == JobStatus.FAILED:
+        return True, None
+
+    lease_state = str(_job_lease_payload(job=job, now=now)["state"])
+    if status == JobStatus.RUNNING and lease_state in {"missing", "stale"}:
+        return True, lease_state
+    return False, lease_state
+
+
 def _retry_job_row(*, job: Any, reason: str, now: datetime) -> dict[str, object]:
     previous_status = _job_status_value(getattr(job, "status", None))
     previous_recovery_count = int(getattr(job, "recovery_count", 0) or 0)
@@ -762,7 +775,7 @@ def retry_job(
         show_default=True,
     ),
 ) -> None:
-    """Move a failed evolution job back to PENDING."""
+    """Requeue a failed or stuck evolution job."""
     settings = _load_settings_or_exit()
     _configure_logging_or_exit(settings=settings, role="jobs", override_level=_get_log_level(ctx))
 
@@ -802,10 +815,11 @@ def retry_job(
                 if job is None:
                     console.print(f"[bold red]Job not found[/] id={job_uuid}")
                     raise typer.Exit(code=1)
-                if job.status != JobStatus.FAILED:
+                retryable, lease_state = _job_retry_state(job=job, now=now)
+                if not retryable:
                     console.print(
-                        "[bold red]Only failed jobs can be retried[/] "
-                        f"id={job_uuid} status={job.status}",
+                        "[bold red]Only failed or stuck RUNNING jobs can be retried[/] "
+                        f"id={job_uuid} status={job.status} lease_state={lease_state or 'n/a'}",
                     )
                     raise typer.Exit(code=1)
                 payload = _retry_job_row(job=job, reason=reason, now=now)

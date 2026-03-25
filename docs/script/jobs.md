@@ -44,9 +44,9 @@ Use `--limit` to change the default result size:
 uv run loreley jobs ls --failed-stale --limit 50
 ```
 
-## Retry a failed job
+## Retry one job
 
-Move a failed job back to `PENDING`:
+Move one job back to `PENDING`:
 
 ```bash
 uv run loreley jobs retry JOB_ID
@@ -64,7 +64,12 @@ Add an explicit retry reason:
 uv run loreley jobs retry JOB_ID --reason "manual retry after worker host restart"
 ```
 
-This command only accepts jobs whose current status is `FAILED`. It resets the execution lease fields, clears `result_commit_hash`, resets `recovery_count` to `0`, and sets `scheduled_at` to `now()` so the scheduler can dispatch the job again.
+This command accepts:
+
+- `FAILED` jobs
+- `RUNNING` jobs whose lease state is `missing` or `stale`
+
+It resets the execution lease fields, clears `result_commit_hash`, resets `recovery_count` to `0`, and sets `scheduled_at` to `now()` so the scheduler can dispatch the job again.
 
 Use it after you fix the underlying cause. If the worker environment is still unstable, the job will likely exhaust the recovery budget again.
 

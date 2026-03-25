@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
@@ -54,6 +54,7 @@ def test_start_job_marks_running_and_returns_snapshot(
     job_id = uuid.uuid4()
     monkeypatch.setenv("LORELEY_WORKER_INSTANCE_ID", "worker-01")
     settings.worker_job_lease_ttl_seconds = 600
+    now = datetime(2026, 3, 25, 8, 0, tzinfo=timezone.utc)
 
     class DummyJob:
         def __init__(self) -> None:
@@ -106,17 +107,17 @@ def test_start_job_marks_running_and_returns_snapshot(
         yield session
 
     monkeypatch.setattr(job_store, "session_scope", fake_scope)
+    monkeypatch.setattr(job_store, "_db_utc_now", lambda _session: now)
     store = EvolutionJobStore(settings=settings)
 
     locked = store.start_job(job_id)
     assert dummy_job.status is JobStatus.RUNNING
-    assert dummy_job.started_at is not None
+    assert dummy_job.started_at == now
     assert dummy_job.candidate_commit_hash is None
     assert dummy_job.candidate_branch_name is None
     assert dummy_job.candidate_published_at is None
-    assert dummy_job.heartbeat_at is not None
-    assert dummy_job.lease_expires_at is not None
-    assert dummy_job.lease_expires_at > dummy_job.started_at
+    assert dummy_job.heartbeat_at == now
+    assert dummy_job.lease_expires_at == now + timedelta(seconds=600)
     assert dummy_job.run_token is not None
     assert dummy_job.worker_id == "worker-01"
     assert dummy_job.last_error is None
@@ -297,6 +298,7 @@ def test_renew_job_lease_raises_when_run_token_is_no_longer_active(
     settings: Settings,
 ) -> None:
     executed: list[Any] = []
+    now = datetime(2026, 3, 25, 8, 15, tzinfo=timezone.utc)
 
     class DummyResult:
         rowcount = 0
@@ -311,11 +313,42 @@ def test_renew_job_lease_raises_when_run_token_is_no_longer_active(
         yield DummySession()
 
     monkeypatch.setattr(job_store, "session_scope", fake_scope)
+    monkeypatch.setattr(job_store, "_db_utc_now", lambda _session: now)
     store = EvolutionJobStore(settings=settings)
 
     with pytest.raises(JobLeaseLost):
         store.renew_job_lease(uuid.uuid4(), uuid.uuid4())
 
+    assert len(executed) == 1
+
+
+def test_renew_job_lease_uses_database_time_for_expiry(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    executed: list[Any] = []
+    now = datetime(2026, 3, 25, 8, 20, tzinfo=timezone.utc)
+    settings.worker_job_lease_ttl_seconds = 90
+
+    class DummyResult:
+        rowcount = 1
+
+    class DummySession:
+        def execute(self, stmt: Any) -> DummyResult:
+            executed.append(stmt)
+            return DummyResult()
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    monkeypatch.setattr(job_store, "session_scope", fake_scope)
+    monkeypatch.setattr(job_store, "_db_utc_now", lambda _session: now)
+    store = EvolutionJobStore(settings=settings)
+
+    lease_expires_at = store.renew_job_lease(uuid.uuid4(), uuid.uuid4())
+
+    assert lease_expires_at == now + timedelta(seconds=90)
     assert len(executed) == 1
 
 

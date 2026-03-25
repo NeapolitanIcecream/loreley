@@ -7,7 +7,7 @@ from typing import Any, TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from loguru import logger
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import SQLAlchemyError
 
 from loreley.core.contracts import clamp_text, normalize_single_line
@@ -104,7 +104,7 @@ class EvolutionJobStore:
                         f"Evolution job {job_id} is {job.status} and cannot run.",
                     )
 
-                now = _utc_now()
+                now = _db_utc_now(session)
                 run_token = uuid4()
                 worker_id = resolve_worker_instance_id()
                 job.status = JobStatus.RUNNING
@@ -191,22 +191,22 @@ class EvolutionJobStore:
     def renew_job_lease(self, job_id: UUID, run_token: UUID) -> datetime:
         """Extend the lease for an active RUNNING job attempt."""
 
-        now = _utc_now()
-        lease_expires_at = now + self._lease_ttl()
-        stmt = (
-            update(EvolutionJob)
-            .where(
-                EvolutionJob.id == job_id,
-                EvolutionJob.status == JobStatus.RUNNING,
-                EvolutionJob.run_token == run_token,
-            )
-            .values(
-                heartbeat_at=now,
-                lease_expires_at=lease_expires_at,
-            )
-        )
         try:
             with session_scope() as session:
+                now = _db_utc_now(session)
+                lease_expires_at = now + self._lease_ttl()
+                stmt = (
+                    update(EvolutionJob)
+                    .where(
+                        EvolutionJob.id == job_id,
+                        EvolutionJob.status == JobStatus.RUNNING,
+                        EvolutionJob.run_token == run_token,
+                    )
+                    .values(
+                        heartbeat_at=now,
+                        lease_expires_at=lease_expires_at,
+                    )
+                )
                 result = session.execute(stmt)
                 if int(getattr(result, "rowcount", 0) or 0) != 1:
                     raise JobLeaseLost(
@@ -432,3 +432,12 @@ class EvolutionJobStore:
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _db_utc_now(session: Any) -> datetime:
+    value = session.execute(select(func.now())).scalar_one()
+    if not isinstance(value, datetime):
+        raise RuntimeError(f"Database current timestamp returned unsupported value: {value!r}")
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)

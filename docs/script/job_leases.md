@@ -44,7 +44,7 @@ Short spikes in `reclaimed_pending` are acceptable after a worker crash or host 
 
 1. Check whether the scheduler is still ticking. If `stale_running > 0` and `reclaimed_pending` stays at `0`, the scheduler may be stopped or `SCHEDULER_STALE_RUNNING_RECLAIM_BATCH_SIZE=0`.
 2. Check worker health. A growing `reclaimed_pending` count usually means workers are dying faster than they recover.
-3. Check `running_without_lease`. Any non-zero value means the database contains pre-lease or partially written `RUNNING` rows. Fix that before trusting automatic recovery.
+3. Check `running_without_lease`. Any non-zero value means the database contains pre-lease or partially written `RUNNING` rows. The scheduler now requeues these rows on the next reclaim pass. If the count stays non-zero, reclaim may be disabled or blocked.
 4. Check `recovery_exhausted_failed`. Any non-zero value means at least one job was retried until the scheduler stopped requeueing it automatically.
 5. Inspect a specific job with `uv run loreley jobs inspect JOB_ID` before retrying it.
 
@@ -79,7 +79,7 @@ SQL
 
 Replace `3` with your configured `SCHEDULER_STALE_RUNNING_MAX_RECOVERY_ATTEMPTS` if you changed the default.
 
-## Retry a failed job
+## Retry one stuck job
 
 Preferred path:
 
@@ -88,6 +88,11 @@ uv run loreley jobs retry REPLACE_JOB_ID
 ```
 
 Add `--json` for machine-readable output or `--reason "..."` to record why you requeued the job.
+
+This command accepts both:
+
+- `FAILED` jobs
+- `RUNNING` jobs whose lease state is `missing` or `stale`
 
 For multiple recovery-exhausted jobs, use:
 

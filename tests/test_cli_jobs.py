@@ -87,6 +87,10 @@ def test_jobs_retry_rejects_non_failed_jobs(
     job = SimpleNamespace(
         id=job_id,
         status=JobStatus.RUNNING,
+        heartbeat_at=datetime.now(timezone.utc),
+        lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+        run_token=uuid.uuid4(),
+        worker_id="worker-01",
         recovery_count=1,
         last_error=None,
     )
@@ -107,8 +111,58 @@ def test_jobs_retry_rejects_non_failed_jobs(
     captured = capsys.readouterr()
 
     assert code == 1
-    assert "only failed jobs can be retried" in captured.out.lower()
+    assert "only failed or stuck running jobs can be retried" in captured.out.lower()
     assert job.status is JobStatus.RUNNING
+
+
+def test_jobs_retry_requeues_running_job_with_missing_lease_state(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    settings = _make_settings()
+    monkeypatch.setattr("loreley.cli.get_settings", lambda: settings)
+    monkeypatch.setattr("loreley.cli._configure_logging_or_exit", lambda **_kwargs: None)
+
+    job_id = uuid.uuid4()
+    job = SimpleNamespace(
+        id=job_id,
+        status=JobStatus.RUNNING,
+        scheduled_at=None,
+        started_at=object(),
+        completed_at=None,
+        heartbeat_at=None,
+        lease_expires_at=None,
+        run_token=None,
+        worker_id=None,
+        recovery_count=1,
+        result_commit_hash="deadbeef",
+        last_error="missing lease metadata",
+    )
+
+    class DummySession:
+        def get(self, _model: Any, key: Any) -> Any:
+            if key == job_id:
+                return job
+            return None
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    monkeypatch.setattr("loreley.db.base.session_scope", fake_scope)
+
+    code = main(["jobs", "retry", str(job_id), "--json"])
+    captured = capsys.readouterr()
+
+    assert code == 0
+    payload = json.loads(captured.out)
+    assert payload["job_id"] == str(job_id)
+    assert payload["previous_status"] == "running"
+    assert payload["new_status"] == "pending"
+    assert job.status is JobStatus.PENDING
+    assert job.run_token is None
+    assert job.worker_id is None
+    assert job.result_commit_hash is None
 
 
 def test_jobs_inspect_json_reports_stale_lease_state(

@@ -14,7 +14,7 @@ from uuid import UUID
 
 from loguru import logger
 from rich.console import Console
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from loreley.config import Settings, resolve_default_island_id
 from loreley.core.map_elites.sampler import MapElitesSampler, SamplingSnapshot, ScheduledSamplerJob
@@ -23,6 +23,15 @@ from loreley.db.models import EvolutionJob, JobStatus
 from loreley.tasks.workers import build_evolution_job_sender_actor
 
 log = logger.bind(module="scheduler.job_scheduler")
+
+
+def _db_utc_now(session: Any) -> datetime:
+    value = session.execute(select(func.now())).scalar_one()
+    if not isinstance(value, datetime):
+        raise RuntimeError(f"Database current timestamp returned unsupported value: {value!r}")
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,21 +97,25 @@ class JobScheduler:
         if batch == 0:
             return JobLeaseReclaimResult()
 
-        current_time = now or datetime.now(timezone.utc)
         requeued = 0
         failed = 0
         max_recoveries = max(0, int(self.settings.scheduler_stale_running_max_recovery_attempts))
 
         with session_scope() as session:
+            current_time = now or _db_utc_now(session)
             stmt = (
                 select(EvolutionJob)
                 .where(
                     EvolutionJob.status == JobStatus.RUNNING,
-                    EvolutionJob.lease_expires_at.is_not(None),
-                    EvolutionJob.lease_expires_at < current_time,
+                    or_(
+                        EvolutionJob.run_token.is_(None),
+                        EvolutionJob.worker_id.is_(None),
+                        EvolutionJob.lease_expires_at.is_(None),
+                        EvolutionJob.lease_expires_at < current_time,
+                    ),
                 )
                 .order_by(
-                    EvolutionJob.lease_expires_at.asc(),
+                    EvolutionJob.lease_expires_at.asc().nullsfirst(),
                     EvolutionJob.started_at.asc(),
                     EvolutionJob.created_at.asc(),
                 )
@@ -112,8 +125,16 @@ class JobScheduler:
             for job in session.execute(stmt).scalars():
                 attempts = int(getattr(job, "recovery_count", 0) or 0)
                 next_attempt = attempts + 1
+                missing_lease = (
+                    getattr(job, "run_token", None) is None
+                    or getattr(job, "worker_id", None) is None
+                    or getattr(job, "lease_expires_at", None) is None
+                )
                 message = (
-                    "Lease expired after missing heartbeat; "
+                    "Lease metadata missing for RUNNING job; "
+                    f"recovered by scheduler (attempt={next_attempt})."
+                    if missing_lease
+                    else "Lease expired after missing heartbeat; "
                     f"recovered by scheduler (attempt={next_attempt})."
                 )
                 job.recovery_count = next_attempt
