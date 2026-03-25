@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timedelta, timezone
 import uuid
 from contextlib import contextmanager
@@ -126,6 +127,75 @@ def test_start_job_marks_running_and_returns_snapshot(
     assert locked.inspiration_commit_hashes == tuple(dummy_job.inspiration_commit_hashes)
     assert locked.run_token == dummy_job.run_token
     assert locked.worker_id == "worker-01"
+
+
+def test_start_job_clamps_worker_id_to_column_budget(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    job_id = uuid.uuid4()
+    raw_worker_id = "worker-" + ("x" * 200)
+    monkeypatch.setenv("LORELEY_WORKER_INSTANCE_ID", raw_worker_id)
+    settings.worker_job_lease_ttl_seconds = 600
+    now = datetime(2026, 3, 25, 8, 0, tzinfo=timezone.utc)
+
+    class DummyJob:
+        def __init__(self) -> None:
+            self.id = job_id
+            self.base_commit_hash = "abc123"
+            self.island_id = "island"
+            self.inspiration_commit_hashes = []
+            self.goal = None
+            self.constraints = []
+            self.acceptance_criteria = []
+            self.notes = []
+            self.tags = []
+            self.iteration_hint = None
+            self.is_seed_job = False
+            self.sampling_strategy = None
+            self.sampling_initial_radius = None
+            self.sampling_radius_used = None
+            self.sampling_fallback_inspirations = None
+            self.status = JobStatus.PENDING
+            self.started_at = None
+            self.candidate_commit_hash = None
+            self.candidate_branch_name = None
+            self.candidate_published_at = None
+            self.heartbeat_at = None
+            self.lease_expires_at = None
+            self.run_token = None
+            self.worker_id = None
+            self.last_error = None
+
+    dummy_job = DummyJob()
+
+    class DummyResult:
+        def __init__(self, obj: Any) -> None:
+            self.obj = obj
+
+        def scalar_one_or_none(self) -> Any:
+            return self.obj
+
+    class DummySession:
+        def execute(self, _stmt: Any) -> DummyResult:
+            return DummyResult(dummy_job)
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    digest = hashlib.sha1(raw_worker_id.encode("utf-8")).hexdigest()[:12]
+    expected_worker_id = f"{raw_worker_id[:115]}-{digest}"
+
+    monkeypatch.setattr(job_store, "session_scope", fake_scope)
+    monkeypatch.setattr(job_store, "_db_utc_now", lambda _session: now)
+    store = EvolutionJobStore(settings=settings)
+
+    locked = store.start_job(job_id)
+
+    assert len(dummy_job.worker_id) == 128
+    assert dummy_job.worker_id == expected_worker_id
+    assert locked.worker_id == expected_worker_id
 
 
 def test_record_candidate_commit_updates_job_metadata(

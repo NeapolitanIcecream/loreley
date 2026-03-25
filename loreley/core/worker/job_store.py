@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import hashlib
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 from uuid import UUID, uuid4
@@ -24,6 +25,9 @@ if TYPE_CHECKING:
     from loreley.core.worker.evolution import JobContext
 
 log = logger.bind(module="worker.job_store")
+
+_WORKER_ID_MAX_CHARS = int(getattr(EvolutionJob.__table__.c.worker_id.type, "length", 128) or 128)
+_WORKER_ID_HASH_CHARS = 12
 
 __all__ = [
     "EvolutionJobStore",
@@ -106,7 +110,7 @@ class EvolutionJobStore:
 
                 now = _db_utc_now(session)
                 run_token = uuid4()
-                worker_id = resolve_worker_instance_id()
+                worker_id = _bounded_worker_instance_id(resolve_worker_instance_id())
                 job.status = JobStatus.RUNNING
                 job.started_at = now
                 job.completed_at = None
@@ -441,3 +445,20 @@ def _db_utc_now(session: Any) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def _bounded_worker_instance_id(value: str) -> str:
+    worker_id = str(value or "").strip()
+    if len(worker_id) <= _WORKER_ID_MAX_CHARS:
+        return worker_id
+    digest = hashlib.sha1(worker_id.encode("utf-8")).hexdigest()[:_WORKER_ID_HASH_CHARS]
+    suffix = f"-{digest}"
+    prefix_budget = max(1, _WORKER_ID_MAX_CHARS - len(suffix))
+    bounded = f"{worker_id[:prefix_budget]}{suffix}"
+    log.warning(
+        "Worker instance id exceeded {} chars; using bounded lease owner id length={} digest={}",
+        _WORKER_ID_MAX_CHARS,
+        len(bounded),
+        digest,
+    )
+    return bounded
