@@ -507,13 +507,13 @@ class WorkerRepository:
             EvolutionJob.ingestion_status == "",
             EvolutionJob.ingestion_status.not_in(("succeeded", "skipped")),
         )
-        failed_published_candidate = and_(
+        failed_candidate_ref_present = and_(
             EvolutionJob.status == JobStatus.FAILED,
-            EvolutionJob.candidate_published_at.is_not(None),
+            EvolutionJob.candidate_commit_hash.is_not(None),
+            EvolutionJob.candidate_commit_hash != "",
             EvolutionJob.candidate_branch_name.is_not(None),
             EvolutionJob.candidate_branch_name != "",
         )
-
         with session_scope() as session:
             archive_rows = session.execute(
                 select(MapElitesArchiveCell.commit_hash).where(
@@ -541,7 +541,7 @@ class WorkerRepository:
                             EvolutionJob.status == JobStatus.SUCCEEDED,
                             ingestion_pending,
                         ),
-                        failed_published_candidate,
+                        failed_candidate_ref_present,
                     )
                 )
             ).all()
@@ -554,7 +554,7 @@ class WorkerRepository:
             inspiration_commit_hashes,
             status,
             ingestion_status,
-            candidate_published_at,
+            _candidate_published_at,
         ) in job_rows:
             normalized_ingestion_status = str(ingestion_status or "").strip().lower()
             protects_full_job_lineage = status in unfinished_statuses or (
@@ -570,7 +570,7 @@ class WorkerRepository:
                     _remember_commit(commit_hash)
                 continue
 
-            if status == JobStatus.FAILED and candidate_published_at is not None:
+            if status == JobStatus.FAILED and candidate_branch_name:
                 _remember_commit(candidate_commit_hash)
                 _remember_branch(candidate_branch_name)
 

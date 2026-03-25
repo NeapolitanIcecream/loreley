@@ -146,6 +146,94 @@ def test_startup_root_scan_waits_for_shared_worker_repo_lock(
     )
 
 
+def test_scheduler_bootstrap_runs_before_repo_open_for_shared_repo_initialization(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    settings: Any,
+) -> None:
+    """Regression: constructor must let bootstrap_instance wait on the shared repo before Repo(...) runs."""
+
+    repo_root = tmp_path / "shared-repo"
+    bootstrap_started = False
+    fake_repo = _FakeRepo()
+
+    monkeypatch.setattr(
+        scheduler_main,
+        "ensure_database_schema",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        scheduler_main.EvolutionScheduler,
+        "_resolve_repo_root",
+        lambda self: repo_root,
+    )
+
+    def _bootstrap_instance(**_kwargs: Any) -> tuple[Any, Any]:
+        nonlocal bootstrap_started
+        bootstrap_started = True
+        return cast(Any, object()), settings
+
+    monkeypatch.setattr(scheduler_main, "bootstrap_instance", _bootstrap_instance)
+    monkeypatch.setattr(
+        scheduler_main.EvolutionScheduler,
+        "_init_repo",
+        lambda self: fake_repo if bootstrap_started else (_ for _ in ()).throw(
+            AssertionError("_init_repo() ran before bootstrap_instance()"),
+        ),
+    )
+    monkeypatch.setattr(
+        scheduler_main,
+        "require_repo_writable",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        scheduler_main.EvolutionScheduler,
+        "_acquire_experiment_lock",
+        lambda self: cast(Any, object()),
+    )
+    monkeypatch.setattr(
+        scheduler_main.EvolutionScheduler,
+        "_require_max_total_jobs",
+        lambda self: 1,
+    )
+    monkeypatch.setattr(
+        scheduler_main.EvolutionScheduler,
+        "_startup_scan_and_validate_repo_state_approval",
+        lambda self: None,
+    )
+    monkeypatch.setattr(
+        scheduler_main,
+        "MapElitesManager",
+        lambda **_kwargs: cast(Any, object()),
+    )
+    monkeypatch.setattr(
+        scheduler_main,
+        "MapElitesSampler",
+        lambda **_kwargs: cast(Any, object()),
+    )
+
+    class _FakeJobScheduler:
+        def count_total_jobs(self) -> int:
+            return 0
+
+    monkeypatch.setattr(
+        scheduler_main,
+        "JobScheduler",
+        lambda **_kwargs: _FakeJobScheduler(),
+    )
+    monkeypatch.setattr(
+        scheduler_main,
+        "MapElitesIngestion",
+        lambda **_kwargs: cast(Any, object()),
+    )
+
+    scheduler = scheduler_main.EvolutionScheduler(settings=settings)
+
+    assert bootstrap_started is True
+    assert scheduler.repo_root == repo_root
+    assert scheduler._repo is fake_repo
+
+
 def test_best_fitness_branch_update_waits_for_shared_worker_repo_lock(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

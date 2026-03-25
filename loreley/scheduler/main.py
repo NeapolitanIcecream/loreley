@@ -63,11 +63,6 @@ class EvolutionScheduler:
         # Ensure DB schema exists before repo-specific bootstrap (seed/validate marker).
         ensure_database_schema(settings=base_settings)
         self.repo_root = self._resolve_repo_root()
-        self._repo = self._init_repo()
-        try:
-            require_repo_writable(repo_root=self.repo_root, repo=self._repo, console=self.console)
-        except ValueError as exc:
-            raise SchedulerError(str(exc)) from exc
         try:
             self.repository, effective_settings = bootstrap_instance(
                 settings=base_settings,
@@ -76,6 +71,11 @@ class EvolutionScheduler:
         except ExperimentError as exc:
             raise SchedulerError(str(exc)) from exc
         self.settings = effective_settings
+        self._repo = self._init_repo()
+        try:
+            require_repo_writable(repo_root=self.repo_root, repo=self._repo, console=self.console)
+        except ValueError as exc:
+            raise SchedulerError(str(exc)) from exc
         self._root_commit_hash = (self.settings.mapelites_experiment_root_commit or "").strip() or None
         self._max_total_jobs = self._require_max_total_jobs()
 
