@@ -12,8 +12,8 @@ uv run loreley reset-db --yes
 
 The scheduler tick log now includes two lease-recovery counters:
 
-- `reclaimed_pending`: stale `RUNNING` jobs moved back to `PENDING`
-- `reclaimed_failed`: stale `RUNNING` jobs that exceeded the recovery budget and were marked `FAILED`
+- `reclaimed_pending`: stale or malformed `RUNNING` jobs moved back to `PENDING`
+- `reclaimed_failed`: stale or malformed `RUNNING` jobs that exceeded the recovery budget and were marked `FAILED`
 
 Example:
 

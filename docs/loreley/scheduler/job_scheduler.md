@@ -94,14 +94,18 @@ dispatched.
 
 ## Interaction with EvolutionScheduler
 
-`EvolutionScheduler.tick()` calls into `JobScheduler` as follows:
+`EvolutionScheduler.tick()` coordinates with `JobScheduler` as follows:
 
-1. `count_total_jobs()` to measure progress toward the global job cap.
-2. `reclaim_stale_running_jobs()` to repair stale or malformed `RUNNING` rows.
-3. `count_unfinished_jobs()` to measure current load after any reclaim.
-4. `schedule_jobs(...)` to request new work from MAP-Elites, honouring both
-   capacity and global job limits.
-5. `dispatch_pending_jobs()` to move ready jobs into the worker queue.
+1. `reclaim_stale_running_jobs()` to repair stale or malformed `RUNNING` rows.
+2. `dispatch_pending_jobs()` to move already-`PENDING` jobs into the worker queue.
+3. `count_unfinished_jobs()` to measure current load after reclaim + dispatch.
+4. `create_seed_jobs(...)` when the archive is still warming up and capacity remains.
+5. `schedule_jobs(...)` to request new work from MAP-Elites, honouring both
+   capacity and the cached global job limit maintained by `EvolutionScheduler`.
+
+`count_total_jobs()` is called during scheduler bootstrap to initialise that
+cached total-job counter, which `EvolutionScheduler` then adjusts as it creates
+seed and regular jobs.
 
 This separation keeps the scheduler loop simple and makes it easier to test
 and evolve the job pipeline independently of the rest of the orchestration

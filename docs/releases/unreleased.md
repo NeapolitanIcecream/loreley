@@ -4,9 +4,9 @@ These notes cover changes merged after `v0.7.7-alpha`.
 
 ## Highlights
 
-- Automatic recovery for `RUNNING` jobs that stop heartbeating. The scheduler now requeues stale jobs until they exhaust a recovery budget, then marks them `FAILED`.
+- Automatic recovery for `RUNNING` jobs with stale or malformed lease state. The scheduler now requeues reclaimable jobs until they exhaust a recovery budget, then marks them `FAILED`.
 - New job repair CLI. Use `uv run loreley jobs inspect`, `uv run loreley jobs ls`, and `uv run loreley jobs retry` to inspect lease state and requeue stuck jobs.
-- Better lease visibility in `uv run loreley status`. The status payload now includes a `job_leases` section with active, stale, malformed, and recovery-exhausted counts.
+- Better lease visibility in `uv run loreley status`. The status payload now includes a `job_leases` section with total `RUNNING`, stale, malformed, and recovery-exhausted counts, plus the current lease timing settings.
 - Safer worker fencing. Worker success, failure, and candidate-publication writes now use `run_token`-scoped lease ownership checks so stale workers cannot overwrite a newer attempt.
 - Shared repo lock coordination. When the scheduler and worker share `WORKER_REPO_WORKTREE`, their base-repo mutation paths use the same cross-process lock.
 
