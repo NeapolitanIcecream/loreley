@@ -22,6 +22,7 @@ Dramatiq task actor builders that drive the Loreley evolution worker.
   - Handles worker-specific exceptions with distinct behaviours:
     - `JobLockConflict`: logs that the job was skipped due to a lock conflict and returns without raising.
     - `JobPreconditionError`: logs a warning and skips the job without raising (treating it as a non-retriable business error).
+    - `JobLeaseLost`: logs that the worker no longer owns the active lease and returns without raising, allowing the scheduler-reclaimed attempt to proceed without a duplicate retry storm.
     - `EvolutionWorkerError`: logs an error and re-raises so Dramatiq can apply its retry policy.
     - Any other unexpected exception: logs with a full stack trace and re-raises as a defensive fallback.
   - Logs a “job complete” event including the resulting candidate commit hash on success.
@@ -37,5 +38,4 @@ experiment-scoped Redis namespace before any actors are registered. The broker i
 configured implicitly at import time.
 
 For usage and operational details, see `docs/script/run_worker.md`.
-
 

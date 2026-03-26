@@ -20,6 +20,7 @@ Helpers for resolving repository identity and validating instance metadata in si
   - Resolves settings via `get_settings()` when not provided explicitly.
   - Chooses the repository root in this order: explicit `repo_root`, `Settings.scheduler_repo_root`, then `Settings.worker_repo_worktree`.
   - Validates that the chosen root is a git repository, logging and raising `ExperimentError` when it is not.
+  - Resolves the repository and root commit while holding the shared repo lock for that root, so scheduler bootstrap does not race with worker base-clone preparation when both point at the same checkout.
   - Resolves the canonical root commit from `MAPELITES_EXPERIMENT_ROOT_COMMIT` and pins repository‑root ignore rules by reading `.gitignore` + `.loreleyignore` from that commit.
   - Stores the canonical root commit and combined ignore text in `Settings` for the scheduler process lifetime (env-only settings model).
   - Validates the single-row `InstanceMetadata` marker (schema version, experiment id, root commit) and updates

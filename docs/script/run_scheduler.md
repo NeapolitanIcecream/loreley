@@ -26,12 +26,23 @@ When the scheduler shares `WORKER_REPO_WORKTREE`, its git fetch/branch-update pa
 `WORKER_EVOLUTION_GLOBAL_GOAL` defaults to a generic improvement objective, but
 you will usually want to override it with a repository-specific goal.
 
+Lease recovery is enabled by default. Tune it with:
+
+- `SCHEDULER_STALE_RUNNING_RECLAIM_BATCH_SIZE`
+- `SCHEDULER_STALE_RUNNING_MAX_RECOVERY_ATTEMPTS`
+
 If `MAPELITES_CODE_EMBEDDING_MODEL` is not a `local-hash` variant, preflight also requires
 `OPENAI_API_KEY` or `LORELEY_LLM_API_KEY` for embeddings.
 
 On first start the scheduler performs a repo-state root scan at `MAPELITES_EXPERIMENT_ROOT_COMMIT`
 and requires operator approval. In non-interactive environments, pass `--yes` or set
 `SCHEDULER_STARTUP_APPROVE=true`.
+
+If you are upgrading an older development database created before lease recovery was added, reset it first:
+
+```bash
+uv run loreley reset-db --yes
+```
 
 ## Options
 
@@ -47,7 +58,7 @@ Logs are written to:
 
 - `logs/{experiment_namespace}/scheduler/scheduler-YYYYMMDD-HHMMSS.log`
 
-Each tick log also includes `reclaimed_pending` and `reclaimed_failed`, which show how many stale `RUNNING` jobs were recovered or failed during that tick.
+Each tick log also includes `reclaimed_pending` and `reclaimed_failed`, which show how many stale or malformed `RUNNING` jobs were requeued or failed during that tick.
 
 For lease recovery triage and manual retry steps, see [Job lease recovery](job_leases.md).
 

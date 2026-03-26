@@ -226,6 +226,7 @@ From these, you can forecast:
 Use this index as a quick map of the rest of the documentation:
 
 - **Releases**
+  - [Unreleased](releases/unreleased.md)
   - [v0.7.7-alpha](releases/v0.7.7-alpha.md)
 - **Configuration**
   - [Global settings](loreley/config.md)
@@ -269,6 +270,8 @@ Use this index as a quick map of the rest of the documentation:
 - **Operations**
   - [Doctor checks](script/doctor.md)
   - [Status](script/status.md)
+  - [Managing jobs](script/jobs.md)
+  - [Job lease recovery](script/job_leases.md)
   - [Archive stats](script/archive_stats.md)
   - [Config dump](script/config_dump.md)
   - [Running the scheduler](script/run_scheduler.md)

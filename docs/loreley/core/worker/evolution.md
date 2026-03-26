@@ -5,10 +5,11 @@ Autonomous evolution worker that orchestrates planning, coding, evaluation, repo
 ## Domain types
 
 - **`JobContext`**: in-memory representation of a locked evolution job containing:
-  - `job_id`, `base_commit_hash`, optional `island_id`.
+  - `job_id`, `run_token`, `base_commit_hash`, optional `island_id`.
   - `inspiration_commit_hashes` (bounded list) used to load lightweight commit context.
   - size-bounded job spec fields: `goal`, `constraints`, `acceptance_criteria`, optional `iteration_hint`, free-form `notes`, and `tags`.
   - seed-job and sampling provenance fields: `is_seed_job`, `sampling_strategy`, optional radius metadata, and optional fallback-inspiration counts.
+- **`_JobLeaseHeartbeat`**: background helper that renews the active job lease while long-running worker stages execute. It periodically calls `EvolutionJobStore.renew_job_lease(...)` and records `JobLeaseLost` when the worker no longer owns the active attempt.
 - **`EvolutionWorkerResult`**: structured success payload returned from `EvolutionWorker.run()`, combining the `job_id`, `base_commit_hash`, resulting `candidate_commit_hash`, the full `PlanningAgentResponse`, `CodingAgentResponse`, `EvaluationResult`, `CheckoutContext`, and the final `commit_message` used for the worker commit.
 
 ## Public worker API
@@ -23,17 +24,20 @@ Autonomous evolution worker that orchestrates planning, coding, evaluation, repo
   - **`run(job_id)`**:
     - Coerces the `job_id` into a `UUID`.
     - Calls `_start_job()` to lock and validate the job row, building a `JobContext`.
+    - Starts `_JobLeaseHeartbeat` so planning, coding, evaluation, and persistence renew the lease in the background.
     - Creates an isolated per-job git worktree via `WorkerRepository.checkout_lease_for_job()`.
     - Runs planning (`_run_planning()`), coding (`_run_coding()`), and evaluation (`_run_evaluation()`) in sequence.
+    - Calls `heartbeat.raise_if_lease_lost()` between long-running stages so a reclaimed attempt stops before it can overwrite a newer worker run.
     - Prepares a commit message via `_prepare_commit_message()`, creates a local commit via `_create_commit()`, records candidate metadata through `EvolutionJobStore.record_candidate_commit(...)`, then publishes the branch.
     - Persists success artifacts and metrics through `EvolutionJobStore.persist_success()` and prunes stale job branches.
     - Returns an `EvolutionWorkerResult` when everything succeeds.
-    - On failure, records the error via `_mark_job_failed()` and re-raises, or directly propagates job lock/precondition errors.
+    - On failure, records the error via `_mark_job_failed()` and re-raises, or directly propagates job lock, precondition, and lease-lost errors.
 
 ## Orchestration helpers
 
 - **`_start_job(job_id)`**: uses `EvolutionJobStore.start_job()` to lock the job row, validates its status, and constructs a `JobContext` by:
   - Reading the size-bounded job spec fields directly from the `EvolutionJob` row (no catch-all payload parsing).
+  - Carrying forward the active `run_token` so later writes can be fenced to the same worker attempt.
   - Falling back to `Settings.worker_evolution_global_goal` only when the per-job `goal` is missing.
 - **`_run_planning(job_ctx, checkout)`**: batch-loads planning context for base + inspirations, builds a `PlanningAgentRequest` from those commit snapshots plus the global goal and iteration context, invokes `PlanningAgent.plan()`, and wraps `PlanningError` into `EvolutionWorkerError`. Seed-job handling happens earlier in `_build_prompt_context()`: it strips historical metrics and evaluation details from the base context, drops inspirations entirely, and carries the seed-job state through `IterationContext.seed_job` and related facts.
 - **`_run_coding(job_ctx, plan, checkout)`**: builds a `CodingAgentRequest` from the plan, base commit, prompt context (`base`, `inspirations`, `iteration_context`), and job notes, runs `CodingAgent.implement()`, and wraps `CodingError` into `EvolutionWorkerError`.

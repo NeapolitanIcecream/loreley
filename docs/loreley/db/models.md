@@ -24,6 +24,8 @@ ORM models and enums for single-tenant experiment databases.
 - **`EvolutionJob`** (`evolution_jobs` table): represents a single evolution iteration scheduled by the system.
   - Tracks current `status`, base commit, island ID, inspiration commit hashes, size-bounded job spec fields (`goal`, `constraints`, `acceptance_criteria`, `notes`, `tags`, sampling hints), human-readable `plan_summary`, priority, scheduling/processing timestamps, and last error if any.
   - Stores candidate-publication metadata (`candidate_commit_hash`, `candidate_branch_name`, `candidate_published_at`) so a worker can durably point to a locally created or remotely published candidate even if a later step fails.
+  - Stores active lease ownership fields (`heartbeat_at`, `lease_expires_at`, `run_token`, `worker_id`) so workers can renew job ownership and stale attempts can be fenced off.
+  - Stores `recovery_count` so the scheduler can limit automatic stale-job recovery and eventually mark repeatedly reclaimed jobs `FAILED`.
   - Stores result/ingestion indexing fields (`result_commit_hash`, ingestion status/attempts/delta/cell index) without embedding large JSON payloads.
 - **`JobArtifacts`** (`job_artifacts` table): filesystem references for cold-path artifacts produced by the worker.
   - Stores paths to planning/coding/evaluation prompts, raw outputs, and logs.

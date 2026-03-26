@@ -2,6 +2,40 @@
 
 Use these commands when you need to inspect or repair individual evolution jobs.
 
+If these commands fail on an older development database with missing lease columns, reset the schema first:
+
+```bash
+uv run loreley reset-db --yes
+```
+
+## List recent jobs
+
+List the most recent jobs:
+
+```bash
+uv run loreley jobs ls
+```
+
+The table includes:
+
+- `status`
+- `lease`: derived lease state for the current row
+- `recovery`: the current `recovery_count`
+- `base_commit`
+- `completed_at`
+
+Change the result size:
+
+```bash
+uv run loreley jobs ls --limit 50
+```
+
+Print the payload as JSON:
+
+```bash
+uv run loreley jobs ls --json
+```
+
 ## Inspect one job
 
 Print a single job with lease details:
@@ -44,6 +78,8 @@ Use `--limit` to change the default result size:
 uv run loreley jobs ls --failed-stale --limit 50
 ```
 
+The `--failed-stale` filter matches both stale-heartbeat failures and failures caused by missing lease metadata on a `RUNNING` row.
+
 ## Retry one job
 
 Move one job back to `PENDING`:
@@ -69,7 +105,7 @@ This command accepts:
 - `FAILED` jobs
 - `RUNNING` jobs whose lease state is `missing` or `stale`
 
-It resets the execution lease fields, clears `result_commit_hash`, resets `recovery_count` to `0`, and sets `scheduled_at` to `now()` so the scheduler can dispatch the job again.
+It resets the execution lease fields, clears `result_commit_hash`, resets `recovery_count` to `0`, writes your retry reason to `last_error`, and sets `scheduled_at` to `now()` so the scheduler can dispatch the job again.
 
 Use it after you fix the underlying cause. If the worker environment is still unstable, the job will likely exhaust the recovery budget again.
 

@@ -22,9 +22,20 @@ You also need database and Redis connectivity (`DATABASE_URL`, `TASKS_REDIS_URL`
 `WORKER_EVOLUTION_GLOBAL_GOAL` defaults to a generic improvement objective, but
 you will usually want to override it with a repository-specific goal.
 
+Job lease ownership is enabled by default. Tune it with:
+
+- `WORKER_JOB_LEASE_TTL_SECONDS`
+- `WORKER_JOB_HEARTBEAT_INTERVAL_SECONDS`
+
 If `MAPELITES_CODE_EMBEDDING_MODEL` is not a `local-hash` variant, or trajectory
 summarization is enabled, preflight also requires `OPENAI_API_KEY` or
 `LORELEY_LLM_API_KEY`.
+
+If you are upgrading an older development database created before lease recovery was added, reset it first:
+
+```bash
+uv run loreley reset-db --yes
+```
 
 ## Options
 

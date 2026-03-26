@@ -27,6 +27,30 @@ from loreley.scheduler.job_scheduler import JobScheduler
   - Used by the main scheduler loop to decide how much new work (if any) can
     safely be created this tick.
 
+- **`count_total_jobs()`**:
+  - Counts all `EvolutionJob` rows in the database.
+  - Used by `EvolutionScheduler` to enforce `SCHEDULER_MAX_TOTAL_JOBS`
+    without rescanning unrelated state.
+
+### Reclaiming stale running jobs
+
+- **`reclaim_stale_running_jobs(now=None) -> JobLeaseReclaimResult`**:
+  - Selects up to `SCHEDULER_STALE_RUNNING_RECLAIM_BATCH_SIZE` jobs with
+    status `RUNNING` whose lease is stale or malformed.
+  - Treats a row as reclaimable when `run_token`, `worker_id`, or
+    `lease_expires_at` is missing, or when `lease_expires_at < now`.
+  - Uses `SELECT ... FOR UPDATE SKIP LOCKED` so one scheduler tick does not
+    block on another transaction touching the same row.
+  - Clears the active lease fields, increments `recovery_count`, and records a
+    concise `last_error` message describing whether the reclaim was caused by a
+    missing lease or a missed heartbeat.
+  - Requeues the row as `PENDING` when the job is still within the configured
+    recovery budget.
+  - Marks the row `FAILED` once `recovery_count` exceeds
+    `SCHEDULER_STALE_RUNNING_MAX_RECOVERY_ATTEMPTS`.
+  - Returns a `JobLeaseReclaimResult` with separate `requeued` and `failed`
+    counters for tick-level observability.
+
 ### Scheduling new jobs
 
 - **`schedule_jobs(unfinished_jobs: int, *, total_jobs: int) -> int`**:
@@ -72,10 +96,12 @@ dispatched.
 
 `EvolutionScheduler.tick()` calls into `JobScheduler` as follows:
 
-1. `count_unfinished_jobs()` to measure current load.
-2. `schedule_jobs(...)` to request new work from MAP-Elites, honouring both
+1. `count_total_jobs()` to measure progress toward the global job cap.
+2. `reclaim_stale_running_jobs()` to repair stale or malformed `RUNNING` rows.
+3. `count_unfinished_jobs()` to measure current load after any reclaim.
+4. `schedule_jobs(...)` to request new work from MAP-Elites, honouring both
    capacity and global job limits.
-3. `dispatch_pending_jobs()` to move ready jobs into the worker queue.
+5. `dispatch_pending_jobs()` to move ready jobs into the worker queue.
 
 This separation keeps the scheduler loop simple and makes it easier to test
 and evolve the job pipeline independently of the rest of the orchestration

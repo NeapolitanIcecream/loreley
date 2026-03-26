@@ -7,11 +7,13 @@ Central orchestration loop that keeps the Loreley evolution pipeline moving by c
 - **Purpose**: continuously monitors unfinished jobs (`pending`, `queued`, `running`), schedules new work from the MAP-Elites archive when capacity allows, dispatches pending jobs to the Dramatiq `run_evolution_job` actor, and backfills the archive with freshly evaluated commits.
 - **Construction**: `EvolutionScheduler(settings=None)` loads `loreley.config.Settings`, resolves the target repository root (preferring `SCHEDULER_REPO_ROOT` and falling back to `WORKER_REPO_WORKTREE`), initialises a `git` repository handle, bootstraps the instance via `loreley.core.experiments.bootstrap_instance()` (pins repo-root ignore rules for the scheduler lifetime and validates `InstanceMetadata`), and acquires a Postgres advisory lock derived from `EXPERIMENT_ID`. When the scheduler shares `WORKER_REPO_WORKTREE`, its git mutation paths reuse the same cross-process repo lock as the worker base clone. It performs a startup scan of eligible repo-state files at the experiment root commit and requires **interactive operator approval** (y/n), wires `MapElitesManager` plus `MapElitesSampler`, and delegates root-commit registration, repo-state bootstrap, and baseline evaluation to `loreley.scheduler.ingestion.MapElitesIngestion`.
 - **Lifecycle**:
-  1. `tick()` runs the ingest → dispatch → measure → seed → schedule pipeline and logs a concise summary for observability. Ingestion is isolated per job so failed ingestions are recorded and do not abort the scheduler loop.
+  1. `tick()` runs the ingest → reclaim stale `RUNNING` jobs → dispatch → measure → seed → schedule pipeline and logs a concise summary for observability. Ingestion is isolated per job so failed ingestions are recorded and do not abort the scheduler loop.
   2. `run_forever()` installs `SIGINT`/`SIGTERM` handlers, runs `tick()` at the configured poll interval, and keeps looping until interrupted.
   3. `--once` CLI flag runs a single tick and exits, useful for cron jobs or tests.
 - **Job scheduling & dispatching**: the scheduler delegates all capacity calculations, MAP-Elites sampling, and Dramatiq job submission to `loreley.scheduler.job_scheduler.JobScheduler`, which:
   - counts unfinished jobs in the database,
+  - counts total jobs in the database so the global cap can be enforced cheaply,
+  - reclaims stale or malformed `RUNNING` rows before dispatch,
   - enforces `SCHEDULER_MAX_UNFINISHED_JOBS` and the required `SCHEDULER_MAX_TOTAL_JOBS` cap,
   - calls `MapElitesSampler.schedule_job()` to produce new work, and
   - sends job messages to the `run_evolution_job` actor and only then marks the corresponding rows as `QUEUED`, which avoids stuck-`QUEUED` rows when broker submission fails.
@@ -33,6 +35,8 @@ The scheduler consumes the following `Settings` fields (all exposed as environme
 - `SCHEDULER_SCHEDULE_BATCH_SIZE`: maximum number of new jobs sampled from MAP-Elites per tick (bounded by the unused capacity).
 - `SCHEDULER_DISPATCH_BATCH_SIZE`: number of pending jobs promoted to `QUEUED` and sent to Dramatiq per tick.
 - `SCHEDULER_INGEST_BATCH_SIZE`: number of newly succeeded jobs ingested into MAP-Elites per tick.
+- `SCHEDULER_STALE_RUNNING_RECLAIM_BATCH_SIZE`: maximum number of stale or malformed `RUNNING` jobs reclaimed per tick. When set to `0`, automatic reclaim is disabled.
+- `SCHEDULER_STALE_RUNNING_MAX_RECOVERY_ATTEMPTS`: number of automatic recoveries allowed before a reclaimed job is marked `FAILED`.
 - `MAPELITES_EXPERIMENT_ROOT_COMMIT`: required git commit identifier used as the logical root for repo-state bootstrap and incremental-only ingestion. The scheduler resolves it to a canonical full hash, pins root ignore rules for repo-state embeddings by reading `.gitignore` + `.loreleyignore` at that root commit, bootstraps the repo-state aggregate, and runs a one-off baseline evaluation to populate `Metric` rows, treating it as an experiment-wide baseline rather than inserting it into any MAP-Elites archive. During cold-start, when the archive is empty and no jobs exist yet, the scheduler generates seed evolution jobs from this root commit to provide warmup data for PCA. While PCA is warming up, `MapElitesManager` persists PCA history but keeps the archive empty; once PCA is fitted, it seeds the archive from the warmup commits and the scheduler transitions to regular MAP-Elites sampling. Seed scheduling targets `max(MAPELITES_SEED_POPULATION_SIZE, MAPELITES_FEATURE_NORMALIZATION_WARMUP_SAMPLES)` jobs so enough warmup data exists to fit PCA.
 
 Startup approval: before entering the main loop, the scheduler prints the observed eligible repo-state file count (and filter knobs) at `MAPELITES_EXPERIMENT_ROOT_COMMIT` and asks the operator to confirm with a y/n question. In non-interactive environments, pass `--yes` or set `SCHEDULER_STARTUP_APPROVE=true`; otherwise the scheduler refuses to start (fail fast).
@@ -55,7 +59,7 @@ uv run python -m loreley.scheduler.main --once
 
 For usage and operational details, see `docs/script/run_scheduler.md`.
 
-`JobScheduler` builds a sender actor for the experiment-scoped queue, and that sender path calls `loreley.tasks.broker.setup_broker(...)` before the first dispatch. Rich console output summarises each tick, while Loguru records detailed diagnostics for ingestion, scheduling, and dispatching via the dedicated `job_scheduler` and `ingestion` helper classes. This makes the scheduler easy to supervise either interactively or under a process manager.
+`JobScheduler` builds a sender actor for the experiment-scoped queue, and that sender path calls `loreley.tasks.broker.setup_broker(...)` before the first dispatch. Rich console output summarises each tick, including `reclaimed_pending` and `reclaimed_failed`, while Loguru records detailed diagnostics for ingestion, stale-job recovery, scheduling, and dispatching via the dedicated `job_scheduler` and `ingestion` helper classes. This makes the scheduler easy to supervise either interactively or under a process manager.
 
 For more detailed information about these helper modules, see:
 

@@ -2,6 +2,12 @@
 
 Use this runbook when `RUNNING` jobs stop making progress, the scheduler starts reclaiming stale jobs, or a job hits the stale-recovery budget and ends in `FAILED`.
 
+If the lease commands or status views fail on an older development database with missing lease columns, reset the schema first:
+
+```bash
+uv run loreley reset-db --yes
+```
+
 ## What to watch
 
 The scheduler tick log now includes two lease-recovery counters:
@@ -72,7 +78,10 @@ SELECT
 FROM evolution_jobs
 WHERE status = 'failed'
   AND recovery_count > 3
-  AND lower(coalesce(last_error, '')) LIKE 'lease expired after missing heartbeat;%'
+  AND (
+    lower(coalesce(last_error, '')) LIKE 'lease expired after missing heartbeat;%'
+    OR lower(coalesce(last_error, '')) LIKE 'lease metadata missing for running job;%'
+  )
 ORDER BY completed_at DESC NULLS LAST, created_at DESC;
 SQL
 ```
@@ -100,6 +109,8 @@ For multiple recovery-exhausted jobs, use:
 uv run loreley jobs retry --failed-stale --limit 10
 uv run loreley jobs retry --failed-stale --all
 ```
+
+When you use `--failed-stale`, you must also provide either `--limit N` or `--all`.
 
 ## Retry a failed job manually with SQL
 

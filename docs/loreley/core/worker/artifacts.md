@@ -8,10 +8,11 @@ Artifacts are large, audit/debug oriented payloads (prompts, raw agent output, e
 
 Artifacts are written under:
 
-- `<base>/logs/<experiment_namespace>/worker/artifacts/<job_id>/` when an experiment namespace is available
-- `<base>/logs/worker/artifacts/<job_id>/` otherwise
+- `<base>/logs/<experiment_namespace>/worker/artifacts/<job_id>/<run_token>/` when an experiment namespace is available
+- `<base>/logs/worker/artifacts/<job_id>/<run_token>/` otherwise
 
 Where `<base>` is `<LOGS_BASE_DIR>` when set, and `<cwd>` otherwise. The experiment namespace is derived from `EXPERIMENT_ID` when configured.
+When `run_token` is unavailable, the worker falls back to the per-job directory without the extra segment.
 
 ## Files written
 
@@ -49,4 +50,3 @@ Supported keys:
 ## Failure handling
 
 Writing artifacts is best-effort: if the artifact store fails, the worker still persists the hot-path job result and logs a warning.
-
