@@ -4,6 +4,7 @@ from tests.support import TestSettings
 from loreley.preflight import (
     _check_openai_api_key_for_scheduler,
     _check_openai_api_key_for_worker,
+    _check_dynamic_openai_agent_ttl,
     check_embedding_dimensions,
     preflight_worker,
 )
@@ -126,3 +127,14 @@ def test_worker_preflight_warns_when_dynamic_ttl_is_shorter_than_kilocode_timeou
     ttl_warnings = [item for item in results if item.name == "openai_dynamic_api_key_ttl"]
     assert ttl_warnings
     assert any(item.status == "warn" for item in ttl_warnings)
+
+
+def test_dynamic_openai_agent_ttl_check_ignores_broken_provider_import(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "OPENAI_DYNAMIC_API_KEY_PROVIDER",
+        "tests.support_broken_dynamic_provider:token_provider",
+    )
+    monkeypatch.setenv("OPENAI_DYNAMIC_API_KEY_TTL_SECONDS", "600")
+    settings = TestSettings()
+
+    assert _check_dynamic_openai_agent_ttl(settings) == []

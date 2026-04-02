@@ -44,6 +44,18 @@ class _AwaitableToken:
         return "awaitable-token"
 
 
+class _OpaqueCallableProvider:
+    @property
+    def __signature__(self):  # type: ignore[override]
+        raise ValueError("opaque signature")
+
+    def __call__(self, audience: str) -> str:
+        return audience
+
+
+_OPAQUE_CALLABLE_PROVIDER = _OpaqueCallableProvider()
+
+
 def test_dynamic_key_manager_fetches_initial_shared_token() -> None:
     clock = _ManualClock()
     calls: list[str] = []
@@ -286,3 +298,13 @@ def test_dynamic_key_manager_rejects_awaitable_provider_results() -> None:
         match="awaitable",
     ):
         manager.get_agent_token()
+
+
+def test_validate_dynamic_provider_ref_rejects_uninspectable_callable_signature() -> None:
+    with pytest.raises(
+        DynamicOpenAIKeyConfigurationError,
+        match="inspectable zero-argument callable",
+    ):
+        validate_dynamic_openai_provider_ref(
+            "tests.core.test_openai_auth:_OPAQUE_CALLABLE_PROVIDER"
+        )

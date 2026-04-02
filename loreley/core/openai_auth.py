@@ -51,11 +51,11 @@ class DynamicOpenAIKeyUnavailableError(RuntimeError):
     """Raised when no usable dynamic API key can be obtained."""
 
 
-def _required_param_count(callable_obj: Any) -> int:
+def _required_param_count(callable_obj: Any) -> int | None:
     try:
         signature = inspect.signature(callable_obj)
     except (TypeError, ValueError):
-        return 0
+        return None
 
     required = 0
     for param in signature.parameters.values():
@@ -69,6 +69,10 @@ def _required_param_count(callable_obj: Any) -> int:
 
 def _assert_zero_arg_callable(callable_obj: Any, *, label: str) -> None:
     required = _required_param_count(callable_obj)
+    if required is None:
+        raise DynamicOpenAIKeyConfigurationError(
+            f"{label} must be an inspectable zero-argument callable.",
+        )
     if required > 0:
         raise DynamicOpenAIKeyConfigurationError(
             f"{label} must be a zero-argument callable.",
@@ -128,6 +132,10 @@ def _assert_zero_arg_callable_instance_class(cls: type[Any], *, label: str) -> N
         )
 
     required = _required_param_count(callable_obj)
+    if required is None:
+        raise DynamicOpenAIKeyConfigurationError(
+            f"{label} class instances must expose an inspectable zero-argument __call__ method.",
+        )
     effective_required = max(0, required - offset)
     if effective_required > 0:
         raise DynamicOpenAIKeyConfigurationError(

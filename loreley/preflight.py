@@ -485,6 +485,8 @@ def _check_dynamic_openai_agent_ttl(settings: Settings) -> list[CheckResult]:
         validated = validate_dynamic_openai_auth_settings(settings)
     except DynamicOpenAIKeyConfigurationError:
         return []
+    except Exception:
+        return []
     if validated is None:
         return []
 
