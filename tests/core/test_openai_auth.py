@@ -110,6 +110,39 @@ def test_dynamic_key_manager_reuses_still_valid_token_when_refresh_fails(
     assert all("secret-token" not in str(record["message"]) for record in warning_logs)
 
 
+def test_dynamic_key_manager_defers_retry_after_refresh_failure() -> None:
+    clock = _ManualClock()
+    calls = {"count": 0}
+
+    def provider() -> str:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return "secret-token"
+        raise RuntimeError("gateway down")
+
+    manager = DynamicOpenAIKeyManager(
+        provider=provider,
+        provider_ref="tests.provider:token",
+        ttl_seconds=10,
+        refresh_skew_seconds=2,
+        monotonic=clock.monotonic,
+        start_refresh_thread=False,
+    )
+
+    assert manager.get_shared_token() == "secret-token"
+
+    clock.advance(8)
+    assert manager.refresh_if_due() == "secret-token"
+    assert calls["count"] == 2
+
+    assert manager.refresh_if_due() == "secret-token"
+    assert calls["count"] == 2
+
+    clock.advance(1)
+    assert manager.refresh_if_due() == "secret-token"
+    assert calls["count"] == 3
+
+
 def test_dynamic_key_manager_raises_after_expiry_when_refresh_fails() -> None:
     clock = _ManualClock()
     calls = {"count": 0}

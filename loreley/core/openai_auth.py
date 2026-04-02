@@ -338,11 +338,13 @@ class DynamicOpenAIKeyManager:
                     and now < self._shared_expires_at
                 ):
                     remaining = max(0.0, float(self._shared_expires_at - now))
+                    retry_in = self._schedule_failed_refresh_retry_locked(now=now)
                     log.warning(
                         "Dynamic OpenAI API key refresh failed; reusing cached key "
-                        "provider_ref={} expires_in_seconds={:.1f} error={}",
+                        "provider_ref={} expires_in_seconds={:.1f} retry_in_seconds={:.1f} error={}",
                         self.provider_ref,
                         remaining,
+                        retry_in,
                         exc,
                     )
                     return self._shared_token
@@ -395,6 +397,19 @@ class DynamicOpenAIKeyManager:
             "initial" if first_fetch else "refresh",
         )
         return token
+
+    def _schedule_failed_refresh_retry_locked(self, *, now: float) -> float:
+        if self._shared_expires_at is None:
+            self._shared_refresh_at = now
+            return 0.0
+
+        remaining = max(0.0, float(self._shared_expires_at - now))
+        retry_in = min(
+            remaining,
+            max(1.0, min(30.0, float(self.refresh_skew_seconds) / 4.0)),
+        )
+        self._shared_refresh_at = now + retry_in
+        return retry_in
 
     def _fetch_one_shot_token(self) -> str:
         token = self._coerce_token(self._provider())
