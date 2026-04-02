@@ -503,12 +503,14 @@ def _check_dynamic_openai_agent_ttl(settings: Settings) -> list[CheckResult]:
             settings.worker_planning_backend if kind == "planning" else settings.worker_coding_backend
         )
         if not (backend_ref or "").strip():
-            continue
-        try:
-            backend = load_agent_backend(backend_ref, label=f"{kind} backend")
-        except Exception:
-            continue
-        if not isinstance(backend, KilocodeCliBackend):
+            backend_is_kilocode = True
+        else:
+            try:
+                backend = load_agent_backend(backend_ref, label=f"{kind} backend")
+            except Exception:
+                continue
+            backend_is_kilocode = isinstance(backend, KilocodeCliBackend)
+        if not backend_is_kilocode:
             continue
         if ttl_seconds <= timeout_seconds:
             warnings.append(

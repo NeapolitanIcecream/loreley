@@ -129,6 +129,27 @@ def test_worker_preflight_warns_when_dynamic_ttl_is_shorter_than_kilocode_timeou
     assert any(item.status == "warn" for item in ttl_warnings)
 
 
+def test_worker_preflight_warns_when_backend_refs_are_blank_strings(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "OPENAI_DYNAMIC_API_KEY_PROVIDER",
+        "tests.support_dynamic_provider:token_provider",
+    )
+    monkeypatch.setenv("OPENAI_DYNAMIC_API_KEY_TTL_SECONDS", "600")
+    monkeypatch.setenv("WORKER_REPO_REMOTE_URL", "https://example.com/repo.git")
+    monkeypatch.setenv("WORKER_EVALUATOR_PLUGIN", "tests.support_dynamic_provider:token_provider")
+    monkeypatch.setenv("WORKER_PLANNING_BACKEND", "")
+    monkeypatch.setenv("WORKER_CODING_BACKEND", "")
+    settings = TestSettings()
+
+    results = preflight_worker(settings)
+
+    ttl_warnings = [item for item in results if item.name == "openai_dynamic_api_key_ttl"]
+    assert ttl_warnings
+    assert any(item.status == "warn" for item in ttl_warnings)
+
+
 def test_dynamic_openai_agent_ttl_check_ignores_broken_provider_import(monkeypatch) -> None:
     monkeypatch.setenv(
         "OPENAI_DYNAMIC_API_KEY_PROVIDER",
