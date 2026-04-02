@@ -32,7 +32,8 @@ Lease recovery is enabled by default. Tune it with:
 - `SCHEDULER_STALE_RUNNING_MAX_RECOVERY_ATTEMPTS`
 
 If `MAPELITES_CODE_EMBEDDING_MODEL` is not a `local-hash` variant, preflight also requires
-`OPENAI_API_KEY` or `LORELEY_LLM_API_KEY` for embeddings.
+either `OPENAI_API_KEY` / `LORELEY_LLM_API_KEY`, or dynamic auth via
+`OPENAI_DYNAMIC_API_KEY_PROVIDER` plus `OPENAI_DYNAMIC_API_KEY_TTL_SECONDS`.
 
 On first start the scheduler performs a repo-state root scan at `MAPELITES_EXPERIMENT_ROOT_COMMIT`
 and requires operator approval. In non-interactive environments, pass `--yes` or set

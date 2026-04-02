@@ -8,7 +8,6 @@ from typing import Sequence
 from uuid import UUID
 
 from loguru import logger
-from openai import OpenAI
 from rich.console import Console
 from sqlalchemy import select
 from sqlalchemy.exc import MultipleResultsFound
@@ -398,18 +397,6 @@ class EvolutionWorker:
         base_context = planning_contexts[0]
         inspiration_contexts = list(planning_contexts[1:])
         if inspiration_contexts:
-            shared_client: OpenAI | None = None
-            if int(self.settings.worker_planning_trajectory_max_chunks or 0) > 0:
-                client_kwargs: dict[str, object] = {}
-                if self.settings.openai_api_key:
-                    client_kwargs["api_key"] = self.settings.openai_api_key
-                if self.settings.openai_base_url:
-                    client_kwargs["base_url"] = self.settings.openai_base_url
-                shared_client = (
-                    OpenAI(**client_kwargs)  # type: ignore[call-arg]
-                    if client_kwargs
-                    else OpenAI()
-                )
             with session_scope() as session:
                 for ctx in inspiration_contexts:
                     try:
@@ -418,7 +405,6 @@ class EvolutionWorker:
                             inspiration_commit_hash=ctx.commit_hash,
                             session=session,
                             settings=self.settings,
-                            client=shared_client,
                         )
                         ctx.trajectory = rollup.lines
                         ctx.trajectory_meta = rollup.meta

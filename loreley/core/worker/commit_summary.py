@@ -10,6 +10,7 @@ from openai import OpenAI, OpenAIError
 from tenacity import RetryError
 
 from loreley.config import Settings, get_settings
+from loreley.core.openai_auth import get_internal_openai_api_key
 from loreley.core.openai_retry import openai_retrying, retry_error_details
 from loreley.core.worker.coding import ExecutionReport
 from loreley.core.worker.planning import PlanDocument
@@ -42,19 +43,6 @@ class CommitSummarizer:
         self.settings = settings or get_settings()
         self._client: Any | None = client
         self._client_factory: Callable[[], Any] | None = None
-        if client is not None:
-            self._client = client
-        else:
-            client_kwargs: dict[str, object] = {}
-            if self.settings.openai_api_key:
-                client_kwargs["api_key"] = self.settings.openai_api_key
-            if self.settings.openai_base_url:
-                client_kwargs["base_url"] = self.settings.openai_base_url
-            self._client_factory = lambda: (
-                OpenAI(**client_kwargs)  # type: ignore[call-arg]
-                if client_kwargs
-                else OpenAI()
-            )
         self._model = self.settings.worker_evolution_commit_model
         self._temperature = self.settings.worker_evolution_commit_temperature
         self._max_tokens = max(32, self.settings.worker_evolution_commit_max_output_tokens)
@@ -128,15 +116,20 @@ class CommitSummarizer:
     def _get_client(self) -> Any:
         if self._client is not None:
             return self._client
-        if self._client_factory is None:
-            raise CommitSummaryUnavailableError("Commit summarizer client is not configured.")
         try:
-            self._client = self._client_factory()
+            if self._client_factory is not None:
+                return self._client_factory()
+            client_kwargs: dict[str, object] = {}
+            api_key = get_internal_openai_api_key(self.settings)
+            if api_key:
+                client_kwargs["api_key"] = api_key
+            if self.settings.openai_base_url:
+                client_kwargs["base_url"] = self.settings.openai_base_url
+            return OpenAI(**client_kwargs) if client_kwargs else OpenAI()
         except Exception as exc:
             raise CommitSummaryUnavailableError(
                 f"Commit summarizer could not initialize an OpenAI client: {exc}",
             ) from exc
-        return self._client
 
     def _build_prompt(
         self,

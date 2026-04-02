@@ -5,11 +5,11 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 import loreley.core.map_elites.code_embedding as code_embedding_module
 from loreley.config import Settings
 from loreley.core.map_elites.chunk import ChunkedFile, FileChunk
 from loreley.core.map_elites.code_embedding import CodeEmbedder
+from loreley.core.openai_auth import DynamicOpenAIKeyUnavailableError
 
 
 class _DummyProgress:
@@ -176,6 +176,83 @@ def test_embed_batch_supports_local_hash_model(
         if record["module"] == "map_elites.code_embedding" and record["level"] == "WARNING"
     ]
     assert any("local-hash embeddings" in str(record["message"]) for record in warn_logs)
+
+
+def test_embed_batch_rebuilds_client_with_current_runtime_api_key(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen_api_keys: list[str] = []
+    responses = [
+        SimpleNamespace(data=[SimpleNamespace(index=0, embedding=[1.0] * 8)]),
+        SimpleNamespace(data=[SimpleNamespace(index=0, embedding=[2.0] * 8)]),
+    ]
+
+    class _FakeEmbeddings:
+        def create(self, *, model, input, dimensions):  # type: ignore[no-untyped-def]
+            assert model == settings.mapelites_code_embedding_model
+            assert dimensions == 8
+            return responses.pop(0)
+
+    api_keys = iter(["dyn-1", "dyn-2"])
+    monkeypatch.setattr(
+        code_embedding_module,
+        "get_internal_openai_api_key",
+        lambda _settings: next(api_keys),
+    )
+    monkeypatch.setattr(
+        code_embedding_module,
+        "OpenAI",
+        lambda **kwargs: seen_api_keys.append(str(kwargs["api_key"])) or SimpleNamespace(
+            embeddings=_FakeEmbeddings()
+        ),
+    )
+
+    embedder = CodeEmbedder(settings=settings, client=None)
+
+    embedder._embed_batch(["chunk-a"])
+    embedder._embed_batch(["chunk-b"])
+
+    assert seen_api_keys == ["dyn-1", "dyn-2"]
+
+
+def test_embed_batch_retries_when_runtime_api_key_lookup_transiently_fails(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings.mapelites_code_embedding_max_retries = 2
+    settings.mapelites_code_embedding_retry_backoff_seconds = 0
+
+    lookup_calls = {"count": 0}
+    seen_api_keys: list[str] = []
+
+    class _FakeEmbeddings:
+        def create(self, *, model, input, dimensions):  # type: ignore[no-untyped-def]
+            return SimpleNamespace(data=[SimpleNamespace(index=0, embedding=[1.0] * 8)])
+
+    def flaky_lookup(_settings):  # noqa: ANN001
+        lookup_calls["count"] += 1
+        if lookup_calls["count"] == 1:
+            raise DynamicOpenAIKeyUnavailableError("provider unavailable")
+        return "dyn-2"
+
+    monkeypatch.setattr(code_embedding_module, "get_internal_openai_api_key", flaky_lookup)
+    monkeypatch.setattr(
+        code_embedding_module,
+        "OpenAI",
+        lambda **kwargs: seen_api_keys.append(str(kwargs["api_key"])) or SimpleNamespace(
+            embeddings=_FakeEmbeddings()
+        ),
+    )
+    monkeypatch.setattr("time.sleep", lambda _: None)
+
+    embedder = CodeEmbedder(settings=settings, client=None)
+
+    vectors = embedder._embed_batch(["chunk-a"])
+
+    assert len(vectors) == 1
+    assert lookup_calls["count"] == 2
+    assert seen_api_keys == ["dyn-2"]
 
 
 # ---------------------------------------------------------------------------

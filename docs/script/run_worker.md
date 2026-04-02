@@ -28,8 +28,9 @@ Job lease ownership is enabled by default. Tune it with:
 - `WORKER_JOB_HEARTBEAT_INTERVAL_SECONDS`
 
 If `MAPELITES_CODE_EMBEDDING_MODEL` is not a `local-hash` variant, or trajectory
-summarization is enabled, preflight also requires `OPENAI_API_KEY` or
-`LORELEY_LLM_API_KEY`.
+summarization is enabled, preflight also requires either `OPENAI_API_KEY` /
+`LORELEY_LLM_API_KEY`, or dynamic auth via `OPENAI_DYNAMIC_API_KEY_PROVIDER`
+plus `OPENAI_DYNAMIC_API_KEY_TTL_SECONDS`.
 
 If you are upgrading an older development database created before lease recovery was added, reset it first:
 

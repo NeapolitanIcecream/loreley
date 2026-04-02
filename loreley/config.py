@@ -84,6 +84,18 @@ class Settings(BaseSettings):
         alias="OPENAI_BASE_URL",
         validation_alias=AliasChoices("OPENAI_BASE_URL", "LORELEY_LLM_BASE_URL"),
     )
+    openai_dynamic_api_key_provider: str | None = Field(
+        default=None,
+        alias="OPENAI_DYNAMIC_API_KEY_PROVIDER",
+    )
+    openai_dynamic_api_key_ttl_seconds: int | None = Field(
+        default=None,
+        alias="OPENAI_DYNAMIC_API_KEY_TTL_SECONDS",
+    )
+    openai_dynamic_api_key_refresh_skew_seconds: int | None = Field(
+        default=None,
+        alias="OPENAI_DYNAMIC_API_KEY_REFRESH_SKEW_SECONDS",
+    )
     openai_api_spec: Literal["responses", "chat_completions"] = Field(
         default="responses",
         alias="OPENAI_API_SPEC",
@@ -776,6 +788,11 @@ class Settings(BaseSettings):
             "openai_api_spec": self.openai_api_spec,
             "openai_base_url": _maybe_url(self.openai_base_url),
             "openai_api_key": _maybe_secret(self.openai_api_key),
+            "openai_dynamic_api_key_provider": self.openai_dynamic_api_key_provider,
+            "openai_dynamic_api_key_ttl_seconds": self.openai_dynamic_api_key_ttl_seconds,
+            "openai_dynamic_api_key_refresh_skew_seconds": (
+                self.openai_dynamic_api_key_refresh_skew_seconds
+            ),
             "mapelites_experiment_root_commit": self.mapelites_experiment_root_commit,
             "database_dsn": (
                 _sanitize_sqlalchemy_dsn(self.database_dsn) if mask_secrets else self.database_dsn

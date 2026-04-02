@@ -8,7 +8,8 @@ from time import monotonic
 
 from loguru import logger
 
-from loreley.config import get_settings
+from loreley.config import Settings, get_settings
+from loreley.core.openai_auth import get_agent_openai_api_key
 from loreley.core.worker.agent.contracts import AgentInvocation, AgentTask
 from loreley.core.worker.agent.utils import truncate_text, validate_workdir
 
@@ -34,6 +35,7 @@ class KilocodeCliBackend:
     extra_env: dict[str, str] = field(default_factory=dict)
     json_output: bool = False
     error_cls: type[RuntimeError] = RuntimeError
+    settings: Settings | None = None
 
     def run(
         self,
@@ -50,8 +52,19 @@ class KilocodeCliBackend:
         command = self._build_command(task.prompt)
         command_for_log = command[:-1] + [f"<prompt:{len(task.prompt)} chars>"]
 
+        explicit_extra_env = self.extra_env or {}
+        preserve_extra_env_api_key = "KILO_OPENAI_API_KEY" in explicit_extra_env
         env = os.environ.copy()
-        env.update(self.extra_env or {})
+        env.update(explicit_extra_env)
+        if not preserve_extra_env_api_key:
+            try:
+                runtime_api_key = self._resolve_api_key()
+            except Exception as exc:
+                raise self.error_cls(
+                    "failed to resolve Kilocode OpenAI API key before launch.",
+                ) from exc
+            if runtime_api_key:
+                env["KILO_OPENAI_API_KEY"] = runtime_api_key
 
         start = monotonic()
         log.debug(
@@ -111,6 +124,10 @@ class KilocodeCliBackend:
             duration_seconds=duration,
         )
 
+    def _resolve_api_key(self) -> str | None:
+        settings = self.settings or get_settings()
+        return get_agent_openai_api_key(settings)
+
     def _build_command(self, prompt: str) -> list[str]:
         command: list[str] = [self.bin, "run", "--auto"]
 
@@ -133,7 +150,7 @@ class KilocodeCliBackend:
         return command
 
 
-def _build_kilocode_openai_env(settings) -> dict[str, str]:
+def _build_kilocode_openai_env(settings, *, api_key: str | None = None) -> dict[str, str]:
     """Translate Loreley settings into Kilo Code CLI provider env config.
 
     Worker-specific ``WORKER_KILOCODE_OPENAI_*`` values take precedence. When
@@ -157,12 +174,10 @@ def _build_kilocode_openai_env(settings) -> dict[str, str]:
     Reference: ``cli/docs/ENVIRONMENT_VARIABLES.md`` in the upstream Kilocode repo.
     """
 
-    worker_api_key = (getattr(settings, "worker_kilocode_openai_api_key", None) or "").strip()
     worker_base_url = (getattr(settings, "worker_kilocode_openai_base_url", None) or "").strip()
     worker_model = (getattr(settings, "worker_kilocode_openai_model", None) or "").strip()
     worker_api_spec = getattr(settings, "worker_kilocode_openai_api_spec", None)
 
-    api_key = worker_api_key or (getattr(settings, "openai_api_key", None) or "").strip()
     base_url = worker_base_url or (getattr(settings, "openai_base_url", None) or "").strip()
     model = worker_model
     api_spec = worker_api_spec or getattr(settings, "openai_api_spec", None)
@@ -179,8 +194,9 @@ def _build_kilocode_openai_env(settings) -> dict[str, str]:
     if provider_type:
         env["KILO_PROVIDER_TYPE"] = provider_type
 
-    if api_key:
-        env["KILO_OPENAI_API_KEY"] = api_key
+    resolved_api_key = str(api_key or "").strip()
+    if resolved_api_key:
+        env["KILO_OPENAI_API_KEY"] = resolved_api_key
     if base_url:
         env["KILO_OPENAI_BASE_URL"] = base_url
     if model:
@@ -207,6 +223,7 @@ def kilocode_backend() -> KilocodeCliBackend:
         variant=str(variant_value) if variant_value else None,
         json_output=bool(json_output_value),
         extra_env=extra_env,
+        settings=settings,
     )
 
 
@@ -236,6 +253,7 @@ def kilocode_planning_backend() -> KilocodeCliBackend:
         json_output=bool(json_output_value),
         extra_env=extra_env,
         error_cls=PlanningError,
+        settings=settings,
     )
 
 
@@ -265,6 +283,7 @@ def kilocode_coding_backend() -> KilocodeCliBackend:
         json_output=bool(json_output_value),
         extra_env=extra_env,
         error_cls=CodingError,
+        settings=settings,
     )
 
 

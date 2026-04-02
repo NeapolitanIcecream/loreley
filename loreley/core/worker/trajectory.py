@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 from tenacity import RetryError
 
 from loreley.config import Settings, get_settings
+from loreley.core.openai_auth import DynamicOpenAIKeyUnavailableError, get_internal_openai_api_key
 from loreley.core.openai_retry import openai_retrying, retry_error_details
 from loreley.db.models import CommitCard, CommitChunkSummary
 
@@ -738,19 +739,7 @@ class _ChunkSummarizer:
         client: OpenAI | None = None,
     ) -> None:
         self.settings = settings
-        if client is not None:
-            self._client = client
-        else:
-            client_kwargs: dict[str, object] = {}
-            if self.settings.openai_api_key:
-                client_kwargs["api_key"] = self.settings.openai_api_key
-            if self.settings.openai_base_url:
-                client_kwargs["base_url"] = self.settings.openai_base_url
-            self._client = (
-                OpenAI(**client_kwargs)  # type: ignore[call-arg]
-                if client_kwargs
-                else OpenAI()
-            )
+        self._client = client
         self._model = (
             (self.settings.worker_planning_trajectory_summary_model or "").strip()
             or self.settings.worker_evolution_commit_model
@@ -788,8 +777,9 @@ class _ChunkSummarizer:
                         "- Be faithful to the provided text; do not add new details.\n"
                         "- Output plain text only."
                     )
+                    client = self._get_client()
                     if self._api_spec == "responses":
-                        response = self._client.responses.create(
+                        response = client.responses.create(
                             model=self._model,
                             input=prompt,
                             temperature=self._temperature,
@@ -798,7 +788,7 @@ class _ChunkSummarizer:
                         )
                         text = (response.output_text or "").strip()
                     else:
-                        response = self._client.chat.completions.create(
+                        response = client.chat.completions.create(
                             model=self._model,
                             messages=[
                                 {"role": "system", "content": instructions},
@@ -830,6 +820,22 @@ Return a compact summary describing the overall trajectory across these steps.
 """
         return textwrap.dedent(prompt).strip()
 
+    def _get_client(self) -> OpenAI:
+        if self._client is not None:
+            return self._client
+        client_kwargs: dict[str, object] = {}
+        try:
+            api_key = get_internal_openai_api_key(self.settings)
+        except DynamicOpenAIKeyUnavailableError as exc:
+            raise ChunkSummaryError(
+                "Chunk summarizer could not resolve OpenAI API key.",
+            ) from exc
+        if api_key:
+            client_kwargs["api_key"] = api_key
+        if self.settings.openai_base_url:
+            client_kwargs["base_url"] = self.settings.openai_base_url
+        return OpenAI(**client_kwargs) if client_kwargs else OpenAI()
+
 
 def _extract_chat_completion_text(response: Any) -> str:
     """Extract assistant text content from a chat completion response."""
@@ -854,4 +860,3 @@ def _extract_chat_completion_text(response: Any) -> str:
                 parts.append(part)
         return "".join(parts)
     return str(content or "")
-

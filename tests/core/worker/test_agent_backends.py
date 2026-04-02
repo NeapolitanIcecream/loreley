@@ -727,7 +727,6 @@ def test_kilocode_backend_factory_uses_env_settings(monkeypatch: pytest.MonkeyPa
     assert backend.variant == "high"
     assert backend.json_output is True
     assert backend.extra_env["KILO_PROVIDER_TYPE"] == "openai-responses"
-    assert backend.extra_env["KILO_OPENAI_API_KEY"] == "sk-test"
     assert backend.extra_env["KILO_OPENAI_BASE_URL"] == "https://example.invalid/v1"
     assert backend.extra_env["KILO_OPENAI_MODEL_ID"] == "gpt-4o-mini"
 
@@ -752,7 +751,6 @@ def test_kilocode_backend_factory_falls_back_to_global_openai_aliases(
     backend = kilocode_backend()
 
     assert backend.extra_env["KILO_PROVIDER_TYPE"] == "openai"
-    assert backend.extra_env["KILO_OPENAI_API_KEY"] == "sk-alias"
     assert backend.extra_env["KILO_OPENAI_BASE_URL"] == "https://alias.example.com/v1"
 
     get_settings.cache_clear()
@@ -775,7 +773,6 @@ def test_kilocode_backend_factory_prefers_worker_specific_openai_config(
     backend = kilocode_backend()
 
     assert backend.extra_env["KILO_PROVIDER_TYPE"] == "openai-responses"
-    assert backend.extra_env["KILO_OPENAI_API_KEY"] == "sk-worker"
     assert backend.extra_env["KILO_OPENAI_BASE_URL"] == "https://worker.example.com/v1"
 
     get_settings.cache_clear()
@@ -797,7 +794,6 @@ def test_kilocode_backend_factory_keeps_global_api_spec_under_partial_worker_ove
     backend = kilocode_backend()
 
     assert backend.extra_env["KILO_PROVIDER_TYPE"] == "openai-responses"
-    assert backend.extra_env["KILO_OPENAI_API_KEY"] == "sk-global"
     assert backend.extra_env["KILO_OPENAI_BASE_URL"] == "https://worker.example.com/v1"
 
     get_settings.cache_clear()
@@ -870,6 +866,242 @@ def test_kilocode_backend_factory_maps_openai_api_spec_to_provider_type(
     assert backend.extra_env["KILO_PROVIDER_TYPE"] == expected_provider_type
 
     get_settings.cache_clear()
+
+
+def test_kilocode_backend_resolves_api_key_at_run_time(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+
+    captured_keys: list[str] = []
+
+    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+        captured_keys.append(env["KILO_OPENAI_API_KEY"])
+        return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
+
+    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    api_keys = iter(["dyn-1", "dyn-2"])
+    monkeypatch.setattr(
+        kilocode_cli,
+        "get_agent_openai_api_key",
+        lambda _settings: next(api_keys),
+    )
+
+    backend = KilocodeCliBackend(
+        bin="kilo",
+        timeout_seconds=30,
+        extra_env={"KILO_PROVIDER_TYPE": "openai-responses"},
+        settings=Settings.model_validate({}),
+        error_cls=RuntimeError,
+    )
+
+    backend.run(AgentTask(name="planning", prompt="plan"), working_dir=repo_dir)
+    backend.run(AgentTask(name="planning", prompt="plan again"), working_dir=repo_dir)
+
+    assert captured_keys == ["dyn-1", "dyn-2"]
+
+
+def test_kilocode_backend_runtime_api_key_does_not_overwrite_shared_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+
+    from loreley.core.openai_auth import DynamicOpenAIKeyManager
+
+    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+        return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
+
+    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+
+    values = iter(["shared-token", "agent-token"])
+    manager = DynamicOpenAIKeyManager(
+        provider=lambda: next(values),
+        provider_ref="tests.provider:token",
+        ttl_seconds=600,
+        refresh_skew_seconds=60,
+        start_refresh_thread=False,
+    )
+    settings = Settings.model_validate({})
+    monkeypatch.setattr(
+        kilocode_cli,
+        "get_agent_openai_api_key",
+        lambda _settings: manager.get_agent_token(),
+    )
+
+    backend = KilocodeCliBackend(
+        bin="kilo",
+        timeout_seconds=30,
+        extra_env={"KILO_PROVIDER_TYPE": "openai-responses"},
+        settings=settings,
+        error_cls=RuntimeError,
+    )
+
+    assert manager.get_shared_token() == "shared-token"
+    backend.run(AgentTask(name="planning", prompt="plan"), working_dir=repo_dir)
+    assert manager.get_shared_token() == "shared-token"
+
+
+def test_kilocode_backend_preserves_explicit_extra_env_api_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+
+    captured_keys: list[str] = []
+
+    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+        captured_keys.append(env["KILO_OPENAI_API_KEY"])
+        return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
+
+    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        kilocode_cli,
+        "get_agent_openai_api_key",
+        lambda _settings: "runtime-key",
+    )
+
+    backend = KilocodeCliBackend(
+        bin="kilo",
+        timeout_seconds=30,
+        extra_env={
+            "KILO_PROVIDER_TYPE": "openai-responses",
+            "KILO_OPENAI_API_KEY": "explicit-extra-env-key",
+        },
+        settings=Settings.model_validate({}),
+        error_cls=RuntimeError,
+    )
+
+    backend.run(AgentTask(name="planning", prompt="plan"), working_dir=repo_dir)
+
+    assert captured_keys == ["explicit-extra-env-key"]
+
+
+def test_kilocode_backend_skips_runtime_api_key_lookup_when_extra_env_sets_api_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+
+    captured_keys: list[str] = []
+
+    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+        captured_keys.append(env["KILO_OPENAI_API_KEY"])
+        return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
+
+    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+
+    def fail_lookup(_settings):  # noqa: ANN001
+        raise RuntimeError("dynamic provider unavailable")
+
+    monkeypatch.setattr(kilocode_cli, "get_agent_openai_api_key", fail_lookup)
+
+    backend = KilocodeCliBackend(
+        bin="kilo",
+        timeout_seconds=30,
+        extra_env={
+            "KILO_PROVIDER_TYPE": "openai-responses",
+            "KILO_OPENAI_API_KEY": "explicit-extra-env-key",
+        },
+        settings=Settings.model_validate({}),
+        error_cls=RuntimeError,
+    )
+
+    backend.run(AgentTask(name="planning", prompt="plan"), working_dir=repo_dir)
+
+    assert captured_keys == ["explicit-extra-env-key"]
+
+
+def test_kilocode_backend_runtime_api_key_overrides_inherited_process_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+
+    captured_keys: list[str] = []
+
+    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+        captured_keys.append(env["KILO_OPENAI_API_KEY"])
+        return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
+
+    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        kilocode_cli,
+        "get_agent_openai_api_key",
+        lambda _settings: "runtime-key",
+    )
+    monkeypatch.setenv("KILO_OPENAI_API_KEY", "stale-process-key")
+
+    backend = KilocodeCliBackend(
+        bin="kilo",
+        timeout_seconds=30,
+        extra_env={"KILO_PROVIDER_TYPE": "openai-responses"},
+        settings=Settings.model_validate({}),
+        error_cls=RuntimeError,
+    )
+
+    backend.run(AgentTask(name="planning", prompt="plan"), working_dir=repo_dir)
+
+    assert captured_keys == ["runtime-key"]
+
+
+def test_run_agent_task_retries_when_kilocode_runtime_api_key_lookup_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from loreley.core.openai_auth import DynamicOpenAIKeyUnavailableError
+    from loreley.core.worker.planning import PlanningError
+
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+
+    lookup_calls = {"count": 0}
+    subprocess_calls = {"count": 0}
+
+    def flaky_lookup(_settings):  # noqa: ANN001
+        lookup_calls["count"] += 1
+        if lookup_calls["count"] == 1:
+            raise DynamicOpenAIKeyUnavailableError("provider unavailable")
+        return "runtime-key"
+
+    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+        subprocess_calls["count"] += 1
+        assert env["KILO_OPENAI_API_KEY"] == "runtime-key"
+        return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
+
+    monkeypatch.setattr(kilocode_cli, "get_agent_openai_api_key", flaky_lookup)
+    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+
+    backend = KilocodeCliBackend(
+        bin="kilo",
+        timeout_seconds=30,
+        extra_env={"KILO_PROVIDER_TYPE": "openai-responses"},
+        settings=Settings.model_validate({}),
+        error_cls=PlanningError,
+    )
+
+    value, invocation, attempts = run_agent_task(
+        backend=backend,
+        task=AgentTask(name="planning", prompt="plan"),
+        working_dir=repo_dir,
+        max_attempts=2,
+        coerce_result=lambda inv: inv.stdout,
+        retryable_exceptions=(PlanningError,),
+        error_cls=PlanningError,
+        error_message="should-not-fail",
+    )
+
+    assert value == "ok"
+    assert invocation.stdout == "ok"
+    assert attempts == 2
+    assert lookup_calls["count"] == 2
+    assert subprocess_calls["count"] == 1
 
 
 def test_run_agent_task_retries_on_post_check(tmp_path: Path) -> None:
