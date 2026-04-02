@@ -52,11 +52,13 @@ class KilocodeCliBackend:
         command = self._build_command(task.prompt)
         command_for_log = command[:-1] + [f"<prompt:{len(task.prompt)} chars>"]
 
+        explicit_extra_env = self.extra_env or {}
+        preserve_extra_env_api_key = "KILO_OPENAI_API_KEY" in explicit_extra_env
         env = os.environ.copy()
-        env.update(self.extra_env or {})
+        env.update(explicit_extra_env)
         runtime_api_key = self._resolve_api_key()
-        if runtime_api_key:
-            env.setdefault("KILO_OPENAI_API_KEY", runtime_api_key)
+        if runtime_api_key and not preserve_extra_env_api_key:
+            env["KILO_OPENAI_API_KEY"] = runtime_api_key
 
         start = monotonic()
         log.debug(

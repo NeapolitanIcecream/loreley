@@ -172,3 +172,11 @@ def test_validate_dynamic_provider_ref_rejects_instance_call_with_required_args(
         validate_dynamic_openai_provider_ref(
             "tests.core.test_openai_auth:_ArgfulCallableProvider"
         )
+
+
+def test_validate_dynamic_provider_ref_rejects_empty_module_name() -> None:
+    with pytest.raises(
+        DynamicOpenAIKeyConfigurationError,
+        match="Invalid dynamic API key provider reference",
+    ):
+        validate_dynamic_openai_provider_ref(":token")

@@ -112,6 +112,11 @@ def _assert_zero_arg_callable_instance_class(cls: type[Any], *, label: str) -> N
 def _split_reference(ref: str) -> tuple[str, str]:
     if ":" in ref:
         module_name, attr_path = ref.split(":", 1)
+        if not module_name or not attr_path:
+            raise DynamicOpenAIKeyConfigurationError(
+                f"Invalid dynamic API key provider reference {ref!r}. "
+                "Use 'module:attr' or 'module.attr'.",
+            )
         return module_name, attr_path
     module_name, _, attr_path = ref.rpartition(".")
     if not module_name or not attr_path:
@@ -129,6 +134,11 @@ def _import_reference(ref: str) -> Any:
     except ModuleNotFoundError as exc:
         raise DynamicOpenAIKeyConfigurationError(
             f"Could not import dynamic API key provider module {module_name!r}.",
+        ) from exc
+    except ValueError as exc:
+        raise DynamicOpenAIKeyConfigurationError(
+            f"Invalid dynamic API key provider reference {ref!r}. "
+            "Use 'module:attr' or 'module.attr'.",
         ) from exc
 
     target: Any = module
