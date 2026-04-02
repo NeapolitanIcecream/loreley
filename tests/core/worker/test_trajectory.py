@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from loreley.config import Settings
 import loreley.core.worker.trajectory as trajectory_module
+from loreley.core.openai_auth import DynamicOpenAIKeyUnavailableError
 from loreley.core.worker.trajectory import (
     build_inspiration_trajectory_rollup,
     find_lca,
@@ -289,3 +290,43 @@ def test_chunk_summarizer_rebuilds_client_with_current_runtime_api_key_for_each_
 
     assert summarizer.summarize_chunk(["step one"]) == "Trajectory summary"
     assert seen_api_keys == ["dyn-1", "dyn-2"]
+
+
+def test_get_or_build_chunk_summary_falls_back_when_runtime_api_key_lookup_fails(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings.worker_planning_trajectory_summary_max_retries = 2
+    settings.worker_planning_trajectory_summary_retry_backoff_seconds = 0
+
+    cards = [
+        _card("c1", "b", "step one"),
+        _card("c2", "c1", "step two"),
+    ]
+    session = cast(Session, _FakeSession({}))
+
+    monkeypatch.setattr(
+        trajectory_module,
+        "_collect_chunk_cards",
+        lambda **kwargs: cards,
+    )
+    monkeypatch.setattr(
+        trajectory_module,
+        "get_internal_openai_api_key",
+        lambda _settings: (_ for _ in ()).throw(DynamicOpenAIKeyUnavailableError("provider unavailable")),
+    )
+    monkeypatch.setattr("time.sleep", lambda _: None)
+
+    summary = trajectory_module.get_or_build_chunk_summary(
+        start_commit_hash="c1",
+        end_commit_hash="c2",
+        block_size=2,
+        session=session,
+        settings=settings,
+    )
+
+    expected = trajectory_module._fallback_chunk_summary(  # noqa: SLF001
+        [trajectory_module._format_step(card) for card in cards],  # noqa: SLF001
+        max_chars=settings.worker_planning_trajectory_summary_max_chars,
+    )
+    assert summary == expected

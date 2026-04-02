@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 from tenacity import RetryError
 
 from loreley.config import Settings, get_settings
-from loreley.core.openai_auth import get_internal_openai_api_key
+from loreley.core.openai_auth import DynamicOpenAIKeyUnavailableError, get_internal_openai_api_key
 from loreley.core.openai_retry import openai_retrying, retry_error_details
 from loreley.db.models import CommitCard, CommitChunkSummary
 
@@ -824,7 +824,12 @@ Return a compact summary describing the overall trajectory across these steps.
         if self._client is not None:
             return self._client
         client_kwargs: dict[str, object] = {}
-        api_key = get_internal_openai_api_key(self.settings)
+        try:
+            api_key = get_internal_openai_api_key(self.settings)
+        except DynamicOpenAIKeyUnavailableError as exc:
+            raise ChunkSummaryError(
+                "Chunk summarizer could not resolve OpenAI API key.",
+            ) from exc
         if api_key:
             client_kwargs["api_key"] = api_key
         if self.settings.openai_base_url:

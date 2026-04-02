@@ -15,7 +15,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from tenacity import RetryError
 
 from loreley.config import Settings, get_settings
-from loreley.core.openai_auth import get_internal_openai_api_key
+from loreley.core.openai_auth import DynamicOpenAIKeyUnavailableError, get_internal_openai_api_key
 from loreley.core.openai_retry import openai_retrying, retry_error_details
 from .chunk import ChunkedFile, FileChunk
 
@@ -202,7 +202,7 @@ class CodeEmbedder:
         retryer = openai_retrying(
             max_attempts=self._max_retries,
             backoff_seconds=self._retry_backoff,
-            retry_on=(OpenAIError,),
+            retry_on=(OpenAIError, DynamicOpenAIKeyUnavailableError),
             log=log,
             operation="Embedding batch",
         )
