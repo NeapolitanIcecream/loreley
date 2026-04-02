@@ -23,6 +23,11 @@ from rich.table import Table
 from rich.text import Text
 
 from loreley.config import Settings
+from loreley.core.openai_auth import (
+    DynamicOpenAIKeyConfigurationError,
+    dynamic_openai_auth_enabled,
+    validate_dynamic_openai_auth_settings,
+)
 
 log = logger.bind(module="preflight")
 
@@ -334,7 +339,30 @@ def _worker_requires_openai_api_key(settings: Settings) -> bool:
     return int(getattr(settings, "worker_planning_trajectory_max_chunks", 0) or 0) > 0
 
 
+def _check_dynamic_openai_auth(settings: Settings) -> CheckResult | None:
+    provider_ref = str(getattr(settings, "openai_dynamic_api_key_provider", "") or "").strip()
+    ttl = getattr(settings, "openai_dynamic_api_key_ttl_seconds", None)
+    skew = getattr(settings, "openai_dynamic_api_key_refresh_skew_seconds", None)
+    if not provider_ref and ttl is None and skew is None:
+        return None
+    try:
+        validated = validate_dynamic_openai_auth_settings(settings)
+    except DynamicOpenAIKeyConfigurationError as exc:
+        return CheckResult("openai_api_key", "fail", str(exc))
+    assert validated is not None
+    ref, ttl_seconds, skew_seconds = validated
+    return CheckResult(
+        "openai_api_key",
+        "ok",
+        "configured via dynamic provider "
+        f"{ref!r} ttl_seconds={ttl_seconds} refresh_skew_seconds={skew_seconds}",
+    )
+
+
 def _check_openai_api_key_for_scheduler(settings: Settings) -> CheckResult:
+    dynamic_check = _check_dynamic_openai_auth(settings)
+    if dynamic_check is not None:
+        return dynamic_check
     if not _scheduler_requires_openai_api_key(settings) and not (settings.openai_api_key or "").strip():
         return CheckResult(
             "openai_api_key",
@@ -345,6 +373,9 @@ def _check_openai_api_key_for_scheduler(settings: Settings) -> CheckResult:
 
 
 def _check_openai_api_key_for_worker(settings: Settings) -> CheckResult:
+    dynamic_check = _check_dynamic_openai_auth(settings)
+    if dynamic_check is not None:
+        return dynamic_check
     if not _worker_requires_openai_api_key(settings) and not (settings.openai_api_key or "").strip():
         return CheckResult(
             "openai_api_key",
@@ -439,6 +470,51 @@ def _check_agent_backend(
     except Exception as exc:
         results.append(CheckResult(label, "fail", f"failed to load backend {backend_ref!r} ({exc})"))
         return results
+
+
+def _check_dynamic_openai_agent_ttl(settings: Settings) -> list[CheckResult]:
+    if not dynamic_openai_auth_enabled(settings):
+        return []
+    try:
+        validated = validate_dynamic_openai_auth_settings(settings)
+    except DynamicOpenAIKeyConfigurationError:
+        return []
+    if validated is None:
+        return []
+
+    from loreley.core.worker.agent import load_agent_backend
+    from loreley.core.worker.agent.backends import KilocodeCliBackend
+
+    _, ttl_seconds, _ = validated
+    warnings: list[str] = []
+    for kind, timeout_seconds in (
+        ("planning", int(getattr(settings, "worker_planning_timeout_seconds", 0) or 0)),
+        ("coding", int(getattr(settings, "worker_coding_timeout_seconds", 0) or 0)),
+    ):
+        backend_ref = (
+            settings.worker_planning_backend if kind == "planning" else settings.worker_coding_backend
+        )
+        if not (backend_ref or "").strip():
+            continue
+        try:
+            backend = load_agent_backend(backend_ref, label=f"{kind} backend")
+        except Exception:
+            continue
+        if not isinstance(backend, KilocodeCliBackend):
+            continue
+        if ttl_seconds <= timeout_seconds:
+            warnings.append(
+                f"{kind} Kilocode timeout={timeout_seconds}s is >= dynamic token TTL={ttl_seconds}s"
+            )
+    if not warnings:
+        return []
+    return [
+        CheckResult(
+            "openai_dynamic_api_key_ttl",
+            "warn",
+            "; ".join(warnings),
+        )
+    ]
 
 
 def preflight_scheduler(settings: Settings, *, timeout_seconds: float = 2.0) -> list[CheckResult]:
@@ -558,6 +634,7 @@ def preflight_worker(settings: Settings, *, timeout_seconds: float = 2.0) -> lis
 
     results.extend(_check_agent_backend(kind="planning", settings=settings))
     results.extend(_check_agent_backend(kind="coding", settings=settings))
+    results.extend(_check_dynamic_openai_agent_ttl(settings))
 
     return results
 

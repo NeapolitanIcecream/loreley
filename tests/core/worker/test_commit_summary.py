@@ -7,6 +7,7 @@ import pytest
 from openai import OpenAIError
 
 from loreley.config import Settings
+import loreley.core.worker.commit_summary as commit_summary_module
 from loreley.core.worker.coding import ExecutionReport
 from loreley.core.worker.commit_summary import (
     CommitSummarizer,
@@ -182,3 +183,52 @@ def test_generate_surfaces_client_initialization_failures_without_retry(
             coding=_make_coding_execution(),
         )
     assert calls["count"] == 1
+
+
+def test_generate_rebuilds_client_with_current_runtime_api_key_for_each_retry(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings.worker_evolution_commit_max_retries = 2
+    settings.worker_evolution_commit_retry_backoff_seconds = 0
+
+    seen_api_keys: list[str] = []
+    api_keys = iter(["dyn-1", "dyn-2"])
+
+    class _FailingResponses:
+        def create(self, **kwargs):  # type: ignore[no-untyped-def]
+            raise OpenAIError("boom")  # type: ignore[arg-type]
+
+    class _SuccessResponses:
+        def create(self, **kwargs):  # type: ignore[no-untyped-def]
+            return SimpleNamespace(output_text="Fix dynamic auth")
+
+    clients = iter(
+        [
+            SimpleNamespace(responses=_FailingResponses()),
+            SimpleNamespace(responses=_SuccessResponses()),
+        ]
+    )
+
+    monkeypatch.setattr(
+        commit_summary_module,
+        "get_internal_openai_api_key",
+        lambda _settings: next(api_keys),
+    )
+    monkeypatch.setattr(
+        commit_summary_module,
+        "OpenAI",
+        lambda **kwargs: seen_api_keys.append(str(kwargs["api_key"])) or next(clients),
+    )
+    monkeypatch.setattr("time.sleep", lambda _: None)
+
+    summarizer = CommitSummarizer(settings=settings)
+
+    subject = summarizer.generate(
+        job=_make_job_context(),
+        plan=_make_plan(),
+        coding=_make_coding_execution(),
+    )
+
+    assert subject == "Fix dynamic auth"
+    assert seen_api_keys == ["dyn-1", "dyn-2"]

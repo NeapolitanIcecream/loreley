@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import hashlib
 from pathlib import Path
 import sys
-from typing import Callable, Iterable, Sequence
+from typing import Iterable, Sequence
 
 from loguru import logger
 import numpy as np
@@ -15,6 +15,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from tenacity import RetryError
 
 from loreley.config import Settings, get_settings
+from loreley.core.openai_auth import get_internal_openai_api_key
 from loreley.core.openai_retry import openai_retrying, retry_error_details
 from .chunk import ChunkedFile, FileChunk
 
@@ -76,22 +77,9 @@ class CodeEmbedder:
     ) -> None:
         self.settings = settings or get_settings()
         self._client: OpenAI | None = client
-        self._client_factory: Callable[[], OpenAI] | None = None
         self._model = self.settings.mapelites_code_embedding_model
         self._use_local_hash = str(self._model or "").strip().lower().startswith("local-hash")
         self._local_hash_warned = False
-        if client is None:
-            if not self._use_local_hash:
-                client_kwargs: dict[str, object] = {}
-                if self.settings.openai_api_key:
-                    client_kwargs["api_key"] = self.settings.openai_api_key
-                if self.settings.openai_base_url:
-                    client_kwargs["base_url"] = self.settings.openai_base_url
-                self._client_factory = lambda: (
-                    OpenAI(**client_kwargs)  # type: ignore[call-arg]
-                    if client_kwargs
-                    else OpenAI()
-                )
         self._dimensions = int(self.settings.mapelites_code_embedding_dimensions or 0)
         if self._dimensions <= 0:
             raise ValueError("MAPELITES_CODE_EMBEDDING_DIMENSIONS must be a positive integer.")
@@ -362,11 +350,15 @@ class CodeEmbedder:
         )
 
     def _get_client(self) -> OpenAI:
-        if self._client is None:
-            if self._client_factory is None:
-                raise RuntimeError("OpenAI client factory is not configured.")
-            self._client = self._client_factory()
-        return self._client
+        if self._client is not None:
+            return self._client
+        client_kwargs: dict[str, object] = {}
+        api_key = get_internal_openai_api_key(self.settings)
+        if api_key:
+            client_kwargs["api_key"] = api_key
+        if self.settings.openai_base_url:
+            client_kwargs["base_url"] = self.settings.openai_base_url
+        return OpenAI(**client_kwargs) if client_kwargs else OpenAI()
 
 
 def embed_chunked_files(

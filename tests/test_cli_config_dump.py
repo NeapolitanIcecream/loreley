@@ -12,6 +12,9 @@ def _make_settings() -> TestSettings:
     return TestSettings(
         OPENAI_API_KEY="sk-test-secret",
         OPENAI_BASE_URL="https://gateway.example.com/v1",
+        OPENAI_DYNAMIC_API_KEY_PROVIDER="tests.support_dynamic_provider:token_provider",
+        OPENAI_DYNAMIC_API_KEY_TTL_SECONDS=600,
+        OPENAI_DYNAMIC_API_KEY_REFRESH_SKEW_SECONDS=30,
         DB_PASSWORD="db-secret-password",
         DB_HOST="db.internal",
         DB_PORT=5433,
@@ -33,6 +36,9 @@ def test_config_dump_json_masks_secrets_by_default(monkeypatch: pytest.MonkeyPat
     assert code == 0
     payload = json.loads(captured.out)
     assert payload["openai_api_key"] == "***"
+    assert payload["openai_dynamic_api_key_provider"] == "tests.support_dynamic_provider:token_provider"
+    assert payload["openai_dynamic_api_key_ttl_seconds"] == 600
+    assert payload["openai_dynamic_api_key_refresh_skew_seconds"] == 30
     assert payload["tasks_redis_password"] == "***"
     assert payload["database_dsn"].startswith("postgresql+psycopg://loreley:***@")
     assert payload["worker_repo_remote_url"] == "https://example.com/repo.git"

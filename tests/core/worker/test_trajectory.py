@@ -4,9 +4,12 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 from typing import Any, cast
 
+import pytest
+from openai import OpenAIError
 from sqlalchemy.orm import Session
 
 from loreley.config import Settings
+import loreley.core.worker.trajectory as trajectory_module
 from loreley.core.worker.trajectory import (
     build_inspiration_trajectory_rollup,
     find_lca,
@@ -243,3 +246,46 @@ def test_build_rollup_caches_commit_card_reads_across_chain_walks(settings: Sett
     )
 
     assert session.execute_count == 41
+
+
+def test_chunk_summarizer_rebuilds_client_with_current_runtime_api_key_for_each_retry(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings.worker_planning_trajectory_summary_max_retries = 2
+    settings.worker_planning_trajectory_summary_retry_backoff_seconds = 0
+
+    seen_api_keys: list[str] = []
+    api_keys = iter(["dyn-1", "dyn-2"])
+
+    class _FailingResponses:
+        def create(self, **kwargs):  # type: ignore[no-untyped-def]
+            raise OpenAIError("boom")  # type: ignore[arg-type]
+
+    class _SuccessResponses:
+        def create(self, **kwargs):  # type: ignore[no-untyped-def]
+            return SimpleNamespace(output_text="Trajectory summary")
+
+    clients = iter(
+        [
+            SimpleNamespace(responses=_FailingResponses()),
+            SimpleNamespace(responses=_SuccessResponses()),
+        ]
+    )
+
+    monkeypatch.setattr(
+        trajectory_module,
+        "get_internal_openai_api_key",
+        lambda _settings: next(api_keys),
+    )
+    monkeypatch.setattr(
+        trajectory_module,
+        "OpenAI",
+        lambda **kwargs: seen_api_keys.append(str(kwargs["api_key"])) or next(clients),
+    )
+    monkeypatch.setattr("time.sleep", lambda _: None)
+
+    summarizer = trajectory_module._ChunkSummarizer(settings=settings)  # noqa: SLF001
+
+    assert summarizer.summarize_chunk(["step one"]) == "Trajectory summary"
+    assert seen_api_keys == ["dyn-1", "dyn-2"]
