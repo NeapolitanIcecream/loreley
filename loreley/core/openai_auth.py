@@ -75,6 +75,27 @@ def _assert_zero_arg_callable(callable_obj: Any, *, label: str) -> None:
         )
 
 
+def _callable_is_async(callable_obj: Any) -> bool:
+    if inspect.iscoroutinefunction(callable_obj) or inspect.isasyncgenfunction(callable_obj):
+        return True
+
+    call_impl = getattr(callable_obj, "__call__", None)
+    return bool(
+        call_impl
+        and (
+            inspect.iscoroutinefunction(call_impl)
+            or inspect.isasyncgenfunction(call_impl)
+        )
+    )
+
+
+def _assert_sync_callable(callable_obj: Any, *, label: str) -> None:
+    if _callable_is_async(callable_obj):
+        raise DynamicOpenAIKeyConfigurationError(
+            f"{label} must be a synchronous callable.",
+        )
+
+
 def _find_instance_call_implementation(cls: type[Any]) -> Any | None:
     for candidate in getattr(cls, "__mro__", ()):
         namespace = getattr(candidate, "__dict__", None) or {}
@@ -100,6 +121,11 @@ def _assert_zero_arg_callable_instance_class(cls: type[Any], *, label: str) -> N
     else:
         callable_obj = descriptor
         offset = 1
+
+    if inspect.iscoroutinefunction(callable_obj) or inspect.isasyncgenfunction(callable_obj):
+        raise DynamicOpenAIKeyConfigurationError(
+            f"{label} class instances must expose a synchronous zero-argument __call__ method.",
+        )
 
     required = _required_param_count(callable_obj)
     effective_required = max(0, required - offset)
@@ -175,6 +201,7 @@ def validate_dynamic_openai_provider_ref(ref: str) -> None:
         raise DynamicOpenAIKeyConfigurationError(
             "OPENAI_DYNAMIC_API_KEY_PROVIDER must resolve to a callable object.",
         )
+    _assert_sync_callable(target, label="OPENAI_DYNAMIC_API_KEY_PROVIDER")
     _assert_zero_arg_callable(target, label="OPENAI_DYNAMIC_API_KEY_PROVIDER")
 
 
@@ -187,12 +214,14 @@ def load_dynamic_openai_api_key_provider(ref: str) -> Provider:
             raise DynamicOpenAIKeyConfigurationError(
                 "OPENAI_DYNAMIC_API_KEY_PROVIDER class instances must be callable.",
             )
+        _assert_sync_callable(instance, label="OPENAI_DYNAMIC_API_KEY_PROVIDER")
         _assert_zero_arg_callable(instance, label="OPENAI_DYNAMIC_API_KEY_PROVIDER")
         return instance
     if not callable(target):
         raise DynamicOpenAIKeyConfigurationError(
             "OPENAI_DYNAMIC_API_KEY_PROVIDER must resolve to a callable object.",
         )
+    _assert_sync_callable(target, label="OPENAI_DYNAMIC_API_KEY_PROVIDER")
     return target
 
 
@@ -294,6 +323,7 @@ class DynamicOpenAIKeyManager:
         self._shared_token: str | None = None
         self._shared_expires_at: float | None = None
         self._shared_refresh_at: float | None = None
+        self._last_refresh_error: str | None = None
 
     def close(self) -> None:
         self._stop_event.set()
@@ -324,21 +354,29 @@ class DynamicOpenAIKeyManager:
             now = float(self._monotonic())
             if (
                 not force
-                and self._shared_token
                 and self._shared_refresh_at is not None
                 and now < self._shared_refresh_at
             ):
-                return self._shared_token
+                if (
+                    self._shared_token
+                    and self._shared_expires_at is not None
+                    and now < self._shared_expires_at
+                ):
+                    return self._shared_token
+                if self._last_refresh_error:
+                    raise DynamicOpenAIKeyUnavailableError(self._last_refresh_error)
             try:
                 return self._fetch_shared_token_locked(now=now)
             except Exception as exc:
+                error_message = str(exc)
+                retry_in = self._schedule_failed_refresh_retry_locked(now=now)
+                self._last_refresh_error = error_message
                 if (
                     self._shared_token
                     and self._shared_expires_at is not None
                     and now < self._shared_expires_at
                 ):
                     remaining = max(0.0, float(self._shared_expires_at - now))
-                    retry_in = self._schedule_failed_refresh_retry_locked(now=now)
                     log.warning(
                         "Dynamic OpenAI API key refresh failed; reusing cached key "
                         "provider_ref={} expires_in_seconds={:.1f} retry_in_seconds={:.1f} error={}",
@@ -349,11 +387,13 @@ class DynamicOpenAIKeyManager:
                     )
                     return self._shared_token
                 log.warning(
-                    "Dynamic OpenAI API key is unavailable provider_ref={} error={}",
+                    "Dynamic OpenAI API key is unavailable provider_ref={} "
+                    "retry_in_seconds={:.1f} error={}",
                     self.provider_ref,
+                    retry_in,
                     exc,
                 )
-                raise DynamicOpenAIKeyUnavailableError(str(exc)) from exc
+                raise DynamicOpenAIKeyUnavailableError(error_message) from exc
 
     def _ensure_refresh_thread_locked(self) -> None:
         if not self._start_refresh_thread:
@@ -388,6 +428,7 @@ class DynamicOpenAIKeyManager:
         self._shared_token = token
         self._shared_expires_at = now + float(self.ttl_seconds)
         self._shared_refresh_at = self._shared_expires_at - float(self.refresh_skew_seconds)
+        self._last_refresh_error = None
         log.info(
             "Updated shared dynamic OpenAI API key provider_ref={} ttl_seconds={} "
             "refresh_skew_seconds={} mode={}",
@@ -399,15 +440,14 @@ class DynamicOpenAIKeyManager:
         return token
 
     def _schedule_failed_refresh_retry_locked(self, *, now: float) -> float:
-        if self._shared_expires_at is None:
-            self._shared_refresh_at = now
-            return 0.0
-
-        remaining = max(0.0, float(self._shared_expires_at - now))
         retry_in = min(
-            remaining,
-            max(1.0, min(30.0, float(self.refresh_skew_seconds) / 4.0)),
+            30.0,
+            max(1.0, float(self.refresh_skew_seconds) / 4.0),
         )
+        if self._shared_expires_at is not None:
+            remaining = max(0.0, float(self._shared_expires_at - now))
+            if remaining > 0:
+                retry_in = min(remaining, retry_in)
         self._shared_refresh_at = now + retry_in
         return retry_in
 
@@ -421,6 +461,16 @@ class DynamicOpenAIKeyManager:
 
     @staticmethod
     def _coerce_token(value: Any) -> str:
+        if inspect.isawaitable(value):
+            close = getattr(value, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+            raise DynamicOpenAIKeyUnavailableError(
+                "Dynamic OpenAI API key provider returned an awaitable; async providers are not supported.",
+            )
         token = str(value or "").strip()
         if not token:
             raise DynamicOpenAIKeyUnavailableError(

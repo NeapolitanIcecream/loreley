@@ -33,6 +33,17 @@ class _ArgfulCallableProvider:
         return audience
 
 
+async def _async_token_provider() -> str:
+    return "async-token"
+
+
+class _AwaitableToken:
+    def __await__(self):  # type: ignore[override]
+        if False:
+            yield None
+        return "awaitable-token"
+
+
 def test_dynamic_key_manager_fetches_initial_shared_token() -> None:
     clock = _ManualClock()
     calls: list[str] = []
@@ -143,6 +154,42 @@ def test_dynamic_key_manager_defers_retry_after_refresh_failure() -> None:
     assert calls["count"] == 3
 
 
+def test_dynamic_key_manager_defers_retry_after_expiry_failure() -> None:
+    clock = _ManualClock()
+    calls = {"count": 0}
+
+    def provider() -> str:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return "secret-token"
+        raise RuntimeError("gateway down")
+
+    manager = DynamicOpenAIKeyManager(
+        provider=provider,
+        provider_ref="tests.provider:token",
+        ttl_seconds=10,
+        refresh_skew_seconds=2,
+        monotonic=clock.monotonic,
+        start_refresh_thread=False,
+    )
+
+    assert manager.get_shared_token() == "secret-token"
+
+    clock.advance(10)
+    with pytest.raises(DynamicOpenAIKeyUnavailableError, match="gateway down"):
+        manager.refresh_if_due()
+    assert calls["count"] == 2
+
+    with pytest.raises(DynamicOpenAIKeyUnavailableError, match="gateway down"):
+        manager.refresh_if_due()
+    assert calls["count"] == 2
+
+    clock.advance(1)
+    with pytest.raises(DynamicOpenAIKeyUnavailableError, match="gateway down"):
+        manager.refresh_if_due()
+    assert calls["count"] == 3
+
+
 def test_dynamic_key_manager_raises_after_expiry_when_refresh_fails() -> None:
     clock = _ManualClock()
     calls = {"count": 0}
@@ -213,3 +260,29 @@ def test_validate_dynamic_provider_ref_rejects_empty_module_name() -> None:
         match="Invalid dynamic API key provider reference",
     ):
         validate_dynamic_openai_provider_ref(":token")
+
+
+def test_validate_dynamic_provider_ref_rejects_async_function() -> None:
+    with pytest.raises(
+        DynamicOpenAIKeyConfigurationError,
+        match="synchronous callable",
+    ):
+        validate_dynamic_openai_provider_ref(
+            "tests.core.test_openai_auth:_async_token_provider"
+        )
+
+
+def test_dynamic_key_manager_rejects_awaitable_provider_results() -> None:
+    manager = DynamicOpenAIKeyManager(
+        provider=lambda: _AwaitableToken(),
+        provider_ref="tests.provider:token",
+        ttl_seconds=10,
+        refresh_skew_seconds=2,
+        start_refresh_thread=False,
+    )
+
+    with pytest.raises(
+        DynamicOpenAIKeyUnavailableError,
+        match="awaitable",
+    ):
+        manager.get_agent_token()
