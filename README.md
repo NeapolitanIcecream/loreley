@@ -15,7 +15,7 @@ Loreley is a distributed system that **evolves entire git repositories** (the un
 
 ### Quick start (local)
 
-**Requirements**: Python 3.11+, [`uv`](https://github.com/astral-sh/uv), Git (worktrees), PostgreSQL, Redis, and an OpenAI-compatible API for embeddings and some summaries (`OPENAI_API_KEY`). You also need:
+**Requirements**: Python 3.11+, [`uv`](https://github.com/astral-sh/uv), Git (worktrees), PostgreSQL, Redis, and an OpenAI-compatible API for embeddings and some summaries. Configure either a static `OPENAI_API_KEY` or a dynamic provider via `OPENAI_DYNAMIC_API_KEY_PROVIDER` plus `OPENAI_DYNAMIC_API_KEY_TTL_SECONDS`. You also need:
 
 - **Planning/coding backend**: default is the Kilocode CLI (`kilo`) on `PATH` (override via `WORKER_PLANNING_BACKEND` / `WORKER_CODING_BACKEND`).
 - **Evaluator plugin**: `WORKER_EVALUATOR_PLUGIN=module:callable` that runs unattended and returns structured metrics.
@@ -31,6 +31,9 @@ cp env.example .env
 # - EXPERIMENT_ID=<uuid or slug>
 # - SCHEDULER_MAX_TOTAL_JOBS=<positive integer>
 # - OPENAI_API_KEY
+#   or:
+# - OPENAI_DYNAMIC_API_KEY_PROVIDER=module:callable
+# - OPENAI_DYNAMIC_API_KEY_TTL_SECONDS=<positive integer>
 # - MAPELITES_CODE_EMBEDDING_DIMENSIONS=<positive integer>
 # - MAPELITES_EXPERIMENT_ROOT_COMMIT=<git commit hash>
 # - WORKER_REPO_REMOTE_URL=<git remote URL with push access>

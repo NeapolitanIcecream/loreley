@@ -75,6 +75,40 @@ def _assert_zero_arg_callable(callable_obj: Any, *, label: str) -> None:
         )
 
 
+def _find_instance_call_implementation(cls: type[Any]) -> Any | None:
+    for candidate in getattr(cls, "__mro__", ()):
+        namespace = getattr(candidate, "__dict__", None) or {}
+        if "__call__" in namespace:
+            return namespace["__call__"]
+    return None
+
+
+def _assert_zero_arg_callable_instance_class(cls: type[Any], *, label: str) -> None:
+    call_impl = _find_instance_call_implementation(cls)
+    if call_impl is None:
+        raise DynamicOpenAIKeyConfigurationError(
+            f"{label} class instances must be callable.",
+        )
+
+    descriptor = call_impl
+    if isinstance(descriptor, staticmethod):
+        callable_obj = descriptor.__func__
+        offset = 0
+    elif isinstance(descriptor, classmethod):
+        callable_obj = descriptor.__func__
+        offset = 1
+    else:
+        callable_obj = descriptor
+        offset = 1
+
+    required = _required_param_count(callable_obj)
+    effective_required = max(0, required - offset)
+    if effective_required > 0:
+        raise DynamicOpenAIKeyConfigurationError(
+            f"{label} class instances must expose a zero-argument __call__ method.",
+        )
+
+
 def _split_reference(ref: str) -> tuple[str, str]:
     if ":" in ref:
         module_name, attr_path = ref.split(":", 1)
@@ -122,6 +156,10 @@ def validate_dynamic_openai_provider_ref(ref: str) -> None:
     target = _import_reference(normalized)
     if inspect.isclass(target):
         _assert_zero_arg_callable(target, label="OPENAI_DYNAMIC_API_KEY_PROVIDER")
+        _assert_zero_arg_callable_instance_class(
+            target,
+            label="OPENAI_DYNAMIC_API_KEY_PROVIDER",
+        )
         return
     if not callable(target):
         raise DynamicOpenAIKeyConfigurationError(

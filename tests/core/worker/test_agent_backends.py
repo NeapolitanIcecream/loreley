@@ -945,6 +945,42 @@ def test_kilocode_backend_runtime_api_key_does_not_overwrite_shared_cache(
     assert manager.get_shared_token() == "shared-token"
 
 
+def test_kilocode_backend_preserves_explicit_extra_env_api_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+
+    captured_keys: list[str] = []
+
+    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+        captured_keys.append(env["KILO_OPENAI_API_KEY"])
+        return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
+
+    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        kilocode_cli,
+        "get_agent_openai_api_key",
+        lambda _settings: "runtime-key",
+    )
+
+    backend = KilocodeCliBackend(
+        bin="kilo",
+        timeout_seconds=30,
+        extra_env={
+            "KILO_PROVIDER_TYPE": "openai-responses",
+            "KILO_OPENAI_API_KEY": "explicit-extra-env-key",
+        },
+        settings=Settings.model_validate({}),
+        error_cls=RuntimeError,
+    )
+
+    backend.run(AgentTask(name="planning", prompt="plan"), working_dir=repo_dir)
+
+    assert captured_keys == ["explicit-extra-env-key"]
+
+
 def test_run_agent_task_retries_on_post_check(tmp_path: Path) -> None:
     class DummyBackend:
         def __init__(self) -> None:

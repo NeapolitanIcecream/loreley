@@ -56,7 +56,7 @@ class KilocodeCliBackend:
         env.update(self.extra_env or {})
         runtime_api_key = self._resolve_api_key()
         if runtime_api_key:
-            env["KILO_OPENAI_API_KEY"] = runtime_api_key
+            env.setdefault("KILO_OPENAI_API_KEY", runtime_api_key)
 
         start = monotonic()
         log.debug(

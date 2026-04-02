@@ -5,8 +5,10 @@ from typing import Any
 import pytest
 
 from loreley.core.openai_auth import (
+    DynamicOpenAIKeyConfigurationError,
     DynamicOpenAIKeyManager,
     DynamicOpenAIKeyUnavailableError,
+    validate_dynamic_openai_provider_ref,
 )
 
 
@@ -19,6 +21,16 @@ class _ManualClock:
 
     def advance(self, seconds: float) -> None:
         self.now += float(seconds)
+
+
+class _NonCallableProvider:
+    def __init__(self) -> None:
+        return None
+
+
+class _ArgfulCallableProvider:
+    def __call__(self, audience: str) -> str:
+        return audience
 
 
 def test_dynamic_key_manager_fetches_initial_shared_token() -> None:
@@ -140,3 +152,23 @@ def test_dynamic_key_manager_agent_token_does_not_overwrite_shared_cache() -> No
     assert manager.get_shared_token() == "shared-token"
     assert manager.get_agent_token() == "agent-token"
     assert manager.get_shared_token() == "shared-token"
+
+
+def test_validate_dynamic_provider_ref_rejects_non_callable_instance_class() -> None:
+    with pytest.raises(
+        DynamicOpenAIKeyConfigurationError,
+        match="class instances must be callable",
+    ):
+        validate_dynamic_openai_provider_ref(
+            "tests.core.test_openai_auth:_NonCallableProvider"
+        )
+
+
+def test_validate_dynamic_provider_ref_rejects_instance_call_with_required_args() -> None:
+    with pytest.raises(
+        DynamicOpenAIKeyConfigurationError,
+        match="zero-argument __call__",
+    ):
+        validate_dynamic_openai_provider_ref(
+            "tests.core.test_openai_auth:_ArgfulCallableProvider"
+        )
