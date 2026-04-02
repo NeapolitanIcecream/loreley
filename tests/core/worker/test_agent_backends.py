@@ -1051,6 +1051,59 @@ def test_kilocode_backend_runtime_api_key_overrides_inherited_process_env(
     assert captured_keys == ["runtime-key"]
 
 
+def test_run_agent_task_retries_when_kilocode_runtime_api_key_lookup_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from loreley.core.openai_auth import DynamicOpenAIKeyUnavailableError
+    from loreley.core.worker.planning import PlanningError
+
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+
+    lookup_calls = {"count": 0}
+    subprocess_calls = {"count": 0}
+
+    def flaky_lookup(_settings):  # noqa: ANN001
+        lookup_calls["count"] += 1
+        if lookup_calls["count"] == 1:
+            raise DynamicOpenAIKeyUnavailableError("provider unavailable")
+        return "runtime-key"
+
+    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+        subprocess_calls["count"] += 1
+        assert env["KILO_OPENAI_API_KEY"] == "runtime-key"
+        return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
+
+    monkeypatch.setattr(kilocode_cli, "get_agent_openai_api_key", flaky_lookup)
+    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+
+    backend = KilocodeCliBackend(
+        bin="kilo",
+        timeout_seconds=30,
+        extra_env={"KILO_PROVIDER_TYPE": "openai-responses"},
+        settings=Settings.model_validate({}),
+        error_cls=PlanningError,
+    )
+
+    value, invocation, attempts = run_agent_task(
+        backend=backend,
+        task=AgentTask(name="planning", prompt="plan"),
+        working_dir=repo_dir,
+        max_attempts=2,
+        coerce_result=lambda inv: inv.stdout,
+        retryable_exceptions=(PlanningError,),
+        error_cls=PlanningError,
+        error_message="should-not-fail",
+    )
+
+    assert value == "ok"
+    assert invocation.stdout == "ok"
+    assert attempts == 2
+    assert lookup_calls["count"] == 2
+    assert subprocess_calls["count"] == 1
+
+
 def test_run_agent_task_retries_on_post_check(tmp_path: Path) -> None:
     class DummyBackend:
         def __init__(self) -> None:

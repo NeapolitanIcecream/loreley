@@ -57,7 +57,12 @@ class KilocodeCliBackend:
         env = os.environ.copy()
         env.update(explicit_extra_env)
         if not preserve_extra_env_api_key:
-            runtime_api_key = self._resolve_api_key()
+            try:
+                runtime_api_key = self._resolve_api_key()
+            except Exception as exc:
+                raise self.error_cls(
+                    "failed to resolve Kilocode OpenAI API key before launch.",
+                ) from exc
             if runtime_api_key:
                 env["KILO_OPENAI_API_KEY"] = runtime_api_key
 
