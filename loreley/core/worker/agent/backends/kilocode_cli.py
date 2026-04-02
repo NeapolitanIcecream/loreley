@@ -56,9 +56,10 @@ class KilocodeCliBackend:
         preserve_extra_env_api_key = "KILO_OPENAI_API_KEY" in explicit_extra_env
         env = os.environ.copy()
         env.update(explicit_extra_env)
-        runtime_api_key = self._resolve_api_key()
-        if runtime_api_key and not preserve_extra_env_api_key:
-            env["KILO_OPENAI_API_KEY"] = runtime_api_key
+        if not preserve_extra_env_api_key:
+            runtime_api_key = self._resolve_api_key()
+            if runtime_api_key:
+                env["KILO_OPENAI_API_KEY"] = runtime_api_key
 
         start = monotonic()
         log.debug(

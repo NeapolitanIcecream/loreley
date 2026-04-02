@@ -981,6 +981,42 @@ def test_kilocode_backend_preserves_explicit_extra_env_api_key(
     assert captured_keys == ["explicit-extra-env-key"]
 
 
+def test_kilocode_backend_skips_runtime_api_key_lookup_when_extra_env_sets_api_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+
+    captured_keys: list[str] = []
+
+    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+        captured_keys.append(env["KILO_OPENAI_API_KEY"])
+        return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
+
+    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+
+    def fail_lookup(_settings):  # noqa: ANN001
+        raise RuntimeError("dynamic provider unavailable")
+
+    monkeypatch.setattr(kilocode_cli, "get_agent_openai_api_key", fail_lookup)
+
+    backend = KilocodeCliBackend(
+        bin="kilo",
+        timeout_seconds=30,
+        extra_env={
+            "KILO_PROVIDER_TYPE": "openai-responses",
+            "KILO_OPENAI_API_KEY": "explicit-extra-env-key",
+        },
+        settings=Settings.model_validate({}),
+        error_cls=RuntimeError,
+    )
+
+    backend.run(AgentTask(name="planning", prompt="plan"), working_dir=repo_dir)
+
+    assert captured_keys == ["explicit-extra-env-key"]
+
+
 def test_kilocode_backend_runtime_api_key_overrides_inherited_process_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
