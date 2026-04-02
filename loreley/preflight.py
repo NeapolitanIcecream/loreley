@@ -349,6 +349,12 @@ def _check_dynamic_openai_auth(settings: Settings) -> CheckResult | None:
         validated = validate_dynamic_openai_auth_settings(settings)
     except DynamicOpenAIKeyConfigurationError as exc:
         return CheckResult("openai_api_key", "fail", str(exc))
+    except Exception as exc:
+        return CheckResult(
+            "openai_api_key",
+            "fail",
+            f"failed to validate dynamic API key provider {provider_ref!r} ({exc})",
+        )
     assert validated is not None
     ref, ttl_seconds, skew_seconds = validated
     return CheckResult(

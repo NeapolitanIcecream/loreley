@@ -93,6 +93,22 @@ def test_dynamic_ttl_without_provider_fails_openai_auth(monkeypatch) -> None:
     assert "OPENAI_DYNAMIC_API_KEY_PROVIDER" in result.details
 
 
+def test_dynamic_provider_import_failure_fails_openai_auth_check(monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("LORELEY_LLM_API_KEY", raising=False)
+    monkeypatch.setenv(
+        "OPENAI_DYNAMIC_API_KEY_PROVIDER",
+        "tests.support_broken_dynamic_provider:token_provider",
+    )
+    monkeypatch.setenv("OPENAI_DYNAMIC_API_KEY_TTL_SECONDS", "600")
+    settings = TestSettings()
+
+    result = _check_openai_api_key_for_worker(settings)
+
+    assert result.status == "fail"
+    assert "broken provider import" in result.details
+
+
 def test_worker_preflight_warns_when_dynamic_ttl_is_shorter_than_kilocode_timeout(
     monkeypatch,
 ) -> None:
