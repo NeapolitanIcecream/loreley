@@ -70,5 +70,5 @@ uv run loreley ui
 - Online docs: [NeapolitanIcecream.github.io/loreley](https://NeapolitanIcecream.github.io/loreley/)
 - Quickstart guides: [`docs/loreley/config.md`](docs/loreley/config.md), [`docs/script/run_scheduler.md`](docs/script/run_scheduler.md), [`docs/script/run_worker.md`](docs/script/run_worker.md)
 - Operations: [`docs/script/status.md`](docs/script/status.md), [`docs/script/jobs.md`](docs/script/jobs.md), [`docs/script/job_leases.md`](docs/script/job_leases.md), [`docs/script/config_dump.md`](docs/script/config_dump.md), [`docs/script/archive_stats.md`](docs/script/archive_stats.md)
-- Upgrade notes: [`docs/releases/unreleased.md`](docs/releases/unreleased.md), [`docs/releases/v0.7.8-alpha.md`](docs/releases/v0.7.8-alpha.md), [`docs/releases/v0.7.7-alpha.md`](docs/releases/v0.7.7-alpha.md)
+- Upgrade notes: [`docs/releases/unreleased.md`](docs/releases/unreleased.md), [`docs/releases/v0.7.9-alpha.md`](docs/releases/v0.7.9-alpha.md), [`docs/releases/v0.7.8-alpha.md`](docs/releases/v0.7.8-alpha.md)
 - Architecture decisions: [`docs/adr/index.md`](docs/adr/index.md)

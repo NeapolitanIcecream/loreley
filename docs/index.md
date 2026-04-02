@@ -227,8 +227,8 @@ Use this index as a quick map of the rest of the documentation:
 
 - **Releases**
   - [Unreleased](releases/unreleased.md)
+  - [v0.7.9-alpha](releases/v0.7.9-alpha.md)
   - [v0.7.8-alpha](releases/v0.7.8-alpha.md)
-  - [v0.7.7-alpha](releases/v0.7.7-alpha.md)
 - **Configuration**
   - [Global settings](loreley/config.md)
 - **Experiments**
