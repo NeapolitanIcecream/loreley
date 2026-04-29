@@ -25,6 +25,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "coverage>=7.0",
     "pytest>=9.0.1",
     "mkdocs-material>=9.7.0",
     "pymdown-extensions>=10.17.2",
@@ -96,3 +97,32 @@ Issues = "https://github.com/NeapolitanIcecream/loreley/issues"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["loreley", "tests", "benchmarks", "examples"]
+
+[tool.cremona]
+targets = ["loreley", "tests", "benchmarks", "examples"]
+exclude = [
+    ".git",
+    ".venv",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".pyright",
+    ".uv-cache",
+    ".uv_cache",
+    ".uv_cache_sandbox",
+    "dist",
+    "examples/circle-packing",
+    "loreley/net/__init__.py",
+    "logs",
+    "output",
+    "site",
+    "tests/__init__.py",
+    "uv_cache",
+    "uv_cache_tmp",
+    "*/__pycache__/*",
+]
+out_dir = "output/refactor-audit"
+baseline = "quality/refactor-baseline.json"

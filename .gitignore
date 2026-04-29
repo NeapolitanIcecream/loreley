@@ -45,6 +45,7 @@ htmlcov/
 .cache
 nosetests.xml
 coverage.xml
+coverage.json
 *.cover
 *.py.cover
 .hypothesis/
@@ -208,4 +209,5 @@ __marimo__/
 
 # Loreley
 logs/
+output/refactor-audit/
 .cursor

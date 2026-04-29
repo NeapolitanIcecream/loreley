@@ -1,0 +1,24 @@
+name: Cremona
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  cremona:
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    uses: NeapolitanIcecream/cremona/.github/workflows/reusable-gate.yml@v0.1.2
+    with:
+      python-version: "3.13"
+      setup-command: uv sync --locked --all-extras
+      test-command: uv run coverage run -m pytest -q
+      coverage-json-command: uv run coverage json -o coverage.json
+      baseline-path: quality/refactor-baseline.json
+      comment-on-pr: true
