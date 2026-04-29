@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import threading
-from typing import Sequence
+from typing import Any, Sequence
 from uuid import UUID
 
 from loguru import logger
@@ -107,6 +107,14 @@ class WorkerPromptContext:
     base: CommitPlanningContext
     inspirations: tuple[CommitPlanningContext, ...]
     iteration_context: IterationContext
+
+
+@dataclass(slots=True)
+class _CommitPlanningRows:
+    cards_by_hash: dict[str, CommitCard]
+    metrics_by_card_id: dict[UUID, list[Metric]]
+    cells_by_hash: dict[str, MapElitesArchiveCell]
+    artifacts_by_hash: dict[str, list[EvaluationArtifactRecord]]
 
 
 class _JobLeaseHeartbeat:
@@ -650,68 +658,122 @@ class EvolutionWorker:
             return ()
         unique_hashes = tuple(dict.fromkeys(ordered_hashes))
 
-        cards_by_hash: dict[str, CommitCard] = {}
-        metrics_by_card_id: dict[UUID, list[Metric]] = {}
-        cells_by_hash: dict[str, MapElitesArchiveCell] = {}
-        artifacts_by_hash: dict[str, list[EvaluationArtifactRecord]] = {}
         with session_scope() as session:
-            cards = session.scalars(
-                select(CommitCard).where(CommitCard.commit_hash.in_(unique_hashes))
-            ).all()
-            cards_by_hash = {card.commit_hash: card for card in cards}
-            card_ids = tuple(card.id for card in cards)
-            if card_ids:
-                metric_rows = session.scalars(
-                    select(Metric).where(Metric.commit_card_id.in_(card_ids))
-                ).all()
-                for row in metric_rows:
-                    metrics_by_card_id.setdefault(row.commit_card_id, []).append(row)
-            if island_id:
-                cells = session.scalars(
-                    select(MapElitesArchiveCell).where(
-                        MapElitesArchiveCell.island_id == island_id,
-                        MapElitesArchiveCell.commit_hash.in_(unique_hashes),
-                    )
-                ).all()
-                for cell in cells:
-                    existing = cells_by_hash.get(cell.commit_hash)
-                    if existing is not None:
-                        raise MultipleResultsFound(
-                            "Multiple map-elites archive cells found for one commit hash "
-                            f"(island={island_id}, commit={cell.commit_hash})."
-                        )
-                    cells_by_hash[cell.commit_hash] = cell
-            if self.settings.worker_evaluation_agent_feedback_mode != "disabled":
-                artifact_rows = session.scalars(
-                    select(EvaluationArtifactRecord)
-                    .where(
-                        EvaluationArtifactRecord.commit_hash.in_(unique_hashes),
-                        EvaluationArtifactRecord.visibility == "agent_visible",
-                    )
-                    .order_by(
-                        EvaluationArtifactRecord.created_at.asc(),
-                        EvaluationArtifactRecord.id.asc(),
-                    )
-                ).all()
-                for row in artifact_rows:
-                    artifacts_by_hash.setdefault(row.commit_hash, []).append(row)
-
-        contexts: list[CommitPlanningContext] = []
-        for commit_hash in ordered_hashes:
-            card = cards_by_hash.get(commit_hash)
-            metric_rows_for_card: Sequence[Metric] = ()
-            if card is not None:
-                metric_rows_for_card = tuple(metrics_by_card_id.get(card.id, ()))
-            contexts.append(
-                self._build_commit_planning_context(
-                    commit_hash=commit_hash,
-                    card=card,
-                    metric_rows=metric_rows_for_card,
-                    artifact_rows=tuple(artifacts_by_hash.get(commit_hash, ())),
-                    cell=cells_by_hash.get(commit_hash),
-                )
+            rows = self._load_commit_planning_rows(
+                session=session,
+                commit_hashes=unique_hashes,
+                island_id=island_id,
             )
-        return tuple(contexts)
+        return self._planning_contexts_from_rows(ordered_hashes=ordered_hashes, rows=rows)
+
+    def _load_commit_planning_rows(
+        self,
+        *,
+        session: Any,
+        commit_hashes: Sequence[str],
+        island_id: str | None,
+    ) -> _CommitPlanningRows:
+        cards = session.scalars(
+            select(CommitCard).where(CommitCard.commit_hash.in_(commit_hashes))
+        ).all()
+        cards_by_hash = {card.commit_hash: card for card in cards}
+        return _CommitPlanningRows(
+            cards_by_hash=cards_by_hash,
+            metrics_by_card_id=self._load_metrics_by_card_id(session=session, cards=cards),
+            cells_by_hash=self._load_cells_by_hash(
+                session=session,
+                commit_hashes=commit_hashes,
+                island_id=island_id,
+            ),
+            artifacts_by_hash=self._load_artifacts_by_hash(
+                session=session,
+                commit_hashes=commit_hashes,
+            ),
+        )
+
+    @staticmethod
+    def _load_metrics_by_card_id(
+        *,
+        session: Any,
+        cards: Sequence[CommitCard],
+    ) -> dict[UUID, list[Metric]]:
+        card_ids = tuple(card.id for card in cards)
+        metrics_by_card_id: dict[UUID, list[Metric]] = {}
+        if not card_ids:
+            return metrics_by_card_id
+        metric_rows = session.scalars(
+            select(Metric).where(Metric.commit_card_id.in_(card_ids))
+        ).all()
+        for row in metric_rows:
+            metrics_by_card_id.setdefault(row.commit_card_id, []).append(row)
+        return metrics_by_card_id
+
+    @staticmethod
+    def _load_cells_by_hash(
+        *,
+        session: Any,
+        commit_hashes: Sequence[str],
+        island_id: str | None,
+    ) -> dict[str, MapElitesArchiveCell]:
+        cells_by_hash: dict[str, MapElitesArchiveCell] = {}
+        if not island_id:
+            return cells_by_hash
+        cells = session.scalars(
+            select(MapElitesArchiveCell).where(
+                MapElitesArchiveCell.island_id == island_id,
+                MapElitesArchiveCell.commit_hash.in_(commit_hashes),
+            )
+        ).all()
+        for cell in cells:
+            if cell.commit_hash in cells_by_hash:
+                raise MultipleResultsFound(
+                    "Multiple map-elites archive cells found for one commit hash "
+                    f"(island={island_id}, commit={cell.commit_hash})."
+                )
+            cells_by_hash[cell.commit_hash] = cell
+        return cells_by_hash
+
+    def _load_artifacts_by_hash(
+        self,
+        *,
+        session: Any,
+        commit_hashes: Sequence[str],
+    ) -> dict[str, list[EvaluationArtifactRecord]]:
+        artifacts_by_hash: dict[str, list[EvaluationArtifactRecord]] = {}
+        if self.settings.worker_evaluation_agent_feedback_mode == "disabled":
+            return artifacts_by_hash
+        artifact_rows = session.scalars(
+            select(EvaluationArtifactRecord)
+            .where(
+                EvaluationArtifactRecord.commit_hash.in_(commit_hashes),
+                EvaluationArtifactRecord.visibility == "agent_visible",
+            )
+            .order_by(
+                EvaluationArtifactRecord.created_at.asc(),
+                EvaluationArtifactRecord.id.asc(),
+            )
+        ).all()
+        for row in artifact_rows:
+            artifacts_by_hash.setdefault(row.commit_hash, []).append(row)
+        return artifacts_by_hash
+
+    def _planning_contexts_from_rows(
+        self,
+        *,
+        ordered_hashes: Sequence[str],
+        rows: _CommitPlanningRows,
+    ) -> tuple[CommitPlanningContext, ...]:
+        return tuple(
+            self._build_commit_planning_context(
+                commit_hash=commit_hash,
+                card=card,
+                metric_rows=tuple(rows.metrics_by_card_id.get(card.id, ())) if card else (),
+                artifact_rows=tuple(rows.artifacts_by_hash.get(commit_hash, ())),
+                cell=rows.cells_by_hash.get(commit_hash),
+            )
+            for commit_hash in ordered_hashes
+            for card in (rows.cards_by_hash.get(commit_hash),)
+        )
 
     def _build_commit_planning_context(
         self,

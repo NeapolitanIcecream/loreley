@@ -182,45 +182,11 @@ def render_evaluation_evidence(
         if not isinstance(artifact, dict):
             continue
         key = str(artifact.get("key") or f"artifact_{index}")
-        label = str(artifact.get("label") or key)
-        kind = str(artifact.get("kind") or "artifact")
-        visibility = str(artifact.get("visibility") or "")
-        st.markdown(f"**{label}**  `{key}`")
-        st.caption(
-            " | ".join(
-                value
-                for value in [
-                    kind,
-                    visibility,
-                    _format_size(artifact.get("size_bytes")),
-                    _format_hash(artifact.get("sha256")),
-                ]
-                if value
-            )
+        _render_evaluation_evidence_item(
+            api_base_url=api_base_url,
+            artifact=artifact,
+            key_prefix=f"{key_prefix}_{key}",
         )
-        summary = str(artifact.get("summary") or "").strip()
-        if summary:
-            st.write(summary)
-        diagnostics = artifact.get("diagnostics")
-        if isinstance(diagnostics, list) and diagnostics:
-            for diagnostic in diagnostics[:5]:
-                if not isinstance(diagnostic, dict):
-                    continue
-                message = str(diagnostic.get("message") or "").strip()
-                if not message:
-                    continue
-                severity = str(diagnostic.get("severity") or "info")
-                kind_value = str(diagnostic.get("kind") or "diagnostic")
-                st.write(f"- {severity}/{kind_value}: {message}")
-        download_url = artifact.get("download_url")
-        if download_url:
-            _render_evaluation_artifact_download(
-                api_base_url=api_base_url,
-                url=str(download_url),
-                key_prefix=f"{key_prefix}_{key}",
-                label=label,
-                mime_type=str(artifact.get("mime_type") or "application/octet-stream"),
-            )
         rendered = True
 
     if not rendered:
@@ -243,6 +209,58 @@ def render_agent_feedback_preview(feedback: dict[str, Any] | None) -> None:
         st.text_area("Agent feedback preview", value=text, height=220, disabled=True)
     else:
         st.write("No agent-visible evaluation evidence.")
+
+
+def _render_evaluation_evidence_item(
+    *,
+    api_base_url: str,
+    artifact: dict[str, Any],
+    key_prefix: str,
+) -> None:
+    key = str(artifact.get("key") or "artifact")
+    label = str(artifact.get("label") or key)
+    st.markdown(f"**{label}**  `{key}`")
+    st.caption(" | ".join(_evidence_caption_parts(artifact)))
+    summary = str(artifact.get("summary") or "").strip()
+    if summary:
+        st.write(summary)
+    _render_evidence_diagnostics(artifact.get("diagnostics"))
+    download_url = artifact.get("download_url")
+    if download_url:
+        _render_evaluation_artifact_download(
+            api_base_url=api_base_url,
+            url=str(download_url),
+            key_prefix=key_prefix,
+            label=label,
+            mime_type=str(artifact.get("mime_type") or "application/octet-stream"),
+        )
+
+
+def _evidence_caption_parts(artifact: dict[str, Any]) -> list[str]:
+    return [
+        value
+        for value in [
+            str(artifact.get("kind") or "artifact"),
+            str(artifact.get("visibility") or ""),
+            _format_size(artifact.get("size_bytes")),
+            _format_hash(artifact.get("sha256")),
+        ]
+        if value
+    ]
+
+
+def _render_evidence_diagnostics(diagnostics: object) -> None:
+    if not isinstance(diagnostics, list):
+        return
+    for diagnostic in diagnostics[:5]:
+        if not isinstance(diagnostic, dict):
+            continue
+        message = str(diagnostic.get("message") or "").strip()
+        if not message:
+            continue
+        severity = str(diagnostic.get("severity") or "info")
+        kind_value = str(diagnostic.get("kind") or "diagnostic")
+        st.write(f"- {severity}/{kind_value}: {message}")
 
 
 def _render_evaluation_artifact_download(

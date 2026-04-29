@@ -160,49 +160,64 @@ def test_root_commit_evaluation_ignores_evaluator_artifacts(
     tmp_path: Path,
 ) -> None:
     settings = TestSettings(MAPELITES_CODE_EMBEDDING_DIMENSIONS=8)
-
-    class _Repo:
-        def commit(self, _commit_hash: str) -> object:
-            return SimpleNamespace(
-                parents=[],
-                author=SimpleNamespace(name="author"),
-                message="Root subject\n\nbody",
-            )
-
     ingestion = MapElitesIngestion(
         settings=settings,
         console=ingestion_mod.Console(),
         repo_root=tmp_path,
-        repo=cast(Any, _Repo()),
+        repo=cast(Any, _RootEvalRepo()),
         manager=DummyManager(),  # type: ignore[arg-type]
     )
-
-    class _ScalarNone:
-        def scalar_one_or_none(self) -> object:
-            return None
-
-        def first(self) -> object:
-            return None
-
     added: list[object] = []
-    sessions: list[object] = []
+    monkeypatch.setattr(ingestion_mod, "session_scope", _root_eval_scope_factory(added))
+    monkeypatch.setattr(ingestion_mod, "WorkerRepository", _root_eval_worker_repository(tmp_path))
+    monkeypatch.setattr(ingestion_mod, "Evaluator", _RootArtifactEvaluator)
 
-    class _Session:
-        def __init__(self) -> None:
-            self.calls = 0
-            sessions.append(self)
+    ingestion._ensure_root_commit_evaluated("abc123")
 
-        def execute(self, _stmt: object) -> _ScalarNone:
-            self.calls += 1
-            return _ScalarNone()
+    assert any(isinstance(obj, CommitCard) for obj in added)
+    assert any(isinstance(obj, Metric) for obj in added)
+    assert not any(isinstance(obj, EvaluationArtifactRecord) for obj in added)
 
-        def add(self, obj: object) -> None:
-            added.append(obj)
 
+class _RootEvalRepo:
+    def commit(self, _commit_hash: str) -> object:
+        return SimpleNamespace(
+            parents=[],
+            author=SimpleNamespace(name="author"),
+            message="Root subject\n\nbody",
+        )
+
+
+class _RootEvalScalarNone:
+    def scalar_one_or_none(self) -> object:
+        return None
+
+    def first(self) -> object:
+        return None
+
+
+class _RootEvalSession:
+    def __init__(self, added: list[object]) -> None:
+        self.calls = 0
+        self.added = added
+
+    def execute(self, _stmt: object) -> _RootEvalScalarNone:
+        self.calls += 1
+        return _RootEvalScalarNone()
+
+    def add(self, obj: object) -> None:
+        self.added.append(obj)
+
+
+def _root_eval_scope_factory(added: list[object]):
     @contextmanager
     def _fake_scope():
-        yield _Session()
+        yield _RootEvalSession(added)
 
+    return _fake_scope
+
+
+def _root_eval_worker_repository(tmp_path: Path):
     class _WorkerRepository:
         def __init__(self, *_args: object, **_kwargs: object) -> None:
             pass
@@ -211,33 +226,28 @@ def test_root_commit_evaluation_ignores_evaluator_artifacts(
         def checkout_lease_for_job(self, **_kwargs: object):
             yield SimpleNamespace(worktree=tmp_path)
 
-    class _Evaluator:
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
-            pass
+    return _WorkerRepository
 
-        def evaluate(self, context: object) -> EvaluationResult:
-            assert getattr(context, "job_id") is None
-            return EvaluationResult(
-                summary="baseline summary",
-                metrics=(EvaluationMetric(name="score", value=1.0),),
-                artifacts=(
-                    EvaluationArtifact(
-                        key="baseline_report",
-                        kind="benchmark_json",
-                        mime_type="application/json",
-                        inline_payload={"score": 1.0},
-                        summary="should not be persisted",
-                        visibility="agent_visible",
-                    ),
-                ),
-            )
 
-    monkeypatch.setattr(ingestion_mod, "session_scope", _fake_scope)
-    monkeypatch.setattr(ingestion_mod, "WorkerRepository", _WorkerRepository)
-    monkeypatch.setattr(ingestion_mod, "Evaluator", _Evaluator)
+class _RootArtifactEvaluator:
+    def __init__(self, *_args: object, **_kwargs: object) -> None:
+        pass
 
-    ingestion._ensure_root_commit_evaluated("abc123")
+    def evaluate(self, context: object) -> EvaluationResult:
+        assert getattr(context, "job_id") is None
+        return EvaluationResult(
+            summary="baseline summary",
+            metrics=(EvaluationMetric(name="score", value=1.0),),
+            artifacts=(_root_eval_artifact(),),
+        )
 
-    assert any(isinstance(obj, CommitCard) for obj in added)
-    assert any(isinstance(obj, Metric) for obj in added)
-    assert not any(isinstance(obj, EvaluationArtifactRecord) for obj in added)
+
+def _root_eval_artifact() -> EvaluationArtifact:
+    return EvaluationArtifact(
+        key="baseline_report",
+        kind="benchmark_json",
+        mime_type="application/json",
+        inline_payload={"score": 1.0},
+        summary="should not be persisted",
+        visibility="agent_visible",
+    )

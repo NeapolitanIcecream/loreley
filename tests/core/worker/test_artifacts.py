@@ -8,7 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from loreley.core.worker.artifacts import JobArtifactWriteResult, write_job_artifacts
+from loreley.core.worker.artifacts import (
+    JobArtifactWriteRequest,
+    JobArtifactWriteResult,
+    write_job_artifacts,
+)
 from loreley.core.worker.coding import CodingAgentResponse, ExecutionReport
 from loreley.core.worker.evaluator import (
     EvaluationArtifact,
@@ -58,15 +62,17 @@ def test_write_job_artifacts_includes_worker_metadata(settings, tmp_path: Path, 
     )
 
     result = write_job_artifacts(
-        job_id=uuid.uuid4(),
-        run_token=run_token,
-        plan=plan,
-        coding=coding,
-        evaluation=evaluation,
-        base_commit_hash="base",
-        candidate_commit_hash="candidate",
-        commit_message="message",
-        settings=settings,
+        JobArtifactWriteRequest(
+            job_id=uuid.uuid4(),
+            run_token=run_token,
+            plan=plan,
+            coding=coding,
+            evaluation=evaluation,
+            base_commit_hash="base",
+            candidate_commit_hash="candidate",
+            commit_message="message",
+            settings=settings,
+        )
     )
     assert isinstance(result, JobArtifactWriteResult)
     paths = result.fixed.as_dict()
@@ -127,16 +133,18 @@ def test_write_job_artifacts_materializes_evaluator_artifacts_under_worker_root(
     )
 
     result = write_job_artifacts(
-        job_id=uuid.uuid4(),
-        run_token=uuid.uuid4(),
-        plan=_plan_response(),
-        coding=_coding_response(),
-        evaluation=evaluation,
-        base_commit_hash="base",
-        candidate_commit_hash="candidate",
-        commit_message="message",
-        worktree=worktree,
-        settings=settings,
+        JobArtifactWriteRequest(
+            job_id=uuid.uuid4(),
+            run_token=uuid.uuid4(),
+            plan=_plan_response(),
+            coding=_coding_response(),
+            evaluation=evaluation,
+            base_commit_hash="base",
+            candidate_commit_hash="candidate",
+            commit_message="message",
+            worktree=worktree,
+            settings=settings,
+        )
     )
 
     assert len(result.evaluation_artifacts) == 2
@@ -180,16 +188,18 @@ def test_write_job_artifacts_records_sanitized_warning_for_unsafe_path(
     )
 
     result = write_job_artifacts(
-        job_id=uuid.uuid4(),
-        run_token=uuid.uuid4(),
-        plan=_plan_response(),
-        coding=_coding_response(),
-        evaluation=evaluation,
-        base_commit_hash="base",
-        candidate_commit_hash="candidate",
-        commit_message="message",
-        worktree=worktree,
-        settings=settings,
+        JobArtifactWriteRequest(
+            job_id=uuid.uuid4(),
+            run_token=uuid.uuid4(),
+            plan=_plan_response(),
+            coding=_coding_response(),
+            evaluation=evaluation,
+            base_commit_hash="base",
+            candidate_commit_hash="candidate",
+            commit_message="message",
+            worktree=worktree,
+            settings=settings,
+        )
     )
 
     assert len(result.evaluation_artifacts) == 1

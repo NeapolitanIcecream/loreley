@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import Any, Sequence, TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from loguru import logger
@@ -14,6 +14,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from loreley.core.contracts import clamp_text, normalize_single_line
 from loreley.core.worker.artifacts import (
     FixedJobArtifactPaths,
+    JobArtifactWriteRequest,
     JobArtifactWriteResult,
     resolve_worker_instance_id,
     write_job_artifacts,
@@ -88,6 +89,29 @@ class LockedJob:
     sampling_initial_radius: int | None
     sampling_radius_used: int | None
     sampling_fallback_inspirations: int | None
+
+
+@dataclass(slots=True)
+class _PersistSuccessPayload:
+    subject: str
+    change_summary: str
+    eval_summary: str | None
+    key_files: list[str]
+    highlights: list[str]
+    tags: list[str]
+    artifact_result: JobArtifactWriteResult
+
+
+@dataclass(slots=True)
+class _PersistSuccessInput:
+    job_ctx: "JobContext"
+    plan: PlanningAgentResponse
+    coding: CodingAgentResponse
+    evaluation: EvaluationResult
+    worktree: Path
+    commit_hash: str
+    commit_message: str
+
 
 class EvolutionJobStore:
     """Persistence adapter for the evolution worker."""
@@ -250,51 +274,16 @@ class EvolutionJobStore:
         via the JobArtifacts table.
         """
 
-        subject = normalize_single_line(commit_message) or f"Evolution job {job_ctx.job_id}"
-        if "```" in subject or subject.startswith("{") or subject.startswith("["):
-            subject = f"Evolution job {job_ctx.job_id}"
-        subject = clamp_text(subject, 72)
-
-        change_summary_source = (
-            coding.report.summary
-            or plan.plan.summary
-            or f"Evolution job {job_ctx.job_id}"
+        request = _PersistSuccessInput(
+            job_ctx=job_ctx,
+            plan=plan,
+            coding=coding,
+            evaluation=evaluation,
+            worktree=worktree,
+            commit_hash=commit_hash,
+            commit_message=commit_message,
         )
-        change_summary = clamp_text(normalize_single_line(change_summary_source), 512) or "N/A"
-
-        eval_summary = clamp_text(normalize_single_line(evaluation.summary), 512) or None
-
-        build = build_commit_card_from_git(
-            worktree=Path(worktree),
-            base_commit=job_ctx.base_commit_hash,
-            candidate_commit=commit_hash,
-        )
-        key_files = [clamp_text(path, 256) for path in build.key_files[:20] if path.strip()]
-        highlights = [clamp_text(line, 200) for line in build.highlights[:8] if line.strip()]
-        if not highlights:
-            highlights = ["No file-level highlights available."]
-
-        tags = [clamp_text(normalize_single_line(tag), 64) for tag in job_ctx.tags if str(tag).strip()]
-
-        artifact_result = JobArtifactWriteResult(fixed=FixedJobArtifactPaths())
-        try:
-            artifact_result = _coerce_artifact_write_result(
-                write_job_artifacts(
-                    job_id=job_ctx.job_id,
-                    run_token=job_ctx.run_token,
-                    plan=plan,
-                    coding=coding,
-                    evaluation=evaluation,
-                    base_commit_hash=job_ctx.base_commit_hash,
-                    candidate_commit_hash=commit_hash,
-                    commit_message=subject,
-                    worktree=Path(worktree),
-                    settings=self.settings,
-                )
-            )
-        except Exception as exc:  # pragma: no cover - best-effort artifact store
-            log.warning("Failed to write artifacts for job {}: {}", job_ctx.job_id, exc)
-
+        payload = self._build_success_payload(request)
         try:
             with session_scope() as session:
                 job = self._lock_active_job_for_run(
@@ -303,96 +292,205 @@ class EvolutionJobStore:
                     run_token=job_ctx.run_token,
                     action="persisting success",
                 )
-                job.status = JobStatus.SUCCEEDED
-                job.completed_at = _utc_now()
-                job.heartbeat_at = None
-                job.lease_expires_at = None
-                job.run_token = None
-                job.worker_id = None
-                job.plan_summary = plan.plan.summary
-                job.candidate_commit_hash = job.candidate_commit_hash or commit_hash
-                job.result_commit_hash = commit_hash
-                job.last_error = None
-                job.ingestion_status = None
-                job.ingestion_attempts = 0
-                job.ingestion_delta = None
-                job.ingestion_status_code = None
-                job.ingestion_message = None
-                job.ingestion_cell_index = None
-                job.ingestion_last_attempt_at = None
-                job.ingestion_reason = None
-
-                card = CommitCard(
+                self._mark_job_row_succeeded(job, plan=plan, commit_hash=commit_hash)
+                card = self._add_commit_card(
+                    session=session,
+                    job_ctx=job_ctx,
                     commit_hash=commit_hash,
-                    parent_commit_hash=job_ctx.base_commit_hash,
-                    island_id=job_ctx.island_id,
-                    author=self.settings.worker_evolution_commit_author,
-                    subject=subject,
-                    change_summary=change_summary,
-                    evaluation_summary=eval_summary,
-                    tags=tags,
-                    key_files=key_files,
-                    highlights=highlights,
-                    job_id=job_ctx.job_id,
+                    payload=payload,
                 )
-                session.add(card)
-                for metric in evaluation.metrics:
-                    session.add(
-                        Metric(
-                            commit=card,
-                            name=metric.name,
-                            value=metric.value,
-                            unit=metric.unit,
-                            higher_is_better=metric.higher_is_better,
-                            details=dict(metric.details or {}),
-                        )
-                    )
-                flush = getattr(session, "flush", None)
-                if callable(flush):
-                    flush()
-                fixed_paths = artifact_result.fixed.as_dict()
-                if fixed_paths:
-                    artifact_row = JobArtifacts(
-                        job_id=job_ctx.job_id,
-                        planning_prompt_path=fixed_paths.get("planning_prompt_path"),
-                        planning_raw_output_path=fixed_paths.get("planning_raw_output_path"),
-                        planning_plan_json_path=fixed_paths.get("planning_plan_json_path"),
-                        coding_prompt_path=fixed_paths.get("coding_prompt_path"),
-                        coding_raw_output_path=fixed_paths.get("coding_raw_output_path"),
-                        coding_execution_json_path=fixed_paths.get("coding_execution_json_path"),
-                        evaluation_json_path=fixed_paths.get("evaluation_json_path"),
-                        evaluation_logs_path=fixed_paths.get("evaluation_logs_path"),
-                    )
-                    merge = getattr(session, "merge", None)
-                    if callable(merge):
-                        merge(artifact_row)
-                    else:  # pragma: no cover - unit-test fallback for simplified sessions
-                        session.add(artifact_row)
-                for artifact in artifact_result.evaluation_artifacts:
-                    session.add(
-                        EvaluationArtifactRecord(
-                            job_id=job_ctx.job_id,
-                            commit_card_id=card.id,
-                            commit_hash=commit_hash,
-                            key=artifact.key,
-                            kind=artifact.kind,
-                            mime_type=artifact.mime_type,
-                            label=artifact.label,
-                            summary=artifact.summary,
-                            visibility=artifact.visibility,
-                            agent_projection=artifact.agent_projection,
-                            storage_path=artifact.storage_path,
-                            size_bytes=artifact.size_bytes,
-                            sha256=artifact.sha256,
-                            diagnostics=[
-                                diagnostic.as_dict()
-                                for diagnostic in artifact.diagnostics
-                            ],
-                            artifact_metadata=dict(artifact.metadata or {}),
-                        )
-                    )
+                self._add_metric_rows(session=session, card=card, evaluation=evaluation)
+                self._flush_session(session)
+                self._merge_fixed_artifacts(
+                    session=session,
+                    job_id=job_ctx.job_id,
+                    fixed=payload.artifact_result.fixed,
+                )
+                self._add_evaluation_artifact_records(
+                    session=session,
+                    job_id=job_ctx.job_id,
+                    commit_hash=commit_hash,
+                    card=card,
+                    artifacts=payload.artifact_result.evaluation_artifacts,
+                )
         except SQLAlchemyError as exc:
             raise EvolutionWorkerError(f"Failed to persist results for job {job_ctx.job_id}: {exc}") from exc
+
+    def _build_success_payload(self, request: _PersistSuccessInput) -> _PersistSuccessPayload:
+        subject = _success_subject(request.job_ctx.job_id, request.commit_message)
+        build = build_commit_card_from_git(
+            worktree=Path(request.worktree),
+            base_commit=request.job_ctx.base_commit_hash,
+            candidate_commit=request.commit_hash,
+        )
+        return _PersistSuccessPayload(
+            subject=subject,
+            change_summary=_change_summary(request),
+            eval_summary=clamp_text(normalize_single_line(request.evaluation.summary), 512) or None,
+            key_files=_commit_card_key_files(build.key_files),
+            highlights=_commit_card_highlights(build.highlights),
+            tags=_bounded_tags(request.job_ctx.tags),
+            artifact_result=self._write_success_artifacts(request, subject=subject),
+        )
+
+    def _write_success_artifacts(
+        self,
+        request: _PersistSuccessInput,
+        *,
+        subject: str,
+    ) -> JobArtifactWriteResult:
+        try:
+            return _coerce_artifact_write_result(
+                write_job_artifacts(
+                    JobArtifactWriteRequest(
+                        job_id=request.job_ctx.job_id,
+                        run_token=request.job_ctx.run_token,
+                        plan=request.plan,
+                        coding=request.coding,
+                        evaluation=request.evaluation,
+                        base_commit_hash=request.job_ctx.base_commit_hash,
+                        candidate_commit_hash=request.commit_hash,
+                        commit_message=subject,
+                        worktree=Path(request.worktree),
+                        settings=self.settings,
+                    )
+                )
+            )
+        except Exception as exc:  # pragma: no cover - best-effort artifact store
+            log.warning("Failed to write artifacts for job {}: {}", request.job_ctx.job_id, exc)
+        return JobArtifactWriteResult(fixed=FixedJobArtifactPaths())
+
+    @staticmethod
+    def _mark_job_row_succeeded(
+        job: EvolutionJob,
+        *,
+        plan: PlanningAgentResponse,
+        commit_hash: str,
+    ) -> None:
+        job.status = JobStatus.SUCCEEDED
+        job.completed_at = _utc_now()
+        job.heartbeat_at = None
+        job.lease_expires_at = None
+        job.run_token = None
+        job.worker_id = None
+        job.plan_summary = plan.plan.summary
+        job.candidate_commit_hash = job.candidate_commit_hash or commit_hash
+        job.result_commit_hash = commit_hash
+        job.last_error = None
+        job.ingestion_status = None
+        job.ingestion_attempts = 0
+        job.ingestion_delta = None
+        job.ingestion_status_code = None
+        job.ingestion_message = None
+        job.ingestion_cell_index = None
+        job.ingestion_last_attempt_at = None
+        job.ingestion_reason = None
+
+    def _add_commit_card(
+        self,
+        *,
+        session: Any,
+        job_ctx: JobContext,
+        commit_hash: str,
+        payload: _PersistSuccessPayload,
+    ) -> CommitCard:
+        card = CommitCard(
+            commit_hash=commit_hash,
+            parent_commit_hash=job_ctx.base_commit_hash,
+            island_id=job_ctx.island_id,
+            author=self.settings.worker_evolution_commit_author,
+            subject=payload.subject,
+            change_summary=payload.change_summary,
+            evaluation_summary=payload.eval_summary,
+            tags=payload.tags,
+            key_files=payload.key_files,
+            highlights=payload.highlights,
+            job_id=job_ctx.job_id,
+        )
+        session.add(card)
+        return card
+
+    @staticmethod
+    def _add_metric_rows(
+        *,
+        session: Any,
+        card: CommitCard,
+        evaluation: EvaluationResult,
+    ) -> None:
+        for metric in evaluation.metrics:
+            session.add(
+                Metric(
+                    commit=card,
+                    name=metric.name,
+                    value=metric.value,
+                    unit=metric.unit,
+                    higher_is_better=metric.higher_is_better,
+                    details=dict(metric.details or {}),
+                )
+            )
+
+    @staticmethod
+    def _flush_session(session: Any) -> None:
+        flush = getattr(session, "flush", None)
+        if callable(flush):
+            flush()
+
+    @staticmethod
+    def _merge_fixed_artifacts(
+        *,
+        session: Any,
+        job_id: UUID,
+        fixed: FixedJobArtifactPaths,
+    ) -> None:
+        fixed_paths = fixed.as_dict()
+        if not fixed_paths:
+            return
+        artifact_row = JobArtifacts(
+            job_id=job_id,
+            planning_prompt_path=fixed_paths.get("planning_prompt_path"),
+            planning_raw_output_path=fixed_paths.get("planning_raw_output_path"),
+            planning_plan_json_path=fixed_paths.get("planning_plan_json_path"),
+            coding_prompt_path=fixed_paths.get("coding_prompt_path"),
+            coding_raw_output_path=fixed_paths.get("coding_raw_output_path"),
+            coding_execution_json_path=fixed_paths.get("coding_execution_json_path"),
+            evaluation_json_path=fixed_paths.get("evaluation_json_path"),
+            evaluation_logs_path=fixed_paths.get("evaluation_logs_path"),
+        )
+        merge = getattr(session, "merge", None)
+        if callable(merge):
+            merge(artifact_row)
+        else:  # pragma: no cover - unit-test fallback for simplified sessions
+            session.add(artifact_row)
+
+    @staticmethod
+    def _add_evaluation_artifact_records(
+        *,
+        session: Any,
+        job_id: UUID,
+        commit_hash: str,
+        card: CommitCard,
+        artifacts: tuple[Any, ...],
+    ) -> None:
+        for artifact in artifacts:
+            session.add(
+                EvaluationArtifactRecord(
+                    job_id=job_id,
+                    commit_card_id=card.id,
+                    commit_hash=commit_hash,
+                    key=artifact.key,
+                    kind=artifact.kind,
+                    mime_type=artifact.mime_type,
+                    label=artifact.label,
+                    summary=artifact.summary,
+                    visibility=artifact.visibility,
+                    agent_projection=artifact.agent_projection,
+                    storage_path=artifact.storage_path,
+                    size_bytes=artifact.size_bytes,
+                    sha256=artifact.sha256,
+                    diagnostics=[diagnostic.as_dict() for diagnostic in artifact.diagnostics],
+                    artifact_metadata=dict(artifact.metadata or {}),
+                )
+            )
 
     def mark_job_failed(
         self,
@@ -504,6 +602,35 @@ def _bounded_worker_instance_id(value: str) -> str:
         digest,
     )
     return bounded
+
+
+def _success_subject(job_id: UUID, commit_message: str) -> str:
+    subject = normalize_single_line(commit_message) or f"Evolution job {job_id}"
+    if "```" in subject or subject.startswith("{") or subject.startswith("["):
+        subject = f"Evolution job {job_id}"
+    return clamp_text(subject, 72)
+
+
+def _change_summary(request: _PersistSuccessInput) -> str:
+    source = (
+        request.coding.report.summary
+        or request.plan.plan.summary
+        or f"Evolution job {request.job_ctx.job_id}"
+    )
+    return clamp_text(normalize_single_line(source), 512) or "N/A"
+
+
+def _commit_card_key_files(paths: Sequence[str]) -> list[str]:
+    return [clamp_text(path, 256) for path in paths[:20] if path.strip()]
+
+
+def _commit_card_highlights(lines: Sequence[str]) -> list[str]:
+    highlights = [clamp_text(line, 200) for line in lines[:8] if line.strip()]
+    return highlights or ["No file-level highlights available."]
+
+
+def _bounded_tags(tags: Sequence[str]) -> list[str]:
+    return [clamp_text(normalize_single_line(tag), 64) for tag in tags if str(tag).strip()]
 
 
 def _coerce_artifact_write_result(value: Any) -> JobArtifactWriteResult:

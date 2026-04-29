@@ -37,6 +37,7 @@ log = logger.bind(module="worker.artifacts")
 __all__ = [
     "FixedJobArtifactPaths",
     "JobArtifactWriteResult",
+    "JobArtifactWriteRequest",
     "MaterializedEvaluationArtifact",
     "resolve_worker_instance_id",
     "worker_runtime_metadata",
@@ -106,6 +107,20 @@ class JobArtifactWriteResult:
     fixed: FixedJobArtifactPaths
     evaluation_artifacts: tuple[MaterializedEvaluationArtifact, ...] = ()
     validation_warnings: tuple[ArtifactValidationWarning, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class JobArtifactWriteRequest:
+    job_id: UUID
+    plan: PlanningAgentResponse
+    coding: CodingAgentResponse
+    evaluation: EvaluationResult
+    base_commit_hash: str
+    candidate_commit_hash: str
+    commit_message: str
+    run_token: UUID | None = None
+    worktree: Path | None = None
+    settings: Settings | None = None
 
 
 _MIME_EXTENSIONS: dict[str, str] = {
@@ -208,113 +223,157 @@ def _materialize_one_artifact(
     allowed_mime_types: set[str],
     max_bytes: int,
 ) -> tuple[MaterializedEvaluationArtifact | None, tuple[ArtifactValidationWarning, ...]]:
-    warnings: list[ArtifactValidationWarning] = []
     has_path = artifact.path is not None
     has_inline = artifact.inline_payload is not None
     if has_path and has_inline:
-        warnings.append(
-            _warning(
-                artifact=artifact,
-                artifact_index=artifact_index,
-                code="multiple_payload_sources",
-                action="metadata_only" if _has_metadata_payload(artifact) else "skipped",
-                message="Artifact declared both path and inline_payload; raw bytes were not stored.",
-                input_ref=f"artifacts[{artifact_index}].inline_payload",
-            )
+        return _invalid_artifact_result(
+            artifact=artifact,
+            artifact_index=artifact_index,
+            code="multiple_payload_sources",
+            message="Artifact declared both path and inline_payload; raw bytes were not stored.",
+            input_ref=f"artifacts[{artifact_index}].inline_payload",
         )
-        return (_metadata_only_artifact(artifact) if _has_metadata_payload(artifact) else None), tuple(warnings)
 
     if artifact.mime_type not in allowed_mime_types:
-        warnings.append(
-            _warning(
-                artifact=artifact,
-                artifact_index=artifact_index,
-                code="unsupported_mime_type",
-                action="metadata_only" if _has_metadata_payload(artifact) else "skipped",
-                message="Artifact MIME type is not allowed for storage.",
-                input_ref=f"artifacts[{artifact_index}].mime_type",
-            )
+        return _invalid_artifact_result(
+            artifact=artifact,
+            artifact_index=artifact_index,
+            code="unsupported_mime_type",
+            message="Artifact MIME type is not allowed for storage.",
+            input_ref=f"artifacts[{artifact_index}].mime_type",
         )
-        return (_metadata_only_artifact(artifact) if _has_metadata_payload(artifact) else None), tuple(warnings)
 
     if not has_path and not has_inline:
         if _has_metadata_payload(artifact):
-            return _metadata_only_artifact(artifact), tuple(warnings)
-        warnings.append(
-            _warning(
-                artifact=artifact,
-                artifact_index=artifact_index,
-                code="missing_payload",
-                action="skipped",
-                message="Artifact has no path, inline payload, summary, or diagnostics.",
-                input_ref=f"artifacts[{artifact_index}]",
-            )
+            return _metadata_only_artifact(artifact), ()
+        return _invalid_artifact_result(
+            artifact=artifact,
+            artifact_index=artifact_index,
+            code="missing_payload",
+            message="Artifact has no path, inline payload, summary, or diagnostics.",
+            input_ref=f"artifacts[{artifact_index}]",
         )
-        return None, tuple(warnings)
 
     artifact_dir = root / "evaluation_artifacts" / artifact.key
     artifact_dir.mkdir(parents=True, exist_ok=True)
     target = artifact_dir / _artifact_filename(artifact)
 
     if has_path:
-        source, path_warning = _resolve_safe_source_path(
-            raw_path=artifact.path,
-            worktree=worktree,
+        written_path, warning = _copy_path_payload(
             artifact=artifact,
             artifact_index=artifact_index,
+            worktree=worktree,
+            target=target,
+            max_bytes=max_bytes,
         )
-        if path_warning is not None:
-            warnings.append(path_warning)
-            return (_metadata_only_artifact(artifact) if _has_metadata_payload(artifact) else None), tuple(warnings)
-        assert source is not None
-        size_bytes = source.stat().st_size
-        if size_bytes > max_bytes:
-            warnings.append(
-                _warning(
-                    artifact=artifact,
-                    artifact_index=artifact_index,
-                    code="artifact_too_large",
-                    action="metadata_only" if _has_metadata_payload(artifact) else "skipped",
-                    message="Artifact raw payload exceeds the configured size limit.",
-                    input_ref=f"artifacts[{artifact_index}].path",
-                )
-            )
-            return (_metadata_only_artifact(artifact) if _has_metadata_payload(artifact) else None), tuple(warnings)
-        shutil.copyfile(source, target)
     else:
-        payload = _inline_payload_bytes(artifact.inline_payload, artifact.mime_type)
-        if len(payload) > max_bytes:
-            warnings.append(
-                _warning(
-                    artifact=artifact,
-                    artifact_index=artifact_index,
-                    code="artifact_too_large",
-                    action="metadata_only" if _has_metadata_payload(artifact) else "skipped",
-                    message="Artifact inline payload exceeds the configured size limit.",
-                    input_ref=f"artifacts[{artifact_index}].inline_payload",
-                )
-            )
-            return (_metadata_only_artifact(artifact) if _has_metadata_payload(artifact) else None), tuple(warnings)
-        target.write_bytes(payload)
+        written_path, warning = _write_inline_payload(
+            artifact=artifact,
+            artifact_index=artifact_index,
+            target=target,
+            max_bytes=max_bytes,
+        )
+    if warning is not None:
+        return _artifact_warning_result(artifact, warning)
+    assert written_path is not None
+    return _stored_materialized_artifact(artifact, written_path), ()
 
-    size_bytes = target.stat().st_size
-    sha256 = _sha256_file(target)
-    return (
-        MaterializedEvaluationArtifact(
-            key=artifact.key,
-            kind=artifact.kind,
-            mime_type=artifact.mime_type,
-            label=artifact.label,
-            summary=artifact.summary,
-            visibility=artifact.visibility,
-            agent_projection=artifact.agent_projection,
-            storage_path=str(target),
-            size_bytes=size_bytes,
-            sha256=sha256,
-            diagnostics=tuple(artifact.diagnostics),
-            metadata=dict(artifact.metadata or {}),
-        ),
-        tuple(warnings),
+
+def _invalid_artifact_result(
+    *,
+    artifact: EvaluationArtifact,
+    artifact_index: int,
+    code: str,
+    message: str,
+    input_ref: str,
+) -> tuple[MaterializedEvaluationArtifact | None, tuple[ArtifactValidationWarning, ...]]:
+    warning = _warning(
+        artifact=artifact,
+        artifact_index=artifact_index,
+        code=code,
+        action="metadata_only" if _has_metadata_payload(artifact) else "skipped",
+        message=message,
+        input_ref=input_ref,
+    )
+    return _artifact_warning_result(artifact, warning)
+
+
+def _artifact_warning_result(
+    artifact: EvaluationArtifact,
+    warning: ArtifactValidationWarning,
+) -> tuple[MaterializedEvaluationArtifact | None, tuple[ArtifactValidationWarning, ...]]:
+    materialized = _metadata_only_artifact(artifact) if _has_metadata_payload(artifact) else None
+    return materialized, (warning,)
+
+
+def _copy_path_payload(
+    *,
+    artifact: EvaluationArtifact,
+    artifact_index: int,
+    worktree: Path,
+    target: Path,
+    max_bytes: int,
+) -> tuple[Path | None, ArtifactValidationWarning | None]:
+    source, path_warning = _resolve_safe_source_path(
+        raw_path=artifact.path,
+        worktree=worktree,
+        artifact=artifact,
+        artifact_index=artifact_index,
+    )
+    if path_warning is not None:
+        return None, path_warning
+    assert source is not None
+    if source.stat().st_size > max_bytes:
+        return None, _warning(
+            artifact=artifact,
+            artifact_index=artifact_index,
+            code="artifact_too_large",
+            action="metadata_only" if _has_metadata_payload(artifact) else "skipped",
+            message="Artifact raw payload exceeds the configured size limit.",
+            input_ref=f"artifacts[{artifact_index}].path",
+        )
+    shutil.copyfile(source, target)
+    return target, None
+
+
+def _write_inline_payload(
+    *,
+    artifact: EvaluationArtifact,
+    artifact_index: int,
+    target: Path,
+    max_bytes: int,
+) -> tuple[Path | None, ArtifactValidationWarning | None]:
+    payload = _inline_payload_bytes(artifact.inline_payload, artifact.mime_type)
+    if len(payload) > max_bytes:
+        return None, _warning(
+            artifact=artifact,
+            artifact_index=artifact_index,
+            code="artifact_too_large",
+            action="metadata_only" if _has_metadata_payload(artifact) else "skipped",
+            message="Artifact inline payload exceeds the configured size limit.",
+            input_ref=f"artifacts[{artifact_index}].inline_payload",
+        )
+    target.write_bytes(payload)
+    return target, None
+
+
+def _stored_materialized_artifact(
+    artifact: EvaluationArtifact,
+    target: Path,
+) -> MaterializedEvaluationArtifact:
+    return MaterializedEvaluationArtifact(
+        key=artifact.key,
+        kind=artifact.kind,
+        mime_type=artifact.mime_type,
+        label=artifact.label,
+        summary=artifact.summary,
+        visibility=artifact.visibility,
+        agent_projection=artifact.agent_projection,
+        storage_path=str(target),
+        size_bytes=target.stat().st_size,
+        sha256=_sha256_file(target),
+        diagnostics=tuple(artifact.diagnostics),
+        metadata=dict(artifact.metadata or {}),
     )
 
 
@@ -466,44 +525,58 @@ def _warning(
     )
 
 
-def write_job_artifacts(
-    *,
-    job_id: UUID,
-    run_token: UUID | None = None,
-    plan: PlanningAgentResponse,
-    coding: CodingAgentResponse,
-    evaluation: EvaluationResult,
-    base_commit_hash: str,
-    candidate_commit_hash: str,
-    commit_message: str,
-    worktree: Path | None = None,
-    settings: Settings | None = None,
-) -> JobArtifactWriteResult:
+def write_job_artifacts(request: JobArtifactWriteRequest) -> JobArtifactWriteResult:
     """Write fixed and evaluator-declared artifacts to worker-managed storage."""
 
-    settings = settings or get_settings()
-    root = _resolve_artifacts_dir(settings, job_id, run_token=run_token)
+    settings = request.settings or get_settings()
+    root = _resolve_artifacts_dir(settings, request.job_id, run_token=request.run_token)
     worker = worker_runtime_metadata()
+    fixed = _write_fixed_job_artifacts(root=root, request=request, worker=worker)
+    evaluation_artifacts, validation_warnings = _write_evaluation_result_artifacts(
+        root=root,
+        request=request,
+        settings=settings,
+        worker=worker,
+    )
+    log.info(
+        "Wrote fixed_artifacts={} evaluation_artifacts={} validation_warnings={} for job {}",
+        len(fixed.as_dict()),
+        len(evaluation_artifacts),
+        len(validation_warnings),
+        request.job_id,
+    )
+    return JobArtifactWriteResult(
+        fixed=fixed,
+        evaluation_artifacts=evaluation_artifacts,
+        validation_warnings=validation_warnings,
+    )
 
+
+def _write_fixed_job_artifacts(
+    *,
+    root: Path,
+    request: JobArtifactWriteRequest,
+    worker: Mapping[str, Any],
+) -> FixedJobArtifactPaths:
     planning_prompt = root / "planning_prompt.txt"
     planning_raw = root / "planning_raw_output.txt"
     planning_plan = root / "planning_plan.json"
-    _write_text(planning_prompt, plan.prompt)
-    _write_text(planning_raw, plan.raw_output)
+    _write_text(planning_prompt, request.plan.prompt)
+    _write_text(planning_raw, request.plan.raw_output)
     _write_json(
         planning_plan,
         {
-            "job_id": str(job_id),
-            "base_commit_hash": base_commit_hash,
-            "candidate_commit_hash": candidate_commit_hash,
-            "commit_message": commit_message,
+            "job_id": str(request.job_id),
+            "base_commit_hash": request.base_commit_hash,
+            "candidate_commit_hash": request.candidate_commit_hash,
+            "commit_message": request.commit_message,
             "worker": worker,
-            "plan": plan.plan.as_dict(),
+            "plan": request.plan.plan.as_dict(),
             "backend": {
-                "command": list(plan.command),
-                "stderr": plan.stderr,
-                "attempts": plan.attempts,
-                "duration_seconds": plan.duration_seconds,
+                "command": list(request.plan.command),
+                "stderr": request.plan.stderr,
+                "attempts": request.plan.attempts,
+                "duration_seconds": request.plan.duration_seconds,
             },
         },
     )
@@ -511,76 +584,68 @@ def write_job_artifacts(
     coding_prompt = root / "coding_prompt.txt"
     coding_raw = root / "coding_raw_output.txt"
     coding_exec = root / "coding_execution.json"
-    _write_text(coding_prompt, coding.prompt)
-    _write_text(coding_raw, coding.raw_output)
+    _write_text(coding_prompt, request.coding.prompt)
+    _write_text(coding_raw, request.coding.raw_output)
     _write_json(
         coding_exec,
         {
-            "job_id": str(job_id),
-            "base_commit_hash": base_commit_hash,
-            "candidate_commit_hash": candidate_commit_hash,
-            "commit_message": commit_message,
+            "job_id": str(request.job_id),
+            "base_commit_hash": request.base_commit_hash,
+            "candidate_commit_hash": request.candidate_commit_hash,
+            "commit_message": request.commit_message,
             "worker": worker,
-            "report": coding.report.as_dict(),
+            "report": request.coding.report.as_dict(),
             "backend": {
-                "command": list(coding.command),
-                "stderr": coding.stderr,
-                "attempts": coding.attempts,
-                "duration_seconds": coding.duration_seconds,
+                "command": list(request.coding.command),
+                "stderr": request.coding.stderr,
+                "attempts": request.coding.attempts,
+                "duration_seconds": request.coding.duration_seconds,
             },
         },
     )
-
-    evaluation_json = root / "evaluation.json"
-    evaluation_logs = root / "evaluation_logs.txt"
-    evaluation_artifacts, validation_warnings = _materialize_evaluation_artifacts(
-        root=root,
-        evaluation=evaluation,
-        worktree=worktree,
-        settings=settings,
-    )
-    _write_json(
-        evaluation_json,
-        {
-            "job_id": str(job_id),
-            "base_commit_hash": base_commit_hash,
-            "candidate_commit_hash": candidate_commit_hash,
-            "commit_message": commit_message,
-            "worker": worker,
-            "summary": evaluation.summary,
-            "metrics": [metric.as_dict() for metric in evaluation.metrics],
-            "tests_executed": list(evaluation.tests_executed),
-            "logs": list(evaluation.logs),
-            "extra": dict(evaluation.extra or {}),
-            "evaluation_artifacts": [
-                artifact.manifest() for artifact in evaluation_artifacts
-            ],
-            "artifact_validation_warnings": [
-                warning.as_dict() for warning in validation_warnings
-            ],
-        },
-    )
-    _write_text(evaluation_logs, "\n".join(str(line) for line in evaluation.logs))
-    fixed = FixedJobArtifactPaths(
+    return FixedJobArtifactPaths(
         planning_prompt_path=str(planning_prompt),
         planning_raw_output_path=str(planning_raw),
         planning_plan_json_path=str(planning_plan),
         coding_prompt_path=str(coding_prompt),
         coding_raw_output_path=str(coding_raw),
         coding_execution_json_path=str(coding_exec),
-        evaluation_json_path=str(evaluation_json),
-        evaluation_logs_path=str(evaluation_logs),
+        evaluation_json_path=str(root / "evaluation.json"),
+        evaluation_logs_path=str(root / "evaluation_logs.txt"),
     )
 
-    log.info(
-        "Wrote fixed_artifacts={} evaluation_artifacts={} validation_warnings={} for job {}",
-        len(fixed.as_dict()),
-        len(evaluation_artifacts),
-        len(validation_warnings),
-        job_id,
+
+def _write_evaluation_result_artifacts(
+    *,
+    root: Path,
+    request: JobArtifactWriteRequest,
+    settings: Settings,
+    worker: Mapping[str, Any],
+) -> tuple[tuple[MaterializedEvaluationArtifact, ...], tuple[ArtifactValidationWarning, ...]]:
+    evaluation_json = root / "evaluation.json"
+    evaluation_logs = root / "evaluation_logs.txt"
+    evaluation_artifacts, validation_warnings = _materialize_evaluation_artifacts(
+        root=root,
+        evaluation=request.evaluation,
+        worktree=request.worktree,
+        settings=settings,
     )
-    return JobArtifactWriteResult(
-        fixed=fixed,
-        evaluation_artifacts=evaluation_artifacts,
-        validation_warnings=validation_warnings,
+    _write_json(
+        evaluation_json,
+        {
+            "job_id": str(request.job_id),
+            "base_commit_hash": request.base_commit_hash,
+            "candidate_commit_hash": request.candidate_commit_hash,
+            "commit_message": request.commit_message,
+            "worker": worker,
+            "summary": request.evaluation.summary,
+            "metrics": [metric.as_dict() for metric in request.evaluation.metrics],
+            "tests_executed": list(request.evaluation.tests_executed),
+            "logs": list(request.evaluation.logs),
+            "extra": dict(request.evaluation.extra or {}),
+            "evaluation_artifacts": [artifact.manifest() for artifact in evaluation_artifacts],
+            "artifact_validation_warnings": [warning.as_dict() for warning in validation_warnings],
+        },
     )
+    _write_text(evaluation_logs, "\n".join(str(line) for line in request.evaluation.logs))
+    return evaluation_artifacts, validation_warnings

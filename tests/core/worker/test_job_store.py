@@ -29,7 +29,7 @@ from loreley.core.worker.job_store import (
     JobPreconditionError,
 )
 from loreley.core.worker.planning import PlanDocument, PlanningAgentResponse
-from loreley.db.models import EvolutionJob, JobStatus
+from loreley.db.models import JobStatus
 
 
 def test_is_lock_conflict_matches_pgcode_and_messages(settings: Settings) -> None:
@@ -433,157 +433,16 @@ def test_persist_success_updates_job_and_records_metadata(
 ) -> None:
     job_id = uuid.uuid4()
     run_token = uuid.uuid4()
-
-    class DummyJob:
-        def __init__(self) -> None:
-            self.id = job_id
-            self.status = JobStatus.RUNNING
-            self.plan_summary: str | None = None
-            self.completed_at = None
-            self.candidate_commit_hash = None
-            self.candidate_branch_name = None
-            self.candidate_published_at = None
-            self.run_token = run_token
-            self.worker_id = "worker-01"
-            self.heartbeat_at = datetime.now(timezone.utc)
-            self.lease_expires_at = datetime.now(timezone.utc)
-            self.last_error = "err"
-            self.island_id = "island"
-            self.base_commit_hash = "base"
-            self.result_commit_hash = None
-            self.ingestion_status = None
-            self.ingestion_attempts = 0
-            self.ingestion_delta = None
-            self.ingestion_status_code = None
-            self.ingestion_message = None
-            self.ingestion_cell_index = None
-            self.ingestion_last_attempt_at = None
-            self.ingestion_reason = None
-
-    job_row = DummyJob()
     added: list[Any] = []
-
-    class DummyResult:
-        def __init__(self, obj: Any) -> None:
-            self.obj = obj
-
-        def scalar_one_or_none(self) -> Any:
-            return self.obj
-
-    class DummySession:
-        def __init__(self) -> None:
-            self.added = added
-
-        def execute(self, _stmt: Any) -> DummyResult:
-            return DummyResult(job_row)
-
-        def add(self, obj: Any) -> None:
-            self.added.append(obj)
-
-        def flush(self) -> None:
-            for obj in self.added:
-                if isinstance(obj, job_store.CommitCard) and obj.id is None:
-                    obj.id = uuid.uuid4()
-
-    @contextmanager
-    def fake_scope() -> Any:
-        yield DummySession()
-
-    monkeypatch.setattr(job_store, "session_scope", fake_scope)
-    monkeypatch.setattr(
-        job_store,
-        "build_commit_card_from_git",
-        lambda **_kwargs: type("Build", (), {"key_files": ["file.py"], "highlights": ["changed"]})(),
-    )
-    materialized_artifact = MaterializedEvaluationArtifact(
-        key="benchmark_report",
-        kind="benchmark_json",
-        mime_type="application/json",
-        label="Benchmark report",
-        summary="Parser throughput improved.",
-        visibility="agent_visible",
-        agent_projection="summary",
-        storage_path="/worker/artifacts/benchmark_report.json",
-        size_bytes=42,
-        sha256="a" * 64,
-        diagnostics=(
-            EvaluationDiagnostic(
-                kind="improvement",
-                message="throughput improved",
-                severity="info",
-            ),
-        ),
-        metadata={"source": "bench"},
-    )
-    monkeypatch.setattr(
-        job_store,
-        "write_job_artifacts",
-        lambda **_kwargs: JobArtifactWriteResult(
-            fixed=FixedJobArtifactPaths(evaluation_json_path="/worker/artifacts/evaluation.json"),
-            evaluation_artifacts=(materialized_artifact,),
-        ),
-    )
+    job_row = _PersistSuccessDummyJob(job_id=job_id, run_token=run_token)
+    _install_persist_success_fakes(monkeypatch, job_row=job_row, added=added)
     store = EvolutionJobStore(settings=settings)
 
-    plan = PlanDocument(
-        summary="plan",
-        markdown="## Summary\n- plan\n",
-        focus_metrics=("f",),
-        guardrails=("g",),
-    )
-    plan_response = PlanningAgentResponse(
-        plan=plan,
-        raw_output="raw",
-        prompt="prompt",
-        command=("cmd",),
-        stderr="",
-        attempts=1,
-        duration_seconds=1.0,
-    )
-    report = ExecutionReport(
-        summary="impl",
-        markdown="## Summary\n- impl\n",
-    )
-    coding_response = CodingAgentResponse(
-        report=report,
-        raw_output="raw",
-        prompt="p",
-        command=("cmd",),
-        stderr="",
-        attempts=1,
-        duration_seconds=1.0,
-    )
-    evaluation = EvaluationResult(
-        summary="eval",
-        metrics=(EvaluationMetric(name="score", value=1.0),),
-        tests_executed=("pytest -q",),
-        logs=("log",),
-        extra={},
-    )
-    job_ctx = JobContext(
-        job_id=job_id,
-        run_token=run_token,
-        base_commit_hash="base",
-        island_id="island",
-        inspiration_commit_hashes=(),
-        goal="goal",
-        constraints=("c",),
-        acceptance_criteria=("done",),
-        iteration_hint=None,
-        notes=(),
-        tags=("tag",),
-        is_seed_job=False,
-        sampling_strategy=None,
-        sampling_initial_radius=None,
-        sampling_radius_used=None,
-        sampling_fallback_inspirations=None,
-    )
-
     store.persist_success(
-        job_ctx=job_ctx,
-        plan=plan_response,
-        coding=coding_response,
-        evaluation=evaluation,
+        job_ctx=_sample_job_context(job_id=job_id, run_token=run_token),
+        plan=_sample_plan_response(),
+        coding=_sample_coding_response(),
+        evaluation=_sample_evaluation_result(),
         worktree=Path("."),  # dummy path; artifacts/git diff are best-effort in tests
         commit_hash="newcommit",
         commit_message="msg",
@@ -610,38 +469,177 @@ def test_persist_success_updates_job_and_records_metadata(
     assert artifacts[0].diagnostics[0]["message"] == "throughput improved"
 
 
+class _PersistSuccessDummyJob:
+    def __init__(self, *, job_id: uuid.UUID, run_token: uuid.UUID) -> None:
+        self.id = job_id
+        self.status = JobStatus.RUNNING
+        self.plan_summary: str | None = None
+        self.completed_at = None
+        self.candidate_commit_hash = None
+        self.candidate_branch_name = None
+        self.candidate_published_at = None
+        self.run_token = run_token
+        self.worker_id = "worker-01"
+        self.heartbeat_at = datetime.now(timezone.utc)
+        self.lease_expires_at = datetime.now(timezone.utc)
+        self.last_error = "err"
+        self.island_id = "island"
+        self.base_commit_hash = "base"
+        self.result_commit_hash = None
+        self.ingestion_status = None
+        self.ingestion_attempts = 0
+        self.ingestion_delta = None
+        self.ingestion_status_code = None
+        self.ingestion_message = None
+        self.ingestion_cell_index = None
+        self.ingestion_last_attempt_at = None
+        self.ingestion_reason = None
+
+
+class _PersistSuccessResult:
+    def __init__(self, obj: Any) -> None:
+        self.obj = obj
+
+    def scalar_one_or_none(self) -> Any:
+        return self.obj
+
+
+class _PersistSuccessSession:
+    def __init__(self, *, job_row: _PersistSuccessDummyJob, added: list[Any]) -> None:
+        self.job_row = job_row
+        self.added = added
+
+    def execute(self, _stmt: Any) -> _PersistSuccessResult:
+        return _PersistSuccessResult(self.job_row)
+
+    def add(self, obj: Any) -> None:
+        self.added.append(obj)
+
+    def flush(self) -> None:
+        for obj in self.added:
+            if isinstance(obj, job_store.CommitCard) and obj.id is None:
+                obj.id = uuid.uuid4()
+
+
+def _install_persist_success_fakes(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    job_row: _PersistSuccessDummyJob,
+    added: list[Any],
+) -> None:
+    @contextmanager
+    def fake_scope() -> Any:
+        yield _PersistSuccessSession(job_row=job_row, added=added)
+
+    monkeypatch.setattr(job_store, "session_scope", fake_scope)
+    monkeypatch.setattr(
+        job_store,
+        "build_commit_card_from_git",
+        lambda **_kwargs: type("Build", (), {"key_files": ["file.py"], "highlights": ["changed"]})(),
+    )
+    monkeypatch.setattr(
+        job_store,
+        "write_job_artifacts",
+        lambda _request: JobArtifactWriteResult(
+            fixed=FixedJobArtifactPaths(evaluation_json_path="/worker/artifacts/evaluation.json"),
+            evaluation_artifacts=(_materialized_benchmark_artifact(),),
+        ),
+    )
+
+
+def _materialized_benchmark_artifact() -> MaterializedEvaluationArtifact:
+    return MaterializedEvaluationArtifact(
+        key="benchmark_report",
+        kind="benchmark_json",
+        mime_type="application/json",
+        label="Benchmark report",
+        summary="Parser throughput improved.",
+        visibility="agent_visible",
+        agent_projection="summary",
+        storage_path="/worker/artifacts/benchmark_report.json",
+        size_bytes=42,
+        sha256="a" * 64,
+        diagnostics=(
+            EvaluationDiagnostic(
+                kind="improvement",
+                message="throughput improved",
+                severity="info",
+            ),
+        ),
+        metadata={"source": "bench"},
+    )
+
+
+def _sample_plan_response() -> PlanningAgentResponse:
+    return PlanningAgentResponse(
+        plan=PlanDocument(
+            summary="plan",
+            markdown="## Summary\n- plan\n",
+            focus_metrics=("f",),
+            guardrails=("g",),
+        ),
+        raw_output="raw",
+        prompt="prompt",
+        command=("cmd",),
+        stderr="",
+        attempts=1,
+        duration_seconds=1.0,
+    )
+
+
+def _sample_coding_response() -> CodingAgentResponse:
+    return CodingAgentResponse(
+        report=ExecutionReport(
+            summary="impl",
+            markdown="## Summary\n- impl\n",
+        ),
+        raw_output="raw",
+        prompt="p",
+        command=("cmd",),
+        stderr="",
+        attempts=1,
+        duration_seconds=1.0,
+    )
+
+
+def _sample_evaluation_result() -> EvaluationResult:
+    return EvaluationResult(
+        summary="eval",
+        metrics=(EvaluationMetric(name="score", value=1.0),),
+        tests_executed=("pytest -q",),
+        logs=("log",),
+        extra={},
+    )
+
+
+def _sample_job_context(*, job_id: uuid.UUID, run_token: uuid.UUID) -> JobContext:
+    return JobContext(
+        job_id=job_id,
+        run_token=run_token,
+        base_commit_hash="base",
+        island_id="island",
+        inspiration_commit_hashes=(),
+        goal="goal",
+        constraints=("c",),
+        acceptance_criteria=("done",),
+        iteration_hint=None,
+        notes=(),
+        tags=("tag",),
+        is_seed_job=False,
+        sampling_strategy=None,
+        sampling_initial_radius=None,
+        sampling_radius_used=None,
+        sampling_fallback_inspirations=None,
+    )
+
+
 def test_persist_success_rejects_stale_run_token(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,
 ) -> None:
     job_id = uuid.uuid4()
-    active_token = uuid.uuid4()
     stale_token = uuid.uuid4()
 
-    class DummyJob:
-        def __init__(self) -> None:
-            self.id = job_id
-            self.status = JobStatus.RUNNING
-            self.plan_summary: str | None = None
-            self.completed_at = None
-            self.run_token = active_token
-            self.worker_id = "worker-02"
-            self.heartbeat_at = datetime.now(timezone.utc)
-            self.lease_expires_at = datetime.now(timezone.utc)
-            self.last_error = None
-            self.island_id = "island"
-            self.base_commit_hash = "base"
-            self.result_commit_hash = None
-            self.ingestion_status = None
-            self.ingestion_attempts = 0
-            self.ingestion_delta = None
-            self.ingestion_status_code = None
-            self.ingestion_message = None
-            self.ingestion_cell_index = None
-            self.ingestion_last_attempt_at = None
-            self.ingestion_reason = None
-
-    job_row = DummyJob()
     added: list[Any] = []
 
     class DummyResult:

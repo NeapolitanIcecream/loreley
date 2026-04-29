@@ -40,6 +40,7 @@ __all__ = [
     "PlanningAgentResponse",
     "PlanningError",
     "PlanDocument",
+    "SharedPromptPacketRequest",
     "render_evaluation_agent_feedback",
     "render_shared_prompt_packet",
 ]
@@ -210,6 +211,24 @@ _EVIDENCE_GUARDRAIL_LINES: tuple[str, ...] = (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class _AgentFeedbackPolicy:
+    mode: str
+    budget_chars: int
+    max_artifacts: int
+    max_diagnostics: int
+    path_mime_types: set[str]
+    path_max_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
+class _RenderedFeedbackBlocks:
+    blocks: tuple[list[str], ...]
+    included_keys: tuple[str, ...]
+    budget_omitted_count: int
+    omitted_reasons: tuple[str, ...]
+
+
 def render_evaluation_agent_feedback(
     artifacts: Sequence[CommitEvaluationArtifactFeedback],
     *,
@@ -219,98 +238,134 @@ def render_evaluation_agent_feedback(
     """Render the bounded evidence block shared by planning, coding, and API preview."""
 
     settings = settings or get_settings()
+    policy = _agent_feedback_policy(settings=settings, mode=mode)
+    eligible = _eligible_agent_feedback_artifacts(artifacts)
+    if not eligible:
+        return EvaluationAgentFeedbackProjection(
+            mode=policy.mode,
+            budget_chars=policy.budget_chars,
+            text="",
+        )
+    if policy.mode == "disabled" or policy.budget_chars <= 0 or policy.max_artifacts <= 0:
+        return EvaluationAgentFeedbackProjection(
+            mode=policy.mode,
+            budget_chars=policy.budget_chars,
+            text="",
+            omitted_artifact_count=len(eligible),
+            omitted_reasons=("mode_or_budget_disabled",),
+        )
+
+    eligible = _sorted_agent_feedback_artifacts(eligible)
+    selected = eligible[: policy.max_artifacts]
+    omitted_count = max(0, len(eligible) - len(selected))
+    omitted_reasons = ["max_artifacts"] if omitted_count else []
+    rendered = _render_bounded_feedback_blocks(
+        selected=selected,
+        initial_omitted_count=omitted_count,
+        policy=policy,
+    )
+    omitted_reasons.extend(rendered.omitted_reasons)
+    omitted_count += rendered.budget_omitted_count
+    text = _compose_evaluation_feedback_text(
+        blocks=rendered.blocks,
+        omitted_count=omitted_count,
+    )
+    included_keys = rendered.included_keys
+    if len(text) > policy.budget_chars or not rendered.blocks:
+        if "char_budget" not in omitted_reasons:
+            omitted_reasons.append("char_budget")
+        omitted_count = len(eligible)
+        text = ""
+        included_keys = ()
+    return EvaluationAgentFeedbackProjection(
+        mode=policy.mode,
+        budget_chars=policy.budget_chars,
+        text=text,
+        included_artifact_keys=included_keys,
+        omitted_artifact_count=omitted_count,
+        omitted_reasons=tuple(dict.fromkeys(omitted_reasons)),
+    )
+
+
+def _agent_feedback_policy(
+    *,
+    settings: Settings,
+    mode: str | None,
+) -> _AgentFeedbackPolicy:
     effective_mode = normalize_single_line(
         str(mode or settings.worker_evaluation_agent_feedback_mode or "summary")
     ).lower()
     if effective_mode not in {"disabled", "manifest", "summary", "path"}:
         effective_mode = "summary"
-    budget_chars = max(0, int(settings.worker_evaluation_agent_feedback_max_chars))
-    max_artifacts = max(0, int(settings.worker_evaluation_agent_feedback_max_artifacts))
-    max_diagnostics = max(0, int(settings.worker_evaluation_agent_feedback_max_diagnostics))
+    return _AgentFeedbackPolicy(
+        mode=effective_mode,
+        budget_chars=max(0, int(settings.worker_evaluation_agent_feedback_max_chars)),
+        max_artifacts=max(0, int(settings.worker_evaluation_agent_feedback_max_artifacts)),
+        max_diagnostics=max(0, int(settings.worker_evaluation_agent_feedback_max_diagnostics)),
+        path_mime_types=_normalized_mime_set(settings.worker_evaluation_artifact_agent_path_mime_types),
+        path_max_bytes=max(0, int(settings.worker_evaluation_artifact_agent_path_max_bytes)),
+    )
 
-    eligible = [
+
+def _eligible_agent_feedback_artifacts(
+    artifacts: Sequence[CommitEvaluationArtifactFeedback],
+) -> list[CommitEvaluationArtifactFeedback]:
+    return [
         artifact
         for artifact in (artifacts or ())
         if artifact.visibility == "agent_visible" and artifact.key
     ]
-    omitted_reasons: list[str] = []
-    if not eligible:
-        return EvaluationAgentFeedbackProjection(
-            mode=effective_mode,
-            budget_chars=budget_chars,
-            text="",
-        )
-    if effective_mode == "disabled" or budget_chars <= 0 or max_artifacts <= 0:
-        if eligible:
-            omitted_reasons.append("mode_or_budget_disabled")
-        return EvaluationAgentFeedbackProjection(
-            mode=effective_mode,
-            budget_chars=budget_chars,
-            text="",
-            omitted_artifact_count=len(eligible),
-            omitted_reasons=tuple(omitted_reasons),
-        )
 
-    eligible.sort(
+
+def _sorted_agent_feedback_artifacts(
+    artifacts: Sequence[CommitEvaluationArtifactFeedback],
+) -> list[CommitEvaluationArtifactFeedback]:
+    return sorted(
+        artifacts,
         key=lambda artifact: (
             0 if artifact.summary or artifact.diagnostics else 1,
             artifact.key,
-        )
+        ),
     )
-    selected = eligible[:max_artifacts]
-    omitted_count = max(0, len(eligible) - len(selected))
-    if omitted_count:
-        omitted_reasons.append("max_artifacts")
 
-    path_mime_types = _normalized_mime_set(settings.worker_evaluation_artifact_agent_path_mime_types)
-    path_max_bytes = max(0, int(settings.worker_evaluation_artifact_agent_path_max_bytes))
+
+def _render_bounded_feedback_blocks(
+    *,
+    selected: Sequence[CommitEvaluationArtifactFeedback],
+    initial_omitted_count: int,
+    policy: _AgentFeedbackPolicy,
+) -> _RenderedFeedbackBlocks:
     included_blocks: list[list[str]] = []
     included_keys: list[str] = []
+    omitted_reasons: list[str] = []
     budget_omitted_count = 0
     for index, artifact in enumerate(selected):
         artifact_reasons: list[str] = []
         block = _artifact_feedback_lines(
             artifact,
-            mode=_effective_artifact_projection(effective_mode, artifact.projection),
-            max_diagnostics=max_diagnostics,
-            path_mime_types=path_mime_types,
-            path_max_bytes=path_max_bytes,
+            mode=_effective_artifact_projection(policy.mode, artifact.projection),
+            policy=policy,
             omitted_reasons=artifact_reasons,
         )
         remaining_selected = len(selected) - index - 1
-        candidate_omitted_count = omitted_count + budget_omitted_count + remaining_selected
+        candidate_omitted_count = initial_omitted_count + budget_omitted_count + remaining_selected
         candidate_text = _compose_evaluation_feedback_text(
             blocks=tuple([*included_blocks, block]),
             omitted_count=candidate_omitted_count,
         )
-        if len(candidate_text) <= budget_chars:
+        if len(candidate_text) <= policy.budget_chars:
             included_blocks.append(block)
             included_keys.append(artifact.key)
             omitted_reasons.extend(artifact_reasons)
             continue
         budget_omitted_count += 1 + remaining_selected
-        if "char_budget" not in omitted_reasons:
-            omitted_reasons.append("char_budget")
+        omitted_reasons.append("char_budget")
         break
-
-    omitted_count += budget_omitted_count
-    text = _compose_evaluation_feedback_text(
+    return _RenderedFeedbackBlocks(
         blocks=tuple(included_blocks),
-        omitted_count=omitted_count,
-    )
-    if len(text) > budget_chars or not included_blocks:
-        if "char_budget" not in omitted_reasons:
-            omitted_reasons.append("char_budget")
-        omitted_count = len(eligible)
-        text = ""
-        included_keys = []
-    return EvaluationAgentFeedbackProjection(
-        mode=effective_mode,
-        budget_chars=budget_chars,
-        text=text,
-        included_artifact_keys=tuple(included_keys),
-        omitted_artifact_count=omitted_count,
-        omitted_reasons=tuple(dict.fromkeys(omitted_reasons)),
+        included_keys=tuple(included_keys),
+        budget_omitted_count=budget_omitted_count,
+        omitted_reasons=tuple(omitted_reasons),
     )
 
 
@@ -345,13 +400,28 @@ def _artifact_feedback_lines(
     artifact: CommitEvaluationArtifactFeedback,
     *,
     mode: str,
-    max_diagnostics: int,
-    path_mime_types: set[str],
-    path_max_bytes: int,
+    policy: _AgentFeedbackPolicy,
     omitted_reasons: list[str],
 ) -> list[str]:
+    header = _artifact_feedback_header(artifact)
+    manifest_bits = _artifact_manifest_bits(artifact)
+    if mode == "manifest" or not (artifact.summary or artifact.diagnostics):
+        return [_artifact_manifest_line(header, manifest_bits)]
+
+    summary = artifact.summary or "Manifest only; evaluator did not provide a bounded diagnostic summary."
+    lines = [f"{header}: {clamp_text(normalize_single_line(summary), 512)}"]
+    if mode == "path":
+        lines.extend(_artifact_uri_lines(artifact, policy=policy, omitted_reasons=omitted_reasons))
+    lines.extend(_artifact_diagnostic_lines(artifact, max_diagnostics=policy.max_diagnostics))
+    return lines
+
+
+def _artifact_feedback_header(artifact: CommitEvaluationArtifactFeedback) -> str:
     label = f" - {artifact.label}" if artifact.label else ""
-    header = f"- `{artifact.key}` ({artifact.kind}{label})"
+    return f"- `{artifact.key}` ({artifact.kind}{label})"
+
+
+def _artifact_manifest_bits(artifact: CommitEvaluationArtifactFeedback) -> list[str]:
     manifest_bits = []
     if artifact.mime_type:
         manifest_bits.append(f"mime={artifact.mime_type}")
@@ -359,34 +429,44 @@ def _artifact_feedback_lines(
         manifest_bits.append(f"size={artifact.size_bytes} bytes")
     if artifact.sha256:
         manifest_bits.append(f"sha256={artifact.sha256[:12]}")
+    return manifest_bits
 
-    if mode == "manifest":
-        suffix = f": {', '.join(manifest_bits)}" if manifest_bits else ""
-        return [f"{header}{suffix}"]
 
-    if not artifact.summary and not artifact.diagnostics:
-        suffix = f": {', '.join(manifest_bits)}" if manifest_bits else ""
-        return [f"{header}{suffix}"]
+def _artifact_manifest_line(header: str, manifest_bits: Sequence[str]) -> str:
+    suffix = f": {', '.join(manifest_bits)}" if manifest_bits else ""
+    return f"{header}{suffix}"
 
-    summary = artifact.summary or "Manifest only; evaluator did not provide a bounded diagnostic summary."
-    lines = [f"{header}: {clamp_text(normalize_single_line(summary), 512)}"]
-    if mode == "path":
-        uri = _eligible_artifact_uri(
-            artifact,
-            path_mime_types=path_mime_types,
-            path_max_bytes=path_max_bytes,
-        )
-        if uri:
-            lines.append(f"  - artifact_uri: {uri}")
-        elif artifact.projection == "path":
-            omitted_reasons.append("path_policy")
-    for diagnostic in tuple(artifact.diagnostics)[:max_diagnostics]:
+
+def _artifact_uri_lines(
+    artifact: CommitEvaluationArtifactFeedback,
+    *,
+    policy: _AgentFeedbackPolicy,
+    omitted_reasons: list[str],
+) -> list[str]:
+    uri = _eligible_artifact_uri(
+        artifact,
+        path_mime_types=policy.path_mime_types,
+        path_max_bytes=policy.path_max_bytes,
+    )
+    if uri:
+        return [f"  - artifact_uri: {uri}"]
+    if artifact.projection == "path":
+        omitted_reasons.append("path_policy")
+    return []
+
+
+def _artifact_diagnostic_lines(
+    artifact: CommitEvaluationArtifactFeedback,
+    *,
+    max_diagnostics: int,
+) -> list[str]:
+    diagnostics = tuple(artifact.diagnostics)
+    lines: list[str] = []
+    for diagnostic in diagnostics[:max_diagnostics]:
         detail = _diagnostic_detail(diagnostic)
         lines.append(f"  - {diagnostic.severity}/{diagnostic.kind}: {detail}")
-    if len(tuple(artifact.diagnostics)) > max_diagnostics:
-        lines.append(
-            f"  - omitted_diagnostics: {len(tuple(artifact.diagnostics)) - max_diagnostics}"
-        )
+    if len(diagnostics) > max_diagnostics:
+        lines.append(f"  - omitted_diagnostics: {len(diagnostics) - max_diagnostics}")
     return lines
 
 
@@ -466,6 +546,19 @@ class PlanningAgentResponse:
     stderr: str
     attempts: int
     duration_seconds: float
+
+
+@dataclass(frozen=True, slots=True)
+class SharedPromptPacketRequest:
+    """Input payload for rendering the prompt context shared by agents."""
+
+    goal: str
+    iteration_context: IterationContext | None
+    base: CommitPlanningContext
+    inspirations: Sequence[CommitPlanningContext]
+    truncate_limit: int = 2000
+    max_metrics: int = 4
+    settings: Settings | None = None
 
 
 class _PromptPacketRenderer(TruncationMixin):
@@ -707,28 +800,19 @@ Inspiration Commits:
         return tuple(deduped)
 
 
-def render_shared_prompt_packet(
-    *,
-    goal: str,
-    iteration_context: IterationContext | None,
-    base: CommitPlanningContext,
-    inspirations: Sequence[CommitPlanningContext],
-    truncate_limit: int = 2000,
-    max_metrics: int = 4,
-    settings: Settings | None = None,
-) -> str:
+def render_shared_prompt_packet(request: SharedPromptPacketRequest) -> str:
     """Render the thin Loreley task packet shared by planning and coding."""
 
     renderer = _PromptPacketRenderer(
-        truncate_limit=truncate_limit,
-        max_metrics=max_metrics,
-        settings=settings,
+        truncate_limit=request.truncate_limit,
+        max_metrics=request.max_metrics,
+        settings=request.settings,
     )
     return renderer.render(
-        goal=goal,
-        iteration_context=iteration_context,
-        base=base,
-        inspirations=inspirations,
+        goal=request.goal,
+        iteration_context=request.iteration_context,
+        base=request.base,
+        inspirations=request.inspirations,
     )
 
 
@@ -848,13 +932,15 @@ class PlanningAgent(TruncationMixin):
     def _render_prompt(self, request: PlanningAgentRequest) -> str:
         """Compose the thin planning prompt for the configured backend."""
         shared_packet = render_shared_prompt_packet(
-            goal=request.goal,
-            iteration_context=request.iteration_context,
-            base=request.base,
-            inspirations=request.inspirations,
-            truncate_limit=self._truncate_limit,
-            max_metrics=4,
-            settings=self.settings,
+            SharedPromptPacketRequest(
+                goal=request.goal,
+                iteration_context=request.iteration_context,
+                base=request.base,
+                inspirations=request.inspirations,
+                truncate_limit=self._truncate_limit,
+                max_metrics=4,
+                settings=self.settings,
+            )
         )
         prompt = f"""
 You are the planning agent inside Loreley's evolution worker.
