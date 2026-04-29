@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import math
 import time
 from pathlib import Path
@@ -65,6 +66,37 @@ __all__ = [
     "MapElitesManager",
     "MapElitesRecord",
 ]
+
+
+@dataclass(slots=True)
+class _IngestStageMetrics:
+    started_at: float
+    aggregate_hit_count: int = 0
+    incremental_count: int = 0
+    embedding_cache_miss_count: int = 0
+    pca_fit_ms: float = 0.0
+    pca_refit_ms: float = 0.0
+    archive_add_ms: float = 0.0
+    snapshot_apply_ms: float = 0.0
+    did_initial_fit: bool = False
+    did_refit: bool = False
+
+
+@dataclass(slots=True, frozen=True)
+class _RepoStateIngestResult:
+    code_embedding: CommitCodeEmbedding | None
+    stats: RepoStateEmbeddingStats
+
+
+@dataclass(slots=True, frozen=True)
+class _ProjectionIngestResult:
+    final_embedding: FinalEmbedding | None
+
+
+@dataclass(slots=True, frozen=True)
+class _ArchiveCandidate:
+    fitness: float
+    vector: np.ndarray
 
 
 class MapElitesManager:
@@ -146,136 +178,56 @@ class MapElitesManager:
         update: SnapshotUpdate | None = None
         result: MapElitesInsertionResult | None = None
         archive_replace_needed = False
-        ingest_started_at = time.perf_counter()
-        aggregate_hit_count = 0
-        incremental_count = 0
-        embedding_cache_miss_count = 0
-        pca_fit_ms = 0.0
-        pca_refit_ms = 0.0
-        archive_add_ms = 0.0
-        snapshot_apply_ms = 0.0
-        did_initial_fit = False
-        did_refit = False
-
-        def _skip(
-            *,
-            message: str,
-            artifacts: CommitEmbeddingArtifacts,
-            log_level: str = "warning",
-        ) -> MapElitesInsertionResult:
-            if log_level == "info":
-                if emit_sampled_info:
-                    log.info("{} {}", message, commit_hash)
-            elif log_level == "error":
-                log.error("{} {}", message, commit_hash)
-            else:
-                log.warning("{} {}", message, commit_hash)
-            return MapElitesInsertionResult(
-                status=0,
-                delta=0.0,
-                record=None,
-                artifacts=artifacts,
-                message=message,
-            )
+        stage_metrics = _IngestStageMetrics(started_at=time.perf_counter())
 
         try:
-            repo_state_embedder = self._get_repo_state_embedder(working_dir)
-            code_embedding, repo_stats = embed_repository_state_incremental(
+            repo_state = self._embed_repo_state_for_ingest(
                 commit_hash=commit_hash,
-                repo_root=working_dir,
-                settings=self.settings,
-                embedder=repo_state_embedder,
+                working_dir=working_dir,
                 session=snapshot_session,
+                stage_metrics=stage_metrics,
             )
-            source = str(getattr(repo_stats, "source", "unknown") or "unknown").strip()
-            if source == "aggregate_hit":
-                aggregate_hit_count += 1
-            elif source == "incremental":
-                incremental_count += 1
-            cache_misses = int(getattr(repo_stats, "cache_misses", 0) or 0)
-            if cache_misses < 0:
-                raise ValueError(
-                    "Repo-state embedding reported a negative cache_misses value "
-                    f"(commit={commit_hash} cache_misses={cache_misses})."
-                )
-            embedding_cache_miss_count += cache_misses
-            if not code_embedding or not code_embedding.vector:
-                artifacts = self._build_artifacts(repo_stats, (), None, None)
-                result = _skip(
+            if not repo_state.code_embedding or not repo_state.code_embedding.vector:
+                artifacts = self._build_artifacts(repo_state.stats, (), None, None)
+                result = self._skip_ingest_result(
                     message="No eligible repository files produced an embedding.",
+                    commit_hash=commit_hash,
                     artifacts=artifacts,
+                    emit_sampled_info=emit_sampled_info,
                 )
                 return result
 
-            old_projection = state.projection
-            reducer = self._reducers.get(effective_island)
-            if reducer is None:
-                reducer = DimensionReducer(
-                    settings=self.settings,
-                    history=state.history,
-                    projection=state.projection,
-                    samples_since_fit=state.samples_since_fit,
-                )
-                self._reducers[effective_island] = reducer
-            pca_fit_started_at = time.perf_counter()
-            final_embedding, history, projection, samples_since_fit = reduce_commit_embeddings(
+            projection_update = self._update_projection_for_ingest(
+                state=state,
+                island_id=effective_island,
                 commit_hash=commit_hash,
-                code_embedding=code_embedding,
-                history=state.history,
-                projection=state.projection,
-                samples_since_fit=state.samples_since_fit,
-                settings=self.settings,
-                reducer=reducer,
+                code_embedding=repo_state.code_embedding,
+                snapshot_session=snapshot_session,
+                stage_metrics=stage_metrics,
             )
-            pca_fit_ms += (time.perf_counter() - pca_fit_started_at) * 1000.0
-            state.history = history
-            state.projection = projection
-            state.samples_since_fit = samples_since_fit
 
-            did_initial_fit = old_projection is None and state.projection is not None
-            did_refit = (
-                old_projection is not None
-                and state.projection is not None
-                and state.projection.epoch != old_projection.epoch
+            final_embedding = projection_update.final_embedding
+            update = self._build_ingest_snapshot_update(
+                state=state,
+                final_embedding=final_embedding,
             )
-            if (
-                did_refit
-                and final_embedding is not None
-                and old_projection is not None
-                and state.projection is not None
-            ):
-                pca_refit_started_at = time.perf_counter()
-                final_embedding = self._rebuild_after_projection_refit(
-                    state=state,
-                    island_id=effective_island,
-                    current=final_embedding,
-                    old_projection=old_projection,
-                    new_projection=state.projection,
-                    snapshot_session=snapshot_session,
-                )
-                pca_refit_ms += (time.perf_counter() - pca_refit_started_at) * 1000.0
-                if effective_island in self._reducers:
-                    self._reducers[effective_island].set_projection(state.projection)
-
-            update = SnapshotUpdate(
-                lower_bounds=state.lower_bounds.tolist(),
-                upper_bounds=state.upper_bounds.tolist(),
-                projection=state.projection,
-                history_limit=resolve_pca_history_limit(self.settings),
-                history_upsert=final_embedding.history_entry if final_embedding else None,
-                history_seen_at=time.time(),
-                samples_since_fit=state.samples_since_fit,
+            artifacts = self._build_artifacts(
+                repo_state.stats,
+                (),
+                repo_state.code_embedding,
+                final_embedding,
             )
-            artifacts = self._build_artifacts(repo_stats, (), code_embedding, final_embedding)
 
             if not final_embedding:
-                result = _skip(
+                result = self._skip_ingest_result(
                     message="Unable to derive final embedding.",
+                    commit_hash=commit_hash,
                     artifacts=artifacts,
+                    emit_sampled_info=emit_sampled_info,
                 )
                 return result
 
-            if did_initial_fit and state.projection is not None:
+            if stage_metrics.did_initial_fit and state.projection is not None:
                 self._seed_archive_after_initial_fit(
                     state=state,
                     island_id=effective_island,
@@ -284,147 +236,56 @@ class MapElitesManager:
                     snapshot_session=snapshot_session,
                 )
 
-            if state.projection is None:
-                message = "PCA warmup: projection is not ready; skipping archive update."
-                if emit_sampled_info:
-                    log.info("{} island={} commit={}", message, effective_island, commit_hash)
-                result = MapElitesInsertionResult(
-                    status=0,
-                    delta=0.0,
-                    record=None,
-                    artifacts=artifacts,
-                    message=message,
-                )
-                return result
-
-            archive_replace_needed = bool(did_refit or did_initial_fit)
-
-            metrics_map = self._coerce_metrics(metrics)
-            fitness = self._resolve_fitness(metrics_map, fitness_override)
-            if fitness is None or not math.isfinite(fitness):
-                result = _skip(
-                    message="Fitness value is undefined; skipping archive update.",
-                    artifacts=artifacts,
-                )
-                return result
-
-            vector = self._clip_vector(final_embedding.vector, state)
-            if vector.shape[0] != self._target_dims:
-                message = (
-                    "Final embedding dimensions mismatch with archive "
-                    f"(expected {self._target_dims} got {vector.shape[0]})."
-                )
-                result = _skip(
-                    message=message,
-                    artifacts=artifacts,
-                    log_level="error",
-                )
-                return result
-
-            archive_add_started_at = time.perf_counter()
-            status, delta, record = self._add_to_archive(
+            result = self._skip_warmup_archive_update(
                 state=state,
                 island_id=effective_island,
                 commit_hash=commit_hash,
-                fitness=fitness,
-                measures=vector,
-            )
-            archive_add_ms += (time.perf_counter() - archive_add_started_at) * 1000.0
-
-            if update is not None and record is not None and not archive_replace_needed:
-                update.cell_upsert = SnapshotCellUpsert(
-                    cell_index=int(record.cell_index),
-                    objective=float(record.fitness),
-                    measures=tuple(float(v) for v in record.measures),
-                    solution=tuple(float(v) for v in record.solution),
-                    commit_hash=str(record.commit_hash),
-                    timestamp=float(record.timestamp),
-                )
-
-            if record:
-                if emit_sampled_info:
-                    log.info(
-                        "Inserted commit {} into island {} (cell={} status={} Δ={:.4f})",
-                        commit_hash,
-                        effective_island,
-                        record.cell_index,
-                        status,
-                        delta,
-                    )
-            elif status < 0:
-                log.warning(
-                    "Archive rejected commit {} for island {} (status={} Δ={:.4f})",
-                    commit_hash,
-                    effective_island,
-                    status,
-                    delta,
-                )
-            else:
-                if emit_sampled_info:
-                    log.info(
-                        "Commit {} did not improve island {} (status={} Δ={:.4f})",
-                        commit_hash,
-                        effective_island,
-                        status,
-                        delta,
-                    )
-
-            message: str | None = None
-            if status <= 0:
-                if status == 0:
-                    message = "Commit not inserted; objective below cell threshold."
-                else:
-                    message = f"Commit not inserted; archive rejected insertion (status={status})."
-            elif record is None:
-                message = "Archive reported insertion success but no record could be retrieved."
-
-            result = MapElitesInsertionResult(
-                status=status,
-                delta=delta,
-                record=record,
                 artifacts=artifacts,
-                message=message,
+                emit_sampled_info=emit_sampled_info,
+            )
+            if result is not None:
+                return result
+
+            archive_replace_needed = bool(stage_metrics.did_refit or stage_metrics.did_initial_fit)
+
+            candidate, skip_result = self._validated_archive_candidate(
+                state=state,
+                commit_hash=commit_hash,
+                metrics=metrics,
+                fitness_override=fitness_override,
+                final_embedding=final_embedding,
+                artifacts=artifacts,
+                emit_sampled_info=emit_sampled_info,
+            )
+            if skip_result is not None:
+                result = skip_result
+                return result
+            candidate = cast(_ArchiveCandidate, candidate)
+
+            result = self._insert_archive_candidate_for_ingest(
+                state=state,
+                island_id=effective_island,
+                commit_hash=commit_hash,
+                candidate=candidate,
+                update=update,
+                archive_replace_needed=archive_replace_needed,
+                artifacts=artifacts,
+                emit_sampled_info=emit_sampled_info,
+                stage_metrics=stage_metrics,
             )
             return result
         finally:
-            snapshot_apply_started_at = time.perf_counter()
-            try:
-                if update is not None and archive_replace_needed and update.archive_replace is None:
-                    update.archive_replace = self._build_archive_replace_payload(
-                        state=state,
-                        island_id=effective_island,
-                    )
-                self._persist_island_state(
-                    effective_island,
-                    state,
-                    update=update,
-                    session=snapshot_session,
-                )
-            finally:
-                snapshot_apply_ms += (time.perf_counter() - snapshot_apply_started_at) * 1000.0
-                emit_stage_metrics = (
-                    emit_sampled_info
-                    or result is None
-                    or did_initial_fit
-                    or did_refit
-                    or (result is not None and result.status < 0)
-                )
-                if emit_stage_metrics:
-                    log.bind(
-                        commit_hash=commit_hash,
-                        island_id=effective_island,
-                        aggregate_hit_count=aggregate_hit_count,
-                        incremental_count=incremental_count,
-                        embedding_cache_miss_count=embedding_cache_miss_count,
-                        pca_fit_ms=round(pca_fit_ms, 3),
-                        pca_refit_ms=round(pca_refit_ms, 3),
-                        archive_add_ms=round(archive_add_ms, 3),
-                        snapshot_apply_ms=round(snapshot_apply_ms, 3),
-                        ingest_total_ms=round((time.perf_counter() - ingest_started_at) * 1000.0, 3),
-                        did_initial_fit=did_initial_fit,
-                        did_refit=did_refit,
-                        status_code=result.status if result is not None else None,
-                    ).info("MAP-Elites ingest stage metrics")
+            self._finalize_ingest_state(
+                island_id=effective_island,
+                commit_hash=commit_hash,
+                state=state,
+                update=update,
+                archive_replace_needed=archive_replace_needed,
+                result=result,
+                session=snapshot_session,
+                emit_sampled_info=emit_sampled_info,
+                stage_metrics=stage_metrics,
+            )
 
     def get_records(
         self,
@@ -574,6 +435,421 @@ class MapElitesManager:
             "norm_qd_score": float(norm_qd_value or 0.0),
             "best_fitness": float(best or 0.0),
         }
+
+    def _embed_repo_state_for_ingest(
+        self,
+        *,
+        commit_hash: str,
+        working_dir: Path,
+        session: Session | None,
+        stage_metrics: _IngestStageMetrics,
+    ) -> _RepoStateIngestResult:
+        repo_state_embedder = self._get_repo_state_embedder(working_dir)
+        code_embedding, repo_stats = embed_repository_state_incremental(
+            commit_hash=commit_hash,
+            repo_root=working_dir,
+            settings=self.settings,
+            embedder=repo_state_embedder,
+            session=session,
+        )
+        self._record_repo_state_stats_for_ingest(
+            repo_stats=repo_stats,
+            commit_hash=commit_hash,
+            stage_metrics=stage_metrics,
+        )
+        return _RepoStateIngestResult(
+            code_embedding=code_embedding,
+            stats=repo_stats,
+        )
+
+    @staticmethod
+    def _record_repo_state_stats_for_ingest(
+        *,
+        repo_stats: RepoStateEmbeddingStats,
+        commit_hash: str,
+        stage_metrics: _IngestStageMetrics,
+    ) -> None:
+        source = str(getattr(repo_stats, "source", "unknown") or "unknown").strip()
+        if source == "aggregate_hit":
+            stage_metrics.aggregate_hit_count += 1
+        elif source == "incremental":
+            stage_metrics.incremental_count += 1
+
+        cache_misses = int(getattr(repo_stats, "cache_misses", 0) or 0)
+        if cache_misses < 0:
+            raise ValueError(
+                "Repo-state embedding reported a negative cache_misses value "
+                f"(commit={commit_hash} cache_misses={cache_misses})."
+            )
+        stage_metrics.embedding_cache_miss_count += cache_misses
+
+    def _update_projection_for_ingest(
+        self,
+        *,
+        state: IslandState,
+        island_id: str,
+        commit_hash: str,
+        code_embedding: CommitCodeEmbedding,
+        snapshot_session: Session | None,
+        stage_metrics: _IngestStageMetrics,
+    ) -> _ProjectionIngestResult:
+        old_projection = state.projection
+        reducer = self._ensure_reducer(island_id, state)
+        pca_fit_started_at = time.perf_counter()
+        final_embedding, history, projection, samples_since_fit = reduce_commit_embeddings(
+            commit_hash=commit_hash,
+            code_embedding=code_embedding,
+            history=state.history,
+            projection=state.projection,
+            samples_since_fit=state.samples_since_fit,
+            settings=self.settings,
+            reducer=reducer,
+        )
+        stage_metrics.pca_fit_ms += (time.perf_counter() - pca_fit_started_at) * 1000.0
+        state.history = history
+        state.projection = projection
+        state.samples_since_fit = samples_since_fit
+
+        did_initial_fit = old_projection is None and state.projection is not None
+        did_refit = (
+            old_projection is not None
+            and state.projection is not None
+            and state.projection.epoch != old_projection.epoch
+        )
+        stage_metrics.did_initial_fit = did_initial_fit
+        stage_metrics.did_refit = did_refit
+        if (
+            did_refit
+            and final_embedding is not None
+            and old_projection is not None
+            and state.projection is not None
+        ):
+            pca_refit_started_at = time.perf_counter()
+            final_embedding = self._rebuild_after_projection_refit(
+                state=state,
+                island_id=island_id,
+                current=final_embedding,
+                old_projection=old_projection,
+                new_projection=state.projection,
+                snapshot_session=snapshot_session,
+            )
+            stage_metrics.pca_refit_ms += (time.perf_counter() - pca_refit_started_at) * 1000.0
+            if island_id in self._reducers:
+                self._reducers[island_id].set_projection(state.projection)
+
+        return _ProjectionIngestResult(
+            final_embedding=final_embedding,
+        )
+
+    def _ensure_reducer(
+        self,
+        island_id: str,
+        state: IslandState,
+    ) -> DimensionReducer:
+        reducer = self._reducers.get(island_id)
+        if reducer is None:
+            reducer = DimensionReducer(
+                settings=self.settings,
+                history=state.history,
+                projection=state.projection,
+                samples_since_fit=state.samples_since_fit,
+            )
+            self._reducers[island_id] = reducer
+        return reducer
+
+    def _build_ingest_snapshot_update(
+        self,
+        *,
+        state: IslandState,
+        final_embedding: FinalEmbedding | None,
+    ) -> SnapshotUpdate:
+        return SnapshotUpdate(
+            lower_bounds=state.lower_bounds.tolist(),
+            upper_bounds=state.upper_bounds.tolist(),
+            projection=state.projection,
+            history_limit=resolve_pca_history_limit(self.settings),
+            history_upsert=final_embedding.history_entry if final_embedding else None,
+            history_seen_at=time.time(),
+            samples_since_fit=state.samples_since_fit,
+        )
+
+    def _skip_ingest_result(
+        self,
+        *,
+        message: str,
+        commit_hash: str,
+        artifacts: CommitEmbeddingArtifacts,
+        emit_sampled_info: bool,
+        log_level: str = "warning",
+    ) -> MapElitesInsertionResult:
+        if log_level == "info":
+            if emit_sampled_info:
+                log.info("{} {}", message, commit_hash)
+        elif log_level == "error":
+            log.error("{} {}", message, commit_hash)
+        else:
+            log.warning("{} {}", message, commit_hash)
+        return MapElitesInsertionResult(
+            status=0,
+            delta=0.0,
+            record=None,
+            artifacts=artifacts,
+            message=message,
+        )
+
+    @staticmethod
+    def _skip_warmup_archive_update(
+        *,
+        state: IslandState,
+        island_id: str,
+        commit_hash: str,
+        artifacts: CommitEmbeddingArtifacts,
+        emit_sampled_info: bool,
+    ) -> MapElitesInsertionResult | None:
+        if state.projection is not None:
+            return None
+
+        message = "PCA warmup: projection is not ready; skipping archive update."
+        if emit_sampled_info:
+            log.info("{} island={} commit={}", message, island_id, commit_hash)
+        return MapElitesInsertionResult(
+            status=0,
+            delta=0.0,
+            record=None,
+            artifacts=artifacts,
+            message=message,
+        )
+
+    def _validated_archive_candidate(
+        self,
+        *,
+        state: IslandState,
+        commit_hash: str,
+        metrics: Sequence[Mapping[str, Any]] | Mapping[str, Any] | None,
+        fitness_override: float | None,
+        final_embedding: FinalEmbedding,
+        artifacts: CommitEmbeddingArtifacts,
+        emit_sampled_info: bool,
+    ) -> tuple[_ArchiveCandidate | None, MapElitesInsertionResult | None]:
+        metrics_map = self._coerce_metrics(metrics)
+        fitness = self._resolve_fitness(metrics_map, fitness_override)
+        if fitness is None or not math.isfinite(fitness):
+            return None, self._skip_ingest_result(
+                message="Fitness value is undefined; skipping archive update.",
+                commit_hash=commit_hash,
+                artifacts=artifacts,
+                emit_sampled_info=emit_sampled_info,
+            )
+
+        vector = self._clip_vector(final_embedding.vector, state)
+        if vector.shape[0] != self._target_dims:
+            message = (
+                "Final embedding dimensions mismatch with archive "
+                f"(expected {self._target_dims} got {vector.shape[0]})."
+            )
+            return None, self._skip_ingest_result(
+                message=message,
+                commit_hash=commit_hash,
+                artifacts=artifacts,
+                emit_sampled_info=emit_sampled_info,
+                log_level="error",
+            )
+
+        return _ArchiveCandidate(fitness=fitness, vector=vector), None
+
+    def _insert_archive_candidate_for_ingest(
+        self,
+        *,
+        state: IslandState,
+        island_id: str,
+        commit_hash: str,
+        candidate: _ArchiveCandidate,
+        update: SnapshotUpdate | None,
+        archive_replace_needed: bool,
+        artifacts: CommitEmbeddingArtifacts,
+        emit_sampled_info: bool,
+        stage_metrics: _IngestStageMetrics,
+    ) -> MapElitesInsertionResult:
+        archive_add_started_at = time.perf_counter()
+        status, delta, record = self._add_to_archive(
+            state=state,
+            island_id=island_id,
+            commit_hash=commit_hash,
+            fitness=candidate.fitness,
+            measures=candidate.vector,
+        )
+        stage_metrics.archive_add_ms += (time.perf_counter() - archive_add_started_at) * 1000.0
+
+        self._record_snapshot_cell_upsert(
+            update=update,
+            record=record,
+            archive_replace_needed=archive_replace_needed,
+        )
+        self._log_archive_insertion_outcome(
+            commit_hash=commit_hash,
+            island_id=island_id,
+            status=status,
+            delta=delta,
+            record=record,
+            emit_sampled_info=emit_sampled_info,
+        )
+        return self._build_archive_insertion_result(
+            status=status,
+            delta=delta,
+            record=record,
+            artifacts=artifacts,
+        )
+
+    @staticmethod
+    def _record_snapshot_cell_upsert(
+        *,
+        update: SnapshotUpdate | None,
+        record: MapElitesRecord | None,
+        archive_replace_needed: bool,
+    ) -> None:
+        if update is not None and record is not None and not archive_replace_needed:
+            update.cell_upsert = SnapshotCellUpsert(
+                cell_index=int(record.cell_index),
+                objective=float(record.fitness),
+                measures=tuple(float(v) for v in record.measures),
+                solution=tuple(float(v) for v in record.solution),
+                commit_hash=str(record.commit_hash),
+                timestamp=float(record.timestamp),
+            )
+
+    @staticmethod
+    def _log_archive_insertion_outcome(
+        *,
+        commit_hash: str,
+        island_id: str,
+        status: int,
+        delta: float,
+        record: MapElitesRecord | None,
+        emit_sampled_info: bool,
+    ) -> None:
+        if record:
+            if emit_sampled_info:
+                log.info(
+                    "Inserted commit {} into island {} (cell={} status={} Δ={:.4f})",
+                    commit_hash,
+                    island_id,
+                    record.cell_index,
+                    status,
+                    delta,
+                )
+        elif status < 0:
+            log.warning(
+                "Archive rejected commit {} for island {} (status={} Δ={:.4f})",
+                commit_hash,
+                island_id,
+                status,
+                delta,
+            )
+        else:
+            if emit_sampled_info:
+                log.info(
+                    "Commit {} did not improve island {} (status={} Δ={:.4f})",
+                    commit_hash,
+                    island_id,
+                    status,
+                    delta,
+                )
+
+    @staticmethod
+    def _build_archive_insertion_result(
+        *,
+        status: int,
+        delta: float,
+        record: MapElitesRecord | None,
+        artifacts: CommitEmbeddingArtifacts,
+    ) -> MapElitesInsertionResult:
+        message: str | None = None
+        if status <= 0:
+            if status == 0:
+                message = "Commit not inserted; objective below cell threshold."
+            else:
+                message = f"Commit not inserted; archive rejected insertion (status={status})."
+        elif record is None:
+            message = "Archive reported insertion success but no record could be retrieved."
+
+        return MapElitesInsertionResult(
+            status=status,
+            delta=delta,
+            record=record,
+            artifacts=artifacts,
+            message=message,
+        )
+
+    def _finalize_ingest_state(
+        self,
+        *,
+        island_id: str,
+        commit_hash: str,
+        state: IslandState,
+        update: SnapshotUpdate | None,
+        archive_replace_needed: bool,
+        result: MapElitesInsertionResult | None,
+        session: Session | None,
+        emit_sampled_info: bool,
+        stage_metrics: _IngestStageMetrics,
+    ) -> None:
+        snapshot_apply_started_at = time.perf_counter()
+        try:
+            if update is not None and archive_replace_needed and update.archive_replace is None:
+                update.archive_replace = self._build_archive_replace_payload(
+                    state=state,
+                    island_id=island_id,
+                )
+            self._persist_island_state(
+                island_id,
+                state,
+                update=update,
+                session=session,
+            )
+        finally:
+            stage_metrics.snapshot_apply_ms += (
+                time.perf_counter() - snapshot_apply_started_at
+            ) * 1000.0
+            self._emit_ingest_stage_metrics(
+                commit_hash=commit_hash,
+                island_id=island_id,
+                result=result,
+                emit_sampled_info=emit_sampled_info,
+                stage_metrics=stage_metrics,
+            )
+
+    @staticmethod
+    def _emit_ingest_stage_metrics(
+        *,
+        commit_hash: str,
+        island_id: str,
+        result: MapElitesInsertionResult | None,
+        emit_sampled_info: bool,
+        stage_metrics: _IngestStageMetrics,
+    ) -> None:
+        emit_stage_metrics = (
+            emit_sampled_info
+            or result is None
+            or stage_metrics.did_initial_fit
+            or stage_metrics.did_refit
+            or (result is not None and result.status < 0)
+        )
+        if emit_stage_metrics:
+            log.bind(
+                commit_hash=commit_hash,
+                island_id=island_id,
+                aggregate_hit_count=stage_metrics.aggregate_hit_count,
+                incremental_count=stage_metrics.incremental_count,
+                embedding_cache_miss_count=stage_metrics.embedding_cache_miss_count,
+                pca_fit_ms=round(stage_metrics.pca_fit_ms, 3),
+                pca_refit_ms=round(stage_metrics.pca_refit_ms, 3),
+                archive_add_ms=round(stage_metrics.archive_add_ms, 3),
+                snapshot_apply_ms=round(stage_metrics.snapshot_apply_ms, 3),
+                ingest_total_ms=round((time.perf_counter() - stage_metrics.started_at) * 1000.0, 3),
+                did_initial_fit=stage_metrics.did_initial_fit,
+                did_refit=stage_metrics.did_refit,
+                status_code=result.status if result is not None else None,
+            ).info("MAP-Elites ingest stage metrics")
 
     def _add_to_archive(
         self,
