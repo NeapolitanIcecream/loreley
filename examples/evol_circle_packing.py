@@ -27,7 +27,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 from loguru import logger
 from rich.console import Console
@@ -145,6 +145,13 @@ class WorkerProcessSpec:
     log_path: Path
     manifest_entry_path: Path
     worktree_base: Path
+
+
+@dataclass(slots=True)
+class WorkerSupervisorState:
+    stop_requested: bool = False
+    interrupted: bool = False
+    exit_code: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -730,6 +737,182 @@ def _open_supervisor_log(path: Path) -> Any:
     return path.open("w", encoding="utf-8")
 
 
+def _supervisor_manifest_path(phase: str) -> Path:
+    return _supervisor_dir(phase) / "workers-manifest.json"
+
+
+def _write_supervisor_manifest(
+    *,
+    path: Path,
+    phase: str,
+    specs: Sequence[WorkerProcessSpec],
+    processes: Sequence[subprocess.Popen[str]],
+    status: str,
+    started_at: str,
+    ended_at: str | None = None,
+) -> None:
+    _write_json(
+        path,
+        _collect_supervisor_manifest(
+            phase=phase,
+            specs=specs,
+            processes=processes,
+            status=status,
+            started_at=started_at,
+            ended_at=ended_at,
+        ),
+    )
+
+
+def _start_worker_process(
+    spec: WorkerProcessSpec,
+    log_handle: Any,
+) -> subprocess.Popen[str]:
+    return subprocess.Popen(
+        list(spec.command),
+        env=spec.env,
+        stdout=log_handle,
+        stderr=subprocess.STDOUT,
+        text=True,
+        start_new_session=True,
+    )
+
+
+def _start_worker_processes(
+    specs: Sequence[WorkerProcessSpec],
+    *,
+    processes: list[subprocess.Popen[str]],
+    log_handles: list[Any],
+) -> None:
+    for spec in specs:
+        handle = _open_supervisor_log(spec.log_path)
+        log_handles.append(handle)
+        proc = _start_worker_process(spec, handle)
+        processes.append(proc)
+        console.log(
+            "[bold green]Started worker process[/] instance={} pid={} log={}".format(
+                spec.instance_id,
+                proc.pid,
+                spec.log_path,
+            )
+        )
+
+
+def _request_worker_supervisor_stop(
+    *,
+    signum: int,
+    processes: Sequence[subprocess.Popen[str]],
+    state: WorkerSupervisorState,
+) -> None:
+    state.interrupted = True
+    state.stop_requested = True
+    state.exit_code = 130 if signum == signal.SIGINT else 143
+    console.log(f"[yellow]Signal received[/] signum={signum}; stopping workers...")
+    for proc in processes:
+        _terminate_process_group(proc)
+
+
+def _install_worker_signal_handlers(
+    *,
+    processes: Sequence[subprocess.Popen[str]],
+    state: WorkerSupervisorState,
+) -> dict[int, Any]:
+    def _request_stop(signum: int, _frame: Any) -> None:
+        _request_worker_supervisor_stop(
+            signum=signum,
+            processes=processes,
+            state=state,
+        )
+
+    previous_handlers = {
+        signal.SIGINT: signal.getsignal(signal.SIGINT),
+        signal.SIGTERM: signal.getsignal(signal.SIGTERM),
+    }
+    signal.signal(signal.SIGINT, _request_stop)
+    signal.signal(signal.SIGTERM, _request_stop)
+    return previous_handlers
+
+
+def _restore_signal_handlers(previous_handlers: dict[int, Any]) -> None:
+    for signum, handler in previous_handlers.items():
+        signal.signal(signum, handler)
+
+
+def _terminate_sibling_workers(
+    processes: Sequence[subprocess.Popen[str]],
+    failed_process: subprocess.Popen[str],
+) -> None:
+    for sibling in processes:
+        if sibling is not failed_process:
+            _terminate_process_group(sibling)
+
+
+def _track_worker_exit(
+    proc: subprocess.Popen[str],
+    *,
+    processes: Sequence[subprocess.Popen[str]],
+    state: WorkerSupervisorState,
+) -> bool:
+    returncode = proc.poll()
+    if returncode is None:
+        return True
+    if returncode != 0 and not state.stop_requested:
+        state.exit_code = int(returncode)
+        state.stop_requested = True
+        console.log(
+            "[bold red]Worker exited unexpectedly[/] pid={} returncode={}".format(
+                proc.pid,
+                returncode,
+            )
+        )
+        _terminate_sibling_workers(processes, proc)
+    return False
+
+
+def _monitor_worker_processes(
+    processes: Sequence[subprocess.Popen[str]],
+    *,
+    state: WorkerSupervisorState,
+    poll_interval_seconds: float = 1.0,
+) -> None:
+    while processes:
+        live_count = sum(
+            1
+            for proc in processes
+            if _track_worker_exit(proc, processes=processes, state=state)
+        )
+        if live_count == 0:
+            break
+        time.sleep(poll_interval_seconds)
+
+
+def _await_worker_shutdown(
+    processes: Sequence[subprocess.Popen[str]],
+    *,
+    timeout_seconds: float = 10.0,
+) -> None:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        if all(proc.poll() is not None for proc in processes):
+            break
+        time.sleep(0.25)
+    for proc in processes:
+        _terminate_process_group(proc, force=True)
+
+
+def _final_supervisor_status(state: WorkerSupervisorState) -> str:
+    if state.interrupted:
+        return "interrupted"
+    if state.exit_code:
+        return "failed"
+    return "completed"
+
+
+def _close_log_handles(log_handles: Sequence[Any]) -> None:
+    for handle in log_handles:
+        handle.close()
+
+
 def _run_workers(
     *,
     phase: str,
@@ -745,114 +928,45 @@ def _run_workers(
         no_preflight=no_preflight,
         preflight_timeout_seconds=preflight_timeout_seconds,
     )
-    supervisor_dir = _supervisor_dir(phase)
-    manifest_path = supervisor_dir / "workers-manifest.json"
+    manifest_path = _supervisor_manifest_path(phase)
     started_at = _now_utc_iso()
-
-    log_handles: list[Any] = []
     processes: list[subprocess.Popen[str]] = []
-    stop_requested = False
-    interrupted = False
-    exit_code = 0
-
-    def _request_stop(signum: int, _frame: Any) -> None:
-        nonlocal stop_requested, interrupted, exit_code
-        interrupted = True
-        stop_requested = True
-        exit_code = 130 if signum == signal.SIGINT else 143
-        console.log(f"[yellow]Signal received[/] signum={signum}; stopping workers...")
-        for proc in processes:
-            _terminate_process_group(proc)
-
-    previous_handlers = {
-        signal.SIGINT: signal.getsignal(signal.SIGINT),
-        signal.SIGTERM: signal.getsignal(signal.SIGTERM),
-    }
-    signal.signal(signal.SIGINT, _request_stop)
-    signal.signal(signal.SIGTERM, _request_stop)
+    log_handles: list[Any] = []
+    state = WorkerSupervisorState()
+    previous_handlers = _install_worker_signal_handlers(processes=processes, state=state)
 
     try:
-        for spec in specs:
-            handle = _open_supervisor_log(spec.log_path)
-            log_handles.append(handle)
-            proc = subprocess.Popen(
-                list(spec.command),
-                env=spec.env,
-                stdout=handle,
-                stderr=subprocess.STDOUT,
-                text=True,
-                start_new_session=True,
-            )
-            processes.append(proc)
-            console.log(
-                "[bold green]Started worker process[/] instance={} pid={} log={}".format(
-                    spec.instance_id,
-                    proc.pid,
-                    spec.log_path,
-                )
-            )
-
-        _write_json(
-            manifest_path,
-            _collect_supervisor_manifest(
-                phase=phase,
-                specs=specs,
-                processes=processes,
-                status="running",
-                started_at=started_at,
-            ),
+        _start_worker_processes(
+            specs,
+            processes=processes,
+            log_handles=log_handles,
+        )
+        _write_supervisor_manifest(
+            path=manifest_path,
+            phase=phase,
+            specs=specs,
+            processes=processes,
+            status="running",
+            started_at=started_at,
         )
 
-        while processes:
-            live_count = 0
-            for proc in processes:
-                returncode = proc.poll()
-                if returncode is None:
-                    live_count += 1
-                    continue
-                if returncode != 0 and not stop_requested:
-                    exit_code = int(returncode)
-                    stop_requested = True
-                    console.log(
-                        "[bold red]Worker exited unexpectedly[/] pid={} returncode={}".format(
-                            proc.pid,
-                            returncode,
-                        )
-                    )
-                    for sibling in processes:
-                        if sibling is not proc:
-                            _terminate_process_group(sibling)
-            if live_count == 0:
-                break
-            time.sleep(1.0)
+        _monitor_worker_processes(processes, state=state)
+        if state.stop_requested:
+            _await_worker_shutdown(processes)
 
-        if stop_requested:
-            deadline = time.time() + 10.0
-            while time.time() < deadline:
-                if all(proc.poll() is not None for proc in processes):
-                    break
-                time.sleep(0.25)
-            for proc in processes:
-                _terminate_process_group(proc, force=True)
-
-        final_status = "interrupted" if interrupted else ("failed" if exit_code else "completed")
-        _write_json(
-            manifest_path,
-            _collect_supervisor_manifest(
-                phase=phase,
-                specs=specs,
-                processes=processes,
-                status=final_status,
-                started_at=started_at,
-                ended_at=_now_utc_iso(),
-            ),
+        _write_supervisor_manifest(
+            path=manifest_path,
+            phase=phase,
+            specs=specs,
+            processes=processes,
+            status=_final_supervisor_status(state),
+            started_at=started_at,
+            ended_at=_now_utc_iso(),
         )
-        return exit_code
+        return state.exit_code
     finally:
-        for signum, handler in previous_handlers.items():
-            signal.signal(signum, handler)
-        for handle in log_handles:
-            handle.close()
+        _restore_signal_handlers(previous_handlers)
+        _close_log_handles(log_handles)
 
 
 def _run_api(
@@ -1007,7 +1121,35 @@ def _collect_reference_stats(*, best_commit_hash: str | None, runs: int) -> list
     return payloads
 
 
-def _load_experiment_jobs() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _load_metrics_by_card_id(
+    *,
+    session: Any,
+    cards: Sequence[Any],
+    metric_model: Any,
+    select_fn: Any,
+) -> dict[str, dict[str, float]]:
+    metrics_by_card_id: dict[str, dict[str, float]] = {}
+    if not cards:
+        return metrics_by_card_id
+
+    card_ids = [card.id for card in cards]
+    metrics = session.execute(
+        select_fn(metric_model).where(metric_model.commit_card_id.in_(card_ids))
+    ).scalars().all()
+    for metric in metrics:
+        metrics_by_card_id.setdefault(str(metric.commit_card_id), {})[metric.name] = float(
+            metric.value
+        )
+    return metrics_by_card_id
+
+
+def _load_experiment_rows() -> tuple[
+    list[Any],
+    list[Any],
+    list[Any],
+    list[Any],
+    dict[str, dict[str, float]],
+]:
     from sqlalchemy import select
 
     from loreley.db.base import session_scope
@@ -1018,93 +1160,415 @@ def _load_experiment_jobs() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]
         artifacts_rows = session.execute(select(JobArtifacts)).scalars().all()
         cards = session.execute(select(CommitCard).where(CommitCard.job_id.is_not(None))).scalars().all()
         archive_cells = session.execute(select(MapElitesArchiveCell)).scalars().all()
-
-        card_by_job_id = {
-            str(card.job_id): card
-            for card in cards
-            if getattr(card, "job_id", None) is not None
-        }
-        metrics_by_card_id: dict[str, dict[str, float]] = {}
-        if cards:
-            card_ids = [card.id for card in cards]
-            metrics = session.execute(
-                select(Metric).where(Metric.commit_card_id.in_(card_ids))
-            ).scalars().all()
-            for metric in metrics:
-                metrics_by_card_id.setdefault(str(metric.commit_card_id), {})[metric.name] = float(
-                    metric.value
-                )
-
-    artifacts_by_job_id = {str(row.job_id): row for row in artifacts_rows}
-    job_payloads: list[dict[str, Any]] = []
-    for job in jobs:
-        job_id = str(job.id)
-        artifact_row = artifacts_by_job_id.get(job_id)
-        planning_payload = _read_json(
-            getattr(artifact_row, "planning_plan_json_path", None) if artifact_row else None
-        )
-        coding_payload = _read_json(
-            getattr(artifact_row, "coding_execution_json_path", None) if artifact_row else None
-        )
-        evaluation_payload = _read_json(
-            getattr(artifact_row, "evaluation_json_path", None) if artifact_row else None
-        )
-        worker = (
-            evaluation_payload.get("worker")
-            or coding_payload.get("worker")
-            or planning_payload.get("worker")
-            or {}
-        )
-        card = card_by_job_id.get(job_id)
-        metrics = metrics_by_card_id.get(str(card.id), {}) if card is not None else {}
-        status_value = getattr(job.status, "value", job.status)
-        job_payloads.append(
-            {
-                "job_id": job_id,
-                "status": str(status_value),
-                "is_seed_job": bool(getattr(job, "is_seed_job", False)),
-                "base_commit_hash": job.base_commit_hash,
-                "result_commit_hash": job.result_commit_hash,
-                "last_error": job.last_error,
-                "created_at": _dt_iso(job.created_at),
-                "started_at": _dt_iso(job.started_at),
-                "completed_at": _dt_iso(job.completed_at),
-                "_created_ts": _timestamp(job.created_at),
-                "_started_ts": _timestamp(job.started_at),
-                "_completed_ts": _timestamp(job.completed_at),
-                "total_duration_seconds": _duration_seconds(job.started_at, job.completed_at),
-                "planning_duration_seconds": (
-                    planning_payload.get("backend", {}) or {}
-                ).get("duration_seconds"),
-                "coding_duration_seconds": (
-                    coding_payload.get("backend", {}) or {}
-                ).get("duration_seconds"),
-                "evaluator_duration_seconds": (
-                    evaluation_payload.get("extra", {}) or {}
-                ).get("evaluator_duration_seconds"),
-                "planning_attempts": (planning_payload.get("backend", {}) or {}).get("attempts"),
-                "coding_attempts": (coding_payload.get("backend", {}) or {}).get("attempts"),
-                "worker_instance_id": worker.get("instance_id"),
-                "worker_pid": worker.get("pid"),
-                "sum_radii": metrics.get("sum_radii"),
-                "packing_density": metrics.get("packing_density"),
-                "runtime_p50_ms": metrics.get("runtime_p50_ms"),
-                "metrics": metrics,
-            }
+        metrics_by_card_id = _load_metrics_by_card_id(
+            session=session,
+            cards=cards,
+            metric_model=Metric,
+            select_fn=select,
         )
 
-    archive_payloads = [
-        {
-            "cell_index": int(cell.cell_index),
-            "commit_hash": cell.commit_hash,
-            "objective": float(cell.objective),
-            "timestamp": float(cell.timestamp),
-            "created_at": _dt_iso(cell.created_at),
-            "updated_at": _dt_iso(cell.updated_at),
-        }
-        for cell in archive_cells
+    return jobs, artifacts_rows, cards, archive_cells, metrics_by_card_id
+
+
+def _cards_by_job_id(cards: Sequence[Any]) -> dict[str, Any]:
+    return {
+        str(card.job_id): card
+        for card in cards
+        if getattr(card, "job_id", None) is not None
+    }
+
+
+def _artifacts_by_job_id(artifacts_rows: Sequence[Any]) -> dict[str, Any]:
+    return {str(row.job_id): row for row in artifacts_rows}
+
+
+def _read_job_artifact_payloads(
+    artifact_row: Any | None,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    planning_payload = _read_json(
+        getattr(artifact_row, "planning_plan_json_path", None) if artifact_row else None
+    )
+    coding_payload = _read_json(
+        getattr(artifact_row, "coding_execution_json_path", None) if artifact_row else None
+    )
+    evaluation_payload = _read_json(
+        getattr(artifact_row, "evaluation_json_path", None) if artifact_row else None
+    )
+    return planning_payload, coding_payload, evaluation_payload
+
+
+def _artifact_worker_payload(
+    planning_payload: dict[str, Any],
+    coding_payload: dict[str, Any],
+    evaluation_payload: dict[str, Any],
+) -> dict[str, Any]:
+    return (
+        evaluation_payload.get("worker")
+        or coding_payload.get("worker")
+        or planning_payload.get("worker")
+        or {}
+    )
+
+
+def _payload_section(payload: dict[str, Any], section: str) -> dict[str, Any]:
+    return payload.get(section, {}) or {}
+
+
+def _experiment_job_metrics(
+    *,
+    card: Any | None,
+    metrics_by_card_id: dict[str, dict[str, float]],
+) -> dict[str, float]:
+    return metrics_by_card_id.get(str(card.id), {}) if card is not None else {}
+
+
+def _build_experiment_job_payload(
+    *,
+    job: Any,
+    artifact_row: Any | None,
+    card: Any | None,
+    metrics_by_card_id: dict[str, dict[str, float]],
+) -> dict[str, Any]:
+    planning_payload, coding_payload, evaluation_payload = _read_job_artifact_payloads(
+        artifact_row
+    )
+    planning_backend = _payload_section(planning_payload, "backend")
+    coding_backend = _payload_section(coding_payload, "backend")
+    evaluation_extra = _payload_section(evaluation_payload, "extra")
+    worker = _artifact_worker_payload(
+        planning_payload,
+        coding_payload,
+        evaluation_payload,
+    )
+    metrics = _experiment_job_metrics(
+        card=card,
+        metrics_by_card_id=metrics_by_card_id,
+    )
+    status_value = getattr(job.status, "value", job.status)
+    return {
+        "job_id": str(job.id),
+        "status": str(status_value),
+        "is_seed_job": bool(getattr(job, "is_seed_job", False)),
+        "base_commit_hash": job.base_commit_hash,
+        "result_commit_hash": job.result_commit_hash,
+        "last_error": job.last_error,
+        "created_at": _dt_iso(job.created_at),
+        "started_at": _dt_iso(job.started_at),
+        "completed_at": _dt_iso(job.completed_at),
+        "_created_ts": _timestamp(job.created_at),
+        "_started_ts": _timestamp(job.started_at),
+        "_completed_ts": _timestamp(job.completed_at),
+        "total_duration_seconds": _duration_seconds(job.started_at, job.completed_at),
+        "planning_duration_seconds": planning_backend.get("duration_seconds"),
+        "coding_duration_seconds": coding_backend.get("duration_seconds"),
+        "evaluator_duration_seconds": evaluation_extra.get("evaluator_duration_seconds"),
+        "planning_attempts": planning_backend.get("attempts"),
+        "coding_attempts": coding_backend.get("attempts"),
+        "worker_instance_id": worker.get("instance_id"),
+        "worker_pid": worker.get("pid"),
+        "sum_radii": metrics.get("sum_radii"),
+        "packing_density": metrics.get("packing_density"),
+        "runtime_p50_ms": metrics.get("runtime_p50_ms"),
+        "metrics": metrics,
+    }
+
+
+def _build_experiment_job_payloads(
+    *,
+    jobs: Sequence[Any],
+    artifacts_rows: Sequence[Any],
+    cards: Sequence[Any],
+    metrics_by_card_id: dict[str, dict[str, float]],
+) -> list[dict[str, Any]]:
+    artifacts = _artifacts_by_job_id(artifacts_rows)
+    cards_by_job = _cards_by_job_id(cards)
+    return [
+        _build_experiment_job_payload(
+            job=job,
+            artifact_row=artifacts.get(str(job.id)),
+            card=cards_by_job.get(str(job.id)),
+            metrics_by_card_id=metrics_by_card_id,
+        )
+        for job in jobs
     ]
-    return job_payloads, archive_payloads
+
+
+def _build_archive_payload(cell: Any) -> dict[str, Any]:
+    return {
+        "cell_index": int(cell.cell_index),
+        "commit_hash": cell.commit_hash,
+        "objective": float(cell.objective),
+        "timestamp": float(cell.timestamp),
+        "created_at": _dt_iso(cell.created_at),
+        "updated_at": _dt_iso(cell.updated_at),
+    }
+
+
+def _build_archive_payloads(archive_cells: Sequence[Any]) -> list[dict[str, Any]]:
+    return [_build_archive_payload(cell) for cell in archive_cells]
+
+
+def _load_experiment_jobs() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    jobs, artifacts_rows, cards, archive_cells, metrics_by_card_id = _load_experiment_rows()
+    return (
+        _build_experiment_job_payloads(
+            jobs=jobs,
+            artifacts_rows=artifacts_rows,
+            cards=cards,
+            metrics_by_card_id=metrics_by_card_id,
+        ),
+        _build_archive_payloads(archive_cells),
+    )
+
+
+def _jobs_with_status(
+    jobs: Sequence[dict[str, Any]],
+    status: str,
+) -> list[dict[str, Any]]:
+    return [job for job in jobs if job.get("status") == status]
+
+
+def _build_jobs_summary(jobs: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    total_jobs = len(jobs)
+    succeeded_jobs = _jobs_with_status(jobs, "succeeded")
+    failed_jobs = _jobs_with_status(jobs, "failed")
+    seed_jobs = [job for job in jobs if job.get("is_seed_job")]
+    non_seed_jobs = [job for job in jobs if not job.get("is_seed_job")]
+    seed_success = [job for job in succeeded_jobs if job.get("is_seed_job")]
+    non_seed_success = [job for job in succeeded_jobs if not job.get("is_seed_job")]
+    return {
+        "total": total_jobs,
+        "succeeded": len(succeeded_jobs),
+        "failed": len(failed_jobs),
+        "seed_total": len(seed_jobs),
+        "non_seed_total": len(non_seed_jobs),
+        "seed_success_rate": (
+            len(seed_success) / len(seed_jobs) if seed_jobs else None
+        ),
+        "non_seed_success_rate": (
+            len(non_seed_success) / len(non_seed_jobs) if non_seed_jobs else None
+        ),
+        "failure_rate": (len(failed_jobs) / total_jobs) if total_jobs else None,
+    }
+
+
+def _numeric_job_samples(
+    jobs: Sequence[dict[str, Any]],
+    field: str,
+) -> list[float]:
+    return [float(job[field]) for job in jobs if job.get(field) is not None]
+
+
+def _build_timing_summary(jobs: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "total_duration_seconds": _stats(
+            _numeric_job_samples(jobs, "total_duration_seconds")
+        ),
+        "planning_duration_seconds": _stats(
+            _numeric_job_samples(jobs, "planning_duration_seconds")
+        ),
+        "coding_duration_seconds": _stats(
+            _numeric_job_samples(jobs, "coding_duration_seconds")
+        ),
+        "evaluator_duration_seconds": _stats(
+            _numeric_job_samples(jobs, "evaluator_duration_seconds")
+        ),
+        "runtime_p50_ms": _stats(_numeric_job_samples(jobs, "runtime_p50_ms")),
+        "planning_attempts": _stats(_numeric_job_samples(jobs, "planning_attempts")),
+        "coding_attempts": _stats(_numeric_job_samples(jobs, "coding_attempts")),
+    }
+
+
+def _job_order_timestamp(job: dict[str, Any]) -> float:
+    return float(job.get("_completed_ts") or job.get("_created_ts") or 0.0)
+
+
+def _ordered_success_jobs(jobs: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        [
+            job
+            for job in jobs
+            if job.get("status") == "succeeded" and job.get("sum_radii") is not None
+        ],
+        key=lambda item: (
+            _job_order_timestamp(item),
+            item.get("job_id") or "",
+        ),
+    )
+
+
+def _experiment_start_timestamp(jobs: Sequence[dict[str, Any]]) -> float | None:
+    return min(
+        (
+            value
+            for job in jobs
+            for value in (job.get("_started_ts"), job.get("_created_ts"))
+            if value is not None
+        ),
+        default=None,
+    )
+
+
+def _build_trajectory_point(
+    *,
+    index: int,
+    job: dict[str, Any],
+    experiment_start: float | None,
+) -> dict[str, Any]:
+    return {
+        "index": index,
+        "job_id": job.get("job_id"),
+        "commit_hash": job.get("result_commit_hash"),
+        "worker_instance_id": job.get("worker_instance_id"),
+        "is_seed_job": bool(job.get("is_seed_job")),
+        "sum_radii": job.get("sum_radii"),
+        "packing_density": job.get("packing_density"),
+        "total_duration_seconds": job.get("total_duration_seconds"),
+        "completed_at": job.get("completed_at"),
+        "elapsed_minutes_from_start": (
+            round((_job_order_timestamp(job) - experiment_start) / 60.0, 3)
+            if experiment_start is not None
+            else None
+        ),
+    }
+
+
+def _build_objective_trajectory(
+    ordered_success: Sequence[dict[str, Any]],
+    *,
+    experiment_start: float | None,
+) -> list[dict[str, Any]]:
+    return [
+        _build_trajectory_point(
+            index=index,
+            job=job,
+            experiment_start=experiment_start,
+        )
+        for index, job in enumerate(ordered_success, start=1)
+    ]
+
+
+def _select_best_job(
+    ordered_success: Sequence[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not ordered_success:
+        return None
+    return max(ordered_success, key=lambda item: float(item.get("sum_radii") or 0.0))
+
+
+def _baseline_sum_radii(references: Sequence[dict[str, Any]]) -> Any:
+    root_reference = next((item for item in references if item.get("label") == "root"), None)
+    if not root_reference:
+        return None
+    return (root_reference.get("target_metrics") or {}).get("sum_radii")
+
+
+def _first_trajectory_point_above_baseline(
+    trajectory: Sequence[dict[str, Any]],
+    baseline_sum_radii: Any,
+) -> dict[str, Any] | None:
+    if baseline_sum_radii is None:
+        return None
+    return next(
+        (
+            point
+            for point in trajectory
+            if point.get("sum_radii") is not None
+            and float(point["sum_radii"]) > float(baseline_sum_radii)
+        ),
+        None,
+    )
+
+
+def _empty_worker_distribution_bucket(worker_id: str) -> dict[str, Any]:
+    return {
+        "worker_instance_id": worker_id,
+        "jobs_total": 0,
+        "jobs_succeeded": 0,
+        "jobs_failed": 0,
+        "best_sum_radii": None,
+        "total_duration_seconds": [],
+    }
+
+
+def _record_worker_job(bucket: dict[str, Any], job: dict[str, Any]) -> None:
+    bucket["jobs_total"] += 1
+    if job.get("status") == "succeeded":
+        bucket["jobs_succeeded"] += 1
+    if job.get("status") == "failed":
+        bucket["jobs_failed"] += 1
+    if job.get("total_duration_seconds") is not None:
+        bucket["total_duration_seconds"].append(float(job["total_duration_seconds"]))
+    if job.get("sum_radii") is not None:
+        candidate = float(job["sum_radii"])
+        current = bucket.get("best_sum_radii")
+        bucket["best_sum_radii"] = candidate if current is None else max(float(current), candidate)
+
+
+def _worker_throughput_item(bucket: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "worker_instance_id": bucket["worker_instance_id"],
+        "jobs_total": bucket["jobs_total"],
+        "jobs_succeeded": bucket["jobs_succeeded"],
+        "jobs_failed": bucket["jobs_failed"],
+        "best_sum_radii": bucket["best_sum_radii"],
+        "total_duration_seconds": _stats(bucket["total_duration_seconds"]),
+    }
+
+
+def _build_worker_throughput(jobs: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    worker_distribution: dict[str, dict[str, Any]] = {}
+    for job in jobs:
+        worker_instance_id = job.get("worker_instance_id")
+        if not worker_instance_id:
+            continue
+        worker_id = str(worker_instance_id)
+        bucket = worker_distribution.setdefault(
+            worker_id,
+            _empty_worker_distribution_bucket(worker_id),
+        )
+        _record_worker_job(bucket, job)
+
+    worker_throughput = [
+        _worker_throughput_item(bucket)
+        for bucket in worker_distribution.values()
+    ]
+    worker_throughput.sort(key=lambda item: item["worker_instance_id"])
+    return worker_throughput
+
+
+def _failure_summaries(failed_jobs: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "job_id": job.get("job_id"),
+            "worker_instance_id": job.get("worker_instance_id"),
+            "last_error": job.get("last_error"),
+        }
+        for job in failed_jobs
+    ]
+
+
+def _build_archive_summary(archive_cells: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    archive_summary = {
+        "occupied_cells": len(archive_cells),
+        "best_objective": max((float(cell["objective"]) for cell in archive_cells), default=None),
+        "best_commit_hash": None,
+    }
+    if archive_cells:
+        best_cell = max(archive_cells, key=lambda cell: float(cell["objective"]))
+        archive_summary["best_commit_hash"] = best_cell.get("commit_hash")
+    return archive_summary
+
+
+def _best_job_summary(best_job: dict[str, Any] | None) -> dict[str, Any]:
+    return {
+        "job_id": best_job.get("job_id") if best_job else None,
+        "commit_hash": best_job.get("result_commit_hash") if best_job else None,
+        "sum_radii": best_job.get("sum_radii") if best_job else None,
+        "packing_density": best_job.get("packing_density") if best_job else None,
+        "runtime_p50_ms": best_job.get("runtime_p50_ms") if best_job else None,
+        "worker_instance_id": best_job.get("worker_instance_id") if best_job else None,
+    }
 
 
 def _build_report_payload(
@@ -1115,217 +1579,94 @@ def _build_report_payload(
     archive_cells: Sequence[dict[str, Any]],
     references: Sequence[dict[str, Any]],
 ) -> dict[str, Any]:
-    total_jobs = len(jobs)
-    succeeded_jobs = [job for job in jobs if job.get("status") == "succeeded"]
-    failed_jobs = [job for job in jobs if job.get("status") == "failed"]
-    seed_jobs = [job for job in jobs if job.get("is_seed_job")]
-    non_seed_jobs = [job for job in jobs if not job.get("is_seed_job")]
-    seed_success = [job for job in succeeded_jobs if job.get("is_seed_job")]
-    non_seed_success = [job for job in succeeded_jobs if not job.get("is_seed_job")]
-
-    total_durations = [
-        float(job["total_duration_seconds"])
-        for job in jobs
-        if job.get("total_duration_seconds") is not None
-    ]
-    planning_durations = [
-        float(job["planning_duration_seconds"])
-        for job in jobs
-        if job.get("planning_duration_seconds") is not None
-    ]
-    coding_durations = [
-        float(job["coding_duration_seconds"])
-        for job in jobs
-        if job.get("coding_duration_seconds") is not None
-    ]
-    evaluator_durations = [
-        float(job["evaluator_duration_seconds"])
-        for job in jobs
-        if job.get("evaluator_duration_seconds") is not None
-    ]
-    runtime_p50_values = [
-        float(job["runtime_p50_ms"])
-        for job in jobs
-        if job.get("runtime_p50_ms") is not None
-    ]
-    planning_attempts = [
-        float(job["planning_attempts"])
-        for job in jobs
-        if job.get("planning_attempts") is not None
-    ]
-    coding_attempts = [
-        float(job["coding_attempts"])
-        for job in jobs
-        if job.get("coding_attempts") is not None
-    ]
-
-    ordered_success = sorted(
-        [job for job in succeeded_jobs if job.get("sum_radii") is not None],
-        key=lambda item: (
-            item.get("_completed_ts") or item.get("_created_ts") or 0.0,
-            item.get("job_id") or "",
-        ),
+    ordered_success = _ordered_success_jobs(jobs)
+    trajectory = _build_objective_trajectory(
+        ordered_success,
+        experiment_start=_experiment_start_timestamp(jobs),
     )
-    experiment_start = min(
-        (
-            value
-            for job in jobs
-            for value in (job.get("_started_ts"), job.get("_created_ts"))
-            if value is not None
-        ),
-        default=None,
+    best_job = _select_best_job(ordered_success)
+    first_above_baseline = _first_trajectory_point_above_baseline(
+        trajectory,
+        _baseline_sum_radii(references),
     )
-    trajectory = [
-        {
-            "index": index,
-            "job_id": job.get("job_id"),
-            "commit_hash": job.get("result_commit_hash"),
-            "worker_instance_id": job.get("worker_instance_id"),
-            "is_seed_job": bool(job.get("is_seed_job")),
-            "sum_radii": job.get("sum_radii"),
-            "packing_density": job.get("packing_density"),
-            "total_duration_seconds": job.get("total_duration_seconds"),
-            "completed_at": job.get("completed_at"),
-            "elapsed_minutes_from_start": (
-                round(
-                    (
-                        (job.get("_completed_ts") or job.get("_created_ts") or 0.0)
-                        - experiment_start
-                    )
-                    / 60.0,
-                    3,
-                )
-                if experiment_start is not None
-                else None
-            ),
-        }
-        for index, job in enumerate(ordered_success, start=1)
-    ]
-
-    best_job = None
-    if ordered_success:
-        best_job = max(ordered_success, key=lambda item: float(item.get("sum_radii") or 0.0))
-
-    root_reference = next((item for item in references if item.get("label") == "root"), None)
-    baseline_sum_radii = None
-    if root_reference:
-        baseline_sum_radii = (
-            (root_reference.get("target_metrics") or {}).get("sum_radii")
-        )
-    first_above_baseline = None
-    if baseline_sum_radii is not None:
-        first_above_baseline = next(
-            (
-                point
-                for point in trajectory
-                if point.get("sum_radii") is not None
-                and float(point["sum_radii"]) > float(baseline_sum_radii)
-            ),
-            None,
-        )
-
-    worker_distribution: dict[str, dict[str, Any]] = {}
-    for job in jobs:
-        worker_instance_id = job.get("worker_instance_id")
-        if not worker_instance_id:
-            continue
-        worker_id = str(worker_instance_id)
-        bucket = worker_distribution.setdefault(
-            worker_id,
-            {
-                "worker_instance_id": worker_id,
-                "jobs_total": 0,
-                "jobs_succeeded": 0,
-                "jobs_failed": 0,
-                "best_sum_radii": None,
-                "total_duration_seconds": [],
-            },
-        )
-        bucket["jobs_total"] += 1
-        if job.get("status") == "succeeded":
-            bucket["jobs_succeeded"] += 1
-        if job.get("status") == "failed":
-            bucket["jobs_failed"] += 1
-        if job.get("total_duration_seconds") is not None:
-            bucket["total_duration_seconds"].append(float(job["total_duration_seconds"]))
-        if job.get("sum_radii") is not None:
-            candidate = float(job["sum_radii"])
-            current = bucket.get("best_sum_radii")
-            bucket["best_sum_radii"] = candidate if current is None else max(float(current), candidate)
-    worker_throughput = []
-    for bucket in worker_distribution.values():
-        worker_throughput.append(
-            {
-                "worker_instance_id": bucket["worker_instance_id"],
-                "jobs_total": bucket["jobs_total"],
-                "jobs_succeeded": bucket["jobs_succeeded"],
-                "jobs_failed": bucket["jobs_failed"],
-                "best_sum_radii": bucket["best_sum_radii"],
-                "total_duration_seconds": _stats(bucket["total_duration_seconds"]),
-            }
-        )
-    worker_throughput.sort(key=lambda item: item["worker_instance_id"])
-
-    failures = [
-        {
-            "job_id": job.get("job_id"),
-            "worker_instance_id": job.get("worker_instance_id"),
-            "last_error": job.get("last_error"),
-        }
-        for job in failed_jobs
-    ]
-
-    archive_summary = {
-        "occupied_cells": len(archive_cells),
-        "best_objective": max((float(cell["objective"]) for cell in archive_cells), default=None),
-        "best_commit_hash": None,
-    }
-    if archive_cells:
-        best_cell = max(archive_cells, key=lambda cell: float(cell["objective"]))
-        archive_summary["best_commit_hash"] = best_cell.get("commit_hash")
 
     return {
         "phase": phase,
         "experiment_id": experiment_id,
         "generated_at": _now_utc_iso(),
-        "jobs": {
-            "total": total_jobs,
-            "succeeded": len(succeeded_jobs),
-            "failed": len(failed_jobs),
-            "seed_total": len(seed_jobs),
-            "non_seed_total": len(non_seed_jobs),
-            "seed_success_rate": (
-                len(seed_success) / len(seed_jobs) if seed_jobs else None
-            ),
-            "non_seed_success_rate": (
-                len(non_seed_success) / len(non_seed_jobs) if non_seed_jobs else None
-            ),
-            "failure_rate": (len(failed_jobs) / total_jobs) if total_jobs else None,
-        },
-        "timing": {
-            "total_duration_seconds": _stats(total_durations),
-            "planning_duration_seconds": _stats(planning_durations),
-            "coding_duration_seconds": _stats(coding_durations),
-            "evaluator_duration_seconds": _stats(evaluator_durations),
-            "runtime_p50_ms": _stats(runtime_p50_values),
-            "planning_attempts": _stats(planning_attempts),
-            "coding_attempts": _stats(coding_attempts),
-        },
-        "best": {
-            "job_id": best_job.get("job_id") if best_job else None,
-            "commit_hash": best_job.get("result_commit_hash") if best_job else None,
-            "sum_radii": best_job.get("sum_radii") if best_job else None,
-            "packing_density": best_job.get("packing_density") if best_job else None,
-            "runtime_p50_ms": best_job.get("runtime_p50_ms") if best_job else None,
-            "worker_instance_id": best_job.get("worker_instance_id") if best_job else None,
-        },
-        "archive": archive_summary,
+        "jobs": _build_jobs_summary(jobs),
+        "timing": _build_timing_summary(jobs),
+        "best": _best_job_summary(best_job),
+        "archive": _build_archive_summary(archive_cells),
         "first_above_baseline": first_above_baseline,
-        "worker_throughput": worker_throughput,
+        "worker_throughput": _build_worker_throughput(jobs),
         "trajectory": trajectory,
         "references": list(references),
-        "failures": failures,
+        "failures": _failure_summaries(_jobs_with_status(jobs, "failed")),
     }
+
+
+def _completed_jobs_for_expansion(jobs: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        [
+            job
+            for job in jobs
+            if job.get("completed_at") is not None
+            and job.get("status") in {"succeeded", "failed"}
+        ],
+        key=lambda item: (
+            item.get("_completed_ts") or item.get("_created_ts") or 0.0,
+            item.get("job_id") or "",
+        ),
+    )
+
+
+def _expansion_duration_median(jobs: Sequence[dict[str, Any]]) -> float | None:
+    return _percentile(
+        [
+            float(job["total_duration_seconds"])
+            for job in jobs
+            if job.get("total_duration_seconds") is not None
+        ],
+        0.50,
+    )
+
+
+def _failed_expansion_jobs_count(jobs: Sequence[dict[str, Any]]) -> int:
+    return sum(1 for job in jobs if job.get("status") == "failed")
+
+
+def _expansion_failure_rate(
+    *,
+    failed_jobs_count: int,
+    total_jobs_count: int,
+) -> float | None:
+    if not total_jobs_count:
+        return None
+    return float(failed_jobs_count / total_jobs_count)
+
+
+def _main_expansion_reasons(
+    *,
+    considered_jobs_count: int,
+    median_total_duration_seconds: float | None,
+    failure_rate: float | None,
+    wall_clock_hours_remaining: float,
+) -> list[str]:
+    reasons: list[str] = []
+    if considered_jobs_count < 24:
+        reasons.append("fewer than 24 completed main jobs are available")
+    if median_total_duration_seconds is None:
+        reasons.append("median total job duration is unavailable")
+    elif median_total_duration_seconds > 15.0 * 60.0:
+        reasons.append("median total job duration exceeds 15 minutes")
+    if failure_rate is None:
+        reasons.append("failure rate is unavailable")
+    elif failure_rate > 0.15:
+        reasons.append("failure rate exceeds 15%")
+    if float(wall_clock_hours_remaining) < 5.0:
+        reasons.append("wall-clock budget remaining is under 5 hours")
+    return reasons
 
 
 def _evaluate_main_expansion(
@@ -1348,47 +1689,19 @@ def _evaluate_main_expansion(
             reasons=("main is already expanded to 96 jobs or beyond",),
         )
 
-    completed = sorted(
-        [
-            job
-            for job in jobs
-            if job.get("completed_at") is not None
-            and job.get("status") in {"succeeded", "failed"}
-        ],
-        key=lambda item: (
-            item.get("_completed_ts") or item.get("_created_ts") or 0.0,
-            item.get("job_id") or "",
-        ),
+    considered = _completed_jobs_for_expansion(jobs)[:24]
+    median_total_duration_seconds = _expansion_duration_median(considered)
+    failed_jobs_considered = _failed_expansion_jobs_count(considered)
+    failure_rate = _expansion_failure_rate(
+        failed_jobs_count=failed_jobs_considered,
+        total_jobs_count=len(considered),
     )
-    considered = completed[:24]
-    reasons: list[str] = []
-    median_total_duration_seconds = _percentile(
-        [
-            float(job["total_duration_seconds"])
-            for job in considered
-            if job.get("total_duration_seconds") is not None
-        ],
-        0.50,
+    reasons = _main_expansion_reasons(
+        considered_jobs_count=len(considered),
+        median_total_duration_seconds=median_total_duration_seconds,
+        failure_rate=failure_rate,
+        wall_clock_hours_remaining=wall_clock_hours_remaining,
     )
-    failed_jobs_considered = sum(1 for job in considered if job.get("status") == "failed")
-    failure_rate = (
-        float(failed_jobs_considered / len(considered))
-        if considered
-        else None
-    )
-
-    if len(considered) < 24:
-        reasons.append("fewer than 24 completed main jobs are available")
-    if median_total_duration_seconds is None:
-        reasons.append("median total job duration is unavailable")
-    elif median_total_duration_seconds > 15.0 * 60.0:
-        reasons.append("median total job duration exceeds 15 minutes")
-    if failure_rate is None:
-        reasons.append("failure rate is unavailable")
-    elif failure_rate > 0.15:
-        reasons.append("failure rate exceeds 15%")
-    if float(wall_clock_hours_remaining) < 5.0:
-        reasons.append("wall-clock budget remaining is under 5 hours")
 
     eligible = not reasons
     return ExpansionCheck(
@@ -1591,19 +1904,44 @@ def _run_expansion_check(
     return 2
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Run Loreley scheduler/worker configured for the circle-packing example.",
-    )
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    scheduler_parser = subparsers.add_parser("scheduler", help="Run the evolution scheduler.")
-    scheduler_parser.add_argument(
+def _add_phase_argument(
+    parser: argparse.ArgumentParser,
+    *,
+    default: str,
+    choices: Sequence[str] | None = None,
+) -> None:
+    parser.add_argument(
         "--phase",
-        choices=sorted(PHASE_PRESETS),
-        default="smoke",
+        choices=tuple(choices) if choices is not None else sorted(PHASE_PRESETS),
+        default=default,
         help="Experiment phase preset.",
     )
+
+
+def _add_preflight_arguments(
+    parser: argparse.ArgumentParser,
+    *,
+    timeout_help: str,
+) -> None:
+    parser.add_argument("--no-preflight", action="store_true", help="Skip preflight.")
+    parser.add_argument(
+        "--preflight-timeout-seconds",
+        type=_positive_float,
+        default=2.0,
+        help=timeout_help,
+    )
+
+
+def _add_log_level_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--log-level", dest="log_level", help="Override LOG_LEVEL.")
+
+
+def _add_scheduler_parser(subparsers: Any) -> None:
+    scheduler_parser = subparsers.add_parser(
+        "scheduler",
+        help="Run the evolution scheduler.",
+    )
+    _add_phase_argument(scheduler_parser, default="smoke")
     scheduler_parser.add_argument("--once", action="store_true", help="Execute one scheduler tick.")
     scheduler_parser.add_argument(
         "--init-db",
@@ -1611,12 +1949,9 @@ def main(argv: list[str] | None = None) -> int:
         help="Drop and recreate all ORM-managed tables before running.",
     )
     scheduler_parser.add_argument("--yes", action="store_true", help="Auto-approve startup.")
-    scheduler_parser.add_argument("--no-preflight", action="store_true", help="Skip preflight.")
-    scheduler_parser.add_argument(
-        "--preflight-timeout-seconds",
-        type=_positive_float,
-        default=2.0,
-        help="Positive timeout used for DB/Redis checks.",
+    _add_preflight_arguments(
+        scheduler_parser,
+        timeout_help="Positive timeout used for DB/Redis checks.",
     )
     scheduler_parser.add_argument(
         "--max-total-jobs",
@@ -1624,23 +1959,17 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Optional override for SCHEDULER_MAX_TOTAL_JOBS.",
     )
-    scheduler_parser.add_argument("--log-level", dest="log_level", help="Override LOG_LEVEL.")
+    _add_log_level_argument(scheduler_parser)
 
+
+def _add_worker_parser(subparsers: Any) -> None:
     worker_parser = subparsers.add_parser("worker", help="Run one evolution worker process.")
-    worker_parser.add_argument(
-        "--phase",
-        choices=sorted(PHASE_PRESETS),
-        default="smoke",
-        help="Experiment phase preset.",
+    _add_phase_argument(worker_parser, default="smoke")
+    _add_preflight_arguments(
+        worker_parser,
+        timeout_help="Positive timeout used for DB/Redis checks.",
     )
-    worker_parser.add_argument("--no-preflight", action="store_true", help="Skip preflight.")
-    worker_parser.add_argument(
-        "--preflight-timeout-seconds",
-        type=_positive_float,
-        default=2.0,
-        help="Positive timeout used for DB/Redis checks.",
-    )
-    worker_parser.add_argument("--log-level", dest="log_level", help="Override LOG_LEVEL.")
+    _add_log_level_argument(worker_parser)
     worker_parser.add_argument(
         "--manifest-entry",
         type=Path,
@@ -1648,80 +1977,59 @@ def main(argv: list[str] | None = None) -> int:
         help=argparse.SUPPRESS,
     )
 
+
+def _add_workers_parser(subparsers: Any) -> None:
     workers_parser = subparsers.add_parser(
         "workers",
         help="Supervise multiple independent worker OS processes.",
     )
-    workers_parser.add_argument(
-        "--phase",
-        choices=sorted(PHASE_PRESETS),
-        default="smoke",
-        help="Experiment phase preset.",
-    )
+    _add_phase_argument(workers_parser, default="smoke")
     workers_parser.add_argument(
         "--count",
         type=_positive_int,
         default=4,
         help="Number of worker processes to supervise.",
     )
-    workers_parser.add_argument("--no-preflight", action="store_true", help="Skip preflight.")
-    workers_parser.add_argument(
-        "--preflight-timeout-seconds",
-        type=_positive_float,
-        default=2.0,
-        help="Positive timeout used for DB/Redis checks.",
+    _add_preflight_arguments(
+        workers_parser,
+        timeout_help="Positive timeout used for DB/Redis checks.",
     )
-    workers_parser.add_argument("--log-level", dest="log_level", help="Override LOG_LEVEL.")
+    _add_log_level_argument(workers_parser)
 
+
+def _add_api_parser(subparsers: Any) -> None:
     api_parser = subparsers.add_parser("api", help="Run the read-only UI API.")
-    api_parser.add_argument(
-        "--phase",
-        choices=sorted(PHASE_PRESETS),
-        default="main",
-        help="Experiment phase preset.",
-    )
+    _add_phase_argument(api_parser, default="main")
     api_parser.add_argument("--host", default=UI_API_HOST, help="Bind host.")
     api_parser.add_argument("--port", type=int, default=UI_API_PORT, help="Bind port.")
     api_parser.add_argument("--reload", action="store_true", help="Enable auto-reload.")
-    api_parser.add_argument("--no-preflight", action="store_true", help="Skip preflight.")
-    api_parser.add_argument(
-        "--preflight-timeout-seconds",
-        type=_positive_float,
-        default=2.0,
-        help="Positive timeout used for DB checks.",
+    _add_preflight_arguments(
+        api_parser,
+        timeout_help="Positive timeout used for DB checks.",
     )
-    api_parser.add_argument("--log-level", dest="log_level", help="Override LOG_LEVEL.")
+    _add_log_level_argument(api_parser)
 
+
+def _add_ui_parser(subparsers: Any) -> None:
     ui_parser = subparsers.add_parser("ui", help="Run the Loreley Streamlit UI.")
-    ui_parser.add_argument(
-        "--phase",
-        choices=sorted(PHASE_PRESETS),
-        default="main",
-        help="Experiment phase preset.",
-    )
+    _add_phase_argument(ui_parser, default="main")
     ui_parser.add_argument("--api-base-url", default=UI_API_BASE_URL, help="UI API base URL.")
     ui_parser.add_argument("--host", default=UI_HOST, help="Streamlit host.")
     ui_parser.add_argument("--port", type=int, default=UI_PORT, help="Streamlit port.")
     ui_parser.add_argument("--headless", action="store_true", help="Run without browser.")
-    ui_parser.add_argument("--no-preflight", action="store_true", help="Skip preflight.")
-    ui_parser.add_argument(
-        "--preflight-timeout-seconds",
-        type=_positive_float,
-        default=2.0,
-        help="Positive timeout used for preflight checks.",
+    _add_preflight_arguments(
+        ui_parser,
+        timeout_help="Positive timeout used for preflight checks.",
     )
-    ui_parser.add_argument("--log-level", dest="log_level", help="Override LOG_LEVEL.")
+    _add_log_level_argument(ui_parser)
 
+
+def _add_report_parser(subparsers: Any) -> None:
     report_parser = subparsers.add_parser(
         "report",
         help="Aggregate DB rows + artifacts into Markdown/JSON.",
     )
-    report_parser.add_argument(
-        "--phase",
-        choices=sorted(PHASE_PRESETS),
-        default="smoke",
-        help="Experiment phase preset.",
-    )
+    _add_phase_argument(report_parser, default="smoke")
     report_parser.add_argument(
         "--runs",
         type=_positive_int,
@@ -1735,16 +2043,13 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional output directory for report files.",
     )
 
+
+def _add_expansion_check_parser(subparsers: Any) -> None:
     expansion_parser = subparsers.add_parser(
         "expansion-check",
         help="Check whether the main run should expand from 64 to 96 jobs.",
     )
-    expansion_parser.add_argument(
-        "--phase",
-        choices=("main",),
-        default="main",
-        help="Experiment phase preset.",
-    )
+    _add_phase_argument(expansion_parser, default="main", choices=("main",))
     expansion_parser.add_argument(
         "--current-max-total-jobs",
         type=_positive_int,
@@ -1758,71 +2063,128 @@ def main(argv: list[str] | None = None) -> int:
         help="Remaining wall-clock budget in hours for the overall experiment.",
     )
 
-    args = parser.parse_args(argv)
 
-    if args.command == "scheduler":
-        return _run_scheduler(
-            phase=str(args.phase),
-            once=bool(args.once),
-            init_db=bool(args.init_db),
-            yes=bool(args.yes),
-            log_level=(str(args.log_level) if args.log_level else None),
-            no_preflight=bool(args.no_preflight),
-            preflight_timeout_seconds=float(args.preflight_timeout_seconds),
-            max_total_jobs=(int(args.max_total_jobs) if args.max_total_jobs else None),
-        )
-    if args.command == "worker":
-        return _run_worker(
-            phase=str(args.phase),
-            log_level=(str(args.log_level) if args.log_level else None),
-            no_preflight=bool(args.no_preflight),
-            preflight_timeout_seconds=float(args.preflight_timeout_seconds),
-            manifest_entry=(Path(args.manifest_entry) if args.manifest_entry else None),
-        )
-    if args.command == "workers":
-        return _run_workers(
-            phase=str(args.phase),
-            count=int(args.count),
-            log_level=(str(args.log_level) if args.log_level else None),
-            no_preflight=bool(args.no_preflight),
-            preflight_timeout_seconds=float(args.preflight_timeout_seconds),
-        )
-    if args.command == "api":
-        return _run_api(
-            phase=str(args.phase),
-            host=str(args.host),
-            port=int(args.port),
-            log_level=(str(args.log_level) if args.log_level else None),
-            reload=bool(args.reload),
-            no_preflight=bool(args.no_preflight),
-            preflight_timeout_seconds=float(args.preflight_timeout_seconds),
-        )
-    if args.command == "ui":
-        return _run_ui(
-            phase=str(args.phase),
-            host=str(args.host),
-            port=int(args.port),
-            api_base_url=str(args.api_base_url),
-            headless=bool(args.headless),
-            log_level=(str(args.log_level) if args.log_level else None),
-            no_preflight=bool(args.no_preflight),
-            preflight_timeout_seconds=float(args.preflight_timeout_seconds),
-        )
-    if args.command == "report":
-        return _run_report(
-            phase=str(args.phase),
-            runs=int(args.runs),
-            output_dir=(Path(args.output_dir) if args.output_dir else None),
-        )
-    if args.command == "expansion-check":
-        return _run_expansion_check(
-            phase=str(args.phase),
-            current_max_total_jobs=int(args.current_max_total_jobs),
-            wall_clock_hours_remaining=float(args.wall_clock_hours_remaining),
-        )
+def _build_cli_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Run Loreley scheduler/worker configured for the circle-packing example.",
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    _add_scheduler_parser(subparsers)
+    _add_worker_parser(subparsers)
+    _add_workers_parser(subparsers)
+    _add_api_parser(subparsers)
+    _add_ui_parser(subparsers)
+    _add_report_parser(subparsers)
+    _add_expansion_check_parser(subparsers)
+    return parser
+
+
+def _arg_log_level(args: argparse.Namespace) -> str | None:
+    return str(args.log_level) if args.log_level else None
+
+
+def _dispatch_scheduler_command(args: argparse.Namespace) -> int:
+    return _run_scheduler(
+        phase=str(args.phase),
+        once=bool(args.once),
+        init_db=bool(args.init_db),
+        yes=bool(args.yes),
+        log_level=_arg_log_level(args),
+        no_preflight=bool(args.no_preflight),
+        preflight_timeout_seconds=float(args.preflight_timeout_seconds),
+        max_total_jobs=(int(args.max_total_jobs) if args.max_total_jobs else None),
+    )
+
+
+def _dispatch_worker_command(args: argparse.Namespace) -> int:
+    return _run_worker(
+        phase=str(args.phase),
+        log_level=_arg_log_level(args),
+        no_preflight=bool(args.no_preflight),
+        preflight_timeout_seconds=float(args.preflight_timeout_seconds),
+        manifest_entry=(Path(args.manifest_entry) if args.manifest_entry else None),
+    )
+
+
+def _dispatch_workers_command(args: argparse.Namespace) -> int:
+    return _run_workers(
+        phase=str(args.phase),
+        count=int(args.count),
+        log_level=_arg_log_level(args),
+        no_preflight=bool(args.no_preflight),
+        preflight_timeout_seconds=float(args.preflight_timeout_seconds),
+    )
+
+
+def _dispatch_api_command(args: argparse.Namespace) -> int:
+    return _run_api(
+        phase=str(args.phase),
+        host=str(args.host),
+        port=int(args.port),
+        log_level=_arg_log_level(args),
+        reload=bool(args.reload),
+        no_preflight=bool(args.no_preflight),
+        preflight_timeout_seconds=float(args.preflight_timeout_seconds),
+    )
+
+
+def _dispatch_ui_command(args: argparse.Namespace) -> int:
+    return _run_ui(
+        phase=str(args.phase),
+        host=str(args.host),
+        port=int(args.port),
+        api_base_url=str(args.api_base_url),
+        headless=bool(args.headless),
+        log_level=_arg_log_level(args),
+        no_preflight=bool(args.no_preflight),
+        preflight_timeout_seconds=float(args.preflight_timeout_seconds),
+    )
+
+
+def _dispatch_report_command(args: argparse.Namespace) -> int:
+    return _run_report(
+        phase=str(args.phase),
+        runs=int(args.runs),
+        output_dir=(Path(args.output_dir) if args.output_dir else None),
+    )
+
+
+def _dispatch_expansion_check_command(args: argparse.Namespace) -> int:
+    return _run_expansion_check(
+        phase=str(args.phase),
+        current_max_total_jobs=int(args.current_max_total_jobs),
+        wall_clock_hours_remaining=float(args.wall_clock_hours_remaining),
+    )
+
+
+_COMMAND_DISPATCHERS: dict[str, Callable[[argparse.Namespace], int]] = {
+    "scheduler": _dispatch_scheduler_command,
+    "worker": _dispatch_worker_command,
+    "workers": _dispatch_workers_command,
+    "api": _dispatch_api_command,
+    "ui": _dispatch_ui_command,
+    "report": _dispatch_report_command,
+    "expansion-check": _dispatch_expansion_check_command,
+}
+
+
+def _dispatch_command(
+    *,
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+) -> int:
+    dispatcher = _COMMAND_DISPATCHERS.get(str(args.command))
+    if dispatcher is not None:
+        return dispatcher(args)
 
     parser.print_help()
     return 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = _build_cli_parser()
+    args = parser.parse_args(argv)
+    return _dispatch_command(args=args, parser=parser)
 
 
 if __name__ == "__main__":  # pragma: no cover

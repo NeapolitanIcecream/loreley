@@ -17,6 +17,77 @@ from loreley.core.map_elites.map_elites import MapElitesManager, MapElitesRecord
 from loreley.core.map_elites.repository_state_embedding import RepoStateEmbeddingStats, RepositoryStateEmbedder
 
 
+class _RecordingSnapshotStore:
+    def __init__(self) -> None:
+        self.updates: list[tuple[str, object, object | None]] = []
+
+    def load(self, island_id: str, *, history_limit: int | None = None) -> dict[str, object] | None:
+        return None
+
+    def apply_update(self, island_id: str, *, update: object, session: object | None = None) -> None:
+        self.updates.append((island_id, update, session))
+
+
+def _repo_state_stats(
+    *,
+    commit_hash: str = "abc",
+    cache_misses: int = 1,
+    source: str = "unknown",
+) -> RepoStateEmbeddingStats:
+    return RepoStateEmbeddingStats(
+        commit_hash=commit_hash,
+        eligible_files=1,
+        files_embedded=1,
+        files_aggregated=1,
+        unique_blobs=1,
+        cache_hits=0,
+        cache_misses=cache_misses,
+        skipped_empty_after_preprocess=0,
+        skipped_failed_embedding=0,
+        source=source,
+    )
+
+
+def _code_embedding(vector: tuple[float, ...] = (0.5, -0.5)) -> CommitCodeEmbedding:
+    return CommitCodeEmbedding(
+        files=(),
+        vector=vector,
+        model="code",
+        dimensions=len(vector),
+    )
+
+
+def _history_entry(
+    *,
+    commit_hash: str = "abc",
+    vector: tuple[float, ...] = (0.5, -0.5),
+) -> PcaHistoryEntry:
+    return PcaHistoryEntry(
+        commit_hash=commit_hash,
+        vector=vector,
+        embedding_model="code",
+    )
+
+
+def _identity_projection(*, dims: int = 2, epoch: int = 0) -> PCAProjection:
+    components = tuple(
+        tuple(1.0 if row == column else 0.0 for column in range(dims))
+        for row in range(dims)
+    )
+    return PCAProjection(
+        feature_count=dims,
+        components=components,
+        mean=tuple(0.0 for _ in range(dims)),
+        explained_variance=tuple(1.0 for _ in range(dims)),
+        explained_variance_ratio=tuple(1.0 / dims for _ in range(dims)),
+        sample_count=1,
+        epoch=epoch,
+        fitted_at=0.0,
+        whiten=False,
+        rotation=None,
+    )
+
+
 def test_manager_lazy_loads_persisted_snapshot_for_stats_and_records(settings: Settings) -> None:
     settings.mapelites_dimensionality_target_dims = 2
     settings.mapelites_archive_cells_per_dim = 4
@@ -354,6 +425,174 @@ def test_manager_passes_snapshot_session_into_repo_state_incremental(
     _ = manager.ingest(commit_hash="c1", snapshot_session=snapshot_session)
 
     assert seen_sessions == [snapshot_session]
+
+
+@pytest.mark.parametrize(
+    ("source", "expected_aggregate", "expected_incremental"),
+    [
+        ("aggregate_hit", 1, 0),
+        ("incremental", 0, 1),
+    ],
+)
+def test_ingest_stage_metrics_count_repo_state_sources(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+    captured_logs: list[dict[str, object]],
+    source: str,
+    expected_aggregate: int,
+    expected_incremental: int,
+) -> None:
+    settings.mapelites_default_island_id = "main"
+    settings.mapelites_dimensionality_target_dims = 2
+    settings.mapelites_fitness_metric = "score"
+    settings.mapelites_ingest_info_log_every = 1
+
+    projection = _identity_projection()
+    entry = _history_entry()
+    final_embedding = FinalEmbedding(
+        commit_hash="abc",
+        vector=(0.2, 0.8),
+        dimensions=2,
+        history_entry=entry,
+        projection=projection,
+    )
+    stats = _repo_state_stats(cache_misses=2, source=source)
+    monkeypatch.setattr(
+        map_elites_module,
+        "embed_repository_state_incremental",
+        lambda *args, **kwargs: (_code_embedding(), stats),
+    )
+    monkeypatch.setattr(
+        map_elites_module,
+        "reduce_commit_embeddings",
+        lambda **kwargs: (final_embedding, (entry,), projection, 0),
+    )
+
+    manager = MapElitesManager(settings=settings, repo_root=Path("."))
+    manager._snapshot_store = _RecordingSnapshotStore()  # type: ignore[attr-defined]
+    manager._ensure_island("main").projection = projection  # type: ignore[attr-defined]
+    monkeypatch.setattr(manager, "_add_to_archive", lambda **kwargs: (0, 0.0, None))
+
+    result = manager.ingest(commit_hash="abc", metrics={"score": 1.0})
+
+    assert result.status == 0
+    stage_logs = [
+        record
+        for record in captured_logs
+        if record.get("module") == "map_elites.manager"
+        and record.get("message") == "MAP-Elites ingest stage metrics"
+    ]
+    assert stage_logs
+    stage_extra = stage_logs[-1].get("extra")
+    assert isinstance(stage_extra, dict)
+    assert stage_extra["aggregate_hit_count"] == expected_aggregate
+    assert stage_extra["incremental_count"] == expected_incremental
+    assert stage_extra["embedding_cache_miss_count"] == 2
+
+
+def test_ingest_warmup_persists_history_without_archive_update(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    settings.mapelites_default_island_id = "main"
+    settings.mapelites_dimensionality_target_dims = 2
+    settings.mapelites_fitness_metric = "score"
+    settings.mapelites_ingest_info_log_every = 1
+
+    entry = _history_entry(commit_hash="warm")
+    final_embedding = FinalEmbedding(
+        commit_hash="warm",
+        vector=(0.2, 0.8),
+        dimensions=2,
+        history_entry=entry,
+        projection=None,
+    )
+    monkeypatch.setattr(
+        map_elites_module,
+        "embed_repository_state_incremental",
+        lambda *args, **kwargs: (
+            _code_embedding(),
+            _repo_state_stats(commit_hash="warm", source="incremental"),
+        ),
+    )
+    monkeypatch.setattr(
+        map_elites_module,
+        "reduce_commit_embeddings",
+        lambda **kwargs: (final_embedding, (entry,), None, 1),
+    )
+
+    manager = MapElitesManager(settings=settings, repo_root=Path("."))
+    recorder = _RecordingSnapshotStore()
+    manager._snapshot_store = recorder  # type: ignore[attr-defined]
+
+    def _fail_add_to_archive(**kwargs: object) -> tuple[int, float, None]:
+        raise AssertionError("warmup commits must not touch the archive")
+
+    monkeypatch.setattr(manager, "_add_to_archive", _fail_add_to_archive)
+
+    result = manager.ingest(commit_hash="warm", metrics={"score": 1.0})
+
+    assert result.status == 0
+    assert result.record is None
+    assert result.message == "PCA warmup: projection is not ready; skipping archive update."
+    assert recorder.updates
+    island_id, update, session = recorder.updates[-1]
+    assert island_id == "main"
+    assert session is None
+    assert isinstance(update, map_elites_module.SnapshotUpdate)
+    assert update.history_upsert is entry
+    assert update.projection is None
+    assert update.cell_upsert is None
+    assert update.archive_replace is None
+
+
+def test_ingest_skips_archive_when_fitness_is_not_finite(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    settings.mapelites_default_island_id = "main"
+    settings.mapelites_dimensionality_target_dims = 2
+    settings.mapelites_fitness_metric = "score"
+
+    projection = _identity_projection()
+    entry = _history_entry()
+    final_embedding = FinalEmbedding(
+        commit_hash="abc",
+        vector=(0.2, 0.8),
+        dimensions=2,
+        history_entry=entry,
+        projection=projection,
+    )
+    monkeypatch.setattr(
+        map_elites_module,
+        "embed_repository_state_incremental",
+        lambda *args, **kwargs: (_code_embedding(), _repo_state_stats()),
+    )
+    monkeypatch.setattr(
+        map_elites_module,
+        "reduce_commit_embeddings",
+        lambda **kwargs: (final_embedding, (entry,), projection, 0),
+    )
+
+    manager = MapElitesManager(settings=settings, repo_root=Path("."))
+    recorder = _RecordingSnapshotStore()
+    manager._snapshot_store = recorder  # type: ignore[attr-defined]
+    manager._ensure_island("main").projection = projection  # type: ignore[attr-defined]
+
+    def _fail_add_to_archive(**kwargs: object) -> tuple[int, float, None]:
+        raise AssertionError("invalid fitness must not touch the archive")
+
+    monkeypatch.setattr(manager, "_add_to_archive", _fail_add_to_archive)
+
+    result = manager.ingest(commit_hash="abc", metrics={"score": float("nan")})
+
+    assert result.status == 0
+    assert result.record is None
+    assert result.message == "Fitness value is undefined; skipping archive update."
+    assert recorder.updates
+    update = recorder.updates[-1][1]
+    assert isinstance(update, map_elites_module.SnapshotUpdate)
+    assert update.cell_upsert is None
 
 
 def test_ingest_builds_record_with_stubbed_dependencies(

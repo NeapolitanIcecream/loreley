@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -504,6 +505,301 @@ def _parse_local_http_base_url(api_base_url: str) -> tuple[str, int] | None:
     return (str(parsed.hostname), int(parsed.port))
 
 
+@dataclass
+class _UiRunState:
+    api_proc: subprocess.Popen | None = None
+    owns_api_proc: bool = False
+    stop_requested: bool = False
+    stop_signal: int = signal.SIGTERM
+    proc: subprocess.Popen | None = None
+
+
+def _run_ui_preflight(
+    *,
+    settings: Settings,
+    console: Console,
+    preflight: bool,
+    preflight_timeout_seconds: float,
+) -> int | None:
+    if not preflight:
+        return None
+
+    results = preflight_ui(settings, timeout_seconds=preflight_timeout_seconds)
+    if not has_failures(results, treat_warnings_as_errors=True):
+        return None
+
+    render_results(console, results, title="Loreley UI preflight")
+    ok, warn, fail = (0, 0, 0)
+    try:
+        from loreley.preflight import summarize
+
+        ok, warn, fail = summarize(results)
+    except Exception:
+        pass
+    console.log(f"[bold red]Preflight failed[/] ok={ok} warn={warn} fail={fail}")
+    console.log("Hint: install UI extras with `uv sync --extra ui` and retry.")
+    return 1
+
+
+def _normalize_ui_api_base_url(api_base_url: str, *, console: Console) -> str | None:
+    normalized = (api_base_url or "").strip()
+    if normalized:
+        return normalized
+    console.log("[bold red]Invalid API base URL[/] value is empty.")
+    return None
+
+
+def _build_ui_environment(api_base_url: str) -> dict[str, str]:
+    env = dict(os.environ)
+    env["LORELEY_UI_API_BASE_URL"] = str(api_base_url)
+    return env
+
+
+def _popen_kwargs(env: dict[str, str]) -> dict[str, object]:
+    popen_kwargs: dict[str, object] = {"env": env}
+    if os.name == "posix":
+        popen_kwargs["start_new_session"] = True
+    return popen_kwargs
+
+
+def _spawn_process(cmd: list[str], *, env: dict[str, str]) -> subprocess.Popen:
+    return subprocess.Popen(cmd, **_popen_kwargs(env))  # type: ignore[arg-type]
+
+
+def _build_ui_api_command(
+    *,
+    settings: Settings,
+    api_host: str,
+    api_port: int,
+    preflight: bool,
+    preflight_timeout_seconds: float,
+) -> list[str]:
+    cmd = [
+        sys.executable,
+        "-m",
+        "loreley",
+        "--log-level",
+        str(settings.log_level or "INFO"),
+        "api",
+        "--host",
+        str(api_host),
+        "--port",
+        str(int(api_port)),
+        "--preflight-timeout-seconds",
+        str(float(preflight_timeout_seconds)),
+    ]
+    if not preflight:
+        cmd.append("--no-preflight")
+    return cmd
+
+
+def _build_streamlit_command(*, host: str, port: int, headless: bool) -> list[str]:
+    ui_script = (Path(__file__).resolve().parent / "ui" / "app.py").resolve()
+    cmd = [
+        sys.executable,
+        "-m",
+        "streamlit",
+        "run",
+        str(ui_script),
+        "--server.address",
+        str(host),
+        "--server.port",
+        str(int(port)),
+    ]
+    if headless:
+        cmd += ["--server.headless", "true"]
+    return cmd
+
+
+def _install_ui_signal_handler(state: _UiRunState) -> None:
+    def _handle_sigterm(signum: int, _frame: object) -> None:
+        state.stop_requested = True
+        state.stop_signal = int(signum)
+        if state.proc is not None:
+            _send_signal(state.proc, state.stop_signal)
+        if state.owns_api_proc and state.api_proc is not None:
+            _send_signal(state.api_proc, state.stop_signal)
+
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+
+
+def _stop_owned_ui_api(
+    state: _UiRunState,
+    *,
+    console: Console,
+    first_signal: int,
+) -> None:
+    if state.owns_api_proc and state.api_proc is not None:
+        _stop_proc(state.api_proc, console=console, first_signal=first_signal)
+
+
+def _wait_for_ui_api_startup(
+    *,
+    state: _UiRunState,
+    console: Console,
+    api_base_url: str,
+    preflight_timeout_seconds: float,
+) -> int | None:
+    api_proc = state.api_proc
+    if api_proc is None:
+        return None
+
+    startup_wait = max(_API_STARTUP_MIN_WAIT_SECONDS, float(preflight_timeout_seconds) * 10.0)
+    deadline = time.time() + startup_wait
+    with console.status(f"[bold]Waiting for UI API[/] url={_api_health_url(api_base_url)}"):
+        while time.time() < deadline:
+            if state.stop_requested:
+                console.log("[yellow]Stop signal received[/]; stopping UI API...")
+                _stop_proc(api_proc, console=console, first_signal=state.stop_signal)
+                return 0
+            if api_proc.poll() is not None:
+                rc = int(api_proc.returncode or 0)
+                console.log(f"[bold red]UI API exited during startup[/] rc={rc}")
+                return _coerce_exit_code(rc, stop_requested=False)
+            if _is_ui_api_reachable(api_base_url, timeout_seconds=preflight_timeout_seconds):
+                console.log("[bold green]UI API ready[/]")
+                return None
+            time.sleep(_POLL_INTERVAL_SECONDS)
+
+    console.log(
+        "[bold red]Timed out waiting for UI API[/] "
+        f"url={_api_health_url(api_base_url)!r} timeout_seconds={startup_wait}",
+    )
+    _stop_proc(api_proc, console=console, first_signal=signal.SIGTERM)
+    return 1
+
+
+def _maybe_start_local_ui_api(
+    *,
+    state: _UiRunState,
+    settings: Settings,
+    console: Console,
+    api_base_url: str,
+    env: dict[str, str],
+    preflight: bool,
+    preflight_timeout_seconds: float,
+) -> int | None:
+    if _is_ui_api_reachable(api_base_url, timeout_seconds=preflight_timeout_seconds):
+        return None
+
+    local_target = _parse_local_http_base_url(api_base_url)
+    if local_target is None:
+        console.log(
+            "[yellow]UI API not reachable[/] "
+            f"url={_api_health_url(api_base_url)!r} (auto-start disabled for non-local or non-http base URLs)",
+        )
+        return None
+
+    api_host, api_port = local_target
+    # Re-check before spawning to avoid races when another process starts the API.
+    if _is_ui_api_reachable(api_base_url, timeout_seconds=preflight_timeout_seconds):
+        return None
+
+    console.log(
+        "[yellow]UI API not reachable[/] "
+        f"starting automatically host={api_host} port={int(api_port)}",
+    )
+    api_cmd = _build_ui_api_command(
+        settings=settings,
+        api_host=api_host,
+        api_port=api_port,
+        preflight=preflight,
+        preflight_timeout_seconds=preflight_timeout_seconds,
+    )
+
+    try:
+        state.api_proc = _spawn_process(api_cmd, env=env)
+        state.owns_api_proc = True
+    except Exception as exc:  # pragma: no cover - defensive
+        console.log(f"[bold red]Failed to start UI API automatically[/] reason={exc}")
+        log.exception("Failed to spawn UI API process")
+        return 1
+
+    return _wait_for_ui_api_startup(
+        state=state,
+        console=console,
+        api_base_url=api_base_url,
+        preflight_timeout_seconds=preflight_timeout_seconds,
+    )
+
+
+def _start_streamlit_process(
+    *,
+    state: _UiRunState,
+    console: Console,
+    env: dict[str, str],
+    api_base_url: str,
+    host: str,
+    port: int,
+    headless: bool,
+) -> int | None:
+    cmd = _build_streamlit_command(host=host, port=port, headless=headless)
+    console.log(
+        "[bold green]Loreley UI online[/] "
+        "host={} port={} api_base_url={}".format(host, int(port), api_base_url),
+    )
+
+    try:
+        state.proc = _spawn_process(cmd, env=env)
+    except FileNotFoundError as exc:  # pragma: no cover
+        console.log(
+            "[bold red]Failed to start Streamlit[/] "
+            "Install with `uv sync --extra ui` and retry. "
+            f"reason={exc}"
+        )
+        _stop_owned_ui_api(state, console=console, first_signal=signal.SIGTERM)
+        return 1
+    except KeyboardInterrupt:
+        console.log("[yellow]Keyboard interrupt received[/]; exiting...")
+        _stop_owned_ui_api(state, console=console, first_signal=signal.SIGINT)
+        return 0
+    return None
+
+
+def _poll_ui_processes_once(*, state: _UiRunState, console: Console) -> int | None:
+    proc = state.proc
+    if proc is None:
+        return 1
+
+    rc = proc.poll()
+    if rc is not None:
+        _stop_owned_ui_api(state, console=console, first_signal=signal.SIGTERM)
+        return _coerce_exit_code(int(rc), stop_requested=state.stop_requested)
+
+    if state.owns_api_proc and state.api_proc is not None and state.api_proc.poll() is not None:
+        api_rc = int(state.api_proc.returncode or 0)
+        console.log(f"[bold red]UI API process exited[/] rc={api_rc}; stopping UI...")
+        _stop_proc(proc, console=console, first_signal=signal.SIGTERM)
+        return _coerce_exit_code(api_rc, stop_requested=False)
+
+    if state.stop_requested:
+        name = {signal.SIGTERM: "SIGTERM"}.get(state.stop_signal, str(state.stop_signal))
+        console.log(f"[yellow]Stop signal received ({name})[/]; stopping UI...")
+        _stop_proc(proc, console=console, first_signal=state.stop_signal)
+        _stop_owned_ui_api(state, console=console, first_signal=state.stop_signal)
+        return 0
+
+    return None
+
+
+def _monitor_ui_processes(*, state: _UiRunState, console: Console) -> int:
+    proc = state.proc
+    if proc is None:
+        return 1
+
+    try:
+        while True:
+            result = _poll_ui_processes_once(state=state, console=console)
+            if result is not None:
+                return result
+            time.sleep(_POLL_INTERVAL_SECONDS)
+    except KeyboardInterrupt:
+        console.log("[yellow]Keyboard interrupt received[/]; stopping UI...")
+        _stop_proc(proc, console=console, first_signal=signal.SIGINT)
+        _stop_owned_ui_api(state, console=console, first_signal=signal.SIGINT)
+        return 0
+
+
 def run_ui(
     *,
     settings: Settings,
@@ -520,188 +816,50 @@ def run_ui(
     The UI is a read-only dashboard that calls the UI API via HTTP. It does not
     require direct database connectivity.
     """
-    if preflight:
-        results = preflight_ui(settings, timeout_seconds=preflight_timeout_seconds)
-        if has_failures(results, treat_warnings_as_errors=True):
-            render_results(console, results, title="Loreley UI preflight")
-            ok, warn, fail = (0, 0, 0)
-            try:
-                from loreley.preflight import summarize
+    preflight_rc = _run_ui_preflight(
+        settings=settings,
+        console=console,
+        preflight=preflight,
+        preflight_timeout_seconds=preflight_timeout_seconds,
+    )
+    if preflight_rc is not None:
+        return preflight_rc
 
-                ok, warn, fail = summarize(results)
-            except Exception:
-                pass
-            console.log(f"[bold red]Preflight failed[/] ok={ok} warn={warn} fail={fail}")
-            console.log("Hint: install UI extras with `uv sync --extra ui` and retry.")
-            return 1
-
-    api_base_url = (api_base_url or "").strip()
-    if not api_base_url:
-        console.log("[bold red]Invalid API base URL[/] value is empty.")
+    normalized_api_base_url = _normalize_ui_api_base_url(api_base_url, console=console)
+    if normalized_api_base_url is None:
         return 1
 
-    env = dict(os.environ)
-    env["LORELEY_UI_API_BASE_URL"] = str(api_base_url)
+    env = _build_ui_environment(normalized_api_base_url)
+    state = _UiRunState()
+    _install_ui_signal_handler(state)
 
-    api_proc: subprocess.Popen | None = None
-    owns_api_proc = False
-
-    stop_requested = False
-    stop_signal = signal.SIGTERM
-    proc: subprocess.Popen | None = None
-
-    def _handle_sigterm(signum: int, _frame: object) -> None:
-        nonlocal stop_requested, stop_signal, proc, api_proc
-        stop_requested = True
-        stop_signal = int(signum)
-        if proc is not None:
-            _send_signal(proc, stop_signal)
-        if owns_api_proc and api_proc is not None:
-            _send_signal(api_proc, stop_signal)
-
-    signal.signal(signal.SIGTERM, _handle_sigterm)
-
-    # Auto-start the UI API when the configured base URL is local and the API is not reachable.
     try:
-        if not _is_ui_api_reachable(api_base_url, timeout_seconds=preflight_timeout_seconds):
-            local_target = _parse_local_http_base_url(api_base_url)
-            if local_target is None:
-                console.log(
-                    "[yellow]UI API not reachable[/] "
-                    f"url={_api_health_url(api_base_url)!r} (auto-start disabled for non-local or non-http base URLs)",
-                )
-            else:
-                api_host, api_port = local_target
-                # Re-check before spawning to avoid races when another process starts the API.
-                if not _is_ui_api_reachable(api_base_url, timeout_seconds=preflight_timeout_seconds):
-                    console.log(
-                        "[yellow]UI API not reachable[/] "
-                        f"starting automatically host={api_host} port={int(api_port)}",
-                    )
-                    api_cmd = [
-                        sys.executable,
-                        "-m",
-                        "loreley",
-                        "--log-level",
-                        str(settings.log_level or "INFO"),
-                        "api",
-                        "--host",
-                        str(api_host),
-                        "--port",
-                        str(int(api_port)),
-                        "--preflight-timeout-seconds",
-                        str(float(preflight_timeout_seconds)),
-                    ]
-                    if not preflight:
-                        api_cmd.append("--no-preflight")
-
-                    popen_kwargs_api: dict[str, object] = {"env": env}
-                    if os.name == "posix":
-                        popen_kwargs_api["start_new_session"] = True
-
-                    try:
-                        api_proc = subprocess.Popen(api_cmd, **popen_kwargs_api)  # type: ignore[arg-type]
-                        owns_api_proc = True
-                    except Exception as exc:  # pragma: no cover - defensive
-                        console.log(f"[bold red]Failed to start UI API automatically[/] reason={exc}")
-                        log.exception("Failed to spawn UI API process")
-                        return 1
-
-                    startup_wait = max(_API_STARTUP_MIN_WAIT_SECONDS, float(preflight_timeout_seconds) * 10.0)
-                    deadline = time.time() + startup_wait
-                    with console.status(f"[bold]Waiting for UI API[/] url={_api_health_url(api_base_url)}"):
-                        while time.time() < deadline:
-                            if stop_requested:
-                                console.log("[yellow]Stop signal received[/]; stopping UI API...")
-                                _stop_proc(api_proc, console=console, first_signal=stop_signal)
-                                return 0
-                            if api_proc.poll() is not None:
-                                rc = int(api_proc.returncode or 0)
-                                console.log(f"[bold red]UI API exited during startup[/] rc={rc}")
-                                return _coerce_exit_code(rc, stop_requested=False)
-                            if _is_ui_api_reachable(api_base_url, timeout_seconds=preflight_timeout_seconds):
-                                console.log("[bold green]UI API ready[/]")
-                                break
-                            time.sleep(_POLL_INTERVAL_SECONDS)
-                        else:
-                            console.log(
-                                "[bold red]Timed out waiting for UI API[/] "
-                                f"url={_api_health_url(api_base_url)!r} timeout_seconds={startup_wait}",
-                            )
-                            _stop_proc(api_proc, console=console, first_signal=signal.SIGTERM)
-                            return 1
+        api_start_rc = _maybe_start_local_ui_api(
+            state=state,
+            settings=settings,
+            console=console,
+            api_base_url=normalized_api_base_url,
+            env=env,
+            preflight=preflight,
+            preflight_timeout_seconds=preflight_timeout_seconds,
+        )
+        if api_start_rc is not None:
+            return api_start_rc
     except KeyboardInterrupt:
         console.log("[yellow]Keyboard interrupt received[/]; stopping...")
-        if owns_api_proc and api_proc is not None:
-            _stop_proc(api_proc, console=console, first_signal=signal.SIGINT)
+        _stop_owned_ui_api(state, console=console, first_signal=signal.SIGINT)
         return 0
 
-    ui_script = (Path(__file__).resolve().parent / "ui" / "app.py").resolve()
-    cmd = [
-        sys.executable,
-        "-m",
-        "streamlit",
-        "run",
-        str(ui_script),
-        "--server.address",
-        str(host),
-        "--server.port",
-        str(int(port)),
-    ]
-    if headless:
-        cmd += ["--server.headless", "true"]
-
-    console.log(
-        "[bold green]Loreley UI online[/] "
-        "host={} port={} api_base_url={}".format(host, int(port), api_base_url),
+    streamlit_start_rc = _start_streamlit_process(
+        state=state,
+        console=console,
+        env=env,
+        api_base_url=normalized_api_base_url,
+        host=host,
+        port=port,
+        headless=headless,
     )
+    if streamlit_start_rc is not None:
+        return streamlit_start_rc
 
-    try:
-        popen_kwargs: dict[str, object] = {"env": env}
-        if os.name == "posix":
-            popen_kwargs["start_new_session"] = True
-        proc = subprocess.Popen(cmd, **popen_kwargs)  # type: ignore[arg-type]
-    except FileNotFoundError as exc:  # pragma: no cover
-        console.log(
-            "[bold red]Failed to start Streamlit[/] "
-            "Install with `uv sync --extra ui` and retry. "
-            f"reason={exc}"
-        )
-        if owns_api_proc and api_proc is not None:
-            _stop_proc(api_proc, console=console, first_signal=signal.SIGTERM)
-        return 1
-    except KeyboardInterrupt:
-        console.log("[yellow]Keyboard interrupt received[/]; exiting...")
-        if owns_api_proc and api_proc is not None:
-            _stop_proc(api_proc, console=console, first_signal=signal.SIGINT)
-        return 0
-
-    try:
-        while True:
-            rc = proc.poll()
-            if rc is not None:
-                if owns_api_proc and api_proc is not None:
-                    _stop_proc(api_proc, console=console, first_signal=signal.SIGTERM)
-                return _coerce_exit_code(int(rc), stop_requested=stop_requested)
-
-            if owns_api_proc and api_proc is not None and api_proc.poll() is not None:
-                api_rc = int(api_proc.returncode or 0)
-                console.log(f"[bold red]UI API process exited[/] rc={api_rc}; stopping UI...")
-                _stop_proc(proc, console=console, first_signal=signal.SIGTERM)
-                return _coerce_exit_code(api_rc, stop_requested=False)
-
-            if stop_requested:
-                name = {signal.SIGTERM: "SIGTERM"}.get(stop_signal, str(stop_signal))
-                console.log(f"[yellow]Stop signal received ({name})[/]; stopping UI...")
-                _stop_proc(proc, console=console, first_signal=stop_signal)
-                if owns_api_proc and api_proc is not None:
-                    _stop_proc(api_proc, console=console, first_signal=stop_signal)
-                return 0
-
-            time.sleep(_POLL_INTERVAL_SECONDS)
-    except KeyboardInterrupt:
-        console.log("[yellow]Keyboard interrupt received[/]; stopping UI...")
-        _stop_proc(proc, console=console, first_signal=signal.SIGINT)
-        if owns_api_proc and api_proc is not None:
-            _stop_proc(api_proc, console=console, first_signal=signal.SIGINT)
-        return 0
+    return _monitor_ui_processes(state=state, console=console)

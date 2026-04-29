@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -75,6 +76,122 @@ def test_open_supervisor_log_truncates_previous_run(tmp_path: Path) -> None:
     handle.close()
 
     assert log_path.read_text(encoding="utf-8") == "new-run\n"
+
+
+def test_run_workers_stops_siblings_and_records_failed_manifest_when_worker_exits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module("test_evol_circle_packing_supervisor", EXAMPLE_SCRIPT)
+    specs = [
+        module.WorkerProcessSpec(
+            instance_id="worker-01",
+            command=("python", "worker-01"),
+            env={"WORKER": "1"},
+            log_path=tmp_path / "worker-01.log",
+            manifest_entry_path=tmp_path / "worker-01.json",
+            worktree_base=tmp_path / "worker-01-worktree",
+        ),
+        module.WorkerProcessSpec(
+            instance_id="worker-02",
+            command=("python", "worker-02"),
+            env={"WORKER": "2"},
+            log_path=tmp_path / "worker-02.log",
+            manifest_entry_path=tmp_path / "worker-02.json",
+            worktree_base=tmp_path / "worker-02-worktree",
+        ),
+    ]
+
+    class FakeProcess:
+        _next_pid = 2000
+
+        def __init__(self, command: list[str], **_kwargs: Any) -> None:
+            FakeProcess._next_pid += 1
+            self.pid = FakeProcess._next_pid
+            self.returncode = 7 if command[-1] == "worker-01" else None
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+    def fake_popen(command: list[str], **kwargs: Any) -> FakeProcess:
+        return FakeProcess(command, **kwargs)
+
+    terminated: list[tuple[int, bool]] = []
+
+    def fake_terminate(process: FakeProcess, *, force: bool = False) -> None:
+        if process.poll() is not None:
+            return
+        terminated.append((process.pid, force))
+        process.returncode = -15 if not force else -9
+
+    previous_handlers = {
+        module.signal.SIGINT: object(),
+        module.signal.SIGTERM: object(),
+    }
+    installed_handlers: list[tuple[int, Any]] = []
+
+    monkeypatch.setattr(module, "_supervisor_dir", lambda _phase: tmp_path)
+    monkeypatch.setattr(module, "_build_worker_process_specs", lambda **_kwargs: specs)
+    monkeypatch.setattr(module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(module, "_terminate_process_group", fake_terminate)
+    monkeypatch.setattr(module.signal, "getsignal", lambda signum: previous_handlers[signum])
+    monkeypatch.setattr(
+        module.signal,
+        "signal",
+        lambda signum, handler: installed_handlers.append((signum, handler)),
+    )
+
+    exit_code = module._run_workers(  # noqa: SLF001 - spec-level assertion
+        phase="smoke",
+        count=2,
+        log_level=None,
+        no_preflight=True,
+        preflight_timeout_seconds=1.0,
+    )
+
+    manifest = module._read_json(tmp_path / "workers-manifest.json")  # noqa: SLF001
+    assert exit_code == 7
+    assert terminated == [(2002, False)]
+    assert manifest["status"] == "failed"
+    assert [worker["returncode"] for worker in manifest["workers"]] == [7, -15]
+    assert installed_handlers[-2:] == list(previous_handlers.items())
+
+
+def test_main_dispatches_workers_with_parsed_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module("test_evol_circle_packing_main_dispatch", EXAMPLE_SCRIPT)
+    captured: dict[str, Any] = {}
+
+    def fake_run_workers(**kwargs: Any) -> int:
+        captured.update(kwargs)
+        return 42
+
+    monkeypatch.setattr(module, "_run_workers", fake_run_workers)
+
+    exit_code = module.main(
+        [
+            "workers",
+            "--phase",
+            "main",
+            "--count",
+            "2",
+            "--no-preflight",
+            "--preflight-timeout-seconds",
+            "1.5",
+            "--log-level",
+            "DEBUG",
+        ]
+    )
+
+    assert exit_code == 42
+    assert captured == {
+        "phase": "main",
+        "count": 2,
+        "log_level": "DEBUG",
+        "no_preflight": True,
+        "preflight_timeout_seconds": 1.5,
+    }
 
 
 def test_build_report_payload_aggregates_worker_and_objective_stats() -> None:

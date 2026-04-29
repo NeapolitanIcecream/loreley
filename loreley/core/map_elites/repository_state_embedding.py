@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections import Counter, OrderedDict
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import subprocess
 from typing import Iterable, Sequence, TypeVar, cast
@@ -87,6 +87,91 @@ class _IncrementalAggregateResult:
     files_embedded: int
     skipped_empty_after_preprocess: int
     skipped_failed_embedding: int
+
+
+@dataclass(frozen=True, slots=True)
+class _IncrementalParent:
+    repo: Repo
+    parent_hash: str
+
+
+@dataclass(frozen=True, slots=True)
+class _ParentAggregateState:
+    commit_hash: str
+    sum_vector: np.ndarray
+    file_count: int
+    dimensions: int
+
+
+@dataclass(frozen=True, slots=True)
+class _SelectedDiffBlob:
+    selected: bool
+    repo_rel: Path | None
+    blob_sha: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _IncrementalDiffSelection:
+    entries: tuple["_DiffEntry", ...]
+    old_shas: tuple[str, ...]
+    new_shas: tuple[str, ...]
+    repo_files_for_new_misses: tuple[RepositoryFile, ...]
+    selector: "_DiffSelector"
+
+
+@dataclass(frozen=True, slots=True)
+class _IncrementalCacheMissResult:
+    unique_new_shas: tuple[str, ...]
+    cache_hits: int
+    cache_misses: int
+    files_embedded: int
+    skipped_empty_after_preprocess: int
+    skipped_failed_embedding: int
+
+
+@dataclass(slots=True)
+class _DiffSelector:
+    repo_prefix: str | None
+    ignore_spec: object | None
+    preprocess_filter: CodePreprocessor
+    blob_sizes: dict[str, int]
+    max_bytes: int
+    _cache: dict[tuple[str | None, str | None], _SelectedDiffBlob] = field(default_factory=dict)
+
+    def select(self, path_str: str | None, sha: str | None) -> _SelectedDiffBlob:
+        cache_key = (path_str, sha)
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+        if not path_str or _is_null_sha(sha):
+            return self._remember(cache_key, _SelectedDiffBlob(False, None, None))
+
+        git_path = path_str.strip().lstrip("/")
+        if not git_path:
+            return self._remember(cache_key, _SelectedDiffBlob(False, None, None))
+        if self.ignore_spec and is_ignored_path(self.ignore_spec, git_path):
+            return self._remember(cache_key, _SelectedDiffBlob(False, None, None))
+
+        repo_rel = _git_path_to_repo_rel(git_path, repo_prefix=self.repo_prefix)
+        if repo_rel is None:
+            return self._remember(cache_key, _SelectedDiffBlob(False, None, None))
+        if self.preprocess_filter.is_excluded(repo_rel):
+            return self._remember(cache_key, _SelectedDiffBlob(False, None, None))
+        if not self.preprocess_filter.is_code_file(repo_rel):
+            return self._remember(cache_key, _SelectedDiffBlob(False, None, None))
+
+        size = self.blob_sizes.get(str(sha))
+        if size is None or size <= 0 or size > self.max_bytes:
+            return self._remember(cache_key, _SelectedDiffBlob(False, None, None))
+        return self._remember(cache_key, _SelectedDiffBlob(True, repo_rel, str(sha)))
+
+    def _remember(
+        self,
+        cache_key: tuple[str | None, str | None],
+        selection: _SelectedDiffBlob,
+    ) -> _SelectedDiffBlob:
+        self._cache[cache_key] = selection
+        return selection
 
 
 class RepositoryStateEmbedder:
@@ -556,93 +641,90 @@ class RepositoryStateEmbedder:
         if not missing:
             return found
         try:
-            if session is None:
-                with session_scope() as owned_session:
-                    for batch in _batched(missing, 500):
-                        stmt = (
-                            select(
-                                MapElitesFileEmbeddingCache.blob_sha,
-                                MapElitesFileEmbeddingCache.vector,
-                                MapElitesFileEmbeddingCache.embedding_model,
-                                MapElitesFileEmbeddingCache.dimensions,
-                            )
-                            .where(
-                                MapElitesFileEmbeddingCache.blob_sha.in_(batch),
-                            )
-                        )
-                        for sha, vec, model, stored_dims in owned_session.execute(stmt).all():
-                            if str(model or "") != str(self.cache.embedding_model):
-                                raise RepoStateEmbeddingError(
-                                    "File embedding cache entry has an unexpected embedding model; "
-                                    "reset the DB (dev). "
-                                    f"(blob_sha={sha} expected_model={self.cache.embedding_model!r} "
-                                    f"got_model={model!r})"
-                                )
-                            if int(stored_dims or 0) != dims:
-                                raise RepoStateEmbeddingError(
-                                    "File embedding cache entry has unexpected dimensions; reset the DB (dev). "
-                                    f"(blob_sha={sha} expected_dims={dims} got_dims={stored_dims!r})"
-                                )
-                            vector = tuple(float(v) for v in (vec or ()))
-                            if not vector:
-                                raise RepoStateEmbeddingError(
-                                    "File embedding cache contains an empty vector; reset the DB (dev). "
-                                    f"(blob_sha={sha} dims={dims})"
-                                )
-                            if len(vector) != dims:
-                                raise RepoStateEmbeddingError(
-                                    "File embedding cache vector has unexpected dimensions; reset the DB (dev). "
-                                    f"(blob_sha={sha} expected_dims={dims} got_dims={len(vector)})"
-                                )
-                            meta = RepositoryStateEmbedder._VectorMeta(vector=vector)
-                            found[str(sha)] = meta
-                            self._remember_file_metadata(str(sha), meta)
-            else:
-                for batch in _batched(missing, 500):
-                    stmt = (
-                        select(
-                            MapElitesFileEmbeddingCache.blob_sha,
-                            MapElitesFileEmbeddingCache.vector,
-                            MapElitesFileEmbeddingCache.embedding_model,
-                            MapElitesFileEmbeddingCache.dimensions,
-                        )
-                        .where(
-                            MapElitesFileEmbeddingCache.blob_sha.in_(batch),
-                        )
-                    )
-                    for sha, vec, model, stored_dims in session.execute(stmt).all():
-                        if str(model or "") != str(self.cache.embedding_model):
-                            raise RepoStateEmbeddingError(
-                                "File embedding cache entry has an unexpected embedding model; "
-                                "reset the DB (dev). "
-                                f"(blob_sha={sha} expected_model={self.cache.embedding_model!r} "
-                                f"got_model={model!r})"
-                            )
-                        if int(stored_dims or 0) != dims:
-                            raise RepoStateEmbeddingError(
-                                "File embedding cache entry has unexpected dimensions; reset the DB (dev). "
-                                f"(blob_sha={sha} expected_dims={dims} got_dims={stored_dims!r})"
-                            )
-                        vector = tuple(float(v) for v in (vec or ()))
-                        if not vector:
-                            raise RepoStateEmbeddingError(
-                                "File embedding cache contains an empty vector; reset the DB (dev). "
-                                f"(blob_sha={sha} dims={dims})"
-                            )
-                        if len(vector) != dims:
-                            raise RepoStateEmbeddingError(
-                                "File embedding cache vector has unexpected dimensions; reset the DB (dev). "
-                                f"(blob_sha={sha} expected_dims={dims} got_dims={len(vector)})"
-                            )
-                        meta = RepositoryStateEmbedder._VectorMeta(vector=vector)
-                        found[str(sha)] = meta
-                        self._remember_file_metadata(str(sha), meta)
+            session_cm = nullcontext(session) if session is not None else session_scope()
+            with session_cm as active_session:
+                self._load_file_cache_metadata_from_db(
+                    blob_shas=missing,
+                    dimensions=dims,
+                    session=active_session,
+                    found=found,
+                )
         except RepoStateEmbeddingError:
             raise
         except Exception as exc:  # pragma: no cover - DB failure handling
             raise RepoStateEmbeddingError(f"Repo-state file cache metadata read failed: {exc}") from exc
 
         return found
+
+    def _load_file_cache_metadata_from_db(
+        self,
+        *,
+        blob_shas: Sequence[str],
+        dimensions: int,
+        session: Session,
+        found: dict[str, "RepositoryStateEmbedder._VectorMeta"],
+    ) -> None:
+        for batch in _batched(blob_shas, 500):
+            stmt = self._file_cache_metadata_query(batch)
+            for sha, vec, model, stored_dims in session.execute(stmt).all():
+                meta = self._validate_file_cache_metadata_row(
+                    blob_sha=sha,
+                    vector=vec,
+                    embedding_model=model,
+                    stored_dimensions=stored_dims,
+                    expected_dimensions=dimensions,
+                )
+                key = str(sha)
+                found[key] = meta
+                self._remember_file_metadata(key, meta)
+
+    @staticmethod
+    def _file_cache_metadata_query(blob_shas: Sequence[str]):
+        return (
+            select(
+                MapElitesFileEmbeddingCache.blob_sha,
+                MapElitesFileEmbeddingCache.vector,
+                MapElitesFileEmbeddingCache.embedding_model,
+                MapElitesFileEmbeddingCache.dimensions,
+            )
+            .where(
+                MapElitesFileEmbeddingCache.blob_sha.in_(blob_shas),
+            )
+        )
+
+    def _validate_file_cache_metadata_row(
+        self,
+        *,
+        blob_sha: object,
+        vector: object,
+        embedding_model: object,
+        stored_dimensions: object,
+        expected_dimensions: int,
+    ) -> "RepositoryStateEmbedder._VectorMeta":
+        if str(embedding_model or "") != str(self.cache.embedding_model):
+            raise RepoStateEmbeddingError(
+                "File embedding cache entry has an unexpected embedding model; "
+                "reset the DB (dev). "
+                f"(blob_sha={blob_sha} expected_model={self.cache.embedding_model!r} "
+                f"got_model={embedding_model!r})"
+            )
+        if int(stored_dimensions or 0) != expected_dimensions:
+            raise RepoStateEmbeddingError(
+                "File embedding cache entry has unexpected dimensions; reset the DB (dev). "
+                f"(blob_sha={blob_sha} expected_dims={expected_dimensions} got_dims={stored_dimensions!r})"
+            )
+        normalized = tuple(float(v) for v in (vector or ()))
+        if not normalized:
+            raise RepoStateEmbeddingError(
+                "File embedding cache contains an empty vector; reset the DB (dev). "
+                f"(blob_sha={blob_sha} dims={expected_dimensions})"
+            )
+        if len(normalized) != expected_dimensions:
+            raise RepoStateEmbeddingError(
+                "File embedding cache vector has unexpected dimensions; reset the DB (dev). "
+                f"(blob_sha={blob_sha} expected_dims={expected_dimensions} got_dims={len(normalized)})"
+            )
+        return RepositoryStateEmbedder._VectorMeta(vector=normalized)
 
     def _try_incremental_aggregate(
         self,
@@ -651,6 +733,83 @@ class RepositoryStateEmbedder:
         repo_root: Path,
         session: Session | None = None,
     ) -> _IncrementalAggregateResult | None:
+        parent = self._resolve_incremental_parent(commit_hash=commit_hash, repo_root=repo_root)
+        if parent is None:
+            return None
+
+        parent_state = self._load_parent_aggregate_state(
+            parent_hash=parent.parent_hash,
+            repo_root=repo_root,
+            session=session,
+        )
+        if parent_state is None:
+            return None
+
+        diffs = self._load_incremental_diff_entries(
+            repo=parent.repo,
+            parent_hash=parent.parent_hash,
+            commit_hash=commit_hash,
+        )
+        if diffs is None:
+            return None
+        if not diffs:
+            return self._persist_incremental_result(
+                commit_hash=commit_hash,
+                repo_root=repo_root,
+                sum_vector=parent_state.sum_vector,
+                file_count=parent_state.file_count,
+                session=session,
+                unique_blobs=0,
+                cache_hits=0,
+                cache_misses=0,
+                files_embedded=0,
+                skipped_empty_after_preprocess=0,
+                skipped_failed_embedding=0,
+            )
+
+        diff_selection = self._select_incremental_diff_candidates(
+            repo=parent.repo,
+            repo_root=repo_root,
+            diffs=diffs,
+        )
+        metadata = self._load_file_cache_metadata(
+            blob_shas=sorted(set(diff_selection.old_shas + diff_selection.new_shas)),
+            dimensions=parent_state.dimensions,
+            session=session,
+        )
+        miss_result = self._embed_incremental_cache_misses(
+            commit_hash=commit_hash,
+            repo_root=repo_root,
+            diff_selection=diff_selection,
+            metadata=metadata,
+            dimensions=parent_state.dimensions,
+        )
+        file_count = self._apply_incremental_delta(
+            diff_selection=diff_selection,
+            metadata=metadata,
+            sum_vector=parent_state.sum_vector,
+            file_count=parent_state.file_count,
+        )
+        return self._persist_incremental_result(
+            commit_hash=commit_hash,
+            repo_root=repo_root,
+            sum_vector=parent_state.sum_vector,
+            file_count=file_count,
+            session=session,
+            unique_blobs=len(miss_result.unique_new_shas),
+            cache_hits=miss_result.cache_hits,
+            cache_misses=miss_result.cache_misses,
+            files_embedded=miss_result.files_embedded,
+            skipped_empty_after_preprocess=miss_result.skipped_empty_after_preprocess,
+            skipped_failed_embedding=miss_result.skipped_failed_embedding,
+        )
+
+    def _resolve_incremental_parent(
+        self,
+        *,
+        commit_hash: str,
+        repo_root: Path,
+    ) -> _IncrementalParent | None:
         repo = self._repo
         if repo is None:
             try:
@@ -670,7 +829,15 @@ class RepositoryStateEmbedder:
         parent_hash = str(getattr(parent, "hexsha", "") or "").strip()
         if not parent_hash:
             return None
+        return _IncrementalParent(repo=repo, parent_hash=parent_hash)
 
+    def _load_parent_aggregate_state(
+        self,
+        *,
+        parent_hash: str,
+        repo_root: Path,
+        session: Session | None,
+    ) -> _ParentAggregateState | None:
         parent_agg = self._load_aggregate(
             commit_hash=parent_hash,
             repo_root=repo_root,
@@ -683,8 +850,6 @@ class RepositoryStateEmbedder:
                 f"Parent aggregate has an invalid file count (commit={parent_hash})."
             )
 
-        pinned_ignore = str(getattr(self.settings, "mapelites_repo_state_ignore_text", "") or "").strip()
-
         sum_vec = np.asarray(parent_agg.sum_vector or (), dtype=np.float64)
         if sum_vec.ndim != 1:
             raise RepoStateEmbeddingError(
@@ -695,23 +860,27 @@ class RepositoryStateEmbedder:
             raise RepoStateEmbeddingError(
                 f"Parent aggregate has no vector data (commit={parent_hash})."
             )
-        if dims != int(getattr(self.cache, "requested_dimensions", 0) or 0):
+        requested_dims = getattr(self.cache, "requested_dimensions", 0)
+        if dims != int(requested_dims or 0):
             raise RepoStateEmbeddingError(
                 "Parent aggregate dimensions do not match the embedding cache; "
-                f"expected {getattr(self.cache, 'requested_dimensions', 0)} got {dims} "
+                f"expected {requested_dims} got {dims} "
                 f"(commit={parent_hash})."
             )
-        file_count = int(parent_agg.file_count)
-
-        repo_prefix = _resolve_git_prefix(repo, repo_root)
-        ignore_spec = build_pinned_ignore_spec(pinned_ignore)
-        preprocess_filter = CodePreprocessor(
-            repo_root=repo_root,
-            settings=self.settings,
-            commit_hash=None,
+        return _ParentAggregateState(
+            commit_hash=parent_hash,
+            sum_vector=sum_vec,
+            file_count=int(parent_agg.file_count),
+            dimensions=dims,
         )
-        max_bytes = max(int(self.settings.mapelites_preprocess_max_file_size_kb), 1) * 1024
 
+    @staticmethod
+    def _load_incremental_diff_entries(
+        *,
+        repo: Repo,
+        parent_hash: str,
+        commit_hash: str,
+    ) -> tuple["_DiffEntry", ...] | None:
         try:
             raw = repo.git.diff_tree(
                 "-r",
@@ -724,29 +893,24 @@ class RepositoryStateEmbedder:
             )
         except GitCommandError:
             return None
+        return tuple(_parse_diff_tree_raw_z(raw))
 
-        diffs = _parse_diff_tree_raw_z(raw)
-        if not diffs:
-            # No changes relative to parent: derive directly from parent aggregate.
-            immutable_sum = tuple(float(v) for v in sum_vec.tolist())
-            vector = divide_vector(sum_vec, float(file_count))
-            persisted = self._persist_aggregate(
-                commit_hash=commit_hash,
-                repo_root=repo_root,
-                sum_vector=immutable_sum,
-                file_count=file_count,
-                session=session,
-            )
-            return _IncrementalAggregateResult(
-                aggregate=persisted,
-                vector=vector,
-                unique_blobs=0,
-                cache_hits=0,
-                cache_misses=0,
-                files_embedded=0,
-                skipped_empty_after_preprocess=0,
-                skipped_failed_embedding=0,
-            )
+    def _select_incremental_diff_candidates(
+        self,
+        *,
+        repo: Repo,
+        repo_root: Path,
+        diffs: Sequence["_DiffEntry"],
+    ) -> _IncrementalDiffSelection:
+        pinned_ignore = str(getattr(self.settings, "mapelites_repo_state_ignore_text", "") or "").strip()
+        repo_prefix = _resolve_git_prefix(repo, repo_root)
+        ignore_spec = build_pinned_ignore_spec(pinned_ignore)
+        preprocess_filter = CodePreprocessor(
+            repo_root=repo_root,
+            settings=self.settings,
+            commit_hash=None,
+        )
+        max_bytes = max(int(self.settings.mapelites_preprocess_max_file_size_kb), 1) * 1024
 
         candidate_blob_shas = sorted(
             {
@@ -757,74 +921,47 @@ class RepositoryStateEmbedder:
             }
         )
         blob_sizes = _load_blob_sizes(repo, candidate_blob_shas)
-        selection_cache: dict[tuple[str | None, str | None], tuple[bool, Path | None, str | None]] = {}
-
-        def _selected(path_str: str | None, sha: str | None) -> tuple[bool, Path | None, str | None]:
-            cache_key = (path_str, sha)
-            cached = selection_cache.get(cache_key)
-            if cached is not None:
-                return cached
-            if not path_str or _is_null_sha(sha):
-                result = (False, None, None)
-                selection_cache[cache_key] = result
-                return result
-            git_path = path_str.strip().lstrip("/")
-            if not git_path:
-                result = (False, None, None)
-                selection_cache[cache_key] = result
-                return result
-            if ignore_spec and is_ignored_path(ignore_spec, git_path):
-                result = (False, None, None)
-                selection_cache[cache_key] = result
-                return result
-            repo_rel = _git_path_to_repo_rel(git_path, repo_prefix=repo_prefix)
-            if repo_rel is None:
-                result = (False, None, None)
-                selection_cache[cache_key] = result
-                return result
-            if preprocess_filter.is_excluded(repo_rel):
-                result = (False, None, None)
-                selection_cache[cache_key] = result
-                return result
-            if not preprocess_filter.is_code_file(repo_rel):
-                result = (False, None, None)
-                selection_cache[cache_key] = result
-                return result
-            size = blob_sizes.get(str(sha))
-            if size is None or size <= 0 or size > max_bytes:
-                result = (False, None, None)
-                selection_cache[cache_key] = result
-                return result
-            result = (True, repo_rel, str(sha))
-            selection_cache[cache_key] = result
-            return result
+        selector = _DiffSelector(
+            repo_prefix=repo_prefix,
+            ignore_spec=ignore_spec,
+            preprocess_filter=preprocess_filter,
+            blob_sizes=blob_sizes,
+            max_bytes=max_bytes,
+        )
 
         old_shas: list[str] = []
         new_shas: list[str] = []
         repo_files_for_new_misses: list[RepositoryFile] = []
 
-        # First pass: determine which blob SHAs we may need.
         for entry in diffs:
-            old_ok, old_repo_rel, old_sha = _selected(entry.old_path, entry.old_sha)
-            new_ok, new_repo_rel, new_sha = _selected(entry.new_path, entry.new_sha)
-            if old_ok and old_sha:
-                old_shas.append(old_sha)
-            if new_ok and new_sha:
-                new_shas.append(new_sha)
-            if new_ok and new_sha and new_repo_rel:
+            old_blob = selector.select(entry.old_path, entry.old_sha)
+            new_blob = selector.select(entry.new_path, entry.new_sha)
+            if old_blob.selected and old_blob.blob_sha:
+                old_shas.append(old_blob.blob_sha)
+            if new_blob.selected and new_blob.blob_sha:
+                new_shas.append(new_blob.blob_sha)
+            if new_blob.selected and new_blob.blob_sha and new_blob.repo_rel:
                 repo_files_for_new_misses.append(
-                    RepositoryFile(path=new_repo_rel, blob_sha=new_sha, size_bytes=0)
+                    RepositoryFile(path=new_blob.repo_rel, blob_sha=new_blob.blob_sha, size_bytes=0)
                 )
-
-        candidates = sorted(set(old_shas + new_shas))
-        metadata = self._load_file_cache_metadata(
-            blob_shas=candidates,
-            dimensions=dims,
-            session=session,
+        return _IncrementalDiffSelection(
+            entries=tuple(diffs),
+            old_shas=tuple(old_shas),
+            new_shas=tuple(new_shas),
+            repo_files_for_new_misses=tuple(repo_files_for_new_misses),
+            selector=selector,
         )
 
-        # Embed cache misses for the *new* side only.
-        unique_new_shas = sorted(set(new_shas))
+    def _embed_incremental_cache_misses(
+        self,
+        *,
+        commit_hash: str,
+        repo_root: Path,
+        diff_selection: _IncrementalDiffSelection,
+        metadata: dict[str, "RepositoryStateEmbedder._VectorMeta"],
+        dimensions: int,
+    ) -> _IncrementalCacheMissResult:
+        unique_new_shas = tuple(sorted(set(diff_selection.new_shas)))
         missing_new = [sha for sha in unique_new_shas if sha not in metadata]
         files_embedded = 0
         skipped_empty_after_preprocess = 0
@@ -832,7 +969,7 @@ class RepositoryStateEmbedder:
             vectors_for_misses, embedded_count, skipped_empty = self._embed_cache_misses(
                 root=repo_root,
                 commit_hash=commit_hash,
-                repo_files=repo_files_for_new_misses,
+                repo_files=diff_selection.repo_files_for_new_misses,
                 missing_blob_shas=missing_new,
             )
             files_embedded = int(embedded_count)
@@ -840,7 +977,7 @@ class RepositoryStateEmbedder:
             if vectors_for_misses:
                 self.cache.put_many(vectors_for_misses)
                 for sha, vec in vectors_for_misses.items():
-                    if vec and len(vec) == dims:
+                    if vec and len(vec) == dimensions:
                         meta = RepositoryStateEmbedder._VectorMeta(vector=vec)
                         metadata[sha] = meta
                         self._remember_file_metadata(sha, meta)
@@ -851,18 +988,32 @@ class RepositoryStateEmbedder:
             cache_misses - files_embedded - skipped_empty_after_preprocess,
             0,
         )
+        return _IncrementalCacheMissResult(
+            unique_new_shas=unique_new_shas,
+            cache_hits=cache_hits,
+            cache_misses=cache_misses,
+            files_embedded=files_embedded,
+            skipped_empty_after_preprocess=skipped_empty_after_preprocess,
+            skipped_failed_embedding=skipped_failed_embedding,
+        )
 
-        # Second pass: apply delta updates using "included" semantics.
-        for entry in diffs:
-            old_ok, _old_repo_rel, old_sha = _selected(entry.old_path, entry.old_sha)
-            new_ok, _new_repo_rel, new_sha = _selected(entry.new_path, entry.new_sha)
-
+    @staticmethod
+    def _apply_incremental_delta(
+        *,
+        diff_selection: _IncrementalDiffSelection,
+        metadata: dict[str, "RepositoryStateEmbedder._VectorMeta"],
+        sum_vector: np.ndarray,
+        file_count: int,
+    ) -> int:
+        for entry in diff_selection.entries:
+            old_blob = diff_selection.selector.select(entry.old_path, entry.old_sha)
+            new_blob = diff_selection.selector.select(entry.new_path, entry.new_sha)
             old_meta: RepositoryStateEmbedder._VectorMeta | None = None
-            if old_ok and old_sha:
-                old_meta = metadata.get(old_sha)
+            if old_blob.selected and old_blob.blob_sha:
+                old_meta = metadata.get(old_blob.blob_sha)
             new_meta: RepositoryStateEmbedder._VectorMeta | None = None
-            if new_ok and new_sha:
-                new_meta = metadata.get(new_sha)
+            if new_blob.selected and new_blob.blob_sha:
+                new_meta = metadata.get(new_blob.blob_sha)
 
             old_included = bool(old_meta is not None and old_meta.vector)
             new_included = bool(new_meta is not None and new_meta.vector)
@@ -870,26 +1021,42 @@ class RepositoryStateEmbedder:
             if old_included and not new_included:
                 if old_meta is None:  # pragma: no cover - type narrowing guard
                     continue
-                accumulate_in_place(sum_vec, old_meta.vector, subtract=True)
+                accumulate_in_place(sum_vector, old_meta.vector, subtract=True)
                 file_count -= 1
                 continue
             if not old_included and new_included:
                 if new_meta is None:  # pragma: no cover - type narrowing guard
                     continue
-                accumulate_in_place(sum_vec, new_meta.vector)
+                accumulate_in_place(sum_vector, new_meta.vector)
                 file_count += 1
                 continue
             if old_included and new_included:
                 if old_meta is None or new_meta is None:  # pragma: no cover - type narrowing guard
                     continue
-                apply_replacement_delta_in_place(sum_vec, new_meta.vector, old_meta.vector)
+                apply_replacement_delta_in_place(sum_vector, new_meta.vector, old_meta.vector)
+        return file_count
 
-        immutable_sum = tuple(float(v) for v in sum_vec.tolist())
+    def _persist_incremental_result(
+        self,
+        *,
+        commit_hash: str,
+        repo_root: Path,
+        sum_vector: np.ndarray,
+        file_count: int,
+        session: Session | None,
+        unique_blobs: int,
+        cache_hits: int,
+        cache_misses: int,
+        files_embedded: int,
+        skipped_empty_after_preprocess: int,
+        skipped_failed_embedding: int,
+    ) -> _IncrementalAggregateResult:
+        immutable_sum = tuple(float(v) for v in sum_vector.tolist())
         if file_count < 0:
             raise RepoStateEmbeddingError(
                 f"Incremental repo-state aggregate underflowed file count (commit={commit_hash})."
             )
-        vector = divide_vector(sum_vec, float(file_count))
+        vector = divide_vector(sum_vector, float(file_count))
         persisted = self._persist_aggregate(
             commit_hash=commit_hash,
             repo_root=repo_root,
@@ -900,7 +1067,7 @@ class RepositoryStateEmbedder:
         return _IncrementalAggregateResult(
             aggregate=persisted,
             vector=vector,
-            unique_blobs=len(unique_new_shas),
+            unique_blobs=unique_blobs,
             cache_hits=cache_hits,
             cache_misses=cache_misses,
             files_embedded=files_embedded,

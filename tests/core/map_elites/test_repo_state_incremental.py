@@ -420,6 +420,66 @@ def test_file_cache_metadata_reuses_memory_cache_for_repeated_blob_queries(
     assert session.loaded_blob_batches == [["sha-a"], ["sha-b"]]
 
 
+def test_file_cache_metadata_keeps_model_mismatch_error_semantics(
+    tmp_path: Path,
+    settings: Settings,
+) -> None:
+    cache = _build_test_cache(dimensions=2)
+    session = _RepoStateSessionRecorder(
+        embedding_model="other",
+        dimensions=cache.requested_dimensions,
+        file_cache={"sha-a": (0.1, 0.2)},
+    )
+    embedder = RepositoryStateEmbedder(settings=settings, cache=cache)
+
+    with pytest.raises(RepoStateEmbeddingError, match="unexpected embedding model"):
+        embedder._load_file_cache_metadata(
+            blob_shas=["sha-a"],
+            dimensions=2,
+            session=session,
+        )
+
+
+def test_file_cache_metadata_keeps_stored_dimension_error_semantics(
+    tmp_path: Path,
+    settings: Settings,
+) -> None:
+    cache = _build_test_cache(dimensions=2)
+    session = _RepoStateSessionRecorder(
+        embedding_model=cache.embedding_model,
+        dimensions=3,
+        file_cache={"sha-a": (0.1, 0.2, 0.3)},
+    )
+    embedder = RepositoryStateEmbedder(settings=settings, cache=cache)
+
+    with pytest.raises(RepoStateEmbeddingError, match="unexpected dimensions"):
+        embedder._load_file_cache_metadata(
+            blob_shas=["sha-a"],
+            dimensions=2,
+            session=session,
+        )
+
+
+def test_file_cache_metadata_keeps_empty_vector_error_semantics(
+    tmp_path: Path,
+    settings: Settings,
+) -> None:
+    cache = _build_test_cache(dimensions=2)
+    session = _RepoStateSessionRecorder(
+        embedding_model=cache.embedding_model,
+        dimensions=cache.requested_dimensions,
+        file_cache={"sha-a": ()},
+    )
+    embedder = RepositoryStateEmbedder(settings=settings, cache=cache)
+
+    with pytest.raises(RepoStateEmbeddingError, match="contains an empty vector"):
+        embedder._load_file_cache_metadata(
+            blob_shas=["sha-a"],
+            dimensions=2,
+            session=session,
+        )
+
+
 def test_session_persisted_aggregate_stays_transaction_local_until_commit(
     tmp_path: Path,
     settings: Settings,
