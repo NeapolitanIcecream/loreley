@@ -405,8 +405,13 @@ def _artifact_feedback_lines(
 ) -> list[str]:
     header = _artifact_feedback_header(artifact)
     manifest_bits = _artifact_manifest_bits(artifact)
-    if mode == "manifest" or not (artifact.summary or artifact.diagnostics):
+    if mode == "manifest":
         return [_artifact_manifest_line(header, manifest_bits)]
+    if not (artifact.summary or artifact.diagnostics):
+        lines = [_artifact_manifest_line(header, manifest_bits)]
+        if mode == "path":
+            lines.extend(_artifact_uri_lines(artifact, policy=policy, omitted_reasons=omitted_reasons))
+        return lines
 
     summary = artifact.summary or "Manifest only; evaluator did not provide a bounded diagnostic summary."
     lines = [f"{header}: {clamp_text(normalize_single_line(summary), 512)}"]

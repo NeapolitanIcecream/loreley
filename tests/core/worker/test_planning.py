@@ -376,6 +376,28 @@ def test_planning_prompt_path_mode_uses_stable_uri_without_filesystem_path(setti
     assert local_path not in prompt
 
 
+def test_path_mode_includes_uri_for_artifacts_without_prose(settings: Settings) -> None:
+    settings.worker_evaluation_agent_feedback_mode = "path"
+    projection = render_evaluation_agent_feedback(
+        (
+            CommitEvaluationArtifactFeedback(
+                key="flamegraph",
+                kind="profile",
+                mime_type="image/svg+xml",
+                projection="path",
+                visibility="agent_visible",
+                size_bytes=512,
+                artifact_uri="loreley://evaluation-artifacts/job-1/flamegraph",
+            ),
+        ),
+        settings=settings,
+    )
+
+    assert "flamegraph" in projection.text
+    assert "loreley://evaluation-artifacts/job-1/flamegraph" in projection.text
+    assert "path_policy" not in projection.omitted_reasons
+
+
 def test_agent_feedback_budget_keeps_guardrail_and_accurate_omissions(
     settings: Settings,
 ) -> None:
