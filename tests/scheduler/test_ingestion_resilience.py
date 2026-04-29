@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any, cast
 from uuid import uuid4
 
@@ -411,6 +412,126 @@ def test_ingest_snapshot_records_failed_when_manager_raises(monkeypatch, tmp_pat
     assert recorded == [("failed", "manager failed")]
 
 
+def test_ingest_snapshot_falls_back_when_canonical_prefetch_payload_is_missing(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    ingestion = _make_ingestion(tmp_path)
+    snapshot = JobSnapshot(
+        job_id=uuid4(),
+        base_commit_hash=None,
+        island_id="island-a",
+        result_commit_hash="cafebabe",
+        completed_at=None,
+    )
+    canonical_hash = "c" * 40
+    fallback_payload = [
+        {
+            "name": "fitness",
+            "value": 1.5,
+            "unit": "score",
+            "higher_is_better": True,
+        }
+    ]
+
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_ensure_commit_available",
+        lambda _self, _commit_hash: canonical_hash,
+    )
+    ingestion._prefetched_metrics_payload_by_commit = {"cafebabe": []}
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_load_metrics_payload_for_commit",
+        lambda _self, commit_hash: fallback_payload if commit_hash == canonical_hash else [],
+    )
+
+    seen_calls: list[dict[str, Any]] = []
+
+    class DummyManager:
+        def ingest(self, *args: Any, **kwargs: Any) -> Any:
+            seen_calls.append(dict(kwargs))
+            return SimpleNamespace(
+                record=None,
+                delta=0.0,
+                status=0,
+                message="unchanged",
+                inserted=False,
+            )
+
+    ingestion.manager = DummyManager()  # type: ignore[assignment]
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_record_ingestion_state",
+        lambda *_args, **_kwargs: None,
+    )
+
+    assert ingestion._ingest_snapshot(snapshot) is False
+    assert seen_calls == [
+        {
+            "commit_hash": canonical_hash,
+            "metrics": fallback_payload,
+            "island_id": "island-a",
+            "repo_root": tmp_path,
+            "snapshot_session": None,
+        }
+    ]
+
+
+def test_ingest_snapshot_records_skipped_state_when_archive_unchanged(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    ingestion = _make_ingestion(tmp_path)
+    snapshot = JobSnapshot(
+        job_id=uuid4(),
+        base_commit_hash=None,
+        island_id=None,
+        result_commit_hash="cafebabe",
+        completed_at=None,
+    )
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_ensure_commit_available",
+        lambda _self, commit_hash: commit_hash,
+    )
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_load_metrics_payload_for_commit",
+        lambda _self, _commit_hash: [],
+    )
+
+    class DummyManager:
+        def ingest(self, *args: Any, **kwargs: Any) -> Any:
+            return SimpleNamespace(
+                record=None,
+                delta=-0.25,
+                status=0,
+                message="Commit not inserted; objective below cell threshold.",
+                inserted=False,
+            )
+
+    ingestion.manager = DummyManager()  # type: ignore[assignment]
+
+    recorded: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_record_ingestion_state",
+        lambda _self, _snapshot, **kwargs: recorded.append(dict(kwargs)),
+    )
+
+    assert ingestion._ingest_snapshot(snapshot) is False
+    assert recorded == [
+        {
+            "status": "skipped",
+            "delta": -0.25,
+            "status_code": 0,
+            "message": "Commit not inserted; objective below cell threshold.",
+            "record": None,
+        }
+    ]
+
+
 def test_ingest_snapshot_wraps_batch_session_work_in_savepoint(monkeypatch, tmp_path) -> None:
     ingestion = _make_ingestion(tmp_path)
     snapshot = JobSnapshot(
@@ -562,6 +683,63 @@ def test_record_ingestion_state_reuses_provided_session(monkeypatch, tmp_path) -
     assert session.begin_nested_calls == 1
     assert dummy_job.ingestion_attempts == 1
     assert dummy_job.ingestion_reason == "boom"
+
+
+def test_record_ingestion_state_records_result_payload(monkeypatch, tmp_path) -> None:
+    ingestion = _make_ingestion(tmp_path)
+
+    job_id = uuid4()
+    snapshot = JobSnapshot(
+        job_id=job_id,
+        base_commit_hash=None,
+        island_id=None,
+        result_commit_hash="abc123",
+        completed_at=None,
+    )
+
+    class DummyJob:
+        def __init__(self) -> None:
+            self.ingestion_attempts = 2
+            self.ingestion_status = None
+            self.ingestion_last_attempt_at = None
+            self.ingestion_reason = "old reason"
+            self.ingestion_delta = None
+            self.ingestion_status_code = None
+            self.ingestion_message = None
+            self.ingestion_cell_index = None
+
+    dummy_job = DummyJob()
+
+    class DummySession:
+        def get(self, _model: Any, key: Any) -> Any:
+            if key == job_id:
+                return dummy_job
+            return None
+
+    @contextmanager
+    def fake_scope():
+        yield DummySession()
+
+    monkeypatch.setattr(ingestion_mod, "session_scope", fake_scope)
+
+    ingestion._record_ingestion_state(
+        snapshot,
+        status="succeeded",
+        reason="updated",
+        delta=1.25,
+        status_code=3,
+        message="Inserted\ninto archive",
+        record=SimpleNamespace(cell_index="7"),
+    )
+
+    assert dummy_job.ingestion_attempts == 3
+    assert dummy_job.ingestion_status == "succeeded"
+    assert dummy_job.ingestion_last_attempt_at is not None
+    assert dummy_job.ingestion_reason == "updated"
+    assert dummy_job.ingestion_delta == 1.25
+    assert dummy_job.ingestion_status_code == 3
+    assert dummy_job.ingestion_message == "Inserted into archive"
+    assert dummy_job.ingestion_cell_index == 7
 
 
 def test_backoff_computation_skips_recent_failures(tmp_path) -> None:
