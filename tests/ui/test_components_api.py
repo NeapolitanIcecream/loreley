@@ -12,6 +12,9 @@ class _FakeStreamlitModule:
         self.button_values: dict[str, bool] = {}
         self.download_calls: list[dict[str, object]] = []
         self.write_calls: list[str] = []
+        self.markdown_calls: list[str] = []
+        self.caption_calls: list[str] = []
+        self.text_area_calls: list[dict[str, object]] = []
         self.error_calls: list[str] = []
         self.session_state: dict[str, object] = {}
 
@@ -40,6 +43,15 @@ class _FakeStreamlitModule:
 
     def write(self, value: str) -> None:
         self.write_calls.append(value)
+
+    def markdown(self, value: str) -> None:
+        self.markdown_calls.append(value)
+
+    def caption(self, value: str) -> None:
+        self.caption_calls.append(value)
+
+    def text_area(self, label: str, **kwargs) -> None:
+        self.text_area_calls.append({"label": label, "kwargs": kwargs})
 
     def error(self, value: str) -> None:
         self.error_calls.append(value)
@@ -137,3 +149,53 @@ def test_render_artifact_downloads_fetches_server_side_after_prepare(ui_api_modu
     assert fake_streamlit.download_calls[0]["label"] == "Download: Planning prompt"
     assert fake_streamlit.download_calls[0]["kwargs"]["data"] == b"payload"
     assert fake_streamlit.download_calls[0]["kwargs"]["mime"] == "application/json"
+
+
+def test_render_evaluation_evidence_defers_fetch_until_prepare_clicked(ui_api_module) -> None:
+    module, fake_streamlit = ui_api_module
+    fetch_calls: list[tuple[str, str]] = []
+
+    def _fake_fetch(base_url: str, path: str, *, params=None):
+        fetch_calls.append((base_url, path))
+        return b"payload", "application/json"
+
+    module.api_get_bytes_or_stop = _fake_fetch
+
+    module.render_evaluation_evidence(
+        api_base_url="http://example.local/root/",
+        artifacts=[
+            {
+                "key": "benchmark_report",
+                "kind": "benchmark_json",
+                "mime_type": "application/json",
+                "summary": "Parser throughput improved.",
+                "visibility": "agent_visible",
+                "download_url": "/api/v1/jobs/123/evaluation-artifacts/benchmark_report",
+            }
+        ],
+        key_prefix="evidence_test",
+    )
+
+    assert fetch_calls == []
+    assert fake_streamlit.download_calls == []
+    assert fake_streamlit.markdown_calls == ["**benchmark_report**  `benchmark_report`"]
+    assert [call["label"] for call in fake_streamlit.button_calls] == [
+        "Prepare: benchmark_report",
+    ]
+
+
+def test_render_agent_feedback_preview_renders_bounded_text(ui_api_module) -> None:
+    module, fake_streamlit = ui_api_module
+
+    module.render_agent_feedback_preview(
+        {
+            "mode": "summary",
+            "budget_chars": 2000,
+            "text": "Evaluation Evidence:\n- `bench`: summary",
+            "included_artifact_keys": ["bench"],
+            "omitted_artifact_count": 0,
+        }
+    )
+
+    assert fake_streamlit.text_area_calls[0]["label"] == "Agent feedback preview"
+    assert "Evaluation Evidence" in fake_streamlit.text_area_calls[0]["kwargs"]["value"]

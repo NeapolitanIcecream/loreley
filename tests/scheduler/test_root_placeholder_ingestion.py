@@ -7,6 +7,8 @@ from types import SimpleNamespace
 
 from sqlalchemy.exc import MultipleResultsFound
 
+from loreley.core.worker.evaluator import EvaluationArtifact, EvaluationMetric, EvaluationResult
+from loreley.db.models import CommitCard, EvaluationArtifactRecord, Metric
 from loreley.scheduler import ingestion as ingestion_mod
 from loreley.scheduler.ingestion import MapElitesIngestion
 from tests.support import TestSettings
@@ -151,3 +153,91 @@ def test_root_commit_evaluation_skips_when_metrics_already_exist_even_if_multipl
     ingestion._ensure_root_commit_evaluated("abc123")
 
     assert worker_repo_calls == []
+
+
+def test_root_commit_evaluation_ignores_evaluator_artifacts(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    settings = TestSettings(MAPELITES_CODE_EMBEDDING_DIMENSIONS=8)
+
+    class _Repo:
+        def commit(self, _commit_hash: str) -> object:
+            return SimpleNamespace(
+                parents=[],
+                author=SimpleNamespace(name="author"),
+                message="Root subject\n\nbody",
+            )
+
+    ingestion = MapElitesIngestion(
+        settings=settings,
+        console=ingestion_mod.Console(),
+        repo_root=tmp_path,
+        repo=cast(Any, _Repo()),
+        manager=DummyManager(),  # type: ignore[arg-type]
+    )
+
+    class _ScalarNone:
+        def scalar_one_or_none(self) -> object:
+            return None
+
+        def first(self) -> object:
+            return None
+
+    added: list[object] = []
+    sessions: list[object] = []
+
+    class _Session:
+        def __init__(self) -> None:
+            self.calls = 0
+            sessions.append(self)
+
+        def execute(self, _stmt: object) -> _ScalarNone:
+            self.calls += 1
+            return _ScalarNone()
+
+        def add(self, obj: object) -> None:
+            added.append(obj)
+
+    @contextmanager
+    def _fake_scope():
+        yield _Session()
+
+    class _WorkerRepository:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        @contextmanager
+        def checkout_lease_for_job(self, **_kwargs: object):
+            yield SimpleNamespace(worktree=tmp_path)
+
+    class _Evaluator:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def evaluate(self, context: object) -> EvaluationResult:
+            assert getattr(context, "job_id") is None
+            return EvaluationResult(
+                summary="baseline summary",
+                metrics=(EvaluationMetric(name="score", value=1.0),),
+                artifacts=(
+                    EvaluationArtifact(
+                        key="baseline_report",
+                        kind="benchmark_json",
+                        mime_type="application/json",
+                        inline_payload={"score": 1.0},
+                        summary="should not be persisted",
+                        visibility="agent_visible",
+                    ),
+                ),
+            )
+
+    monkeypatch.setattr(ingestion_mod, "session_scope", _fake_scope)
+    monkeypatch.setattr(ingestion_mod, "WorkerRepository", _WorkerRepository)
+    monkeypatch.setattr(ingestion_mod, "Evaluator", _Evaluator)
+
+    ingestion._ensure_root_commit_evaluated("abc123")
+
+    assert any(isinstance(obj, CommitCard) for obj in added)
+    assert any(isinstance(obj, Metric) for obj in added)
+    assert not any(isinstance(obj, EvaluationArtifactRecord) for obj in added)

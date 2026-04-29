@@ -243,6 +243,7 @@ class CodingAgent(TruncationMixin):
             inspirations=request.inspirations,
             truncate_limit=self._truncate_limit,
             max_metrics=4,
+            settings=self.settings,
         )
 
         prompt = f"""

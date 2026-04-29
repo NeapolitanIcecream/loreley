@@ -361,6 +361,54 @@ class Settings(BaseSettings):
         default=64,
         alias="WORKER_EVALUATOR_MAX_METRICS",
     )
+    worker_evaluation_artifacts_enabled: bool = Field(
+        default=True,
+        alias="WORKER_EVALUATION_ARTIFACTS_ENABLED",
+    )
+    worker_evaluation_agent_feedback_mode: Literal["disabled", "manifest", "summary", "path"] = Field(
+        default="summary",
+        alias="WORKER_EVALUATION_AGENT_FEEDBACK_MODE",
+    )
+    worker_evaluation_agent_feedback_max_artifacts: int = Field(
+        default=4,
+        alias="WORKER_EVALUATION_AGENT_FEEDBACK_MAX_ARTIFACTS",
+    )
+    worker_evaluation_agent_feedback_max_diagnostics: int = Field(
+        default=3,
+        alias="WORKER_EVALUATION_AGENT_FEEDBACK_MAX_DIAGNOSTICS",
+    )
+    worker_evaluation_agent_feedback_max_chars: int = Field(
+        default=2000,
+        alias="WORKER_EVALUATION_AGENT_FEEDBACK_MAX_CHARS",
+    )
+    worker_evaluation_artifact_max_bytes: int = Field(
+        default=10_485_760,
+        alias="WORKER_EVALUATION_ARTIFACT_MAX_BYTES",
+    )
+    worker_evaluation_artifact_agent_path_max_bytes: int = Field(
+        default=1_048_576,
+        alias="WORKER_EVALUATION_ARTIFACT_AGENT_PATH_MAX_BYTES",
+    )
+    worker_evaluation_artifact_allowed_mime_types: list[str] = Field(
+        default_factory=lambda: [
+            "text/plain",
+            "application/json",
+            "image/svg+xml",
+            "image/png",
+            "text/html",
+            "application/octet-stream",
+        ],
+        alias="WORKER_EVALUATION_ARTIFACT_ALLOWED_MIME_TYPES",
+    )
+    worker_evaluation_artifact_agent_path_mime_types: list[str] = Field(
+        default_factory=lambda: [
+            "text/plain",
+            "application/json",
+            "image/svg+xml",
+            "text/html",
+        ],
+        alias="WORKER_EVALUATION_ARTIFACT_AGENT_PATH_MIME_TYPES",
+    )
     # Global evolution objective used to guide planning and coding agents.
     # This should be a stable, plain-language description of what the
     # autonomous worker is trying to achieve across all evolution jobs.

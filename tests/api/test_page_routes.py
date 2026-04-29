@@ -16,6 +16,7 @@ from loreley.api.routers.commits import router as commits_api_router
 from loreley.api.routers.jobs import router as jobs_api_router
 from loreley.api.services.archive import ArchiveRecordPage
 from loreley.api.services.commits import CommitPage
+from loreley.api.services.evidence import EvidenceIndicator
 from loreley.api.services.jobs import JobPage
 from loreley.config import Settings
 from loreley.db.models import JobStatus
@@ -29,7 +30,33 @@ def _build_test_client() -> TestClient:
     return TestClient(app)
 
 
+def _patch_no_evidence(monkeypatch) -> None:
+    monkeypatch.setattr(jobs_router, "load_evidence_indicators_by_commit_hash", lambda _hashes: {})
+    monkeypatch.setattr(commits_router, "load_evidence_indicators_by_commit_hash", lambda _hashes: {})
+    monkeypatch.setattr(archive_router, "load_evidence_indicators_by_commit_hash", lambda _hashes: {})
+
+
+def _commit_row(commit_hash: str = "abc") -> SimpleNamespace:
+    return SimpleNamespace(
+        id=uuid4(),
+        commit_hash=commit_hash,
+        parent_commit_hash=None,
+        island_id="main",
+        job_id=None,
+        author="bot",
+        subject="Subject",
+        change_summary="Summary",
+        evaluation_summary=None,
+        tags=[],
+        key_files=[],
+        highlights=[],
+        created_at=datetime(2026, 3, 11, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 3, 11, tzinfo=timezone.utc),
+    )
+
+
 def test_jobs_page_route_returns_items_and_next_cursor(monkeypatch) -> None:
+    _patch_no_evidence(monkeypatch)
     row = SimpleNamespace(
         id=uuid4(),
         status=JobStatus.SUCCEEDED,
@@ -59,22 +86,8 @@ def test_jobs_page_route_returns_items_and_next_cursor(monkeypatch) -> None:
 
 
 def test_commits_page_route_returns_items_and_next_cursor(monkeypatch) -> None:
-    row = SimpleNamespace(
-        id=uuid4(),
-        commit_hash="abc",
-        parent_commit_hash=None,
-        island_id="main",
-        job_id=None,
-        author="bot",
-        subject="Subject",
-        change_summary="Summary",
-        evaluation_summary=None,
-        tags=[],
-        key_files=[],
-        highlights=[],
-        created_at=datetime(2026, 3, 11, tzinfo=timezone.utc),
-        updated_at=datetime(2026, 3, 11, tzinfo=timezone.utc),
-    )
+    _patch_no_evidence(monkeypatch)
+    row = _commit_row()
     monkeypatch.setattr(
         commits_router,
         "list_commits_page",
@@ -90,23 +103,9 @@ def test_commits_page_route_returns_items_and_next_cursor(monkeypatch) -> None:
 
 
 def test_commits_page_route_passes_query_filter(monkeypatch) -> None:
+    _patch_no_evidence(monkeypatch)
     captured: dict[str, object] = {}
-    row = SimpleNamespace(
-        id=uuid4(),
-        commit_hash="abc",
-        parent_commit_hash=None,
-        island_id="main",
-        job_id=None,
-        author="bot",
-        subject="Subject",
-        change_summary="Summary",
-        evaluation_summary=None,
-        tags=[],
-        key_files=[],
-        highlights=[],
-        created_at=datetime(2026, 3, 11, tzinfo=timezone.utc),
-        updated_at=datetime(2026, 3, 11, tzinfo=timezone.utc),
-    )
+    row = _commit_row()
 
     def _fake_list_commits_page(**kwargs):
         captured.update(kwargs)
@@ -121,7 +120,44 @@ def test_commits_page_route_passes_query_filter(monkeypatch) -> None:
     assert captured["query"] == "bugfix"
 
 
+def test_commit_routes_serialize_evidence_indicators(monkeypatch) -> None:
+    row = _commit_row()
+    indicator = EvidenceIndicator(
+        has_evaluation_evidence=True,
+        agent_visible_evidence_count=2,
+        top_evaluation_diagnosis="p95 latency regressed",
+    )
+
+    monkeypatch.setattr(commits_router, "list_commits", lambda **_kwargs: [row])
+    monkeypatch.setattr(
+        commits_router,
+        "list_commits_page",
+        lambda **_kwargs: CommitPage(items=[row], next_cursor=None),
+    )
+    monkeypatch.setattr(commits_router, "get_commit", lambda **_kwargs: row)
+    monkeypatch.setattr(commits_router, "list_metrics", lambda **_kwargs: [])
+    monkeypatch.setattr(commits_router, "list_evaluation_artifacts_for_commit", lambda **_kwargs: [])
+    monkeypatch.setattr(commits_router, "build_agent_feedback_payload", lambda _rows: None)
+    monkeypatch.setattr(
+        commits_router,
+        "load_evidence_indicators_by_commit_hash",
+        lambda _hashes: {"abc": indicator},
+    )
+
+    client = _build_test_client()
+
+    list_payload = client.get("/api/v1/commits").json()[0]
+    page_payload = client.get("/api/v1/commits/page").json()["items"][0]
+    detail_payload = client.get("/api/v1/commits/abc").json()
+
+    for payload in (list_payload, page_payload, detail_payload):
+        assert payload["has_evaluation_evidence"] is True
+        assert payload["agent_visible_evidence_count"] == 2
+        assert payload["top_evaluation_diagnosis"] == "p95 latency regressed"
+
+
 def test_archive_records_page_route_returns_items_and_next_cursor(monkeypatch) -> None:
+    _patch_no_evidence(monkeypatch)
     settings = Settings.model_validate({"mapelites_code_embedding_dimensions": 8})
     monkeypatch.setattr(archive_router, "get_settings", lambda: settings)
     monkeypatch.setattr(archive_router, "resolve_default_island_id", lambda _settings: "main")
@@ -157,6 +193,7 @@ def test_archive_records_page_route_returns_items_and_next_cursor(monkeypatch) -
 
 
 def test_jobs_page_route_rejects_invalid_cursor(monkeypatch) -> None:
+    _patch_no_evidence(monkeypatch)
     monkeypatch.setattr(
         jobs_router,
         "list_jobs_page",
@@ -171,6 +208,7 @@ def test_jobs_page_route_rejects_invalid_cursor(monkeypatch) -> None:
 
 
 def test_commits_page_route_rejects_invalid_cursor(monkeypatch) -> None:
+    _patch_no_evidence(monkeypatch)
     monkeypatch.setattr(
         commits_router,
         "list_commits_page",
@@ -185,6 +223,7 @@ def test_commits_page_route_rejects_invalid_cursor(monkeypatch) -> None:
 
 
 def test_archive_records_page_route_rejects_invalid_cursor(monkeypatch) -> None:
+    _patch_no_evidence(monkeypatch)
     settings = Settings.model_validate({"mapelites_code_embedding_dimensions": 8})
     monkeypatch.setattr(archive_router, "get_settings", lambda: settings)
     monkeypatch.setattr(archive_router, "resolve_default_island_id", lambda _settings: "main")
@@ -199,3 +238,17 @@ def test_archive_records_page_route_rejects_invalid_cursor(monkeypatch) -> None:
 
     assert response.status_code == 400
     assert response.json() == {"detail": "Archive records cursor is invalid."}
+
+
+def test_job_evaluation_artifact_download_returns_404_when_hidden_or_missing(monkeypatch) -> None:
+    monkeypatch.setattr(
+        jobs_router,
+        "get_downloadable_evaluation_artifact",
+        lambda **_kwargs: None,
+    )
+
+    client = _build_test_client()
+    response = client.get(f"/api/v1/jobs/{uuid4()}/evaluation-artifacts/hidden")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Evaluation artifact not found."}

@@ -8,6 +8,7 @@ from fastapi import HTTPException
 
 from loreley.api.pagination import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, PaginationCursorError
 from loreley.api.schemas.archive import ArchiveRecordOut, ArchiveRecordPageOut, ArchiveSnapshotMetaOut, IslandStatsOut
+from loreley.api.services.evidence import load_evidence_indicators_by_commit_hash
 from loreley.api.services.archive import (
     describe_island,
     list_islands,
@@ -50,7 +51,7 @@ def get_records(
         limit=limit,
         offset=offset,
     )
-    return records
+    return _records_with_evidence(records)
 
 
 @router.get("/archive/records/page", response_model=ArchiveRecordPageOut)
@@ -71,7 +72,7 @@ def get_records_page(
     except PaginationCursorError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return ArchiveRecordPageOut(
-        items=page.items,
+        items=_records_with_evidence(page.items),
         next_cursor=page.next_cursor,
     )
 
@@ -99,3 +100,17 @@ def get_snapshot_meta(
         history_length=int(meta.history_length),
         updated_at=updated_at,
     )
+
+
+def _records_with_evidence(records: list[object]) -> list[ArchiveRecordOut]:
+    indicators = load_evidence_indicators_by_commit_hash(
+        [str(getattr(record, "commit_hash", "") or "") for record in records]
+    )
+    out: list[ArchiveRecordOut] = []
+    for record in records:
+        item = ArchiveRecordOut.model_validate(record)
+        indicator = indicators.get(item.commit_hash)
+        if indicator is not None:
+            item = item.model_copy(update=indicator.as_dict())
+        out.append(item)
+    return out

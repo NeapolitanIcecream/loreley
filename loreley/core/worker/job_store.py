@@ -12,14 +12,26 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import SQLAlchemyError
 
 from loreley.core.contracts import clamp_text, normalize_single_line
-from loreley.core.worker.artifacts import resolve_worker_instance_id, write_job_artifacts
+from loreley.core.worker.artifacts import (
+    FixedJobArtifactPaths,
+    JobArtifactWriteResult,
+    resolve_worker_instance_id,
+    write_job_artifacts,
+)
 from loreley.core.worker.commit_card import build_commit_card_from_git
 from loreley.config import Settings, get_settings
 from loreley.core.worker.coding import CodingAgentResponse
 from loreley.core.worker.evaluator import EvaluationResult
 from loreley.core.worker.planning import PlanningAgentResponse
 from loreley.db.base import session_scope
-from loreley.db.models import CommitCard, EvolutionJob, JobArtifacts, JobStatus, Metric
+from loreley.db.models import (
+    CommitCard,
+    EvaluationArtifactRecord,
+    EvolutionJob,
+    JobArtifacts,
+    JobStatus,
+    Metric,
+)
 
 if TYPE_CHECKING:
     from loreley.core.worker.evolution import JobContext
@@ -264,18 +276,21 @@ class EvolutionJobStore:
 
         tags = [clamp_text(normalize_single_line(tag), 64) for tag in job_ctx.tags if str(tag).strip()]
 
-        artifact_paths: dict[str, str] = {}
+        artifact_result = JobArtifactWriteResult(fixed=FixedJobArtifactPaths())
         try:
-            artifact_paths = write_job_artifacts(
-                job_id=job_ctx.job_id,
-                run_token=job_ctx.run_token,
-                plan=plan,
-                coding=coding,
-                evaluation=evaluation,
-                base_commit_hash=job_ctx.base_commit_hash,
-                candidate_commit_hash=commit_hash,
-                commit_message=subject,
-                settings=self.settings,
+            artifact_result = _coerce_artifact_write_result(
+                write_job_artifacts(
+                    job_id=job_ctx.job_id,
+                    run_token=job_ctx.run_token,
+                    plan=plan,
+                    coding=coding,
+                    evaluation=evaluation,
+                    base_commit_hash=job_ctx.base_commit_hash,
+                    candidate_commit_hash=commit_hash,
+                    commit_message=subject,
+                    worktree=Path(worktree),
+                    settings=self.settings,
+                )
             )
         except Exception as exc:  # pragma: no cover - best-effort artifact store
             log.warning("Failed to write artifacts for job {}: {}", job_ctx.job_id, exc)
@@ -332,23 +347,50 @@ class EvolutionJobStore:
                             details=dict(metric.details or {}),
                         )
                     )
-                if artifact_paths:
+                flush = getattr(session, "flush", None)
+                if callable(flush):
+                    flush()
+                fixed_paths = artifact_result.fixed.as_dict()
+                if fixed_paths:
                     artifact_row = JobArtifacts(
                         job_id=job_ctx.job_id,
-                        planning_prompt_path=artifact_paths.get("planning_prompt_path"),
-                        planning_raw_output_path=artifact_paths.get("planning_raw_output_path"),
-                        planning_plan_json_path=artifact_paths.get("planning_plan_json_path"),
-                        coding_prompt_path=artifact_paths.get("coding_prompt_path"),
-                        coding_raw_output_path=artifact_paths.get("coding_raw_output_path"),
-                        coding_execution_json_path=artifact_paths.get("coding_execution_json_path"),
-                        evaluation_json_path=artifact_paths.get("evaluation_json_path"),
-                        evaluation_logs_path=artifact_paths.get("evaluation_logs_path"),
+                        planning_prompt_path=fixed_paths.get("planning_prompt_path"),
+                        planning_raw_output_path=fixed_paths.get("planning_raw_output_path"),
+                        planning_plan_json_path=fixed_paths.get("planning_plan_json_path"),
+                        coding_prompt_path=fixed_paths.get("coding_prompt_path"),
+                        coding_raw_output_path=fixed_paths.get("coding_raw_output_path"),
+                        coding_execution_json_path=fixed_paths.get("coding_execution_json_path"),
+                        evaluation_json_path=fixed_paths.get("evaluation_json_path"),
+                        evaluation_logs_path=fixed_paths.get("evaluation_logs_path"),
                     )
                     merge = getattr(session, "merge", None)
                     if callable(merge):
                         merge(artifact_row)
                     else:  # pragma: no cover - unit-test fallback for simplified sessions
                         session.add(artifact_row)
+                for artifact in artifact_result.evaluation_artifacts:
+                    session.add(
+                        EvaluationArtifactRecord(
+                            job_id=job_ctx.job_id,
+                            commit_card_id=card.id,
+                            commit_hash=commit_hash,
+                            key=artifact.key,
+                            kind=artifact.kind,
+                            mime_type=artifact.mime_type,
+                            label=artifact.label,
+                            summary=artifact.summary,
+                            visibility=artifact.visibility,
+                            agent_projection=artifact.agent_projection,
+                            storage_path=artifact.storage_path,
+                            size_bytes=artifact.size_bytes,
+                            sha256=artifact.sha256,
+                            diagnostics=[
+                                diagnostic.as_dict()
+                                for diagnostic in artifact.diagnostics
+                            ],
+                            artifact_metadata=dict(artifact.metadata or {}),
+                        )
+                    )
         except SQLAlchemyError as exc:
             raise EvolutionWorkerError(f"Failed to persist results for job {job_ctx.job_id}: {exc}") from exc
 
@@ -462,3 +504,18 @@ def _bounded_worker_instance_id(value: str) -> str:
         digest,
     )
     return bounded
+
+
+def _coerce_artifact_write_result(value: Any) -> JobArtifactWriteResult:
+    """Accept the current typed write result and old dict-shaped test doubles."""
+
+    if isinstance(value, JobArtifactWriteResult):
+        return value
+    if isinstance(value, dict):
+        allowed = {
+            key: str(path)
+            for key, path in value.items()
+            if key in FixedJobArtifactPaths.__dataclass_fields__ and path
+        }
+        return JobArtifactWriteResult(fixed=FixedJobArtifactPaths(**allowed))
+    return JobArtifactWriteResult(fixed=FixedJobArtifactPaths())

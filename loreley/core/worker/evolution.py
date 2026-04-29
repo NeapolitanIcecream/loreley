@@ -26,8 +26,10 @@ from loreley.core.worker.evaluator import (
     EvaluationResult,
 )
 from loreley.core.worker.planning import (
+    CommitEvaluationArtifactFeedback,
     CommitMetric,
     CommitPlanningContext,
+    EvaluationDiagnosticBrief,
     IterationContext,
     PlanningAgent,
     PlanningAgentRequest,
@@ -49,7 +51,7 @@ from loreley.core.worker.job_store import (
 )
 from loreley.core.worker.repository import CheckoutContext, WorkerRepository, RepositoryError
 from loreley.db.base import session_scope
-from loreley.db.models import CommitCard, MapElitesArchiveCell, Metric
+from loreley.db.models import CommitCard, EvaluationArtifactRecord, MapElitesArchiveCell, Metric
 
 console = Console()
 log = logger.bind(module="worker.evolution")
@@ -651,6 +653,7 @@ class EvolutionWorker:
         cards_by_hash: dict[str, CommitCard] = {}
         metrics_by_card_id: dict[UUID, list[Metric]] = {}
         cells_by_hash: dict[str, MapElitesArchiveCell] = {}
+        artifacts_by_hash: dict[str, list[EvaluationArtifactRecord]] = {}
         with session_scope() as session:
             cards = session.scalars(
                 select(CommitCard).where(CommitCard.commit_hash.in_(unique_hashes))
@@ -678,6 +681,20 @@ class EvolutionWorker:
                             f"(island={island_id}, commit={cell.commit_hash})."
                         )
                     cells_by_hash[cell.commit_hash] = cell
+            if self.settings.worker_evaluation_agent_feedback_mode != "disabled":
+                artifact_rows = session.scalars(
+                    select(EvaluationArtifactRecord)
+                    .where(
+                        EvaluationArtifactRecord.commit_hash.in_(unique_hashes),
+                        EvaluationArtifactRecord.visibility == "agent_visible",
+                    )
+                    .order_by(
+                        EvaluationArtifactRecord.created_at.asc(),
+                        EvaluationArtifactRecord.id.asc(),
+                    )
+                ).all()
+                for row in artifact_rows:
+                    artifacts_by_hash.setdefault(row.commit_hash, []).append(row)
 
         contexts: list[CommitPlanningContext] = []
         for commit_hash in ordered_hashes:
@@ -690,6 +707,7 @@ class EvolutionWorker:
                     commit_hash=commit_hash,
                     card=card,
                     metric_rows=metric_rows_for_card,
+                    artifact_rows=tuple(artifacts_by_hash.get(commit_hash, ())),
                     cell=cells_by_hash.get(commit_hash),
                 )
             )
@@ -702,6 +720,7 @@ class EvolutionWorker:
         card: CommitCard | None,
         metric_rows: Sequence[Metric],
         cell: MapElitesArchiveCell | None,
+        artifact_rows: Sequence[EvaluationArtifactRecord] = (),
     ) -> CommitPlanningContext:
         subject = (getattr(card, "subject", None) or "").strip() or f"Commit {commit_hash}"
         change_summary = (getattr(card, "change_summary", None) or "").strip() or "N/A"
@@ -709,6 +728,9 @@ class EvolutionWorker:
         highlights = tuple(getattr(card, "highlights", None) or ())
         evaluation_summary = getattr(card, "evaluation_summary", None)
         metrics = tuple(self._metric_from_row(row) for row in metric_rows)
+        evaluation_artifacts = tuple(
+            self._artifact_feedback_from_row(row) for row in artifact_rows
+        )
 
         return CommitPlanningContext(
             commit_hash=commit_hash,
@@ -718,6 +740,7 @@ class EvolutionWorker:
             highlights=highlights,
             evaluation_summary=evaluation_summary,
             metrics=metrics,
+            evaluation_artifacts=evaluation_artifacts,
             map_elites_cell_index=int(cell.cell_index) if cell is not None else None,
             map_elites_objective=float(cell.objective) if cell is not None else None,
             map_elites_measures=tuple(float(v) for v in (cell.measures or ())) if cell is not None else (),
@@ -736,6 +759,60 @@ class EvolutionWorker:
             unit=row.unit,
             higher_is_better=row.higher_is_better,
             summary=summary or None,
+        )
+
+    def _artifact_feedback_from_row(
+        self,
+        row: EvaluationArtifactRecord,
+    ) -> CommitEvaluationArtifactFeedback:
+        diagnostics = tuple(
+            self._diagnostic_brief_from_mapping(item)
+            for item in (row.diagnostics or ())
+            if isinstance(item, dict)
+        )
+        artifact_uri = None
+        if row.storage_path:
+            artifact_uri = f"loreley://evaluation-artifacts/{row.job_id}/{row.key}"
+        return CommitEvaluationArtifactFeedback(
+            key=row.key,
+            kind=row.kind,
+            mime_type=row.mime_type,
+            label=row.label,
+            summary=row.summary,
+            diagnostics=diagnostics,
+            projection=row.agent_projection,
+            visibility=row.visibility,
+            size_bytes=row.size_bytes,
+            sha256=row.sha256,
+            artifact_uri=artifact_uri,
+        )
+
+    @staticmethod
+    def _diagnostic_brief_from_mapping(payload: dict[str, object]) -> EvaluationDiagnosticBrief:
+        return EvaluationDiagnosticBrief(
+            kind=str(payload.get("kind") or ""),
+            message=str(payload.get("message") or ""),
+            severity=str(payload.get("severity") or "info"),
+            location=(
+                str(payload.get("location"))
+                if payload.get("location") is not None
+                else None
+            ),
+            metric=(
+                str(payload.get("metric"))
+                if payload.get("metric") is not None
+                else None
+            ),
+            value=(
+                float(payload.get("value"))
+                if payload.get("value") is not None
+                else None
+            ),
+            unit=(
+                str(payload.get("unit"))
+                if payload.get("unit") is not None
+                else None
+            ),
         )
 
     def _build_iteration_context(self, job_ctx: JobContext) -> IterationContext:

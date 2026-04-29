@@ -12,11 +12,16 @@ from sqlalchemy.exc import SQLAlchemyError
 
 import loreley.core.worker.job_store as job_store
 from loreley.config import Settings
+from loreley.core.worker.artifacts import (
+    FixedJobArtifactPaths,
+    JobArtifactWriteResult,
+    MaterializedEvaluationArtifact,
+)
 from loreley.core.worker.coding import (
     CodingAgentResponse,
     ExecutionReport,
 )
-from loreley.core.worker.evaluator import EvaluationMetric, EvaluationResult
+from loreley.core.worker.evaluator import EvaluationDiagnostic, EvaluationMetric, EvaluationResult
 from loreley.core.worker.evolution import JobContext
 from loreley.core.worker.job_store import (
     EvolutionJobStore,
@@ -475,11 +480,49 @@ def test_persist_success_updates_job_and_records_metadata(
         def add(self, obj: Any) -> None:
             self.added.append(obj)
 
+        def flush(self) -> None:
+            for obj in self.added:
+                if isinstance(obj, job_store.CommitCard) and obj.id is None:
+                    obj.id = uuid.uuid4()
+
     @contextmanager
     def fake_scope() -> Any:
         yield DummySession()
 
     monkeypatch.setattr(job_store, "session_scope", fake_scope)
+    monkeypatch.setattr(
+        job_store,
+        "build_commit_card_from_git",
+        lambda **_kwargs: type("Build", (), {"key_files": ["file.py"], "highlights": ["changed"]})(),
+    )
+    materialized_artifact = MaterializedEvaluationArtifact(
+        key="benchmark_report",
+        kind="benchmark_json",
+        mime_type="application/json",
+        label="Benchmark report",
+        summary="Parser throughput improved.",
+        visibility="agent_visible",
+        agent_projection="summary",
+        storage_path="/worker/artifacts/benchmark_report.json",
+        size_bytes=42,
+        sha256="a" * 64,
+        diagnostics=(
+            EvaluationDiagnostic(
+                kind="improvement",
+                message="throughput improved",
+                severity="info",
+            ),
+        ),
+        metadata={"source": "bench"},
+    )
+    monkeypatch.setattr(
+        job_store,
+        "write_job_artifacts",
+        lambda **_kwargs: JobArtifactWriteResult(
+            fixed=FixedJobArtifactPaths(evaluation_json_path="/worker/artifacts/evaluation.json"),
+            evaluation_artifacts=(materialized_artifact,),
+        ),
+    )
     store = EvolutionJobStore(settings=settings)
 
     plan = PlanDocument(
@@ -555,10 +598,16 @@ def test_persist_success_updates_job_and_records_metadata(
     assert job_row.lease_expires_at is None
     metadata = [obj for obj in added if isinstance(obj, job_store.CommitCard)]
     metrics = [obj for obj in added if isinstance(obj, job_store.Metric)]
+    artifacts = [obj for obj in added if isinstance(obj, job_store.EvaluationArtifactRecord)]
     assert len(metadata) == 1
     assert metadata[0].commit_hash == "newcommit"
     assert len(metrics) == 1
     assert metrics[0].name == "score"
+    assert len(artifacts) == 1
+    assert artifacts[0].job_id == job_id
+    assert artifacts[0].commit_card_id == metadata[0].id
+    assert artifacts[0].key == "benchmark_report"
+    assert artifacts[0].diagnostics[0]["message"] == "throughput improved"
 
 
 def test_persist_success_rejects_stale_run_token(

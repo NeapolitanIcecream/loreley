@@ -8,6 +8,10 @@ from uuid import UUID
 from pydantic import Field, field_validator
 
 from loreley.api.schemas import OrmOutModel
+from loreley.api.schemas.evidence import (
+    EvaluationAgentFeedbackOut,
+    EvaluationArtifactOut,
+)
 
 
 class JobOut(OrmOutModel):
@@ -24,6 +28,9 @@ class JobOut(OrmOutModel):
     is_seed_job: bool = False
     result_commit_hash: str | None = None
     ingestion_status: str | None = None
+    has_evaluation_evidence: bool = False
+    agent_visible_evidence_count: int = 0
+    top_evaluation_diagnosis: str | None = None
 
     @field_validator("status", mode="before")
     @classmethod
@@ -62,6 +69,8 @@ class JobDetailOut(JobOut):
     ingestion_reason: str | None = None
 
     artifacts: "JobArtifactsOut | None" = None
+    evaluation_artifacts: list[EvaluationArtifactOut] = Field(default_factory=list)
+    evaluation_agent_feedback: EvaluationAgentFeedbackOut | None = None
 
 
 class JobArtifactsOut(OrmOutModel):

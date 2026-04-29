@@ -5,7 +5,13 @@ from __future__ import annotations
 import streamlit as st
 
 from loreley.ui.components.aggrid import render_table, selected_rows
-from loreley.ui.components.api import api_get_or_stop, api_get_page_or_stop, render_artifact_downloads
+from loreley.ui.components.api import (
+    api_get_or_stop,
+    api_get_page_or_stop,
+    render_agent_feedback_preview,
+    render_artifact_downloads,
+    render_evaluation_evidence,
+)
 from loreley.ui.paging import (
     advance_cursor_pager,
     current_cursor,
@@ -181,8 +187,21 @@ def render() -> None:
         with st.expander("Evaluation summary", expanded=False):
             st.write(detail.get("evaluation_summary") or "")
 
+        evidence = detail.get("evaluation_artifacts") if isinstance(detail.get("evaluation_artifacts"), list) else []
+        with st.expander("Evaluation Evidence", expanded=True):
+            render_evaluation_evidence(
+                api_base_url=api_base_url,
+                artifacts=evidence,
+                key_prefix=f"evidence_commit_{commit_hash}",
+                empty_message="No evaluation evidence available for this commit.",
+            )
+
+        feedback = detail.get("evaluation_agent_feedback") if isinstance(detail.get("evaluation_agent_feedback"), dict) else None
+        with st.expander("Agent Feedback Preview", expanded=False):
+            render_agent_feedback_preview(feedback)
+
         artifacts = detail.get("artifacts") if isinstance(detail.get("artifacts"), dict) else {}
-        with st.expander("Artifacts", expanded=False):
+        with st.expander("Worker Artifacts", expanded=False):
             render_artifact_downloads(
                 api_base_url=api_base_url,
                 artifacts=artifacts,
