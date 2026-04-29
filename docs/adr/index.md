@@ -58,7 +58,7 @@ ADR numbers are unique and chronological. `ADR 0029` resolves an earlier duplica
 - [ADR 0038: Worker planning context batch DB loading](0038-worker-planning-context-batch-db-loading.md)
 - [ADR 0039: PCA epochs and archive rebuild on refit](0039-pca-epochs-and-archive-rebuild-on-refit.md)
 
-## 0040-0045
+## 0040-0046
 
 - [ADR 0040: Delay MAP-Elites archive until initial PCA fit](0040-delay-map-elites-archive-until-initial-pca-fit.md)
 - [ADR 0041: Split MAP-Elites manager modules](0041-map-elites-manager-module-split.md)
@@ -66,3 +66,4 @@ ADR numbers are unique and chronological. `ADR 0029` resolves an earlier duplica
 - [ADR 0043: Cache PCA history matrix for refits](0043-cache-pca-history-matrix.md)
 - [ADR 0044: Repo-state embeddings must embed all cache misses](0044-repo-state-embedding-must-not-truncate-cache-misses.md)
 - [ADR 0045: Config profiles for large-repo campaigns](0045-config-profiles-for-large-repo-campaigns.md)
+- [ADR 0046: Agent-visible evaluation artifacts](0046-agent-visible-evaluation-artifacts.md)

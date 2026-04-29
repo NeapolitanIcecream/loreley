@@ -211,3 +211,4 @@ __marimo__/
 logs/
 output/refactor-audit/
 .cursor
+.codex-workflows/
