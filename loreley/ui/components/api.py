@@ -185,7 +185,7 @@ def render_evaluation_evidence(
         _render_evaluation_evidence_item(
             api_base_url=api_base_url,
             artifact=artifact,
-            key_prefix=f"{key_prefix}_{key}",
+            key_prefix=f"{key_prefix}_{index}_{key}",
         )
         rendered = True
 

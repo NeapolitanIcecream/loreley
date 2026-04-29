@@ -184,6 +184,37 @@ def test_render_evaluation_evidence_defers_fetch_until_prepare_clicked(ui_api_mo
     ]
 
 
+def test_render_evaluation_evidence_uses_unique_widget_keys_for_duplicate_artifact_keys(
+    ui_api_module,
+) -> None:
+    module, fake_streamlit = ui_api_module
+
+    module.render_evaluation_evidence(
+        api_base_url="http://example.local/root/",
+        artifacts=[
+            {
+                "key": "benchmark_report",
+                "kind": "benchmark_json",
+                "mime_type": "application/json",
+                "download_url": "/api/v1/jobs/1/evaluation-artifacts/benchmark_report",
+            },
+            {
+                "key": "benchmark_report",
+                "kind": "benchmark_json",
+                "mime_type": "application/json",
+                "download_url": "/api/v1/jobs/2/evaluation-artifacts/benchmark_report",
+            },
+        ],
+        key_prefix="evidence_test",
+    )
+
+    button_keys = [call["kwargs"]["key"] for call in fake_streamlit.button_calls]
+    assert button_keys == [
+        "evidence_test_0_benchmark_report_prepare",
+        "evidence_test_1_benchmark_report_prepare",
+    ]
+
+
 def test_render_agent_feedback_preview_renders_bounded_text(ui_api_module) -> None:
     module, fake_streamlit = ui_api_module
 
