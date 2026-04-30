@@ -14,6 +14,39 @@ from rich.console import Console
 console = Console()
 log = logger.bind(module="config")
 
+_LARGE_REPO_PROFILE_ALIASES = {"large-repo-1m-30k", "large_repo_1m_30k"}
+_LARGE_REPO_PROFILE_DEFAULTS: dict[str, object] = {
+    "scheduler_poll_interval_seconds": 15.0,
+    "tasks_worker_time_limit_seconds": 0,
+    "worker_planning_timeout_seconds": 1200,
+    "worker_coding_timeout_seconds": 3600,
+    "worker_evaluator_timeout_seconds": 3600,
+    "mapelites_preprocess_max_file_size_kb": 256,
+    "mapelites_chunk_target_lines": 120,
+    "mapelites_chunk_min_lines": 40,
+    "mapelites_chunk_overlap_lines": 12,
+    "mapelites_code_embedding_batch_size": 64,
+    "mapelites_dimensionality_min_fit_samples": 128,
+    "mapelites_dimensionality_history_size": 8192,
+    "mapelites_dimensionality_refit_interval": 250,
+    "mapelites_feature_normalization_warmup_samples": 128,
+    "mapelites_seed_population_size": 32,
+    "mapelites_sampler_inspiration_count": 4,
+    "mapelites_sampler_neighbor_max_radius": 4,
+    "mapelites_sampler_fallback_sample_size": 32,
+}
+
+
+def _normalized_profile_name(profile: object) -> str:
+    raw = str(profile or "").strip()
+    return raw.lower() if raw else "default"
+
+
+def _profile_derived_defaults(profile: object) -> dict[str, object]:
+    if _normalized_profile_name(profile) in _LARGE_REPO_PROFILE_ALIASES:
+        return dict(_LARGE_REPO_PROFILE_DEFAULTS)
+    return {}
+
 
 def _mask_secret(value: str | None) -> str | None:
     """Return a constant marker for present secrets."""
@@ -723,35 +756,13 @@ class Settings(BaseSettings):
     def model_post_init(self, __context: Any) -> None:
         """Apply derived defaults that depend on other fields."""
 
-        raw_profile = str(getattr(self, "profile", "") or "").strip()
-        effective_profile = raw_profile.lower() if raw_profile else "default"
-
         def _set_if_unset(field: str, value: object) -> None:
             if field in self.model_fields_set:
                 return
             object.__setattr__(self, field, value)
 
-        if effective_profile in {"large-repo-1m-30k", "large_repo_1m_30k"}:
-            # Scaling-oriented defaults for long runs on large repositories.
-            _set_if_unset("scheduler_poll_interval_seconds", 15.0)
-            _set_if_unset("tasks_worker_time_limit_seconds", 0)
-            _set_if_unset("worker_planning_timeout_seconds", 1200)
-            _set_if_unset("worker_coding_timeout_seconds", 3600)
-            _set_if_unset("worker_evaluator_timeout_seconds", 3600)
-
-            _set_if_unset("mapelites_preprocess_max_file_size_kb", 256)
-            _set_if_unset("mapelites_chunk_target_lines", 120)
-            _set_if_unset("mapelites_chunk_min_lines", 40)
-            _set_if_unset("mapelites_chunk_overlap_lines", 12)
-            _set_if_unset("mapelites_code_embedding_batch_size", 64)
-            _set_if_unset("mapelites_dimensionality_min_fit_samples", 128)
-            _set_if_unset("mapelites_dimensionality_history_size", 8192)
-            _set_if_unset("mapelites_dimensionality_refit_interval", 250)
-            _set_if_unset("mapelites_feature_normalization_warmup_samples", 128)
-            _set_if_unset("mapelites_seed_population_size", 32)
-            _set_if_unset("mapelites_sampler_inspiration_count", 4)
-            _set_if_unset("mapelites_sampler_neighbor_max_radius", 4)
-            _set_if_unset("mapelites_sampler_fallback_sample_size", 32)
+        for field, value in _profile_derived_defaults(self.profile).items():
+            _set_if_unset(field, value)
 
         if self.worker_repo_worktree_randomize:
             suffix_len = int(self.worker_repo_worktree_random_suffix_len or 0)
@@ -804,121 +815,150 @@ class Settings(BaseSettings):
 
     def export_safe(self, *, mask_secrets: bool = True) -> dict[str, Any]:
         """Return effective settings for debugging/logging."""
-        from loreley.naming import (
-            DEFAULT_TASKS_QUEUE_PREFIX,
-            DEFAULT_TASKS_REDIS_NAMESPACE_PREFIX,
-            safe_namespace_or_none,
-        )
+        return _build_safe_export_payload(self, mask_secrets=mask_secrets)
 
-        def _maybe_secret(value: str | None) -> str | None:
-            normalized = (value or "").strip() or None
-            if normalized is None:
-                return None
-            if mask_secrets:
-                return _mask_secret(normalized)
-            return normalized
 
-        def _maybe_url(value: str | None) -> str | None:
-            normalized = (value or "").strip() or None
-            if normalized is None:
-                return None
-            if mask_secrets:
-                return _sanitize_url(normalized)
-            return normalized
+def _safe_export_secret(value: str | None, *, mask_secrets: bool) -> str | None:
+    normalized = (value or "").strip() or None
+    if normalized is None:
+        return None
+    if mask_secrets:
+        return _mask_secret(normalized)
+    return normalized
 
-        exp_ns = safe_namespace_or_none(self.experiment_id)
-        return {
-            "app_name": self.app_name,
-            "environment": self.environment,
-            "log_level": self.log_level,
-            "profile": self.profile,
-            "logs_base_dir": self.logs_base_dir,
-            "openai_api_spec": self.openai_api_spec,
-            "openai_base_url": _maybe_url(self.openai_base_url),
-            "openai_api_key": _maybe_secret(self.openai_api_key),
-            "openai_dynamic_api_key_provider": self.openai_dynamic_api_key_provider,
-            "openai_dynamic_api_key_ttl_seconds": self.openai_dynamic_api_key_ttl_seconds,
-            "openai_dynamic_api_key_refresh_skew_seconds": (
-                self.openai_dynamic_api_key_refresh_skew_seconds
-            ),
-            "mapelites_experiment_root_commit": self.mapelites_experiment_root_commit,
-            "database_dsn": (
-                _sanitize_sqlalchemy_dsn(self.database_dsn) if mask_secrets else self.database_dsn
-            ),
-            "db_scheme": self.db_scheme,
-            "db_host": self.db_host,
-            "db_port": self.db_port,
-            "db_name": self.db_name,
-            "db_password": _maybe_secret(self.db_password),
-            "db_pool_size": self.db_pool_size,
-            "db_max_overflow": self.db_max_overflow,
-            "db_pool_timeout": self.db_pool_timeout,
-            "db_echo": self.db_echo,
-            "tasks_redis_url": _maybe_url(self.tasks_redis_url),
-            "tasks_redis_host": self.tasks_redis_host,
-            "tasks_redis_port": self.tasks_redis_port,
-            "tasks_redis_db": self.tasks_redis_db,
-            "tasks_redis_password": _maybe_secret(self.tasks_redis_password),
-            "tasks_redis_namespace": (
-                f"{DEFAULT_TASKS_REDIS_NAMESPACE_PREFIX}.{exp_ns}" if exp_ns else None
-            ),
-            "tasks_queue_name": f"{DEFAULT_TASKS_QUEUE_PREFIX}.{exp_ns}" if exp_ns else None,
-            "tasks_queue_prefetch": self.tasks_queue_prefetch,
-            "tasks_delay_queue_prefetch": self.tasks_delay_queue_prefetch,
-            "tasks_worker_max_retries": self.tasks_worker_max_retries,
-            "tasks_worker_time_limit_seconds": self.tasks_worker_time_limit_seconds,
-            "experiment_id": str(self.experiment_id) if self.experiment_id else None,
-            "scheduler_repo_root": self.scheduler_repo_root,
-            "scheduler_poll_interval_seconds": self.scheduler_poll_interval_seconds,
-            "worker_repo_worktree": self.worker_repo_worktree,
-            "worker_repo_remote_url": _maybe_url(self.worker_repo_remote_url),
-            "worker_repo_branch": self.worker_repo_branch,
-            "worker_repo_fetch_depth": self.worker_repo_fetch_depth,
-            "worker_repo_enable_lfs": self.worker_repo_enable_lfs,
-            "worker_repo_job_branch_ttl_hours": self.worker_repo_job_branch_ttl_hours,
-            "worker_job_lease_ttl_seconds": self.worker_job_lease_ttl_seconds,
-            "worker_job_heartbeat_interval_seconds": self.worker_job_heartbeat_interval_seconds,
-            "worker_planning_backend": self.worker_planning_backend,
-            "worker_planning_codex_model": self.worker_planning_codex_model,
-            "worker_planning_max_attempts": self.worker_planning_max_attempts,
-            "worker_planning_timeout_seconds": self.worker_planning_timeout_seconds,
-            "worker_coding_backend": self.worker_coding_backend,
-            "worker_coding_codex_model": self.worker_coding_codex_model,
-            "worker_coding_max_attempts": self.worker_coding_max_attempts,
-            "worker_coding_timeout_seconds": self.worker_coding_timeout_seconds,
-            "worker_cursor_model": self.worker_cursor_model,
-            "worker_kilocode_mode": self.worker_kilocode_mode,
-            "worker_kilocode_agent": self.worker_kilocode_agent,
-            "worker_kilocode_model": self.worker_kilocode_model,
-            "worker_kilocode_variant": self.worker_kilocode_variant,
-            "worker_kilocode_json_output": self.worker_kilocode_json_output,
-            "worker_kilocode_openai_api_spec": self.worker_kilocode_openai_api_spec,
-            "worker_kilocode_openai_base_url": _maybe_url(self.worker_kilocode_openai_base_url),
-            "worker_kilocode_openai_api_key": _maybe_secret(self.worker_kilocode_openai_api_key),
-            "worker_kilocode_openai_model": self.worker_kilocode_openai_model,
-            "worker_evaluator_plugin": self.worker_evaluator_plugin,
-            "worker_evaluator_timeout_seconds": self.worker_evaluator_timeout_seconds,
-            "worker_evaluator_max_metrics": self.worker_evaluator_max_metrics,
-            "worker_evolution_global_goal": self.worker_evolution_global_goal,
-            "mapelites_code_embedding_model": self.mapelites_code_embedding_model,
-            "mapelites_code_embedding_dimensions": self.mapelites_code_embedding_dimensions,
-            "mapelites_dimensionality_target_dims": self.mapelites_dimensionality_target_dims,
-            "mapelites_archive_cells_per_dim": self.mapelites_archive_cells_per_dim,
-            "mapelites_fitness_metric": self.mapelites_fitness_metric,
-            "mapelites_fitness_higher_is_better": self.mapelites_fitness_higher_is_better,
-            "scheduler_max_unfinished_jobs": self.scheduler_max_unfinished_jobs,
-            "scheduler_dispatch_batch_size": self.scheduler_dispatch_batch_size,
-            "scheduler_schedule_batch_size": self.scheduler_schedule_batch_size,
-            "scheduler_ingest_batch_size": self.scheduler_ingest_batch_size,
-            "scheduler_max_total_jobs": self.scheduler_max_total_jobs,
-            "scheduler_startup_approve": self.scheduler_startup_approve,
-            "scheduler_stale_running_reclaim_batch_size": (
-                self.scheduler_stale_running_reclaim_batch_size
-            ),
-            "scheduler_stale_running_max_recovery_attempts": (
-                self.scheduler_stale_running_max_recovery_attempts
-            ),
-        }
+
+def _safe_export_url(value: str | None, *, mask_secrets: bool) -> str | None:
+    normalized = (value or "").strip() or None
+    if normalized is None:
+        return None
+    if mask_secrets:
+        return _sanitize_url(normalized)
+    return normalized
+
+
+def _safe_export_database_dsn(settings: Settings, *, mask_secrets: bool) -> str:
+    if mask_secrets:
+        return _sanitize_sqlalchemy_dsn(settings.database_dsn)
+    return settings.database_dsn
+
+
+def _safe_export_task_names(experiment_id: object) -> dict[str, str | None]:
+    from loreley.naming import (
+        DEFAULT_TASKS_QUEUE_PREFIX,
+        DEFAULT_TASKS_REDIS_NAMESPACE_PREFIX,
+        safe_namespace_or_none,
+    )
+
+    exp_ns = safe_namespace_or_none(experiment_id)
+    return {
+        "tasks_redis_namespace": (
+            f"{DEFAULT_TASKS_REDIS_NAMESPACE_PREFIX}.{exp_ns}" if exp_ns else None
+        ),
+        "tasks_queue_name": f"{DEFAULT_TASKS_QUEUE_PREFIX}.{exp_ns}" if exp_ns else None,
+    }
+
+
+def _build_safe_export_payload(settings: Settings, *, mask_secrets: bool) -> dict[str, Any]:
+    task_names = _safe_export_task_names(settings.experiment_id)
+    return {
+        "app_name": settings.app_name,
+        "environment": settings.environment,
+        "log_level": settings.log_level,
+        "profile": settings.profile,
+        "logs_base_dir": settings.logs_base_dir,
+        "openai_api_spec": settings.openai_api_spec,
+        "openai_base_url": _safe_export_url(settings.openai_base_url, mask_secrets=mask_secrets),
+        "openai_api_key": _safe_export_secret(settings.openai_api_key, mask_secrets=mask_secrets),
+        "openai_dynamic_api_key_provider": settings.openai_dynamic_api_key_provider,
+        "openai_dynamic_api_key_ttl_seconds": settings.openai_dynamic_api_key_ttl_seconds,
+        "openai_dynamic_api_key_refresh_skew_seconds": (
+            settings.openai_dynamic_api_key_refresh_skew_seconds
+        ),
+        "mapelites_experiment_root_commit": settings.mapelites_experiment_root_commit,
+        "database_dsn": _safe_export_database_dsn(settings, mask_secrets=mask_secrets),
+        "db_scheme": settings.db_scheme,
+        "db_host": settings.db_host,
+        "db_port": settings.db_port,
+        "db_name": settings.db_name,
+        "db_password": _safe_export_secret(settings.db_password, mask_secrets=mask_secrets),
+        "db_pool_size": settings.db_pool_size,
+        "db_max_overflow": settings.db_max_overflow,
+        "db_pool_timeout": settings.db_pool_timeout,
+        "db_echo": settings.db_echo,
+        "tasks_redis_url": _safe_export_url(settings.tasks_redis_url, mask_secrets=mask_secrets),
+        "tasks_redis_host": settings.tasks_redis_host,
+        "tasks_redis_port": settings.tasks_redis_port,
+        "tasks_redis_db": settings.tasks_redis_db,
+        "tasks_redis_password": _safe_export_secret(
+            settings.tasks_redis_password,
+            mask_secrets=mask_secrets,
+        ),
+        **task_names,
+        "tasks_queue_prefetch": settings.tasks_queue_prefetch,
+        "tasks_delay_queue_prefetch": settings.tasks_delay_queue_prefetch,
+        "tasks_worker_max_retries": settings.tasks_worker_max_retries,
+        "tasks_worker_time_limit_seconds": settings.tasks_worker_time_limit_seconds,
+        "experiment_id": str(settings.experiment_id) if settings.experiment_id else None,
+        "scheduler_repo_root": settings.scheduler_repo_root,
+        "scheduler_poll_interval_seconds": settings.scheduler_poll_interval_seconds,
+        "worker_repo_worktree": settings.worker_repo_worktree,
+        "worker_repo_remote_url": _safe_export_url(
+            settings.worker_repo_remote_url,
+            mask_secrets=mask_secrets,
+        ),
+        "worker_repo_branch": settings.worker_repo_branch,
+        "worker_repo_fetch_depth": settings.worker_repo_fetch_depth,
+        "worker_repo_enable_lfs": settings.worker_repo_enable_lfs,
+        "worker_repo_job_branch_ttl_hours": settings.worker_repo_job_branch_ttl_hours,
+        "worker_job_lease_ttl_seconds": settings.worker_job_lease_ttl_seconds,
+        "worker_job_heartbeat_interval_seconds": settings.worker_job_heartbeat_interval_seconds,
+        "worker_planning_backend": settings.worker_planning_backend,
+        "worker_planning_codex_model": settings.worker_planning_codex_model,
+        "worker_planning_max_attempts": settings.worker_planning_max_attempts,
+        "worker_planning_timeout_seconds": settings.worker_planning_timeout_seconds,
+        "worker_coding_backend": settings.worker_coding_backend,
+        "worker_coding_codex_model": settings.worker_coding_codex_model,
+        "worker_coding_max_attempts": settings.worker_coding_max_attempts,
+        "worker_coding_timeout_seconds": settings.worker_coding_timeout_seconds,
+        "worker_cursor_model": settings.worker_cursor_model,
+        "worker_kilocode_mode": settings.worker_kilocode_mode,
+        "worker_kilocode_agent": settings.worker_kilocode_agent,
+        "worker_kilocode_model": settings.worker_kilocode_model,
+        "worker_kilocode_variant": settings.worker_kilocode_variant,
+        "worker_kilocode_json_output": settings.worker_kilocode_json_output,
+        "worker_kilocode_openai_api_spec": settings.worker_kilocode_openai_api_spec,
+        "worker_kilocode_openai_base_url": _safe_export_url(
+            settings.worker_kilocode_openai_base_url,
+            mask_secrets=mask_secrets,
+        ),
+        "worker_kilocode_openai_api_key": _safe_export_secret(
+            settings.worker_kilocode_openai_api_key,
+            mask_secrets=mask_secrets,
+        ),
+        "worker_kilocode_openai_model": settings.worker_kilocode_openai_model,
+        "worker_evaluator_plugin": settings.worker_evaluator_plugin,
+        "worker_evaluator_timeout_seconds": settings.worker_evaluator_timeout_seconds,
+        "worker_evaluator_max_metrics": settings.worker_evaluator_max_metrics,
+        "worker_evolution_global_goal": settings.worker_evolution_global_goal,
+        "mapelites_code_embedding_model": settings.mapelites_code_embedding_model,
+        "mapelites_code_embedding_dimensions": settings.mapelites_code_embedding_dimensions,
+        "mapelites_dimensionality_target_dims": settings.mapelites_dimensionality_target_dims,
+        "mapelites_archive_cells_per_dim": settings.mapelites_archive_cells_per_dim,
+        "mapelites_fitness_metric": settings.mapelites_fitness_metric,
+        "mapelites_fitness_higher_is_better": settings.mapelites_fitness_higher_is_better,
+        "scheduler_max_unfinished_jobs": settings.scheduler_max_unfinished_jobs,
+        "scheduler_dispatch_batch_size": settings.scheduler_dispatch_batch_size,
+        "scheduler_schedule_batch_size": settings.scheduler_schedule_batch_size,
+        "scheduler_ingest_batch_size": settings.scheduler_ingest_batch_size,
+        "scheduler_max_total_jobs": settings.scheduler_max_total_jobs,
+        "scheduler_startup_approve": settings.scheduler_startup_approve,
+        "scheduler_stale_running_reclaim_batch_size": (
+            settings.scheduler_stale_running_reclaim_batch_size
+        ),
+        "scheduler_stale_running_max_recovery_attempts": (
+            settings.scheduler_stale_running_max_recovery_attempts
+        ),
+    }
 
 
 @lru_cache

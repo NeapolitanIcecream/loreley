@@ -7,9 +7,10 @@ from typing import Any, Mapping, Sequence
 import pytest
 from git import Repo
 
+import loreley.core.map_elites.repository_state_embedding as rse
 from loreley.config import Settings
 from loreley.core.map_elites.code_embedding import CommitCodeEmbedding, FileEmbedding
-from loreley.core.map_elites.repository_files import list_repository_files
+from loreley.core.map_elites.repository_files import RepositoryFile, list_repository_files
 from loreley.core.map_elites.repository_state_embedding import RepositoryStateEmbedder
 
 
@@ -308,6 +309,52 @@ def test_repository_file_catalog_gitignore_semantics_directory_rule(
     files = list_repository_files(repo_root=tmp_path, commit_hash=commit, settings=settings, repo=repo)
     assert [f.path.as_posix() for f in files] == ["keep.py"]
 
+
+def test_repository_state_vector_aggregation_weights_duplicates_and_skips_missing_vectors() -> None:
+    repo_files = (
+        RepositoryFile(path=Path("a.py"), blob_sha="shared", size_bytes=12),
+        RepositoryFile(path=Path("b.py"), blob_sha="shared", size_bytes=12),
+        RepositoryFile(path=Path("c.py"), blob_sha="unique", size_bytes=12),
+        RepositoryFile(path=Path("empty.py"), blob_sha="empty", size_bytes=12),
+        RepositoryFile(path=Path("missing.py"), blob_sha="", size_bytes=0),
+    )
+    blob_weights, unique_blob_shas = rse._blob_weights_for_files(repo_files)
+
+    result = rse._aggregate_weighted_blob_vectors(
+        repo_files=repo_files,
+        blob_weights=blob_weights,
+        vectors_by_blob={
+            "shared": (1.0, 3.0),
+            "unique": (5.0, 7.0),
+            "empty": (),
+        },
+    )
+
+    assert unique_blob_shas == ["empty", "shared", "unique"]
+    assert result.files_aggregated == 3
+    assert result.skipped_failed_embedding == 2
+    assert result.sum_vector == pytest.approx((7.0, 13.0))
+    assert result.commit_vector == pytest.approx((7.0 / 3.0, 13.0 / 3.0))
+
+
+def test_repository_state_vector_aggregation_preserves_dimension_mismatch_error() -> None:
+    repo_files = (
+        RepositoryFile(path=Path("a.py"), blob_sha="a", size_bytes=12),
+        RepositoryFile(path=Path("b.py"), blob_sha="b", size_bytes=12),
+    )
+    blob_weights, _unique_blob_shas = rse._blob_weights_for_files(repo_files)
+
+    with pytest.raises(ValueError, match="dimension mismatch"):
+        rse._aggregate_weighted_blob_vectors(
+            repo_files=repo_files,
+            blob_weights=blob_weights,
+            vectors_by_blob={
+                "a": (1.0, 2.0),
+                "b": (1.0, 2.0, 3.0),
+            },
+        )
+
+
 def test_repository_state_embedder_uses_cache_hits_and_misses(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -403,6 +450,46 @@ def test_repository_state_embedder_embeds_all_cache_misses_without_truncation(
     assert all(count <= 64 for count in calls["file_counts"])
 
 
+def test_repository_state_embedder_counts_comment_only_cache_miss_as_empty(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    settings: Settings,
+) -> None:
+    repo = _init_repo(tmp_path)
+    settings.mapelites_preprocess_allowed_extensions = [".py"]
+    settings.mapelites_preprocess_allowed_filenames = []
+    settings.mapelites_preprocess_excluded_globs = []
+    settings.mapelites_preprocess_max_file_size_kb = 64
+    settings.mapelites_preprocess_strip_comments = True
+
+    (tmp_path / "empty_after_cleanup.py").write_text("# comment only\n", encoding="utf-8")
+    commit = _commit_all(repo, "init")
+
+    def _unexpected_embed(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("comment-only cache misses should not be embedded")
+
+    monkeypatch.setattr(rse, "embed_chunked_files", _unexpected_embed)
+
+    cache = _StubFileEmbeddingCache(
+        embedding_model="stub",
+        requested_dimensions=int(getattr(settings, "mapelites_code_embedding_dimensions", 2) or 2),
+    )
+    embedder = RepositoryStateEmbedder(settings=settings, cache=cache, repo=repo)
+    repo_files = list_repository_files(repo_root=tmp_path, commit_hash=commit, settings=settings, repo=repo)
+    missing_blob_shas = [f.blob_sha for f in repo_files]
+
+    vectors, embedded_count, skipped_empty = embedder._embed_cache_misses(
+        root=tmp_path,
+        commit_hash=commit,
+        repo_files=repo_files,
+        missing_blob_shas=missing_blob_shas,
+    )
+
+    assert vectors == {}
+    assert embedded_count == 0
+    assert skipped_empty == 1
+
+
 def test_repository_state_embedder_deduplicates_duplicate_blobs(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -476,4 +563,3 @@ def test_repository_state_embedder_weights_duplicate_blobs_by_file_count(
     cached = embedder.cache.get_many(sorted({f.blob_sha for f in repo_files}))
     expected = _mean([cached[f.blob_sha] for f in repo_files])
     assert embedding.vector == pytest.approx(expected)
-

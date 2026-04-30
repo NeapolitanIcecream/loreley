@@ -8,6 +8,7 @@ import numpy as np
 from types import SimpleNamespace
 
 from loreley.config import Settings
+from loreley.core.map_elites import sampler as sampler_module
 from loreley.core.map_elites.sampler import MapElitesSampler
 
 
@@ -130,6 +131,39 @@ def test_select_inspirations_does_not_call_neighbor_indices(monkeypatch, setting
     assert set(inspirations) == {"n1", "n2"}
     assert stats["radius_used"] == settings.mapelites_sampler_neighbor_radius
     assert stats["radius_used"] <= settings.mapelites_sampler_neighbor_max_radius
+
+
+def test_neighbor_candidate_positions_keep_initial_radius_shell_semantics() -> None:
+    distances = np.asarray([0, 1, 2, 3], dtype=np.int64)
+
+    initial = sampler_module._neighbor_candidate_positions(  # noqa: SLF001
+        distances=distances,
+        radius=2,
+        first_radius=2,
+    )
+    later = sampler_module._neighbor_candidate_positions(  # noqa: SLF001
+        distances=distances,
+        radius=3,
+        first_radius=2,
+    )
+
+    assert initial == [1, 2]
+    assert later == [3]
+
+
+def test_fallback_inspiration_candidates_exclude_base_and_selected_commits() -> None:
+    candidates = sampler_module._fallback_inspiration_candidates(  # noqa: SLF001
+        base_cell_index=1,
+        cell_commits={
+            1: "base",
+            2: "already-selected",
+            3: "candidate",
+            4: "",
+        },
+        selected_commits={"base", "already-selected"},
+    )
+
+    assert candidates == ("candidate",)
 
 
 def test_schedule_job_with_and_without_records(monkeypatch, settings: Settings) -> None:

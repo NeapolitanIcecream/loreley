@@ -5,10 +5,13 @@ from pathlib import Path
 import subprocess
 import tempfile
 import stat
+from typing import Any, cast
 
 import pytest
 from git import Repo
+from rich.console import Console
 
+import loreley.scheduler.main as scheduler_main
 import loreley.scheduler.startup_approval as startup_approval
 
 
@@ -66,6 +69,42 @@ def test_repo_state_root_approval_auto_approve_does_not_require_tty(
     )
 
 
+def test_scheduler_startup_approval_requires_root_commit(settings) -> None:
+    scheduler = scheduler_main.EvolutionScheduler.__new__(scheduler_main.EvolutionScheduler)
+    scheduler.settings = settings
+    scheduler.console = Console(record=True)
+    scheduler.repo_root = Path(".")
+    scheduler._repo = cast(Any, object())
+    scheduler._root_commit_hash = None
+
+    with pytest.raises(scheduler_main.SchedulerError, match="MAPELITES_EXPERIMENT_ROOT_COMMIT"):
+        scheduler._require_repo_state_startup_root_commit()
+
+
+def test_scheduler_startup_approval_details_are_stable_for_auto_approval(settings) -> None:
+    scheduler = scheduler_main.EvolutionScheduler.__new__(scheduler_main.EvolutionScheduler)
+    scheduler.settings = settings
+    scheduler.console = Console(record=True)
+    scheduler.repo_root = Path(".")
+    scheduler._repo = cast(Any, object())
+    settings.mapelites_chunk_max_chunks_per_file = 3
+    filters = scheduler._repo_state_startup_filters()
+
+    approval = scheduler._build_repo_state_startup_approval(
+        root_commit="deadbeef",
+        eligible_files=4,
+        filters=filters,
+    )
+
+    assert approval.root_commit == "deadbeef"
+    assert approval.eligible_files == 4
+    assert approval.details["chunk_max_chunks_per_file"] == 3
+    assert approval.details["root_chunk_upper_bound"] == 12
+    assert approval.details["allowed_extensions"] == list(
+        settings.mapelites_preprocess_allowed_extensions or []
+    )
+
+
 def test_require_repo_writable_accepts_normal_repo(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     repo_root.mkdir(parents=True, exist_ok=True)
@@ -98,4 +137,3 @@ def test_require_repo_writable_rejects_readonly_git_dir(tmp_path: Path) -> None:
             startup_approval.require_repo_writable(repo_root=repo_root, repo=repo)
     finally:
         git_dir.chmod(original_mode)
-

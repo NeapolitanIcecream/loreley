@@ -204,6 +204,50 @@ def test_build_rollup_forces_earliest_steps_when_no_partial_block(settings: Sett
     assert "c2:" in text
 
 
+def test_raw_trajectory_window_aligns_recent_steps_and_counts_earliest_gap() -> None:
+    window = trajectory_module._raw_trajectory_window(  # noqa: SLF001
+        unique_steps_count=37,
+        depths=list(range(4, 41)),
+        block_size=8,
+        max_raw_steps=6,
+    )
+
+    assert window.recent_start_index == 29
+    assert window.earliest_raw_end == 5
+    assert min(window.covered_indices) == 29
+    assert max(window.covered_indices) == 36
+
+
+def test_chunk_range_selection_keeps_oldest_then_newest_non_overlapping_chunks() -> None:
+    chunks = [
+        (0, 8, "r", "c8"),
+        (8, 16, "c8", "c16"),
+        (16, 24, "c16", "c24"),
+        (24, 32, "c24", "c32"),
+    ]
+
+    selected = trajectory_module._select_chunk_ranges(  # noqa: SLF001
+        chunks,
+        recent_start_index=24,
+        max_chunks=2,
+    )
+
+    assert selected == [
+        (0, 8, "r", "c8"),
+        (16, 24, "c16", "c24"),
+    ]
+
+
+def test_omission_count_uses_union_of_raw_and_chunk_coverage() -> None:
+    omitted = trajectory_module._count_omitted_steps(  # noqa: SLF001
+        10,
+        raw_indices={0, 1, 8, 9},
+        chunk_ranges=[(0, 4), (4, 8)],
+    )
+
+    assert omitted == 0
+
+
 def test_build_rollup_marks_zero_unique_steps_for_ancestor_inspiration(settings: Settings) -> None:
     # r -> b -> c (inspiration=b is an ancestor of base=c)
     cards = {

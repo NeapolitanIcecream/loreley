@@ -57,6 +57,89 @@ class SamplingSnapshot:
     neighbor_coords: np.ndarray | None
 
 
+@dataclass(slots=True)
+class _InspirationSelectionState:
+    selected: list[str]
+    selected_commits: set[str]
+
+
+@dataclass(slots=True, frozen=True)
+class _NeighborRadiusConfig:
+    radius: int
+    min_radius: int
+    max_radius: int
+
+
+def _occupied_neighbor_arrays(
+    items: Sequence[tuple[int, str]],
+    *,
+    grid_shape: tuple[int, ...],
+) -> tuple[np.ndarray | None, tuple[str, ...], np.ndarray | None]:
+    if not items:
+        return None, tuple(), None
+
+    cell_indices = np.asarray([idx for idx, _ in items], dtype=np.int64)
+    commits = tuple(commit for _, commit in items)
+    max_index = prod(grid_shape) - 1
+    valid_mask = cell_indices >= 0
+    if max_index >= 0:
+        try:
+            valid_mask &= cell_indices <= max_index
+        except OverflowError:
+            # If max_index exceeds int64 range, any int64 cell index is
+            # necessarily <= max_index. Keep only non-negative values.
+            pass
+    if not np.all(valid_mask):
+        mask_list = valid_mask.tolist()
+        cell_indices = cell_indices[valid_mask]
+        commits = tuple(commit for commit, keep in zip(commits, mask_list) if keep)
+    if cell_indices.size <= 0:
+        return None, tuple(), None
+
+    try:
+        coords = np.asarray(
+            np.unravel_index(cell_indices, grid_shape),
+            dtype=np.int64,
+        ).T
+    except ValueError:
+        return None, tuple(), None
+    return cell_indices, commits, coords
+
+
+def _neighbor_candidate_positions(
+    *,
+    distances: np.ndarray,
+    radius: int,
+    first_radius: int,
+) -> list[int]:
+    # Preserve the existing semantics:
+    # - The first iteration considers all occupied cells within the configured
+    #   initial radius (<= radius).
+    # - Subsequent iterations only consider the new shell (distance == radius)
+    #   to avoid redundant rescans.
+    if int(radius) == int(first_radius):
+        candidates = np.flatnonzero((distances > 0) & (distances <= radius))
+    else:
+        candidates = np.flatnonzero(distances == radius)
+    return candidates.tolist()
+
+
+def _fallback_inspiration_candidates(
+    *,
+    base_cell_index: int,
+    cell_commits: Mapping[int, str],
+    selected_commits: Collection[str],
+) -> tuple[str, ...]:
+    selected = set(selected_commits)
+    return tuple(
+        commit_hash
+        for cell_index, commit_hash in cell_commits.items()
+        if cell_index != base_cell_index
+        and commit_hash
+        and commit_hash not in selected
+    )
+
+
 class MapElitesSampler:
     """Translate MAP-Elites archives into EvolutionJob rows."""
 
@@ -257,30 +340,10 @@ class MapElitesSampler:
         neighbor_coords: np.ndarray | None = None
 
         if items:
-            cell_indices = np.asarray([idx for idx, _ in items], dtype=np.int64)
-            commits = tuple(commit for _, commit in items)
-            max_index = prod(self._grid_shape) - 1
-            valid_mask = cell_indices >= 0
-            if max_index >= 0:
-                try:
-                    valid_mask &= cell_indices <= max_index
-                except OverflowError:
-                    pass
-            if not np.all(valid_mask):
-                mask_list = valid_mask.tolist()
-                cell_indices = cell_indices[valid_mask]
-                commits = tuple(commit for commit, keep in zip(commits, mask_list) if keep)
-            if cell_indices.size > 0:
-                try:
-                    neighbor_coords = np.asarray(
-                        np.unravel_index(cell_indices, self._grid_shape),
-                        dtype=np.int64,
-                    ).T
-                    neighbor_cell_indices = cell_indices
-                    neighbor_commits = commits
-                except ValueError:
-                    neighbor_coords = None
-                    neighbor_cell_indices = None
+            neighbor_cell_indices, neighbor_commits, neighbor_coords = _occupied_neighbor_arrays(
+                items,
+                grid_shape=self._grid_shape,
+            )
 
         return SamplingSnapshot(
             island_id=island_id,
@@ -381,96 +444,31 @@ class MapElitesSampler:
         radius = max(1, min_radius) if max_radius > 0 else 1
 
         if cell_commits and max_radius > 0:
-            try:
-                base_coords = np.asarray(
-                    np.unravel_index(base_cell_index, self._grid_shape),
-                    dtype=np.int64,
-                )
-            except ValueError:
-                base_coords = None
-
-            if base_coords is not None:
-                coords = sampling_snapshot.neighbor_coords if sampling_snapshot is not None else None
-                commits: Sequence[str]
-                if coords is not None:
-                    commits = sampling_snapshot.neighbor_commits
-                else:
-                    # We only care about occupied archive cells. Enumerating the full
-                    # Chebyshev ball in d dimensions is (2r+1)^d and quickly becomes
-                    # intractable; instead we compute Chebyshev distances to occupied
-                    # cells in a single vectorized pass (O(N * d)).
-                    items = tuple(cell_commits.items())
-                    cell_indices = np.asarray([idx for idx, _ in items], dtype=np.int64)
-                    commits = [commit for _, commit in items]
-                    max_index = prod(self._grid_shape) - 1
-                    if max_index >= 0:
-                        valid_mask = cell_indices >= 0
-                        try:
-                            valid_mask &= cell_indices <= max_index
-                        except OverflowError:
-                            # If max_index exceeds int64 range, any int64 cell index is
-                            # necessarily <= max_index. Keep only non-negative values.
-                            pass
-                        if not np.all(valid_mask):
-                            mask_list = valid_mask.tolist()
-                            cell_indices = cell_indices[valid_mask]
-                            commits = [commit for commit, keep in zip(commits, mask_list) if keep]
-                    if cell_indices.size > 0:
-                        try:
-                            coords = np.asarray(
-                                np.unravel_index(cell_indices, self._grid_shape),
-                                dtype=np.int64,
-                            ).T
-                        except ValueError:
-                            coords = None
-                    else:
-                        coords = None
-
-                if coords is not None:
-                    dist = np.max(np.abs(coords - base_coords), axis=1)
-
-                    while radius <= max_radius and len(selected) < self._inspiration_count:
-                        # Preserve the existing semantics:
-                        # - The first iteration considers all occupied cells within
-                        #   the configured initial radius (<= radius).
-                        # - Subsequent iterations only consider the new shell
-                        #   (distance == radius) to avoid redundant rescans.
-                        if radius == max(1, min_radius):
-                            candidate_positions = np.flatnonzero((dist > 0) & (dist <= radius))
-                        else:
-                            candidate_positions = np.flatnonzero(dist == radius)
-
-                        positions = candidate_positions.tolist()
-                        self._rng.shuffle(positions)
-                        added_this_radius = False
-                        for pos in positions:
-                            commit_hash = commits[pos]
-                            if not commit_hash or commit_hash in selected_commits:
-                                continue
-                            selected.append(commit_hash)
-                            selected_commits.add(commit_hash)
-                            added_this_radius = True
-                            if len(selected) >= self._inspiration_count:
-                                break
-                        if added_this_radius:
-                            radius_used = radius
-                        radius += 1
+            radius_used = self._select_neighbor_inspirations(
+                base_cell_index=base_cell_index,
+                cell_commits=cell_commits,
+                sampling_snapshot=sampling_snapshot,
+                state=_InspirationSelectionState(
+                    selected=selected,
+                    selected_commits=selected_commits,
+                ),
+                radius_config=_NeighborRadiusConfig(
+                    radius=radius,
+                    min_radius=min_radius,
+                    max_radius=max_radius,
+                ),
+            )
 
         fallback_inspirations = 0
         if len(selected) < self._inspiration_count and self._fallback_sample_size > 0:
-            needed = self._inspiration_count - len(selected)
-            fallback_candidates = [
-                commit_hash
-                for cell_index, commit_hash in cell_commits.items()
-                if cell_index != base_cell_index
-                and commit_hash
-                and commit_hash not in selected_commits
-            ]
-            if fallback_candidates:
-                self._rng.shuffle(fallback_candidates)
-                fallback_slice = fallback_candidates[: min(needed, self._fallback_sample_size)]
-                fallback_inspirations = len(fallback_slice)
-                selected.extend(fallback_slice)
+            fallback = self._select_fallback_inspirations(
+                base_cell_index=base_cell_index,
+                cell_commits=cell_commits,
+                selected_commits=selected_commits,
+                needed=self._inspiration_count - len(selected),
+            )
+            fallback_inspirations = len(fallback)
+            selected.extend(fallback)
 
         if len(selected) > self._inspiration_count:
             selected = selected[: self._inspiration_count]
@@ -482,6 +480,112 @@ class MapElitesSampler:
             "fallback_inspirations": fallback_inspirations,
         }
         return tuple(selected), stats
+
+    def _select_neighbor_inspirations(
+        self,
+        *,
+        base_cell_index: int,
+        cell_commits: Mapping[int, str],
+        sampling_snapshot: SamplingSnapshot | None,
+        state: _InspirationSelectionState,
+        radius_config: _NeighborRadiusConfig,
+    ) -> int:
+        try:
+            base_coords = np.asarray(
+                np.unravel_index(base_cell_index, self._grid_shape),
+                dtype=np.int64,
+            )
+        except ValueError:
+            return 0
+
+        commits, coords = self._neighbor_candidates_for_selection(
+            cell_commits=cell_commits,
+            sampling_snapshot=sampling_snapshot,
+        )
+        if coords is None:
+            return 0
+
+        dist = np.max(np.abs(coords - base_coords), axis=1)
+        radius_used = 0
+        radius = radius_config.radius
+        first_radius = max(1, radius_config.min_radius)
+        while radius <= radius_config.max_radius and len(state.selected) < self._inspiration_count:
+            positions = _neighbor_candidate_positions(
+                distances=dist,
+                radius=radius,
+                first_radius=first_radius,
+            )
+            self._rng.shuffle(positions)
+            added_this_radius = self._append_neighbor_inspirations(
+                positions=positions,
+                commits=commits,
+                selected=state.selected,
+                selected_commits=state.selected_commits,
+            )
+            if added_this_radius:
+                radius_used = radius
+            radius += 1
+        return radius_used
+
+    def _neighbor_candidates_for_selection(
+        self,
+        *,
+        cell_commits: Mapping[int, str],
+        sampling_snapshot: SamplingSnapshot | None,
+    ) -> tuple[Sequence[str], np.ndarray | None]:
+        coords = sampling_snapshot.neighbor_coords if sampling_snapshot is not None else None
+        if coords is not None:
+            return sampling_snapshot.neighbor_commits, coords
+
+        # We only care about occupied archive cells. Enumerating the full
+        # Chebyshev ball in d dimensions is (2r+1)^d and quickly becomes
+        # intractable; instead we compute Chebyshev distances to occupied
+        # cells in a single vectorized pass (O(N * d)).
+        _cell_indices, commits, coords = _occupied_neighbor_arrays(
+            tuple(cell_commits.items()),
+            grid_shape=self._grid_shape,
+        )
+        return commits, coords
+
+    def _append_neighbor_inspirations(
+        self,
+        *,
+        positions: Sequence[int],
+        commits: Sequence[str],
+        selected: list[str],
+        selected_commits: set[str],
+    ) -> bool:
+        added = False
+        for pos in positions:
+            commit_hash = commits[pos]
+            if not commit_hash or commit_hash in selected_commits:
+                continue
+            selected.append(commit_hash)
+            selected_commits.add(commit_hash)
+            added = True
+            if len(selected) >= self._inspiration_count:
+                break
+        return added
+
+    def _select_fallback_inspirations(
+        self,
+        *,
+        base_cell_index: int,
+        cell_commits: Mapping[int, str],
+        selected_commits: Collection[str],
+        needed: int,
+    ) -> tuple[str, ...]:
+        candidates = list(
+            _fallback_inspiration_candidates(
+                base_cell_index=base_cell_index,
+                cell_commits=cell_commits,
+                selected_commits=selected_commits,
+            )
+        )
+        if not candidates:
+            return ()
+        self._rng.shuffle(candidates)
+        return tuple(candidates[: min(max(0, int(needed)), self._fallback_sample_size)])
 
     def _neighbor_indices(self, center_index: int, radius: int) -> list[int]:
         if radius <= 0:
