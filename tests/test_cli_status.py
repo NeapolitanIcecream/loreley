@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from loreley.cli import main
+from loreley.cli import _status_response_payload, main
 from tests.support import TestSettings
 
 
@@ -84,6 +84,24 @@ def test_status_json_includes_job_lease_health(
         "running": 3,
         "running_without_lease": 0,
         "stale_running": 1,
+    }
+
+
+def test_status_response_payload_preserves_nested_sections() -> None:
+    payload = _status_response_payload(
+        instance_payload={"experiment_id_raw": "exp-demo"},
+        jobs_payload={"unfinished": 2, "pending_ingestion": 1},
+        lease_payload={"running": 1, "stale_running": 0},
+        archive_stats={"island_id": "main"},
+        best_commit={"commit_hash": "abc123"},
+    )
+
+    assert payload == {
+        "instance": {"experiment_id_raw": "exp-demo"},
+        "jobs": {"unfinished": 2, "pending_ingestion": 1},
+        "job_leases": {"running": 1, "stale_running": 0},
+        "archive": {"island_id": "main"},
+        "best_commit": {"commit_hash": "abc123"},
     }
 
 

@@ -10,6 +10,98 @@ from loreley.api.pagination import MAX_PAGE_LIMIT
 from loreley.ui.components.api import api_get_all_pages_or_stop, api_get_or_stop
 from loreley.ui.state import API_BASE_URL_KEY, ISLAND_ID_KEY
 
+
+def _build_overview_kpis(
+    *,
+    islands: object,
+    jobs: object,
+    island_id: object,
+) -> dict[str, Any]:
+    job_rows = _job_rows(jobs)
+    island_rows = _island_rows(islands)
+    status_counts = _job_status_counts(job_rows)
+    metric_name, best_fitness = _overview_metric_summary(island_rows)
+    selected_stats = _selected_island_stats(island_rows, island_id)
+
+    return {
+        "status_counts": status_counts,
+        "total_jobs": len(job_rows),
+        "succeeded": int(status_counts.get("succeeded", 0)),
+        "failed": int(status_counts.get("failed", 0)),
+        "running": int(status_counts.get("running", 0)),
+        "metric_name": metric_name,
+        "best_fitness": best_fitness,
+        "coverage": selected_stats.get("coverage") if selected_stats else None,
+        "qd_score": selected_stats.get("qd_score") if selected_stats else None,
+        "norm_qd_score": selected_stats.get("norm_qd_score") if selected_stats else None,
+        "occupied": selected_stats.get("occupied") if selected_stats else None,
+        "cells": selected_stats.get("cells") if selected_stats else None,
+    }
+
+
+def _job_rows(jobs: object) -> list[dict[str, Any]]:
+    if not isinstance(jobs, list):
+        return []
+    return [row for row in jobs if isinstance(row, dict)]
+
+
+def _island_rows(islands: object) -> list[dict[str, Any]]:
+    if not isinstance(islands, list):
+        return []
+    return [row for row in islands if isinstance(row, dict)]
+
+
+def _job_status_counts(job_rows: list[dict[str, Any]]) -> dict[str, int]:
+    status_counts: dict[str, int] = {}
+    for row in job_rows:
+        status = str(row.get("status") or "")
+        status_counts[status] = status_counts.get(status, 0) + 1
+    return status_counts
+
+
+def _overview_metric_summary(island_rows: list[dict[str, Any]]) -> tuple[str | None, float | None]:
+    metric_name = _first_island_metric_name(island_rows)
+    higher_is_better = _first_higher_is_better(island_rows)
+    try:
+        values = [
+            float(row.get("best_fitness", 0.0))
+            for row in island_rows
+            if row.get("best_fitness") is not None
+        ]
+    except Exception:
+        return metric_name, None
+    if not values:
+        return metric_name, None
+    return metric_name, max(values) if higher_is_better else min(values)
+
+
+def _first_island_metric_name(island_rows: list[dict[str, Any]]) -> str | None:
+    for row in island_rows:
+        if row.get("metric_name"):
+            return str(row.get("metric_name"))
+    return None
+
+
+def _first_higher_is_better(island_rows: list[dict[str, Any]]) -> bool:
+    for row in island_rows:
+        if row.get("higher_is_better") is not None:
+            return bool(row.get("higher_is_better"))
+    return True
+
+
+def _selected_island_stats(
+    island_rows: list[dict[str, Any]],
+    island_id: object,
+) -> dict[str, Any] | None:
+    if not island_id:
+        return None
+    selected_id = str(island_id)
+    for row in island_rows:
+        if str(row.get("island_id") or "") == selected_id:
+            return row
+    return None
+
+
 def render() -> None:
     """Render the overview page."""
 
@@ -56,61 +148,18 @@ def render() -> None:
         return
 
     jobs_df: Any = pd.DataFrame(jobs)
-    status_counts = {}
-    if not jobs_df.empty and "status" in jobs_df.columns:
-        status_counts = jobs_df["status"].value_counts(dropna=False).to_dict()
-
-    total_jobs = int(jobs_df.shape[0])
-    succeeded = int(status_counts.get("succeeded", 0))
-    failed = int(status_counts.get("failed", 0))
-    running = int(status_counts.get("running", 0))
-
-    best_fitness = None
-    metric_name = None
-    higher_is_better = True
-    if isinstance(islands, list) and islands:
-        try:
-            metric_name = next(
-                (
-                    str(entry.get("metric_name"))
-                    for entry in islands
-                    if isinstance(entry, dict) and entry.get("metric_name")
-                ),
-                None,
-            )
-            higher_is_better = bool(
-                next(
-                    (
-                        entry.get("higher_is_better")
-                        for entry in islands
-                        if isinstance(entry, dict) and entry.get("higher_is_better") is not None
-                    ),
-                    True,
-                )
-            )
-            values = [
-                float(i.get("best_fitness", 0.0))
-                for i in islands
-                if isinstance(i, dict) and i.get("best_fitness") is not None
-            ]
-            if values:
-                best_fitness = max(values) if higher_is_better else min(values)
-        except Exception:
-            best_fitness = None
-
-    selected_stats: dict[str, Any] | None = None
-    if island_id and isinstance(islands, list):
-        for entry in islands:
-            if not isinstance(entry, dict):
-                continue
-            if str(entry.get("island_id") or "") == str(island_id):
-                selected_stats = entry
-                break
-    coverage = selected_stats.get("coverage") if selected_stats else None
-    qd_score = selected_stats.get("qd_score") if selected_stats else None
-    norm_qd_score = selected_stats.get("norm_qd_score") if selected_stats else None
-    occupied = selected_stats.get("occupied") if selected_stats else None
-    cells = selected_stats.get("cells") if selected_stats else None
+    kpis = _build_overview_kpis(islands=islands, jobs=jobs, island_id=island_id)
+    status_counts = kpis["status_counts"]
+    total_jobs = kpis["total_jobs"]
+    succeeded = kpis["succeeded"]
+    failed = kpis["failed"]
+    metric_name = kpis["metric_name"]
+    best_fitness = kpis["best_fitness"]
+    coverage = kpis["coverage"]
+    qd_score = kpis["qd_score"]
+    norm_qd_score = kpis["norm_qd_score"]
+    occupied = kpis["occupied"]
+    cells = kpis["cells"]
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Jobs (loaded)", f"{total_jobs}")

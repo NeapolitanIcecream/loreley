@@ -5,12 +5,14 @@ from pathlib import Path
 from typing import Any, cast
 from types import SimpleNamespace
 
+import pytest
 from sqlalchemy.exc import MultipleResultsFound
 
+import loreley.core.map_elites.repository_state_embedding as repo_state_mod
 from loreley.core.worker.evaluator import EvaluationArtifact, EvaluationMetric, EvaluationResult
 from loreley.db.models import CommitCard, EvaluationArtifactRecord, Metric
 from loreley.scheduler import ingestion as ingestion_mod
-from loreley.scheduler.ingestion import MapElitesIngestion
+from loreley.scheduler.ingestion import IngestionError, MapElitesIngestion
 from tests.support import TestSettings
 
 
@@ -93,6 +95,80 @@ def test_root_initialisation_evaluates_without_ingesting_into_archive(
     # Root initialisation should not attempt to ingest the root commit into any
     # MAP-Elites archive.
     assert manager.ingest_calls == []
+
+
+def test_root_initialisation_stops_when_root_commit_is_unavailable(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    settings = TestSettings(MAPELITES_CODE_EMBEDDING_DIMENSIONS=8)
+    ingestion = MapElitesIngestion(
+        settings=settings,
+        console=ingestion_mod.Console(),
+        repo_root=tmp_path,
+        repo=cast(Any, object()),
+        manager=DummyManager(),  # type: ignore[arg-type]
+    )
+
+    calls: list[str] = []
+
+    def _fail_available(self: MapElitesIngestion, commit_hash: str) -> str:
+        calls.append("available")
+        raise IngestionError("missing root")
+
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_ensure_commit_available",
+        _fail_available,
+    )
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_ensure_root_commit_metadata",
+        lambda *_args, **_kwargs: calls.append("metadata"),
+    )
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_ensure_root_commit_repo_state_bootstrap",
+        lambda *_args, **_kwargs: calls.append("repo_state_bootstrap"),
+    )
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_ensure_root_commit_evaluated",
+        lambda *_args, **_kwargs: calls.append("evaluated"),
+    )
+
+    with pytest.raises(IngestionError, match="missing root"):
+        ingestion.initialise_root_commit("bad-root")
+
+    assert calls == ["available"]
+
+
+def test_root_repo_state_bootstrap_fails_when_no_embedding_is_created(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    settings = TestSettings(MAPELITES_CODE_EMBEDDING_DIMENSIONS=8)
+    ingestion = MapElitesIngestion(
+        settings=settings,
+        console=ingestion_mod.Console(),
+        repo_root=tmp_path,
+        repo=cast(Any, object()),
+        manager=DummyManager(),  # type: ignore[arg-type]
+    )
+
+    stats = SimpleNamespace(
+        eligible_files=2,
+        files_aggregated=0,
+        skipped_failed_embedding=2,
+    )
+    monkeypatch.setattr(
+        repo_state_mod,
+        "bootstrap_repository_state_aggregate",
+        lambda **_kwargs: (None, stats),
+    )
+
+    with pytest.raises(IngestionError, match="Repo-state bootstrap produced no embedding"):
+        ingestion._ensure_root_commit_repo_state_bootstrap("root123")
 
 
 def test_root_commit_evaluation_skips_when_metrics_already_exist_even_if_multiple(

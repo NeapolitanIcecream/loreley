@@ -82,6 +82,81 @@ def test_config_dump_json_can_disable_secret_masking(monkeypatch: pytest.MonkeyP
     assert "db-secret-password" in payload["database_dsn"]
 
 
+def test_large_repo_profile_effective_defaults_snapshot() -> None:
+    settings = TestSettings(LORELEY_PROFILE="large_repo_1m_30k")
+
+    snapshot = {
+        "scheduler_poll_interval_seconds": settings.scheduler_poll_interval_seconds,
+        "tasks_worker_time_limit_seconds": settings.tasks_worker_time_limit_seconds,
+        "worker_planning_timeout_seconds": settings.worker_planning_timeout_seconds,
+        "worker_coding_timeout_seconds": settings.worker_coding_timeout_seconds,
+        "worker_evaluator_timeout_seconds": settings.worker_evaluator_timeout_seconds,
+        "mapelites_preprocess_max_file_size_kb": settings.mapelites_preprocess_max_file_size_kb,
+        "mapelites_chunk_target_lines": settings.mapelites_chunk_target_lines,
+        "mapelites_chunk_min_lines": settings.mapelites_chunk_min_lines,
+        "mapelites_chunk_overlap_lines": settings.mapelites_chunk_overlap_lines,
+        "mapelites_code_embedding_batch_size": settings.mapelites_code_embedding_batch_size,
+        "mapelites_dimensionality_min_fit_samples": settings.mapelites_dimensionality_min_fit_samples,
+        "mapelites_dimensionality_history_size": settings.mapelites_dimensionality_history_size,
+        "mapelites_dimensionality_refit_interval": settings.mapelites_dimensionality_refit_interval,
+        "mapelites_feature_normalization_warmup_samples": (
+            settings.mapelites_feature_normalization_warmup_samples
+        ),
+        "mapelites_seed_population_size": settings.mapelites_seed_population_size,
+        "mapelites_sampler_inspiration_count": settings.mapelites_sampler_inspiration_count,
+        "mapelites_sampler_neighbor_max_radius": settings.mapelites_sampler_neighbor_max_radius,
+        "mapelites_sampler_fallback_sample_size": settings.mapelites_sampler_fallback_sample_size,
+    }
+
+    assert snapshot == {
+        "scheduler_poll_interval_seconds": 15.0,
+        "tasks_worker_time_limit_seconds": 0,
+        "worker_planning_timeout_seconds": 1200,
+        "worker_coding_timeout_seconds": 3600,
+        "worker_evaluator_timeout_seconds": 3600,
+        "mapelites_preprocess_max_file_size_kb": 256,
+        "mapelites_chunk_target_lines": 120,
+        "mapelites_chunk_min_lines": 40,
+        "mapelites_chunk_overlap_lines": 12,
+        "mapelites_code_embedding_batch_size": 64,
+        "mapelites_dimensionality_min_fit_samples": 32,
+        "mapelites_dimensionality_history_size": 8192,
+        "mapelites_dimensionality_refit_interval": 250,
+        "mapelites_feature_normalization_warmup_samples": 128,
+        "mapelites_seed_population_size": 32,
+        "mapelites_sampler_inspiration_count": 4,
+        "mapelites_sampler_neighbor_max_radius": 4,
+        "mapelites_sampler_fallback_sample_size": 32,
+    }
+
+
+def test_export_safe_masks_sensitive_fields_snapshot() -> None:
+    settings = _make_settings()
+
+    payload = settings.export_safe(mask_secrets=True)
+    snapshot = {
+        "openai_api_key": payload["openai_api_key"],
+        "openai_base_url": payload["openai_base_url"],
+        "database_dsn": payload["database_dsn"],
+        "db_password": payload["db_password"],
+        "tasks_redis_url": payload["tasks_redis_url"],
+        "tasks_redis_password": payload["tasks_redis_password"],
+        "worker_kilocode_openai_api_key": payload["worker_kilocode_openai_api_key"],
+        "worker_repo_remote_url": payload["worker_repo_remote_url"],
+    }
+
+    assert snapshot == {
+        "openai_api_key": "***",
+        "openai_base_url": "https://gateway.example.com/v1",
+        "database_dsn": "postgresql+psycopg://loreley:***@db.internal:5433/loreley_dev",
+        "db_password": "***",
+        "tasks_redis_url": "redis://redis.internal:6380/2",
+        "tasks_redis_password": "***",
+        "worker_kilocode_openai_api_key": "***",
+        "worker_repo_remote_url": "https://example.com/repo.git",
+    }
+
+
 def test_config_dump_yaml_output(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     yaml = pytest.importorskip("yaml")
 

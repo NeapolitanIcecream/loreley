@@ -165,6 +165,82 @@ def _job_summary_payload(*, job: Any, now: datetime) -> dict[str, object]:
     }
 
 
+def _job_detail_payload(*, job: Any, now: datetime) -> dict[str, object]:
+    return {
+        **_job_summary_payload(job=job, now=now),
+        "scheduled_at": _iso_or_none(getattr(job, "scheduled_at", None)),
+        "started_at": _iso_or_none(getattr(job, "started_at", None)),
+        "heartbeat_at": _iso_or_none(getattr(job, "heartbeat_at", None)),
+        "lease_expires_at": _iso_or_none(getattr(job, "lease_expires_at", None)),
+        "lease": _job_lease_payload(job=job, now=now),
+    }
+
+
+def _instance_status_payload(instance: Any) -> dict[str, object]:
+    return {
+        "experiment_id_raw": str(getattr(instance, "experiment_id_raw", "") or ""),
+        "experiment_uuid": str(getattr(instance, "experiment_uuid", "") or ""),
+        "root_commit_hash": str(getattr(instance, "root_commit_hash", "") or ""),
+        "repository_slug": getattr(instance, "repository_slug", None),
+        "repository_canonical_origin": getattr(instance, "repository_canonical_origin", None),
+    }
+
+
+def _jobs_status_payload(*, unfinished_jobs: int, pending_ingestion_jobs: int) -> dict[str, int]:
+    return {
+        "unfinished": int(unfinished_jobs),
+        "pending_ingestion": int(pending_ingestion_jobs),
+    }
+
+
+def _lease_status_payload(
+    *,
+    settings: Settings,
+    running_jobs: int,
+    stale_running_jobs: int,
+    running_without_lease_jobs: int,
+    recovery_exhausted_failed_jobs: int,
+) -> dict[str, int]:
+    return {
+        "lease_ttl_seconds": int(settings.worker_job_lease_ttl_seconds),
+        "heartbeat_interval_seconds": int(settings.worker_job_heartbeat_interval_seconds),
+        "max_recovery_attempts": int(settings.scheduler_stale_running_max_recovery_attempts),
+        "running": int(running_jobs),
+        "stale_running": int(stale_running_jobs),
+        "running_without_lease": int(running_without_lease_jobs),
+        "recovery_exhausted_failed": int(recovery_exhausted_failed_jobs),
+    }
+
+
+def _best_commit_status_payload(*, row: Any, metric_name: str) -> dict[str, object]:
+    commit_hash, subject, best_island, fitness_value, created_at = row
+    return {
+        "commit_hash": str(commit_hash),
+        "subject": str(subject),
+        "island_id": str(best_island) if best_island is not None else None,
+        "metric": metric_name,
+        "fitness": float(fitness_value) if fitness_value is not None else None,
+        "created_at": created_at.isoformat() if created_at is not None else None,
+    }
+
+
+def _status_response_payload(
+    *,
+    instance_payload: dict[str, object],
+    jobs_payload: dict[str, int],
+    lease_payload: dict[str, int],
+    archive_stats: dict[str, object],
+    best_commit: dict[str, object] | None,
+) -> dict[str, object]:
+    return {
+        "instance": instance_payload,
+        "jobs": jobs_payload,
+        "job_leases": lease_payload,
+        "archive": archive_stats,
+        "best_commit": best_commit,
+    }
+
+
 def _failed_stale_job_conditions(
     *,
     EvolutionJob: Any,
@@ -183,6 +259,237 @@ def _failed_stale_job_conditions(
             lease_error_norm.like("lease metadata missing for running job;%"),
         ),
     )
+
+
+def _count_status_rows(session: Any, stmt: Any) -> int:
+    return int(session.execute(stmt).scalar_one())
+
+
+def _status_query_deps() -> tuple[Any, Any, Any, Any, Any]:
+    from sqlalchemy import func, or_, select
+
+    from loreley.db.models import EvolutionJob, JobStatus
+
+    return select, func, or_, EvolutionJob, JobStatus
+
+
+def _count_unfinished_jobs(
+    *,
+    session: Any,
+    EvolutionJob: Any,
+    JobStatus: Any,
+    select: Any,
+    func: Any,
+) -> int:
+    return _count_status_rows(
+        session,
+        select(func.count(EvolutionJob.id)).where(
+            EvolutionJob.status.in_((JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING)),
+        ),
+    )
+
+
+def _count_pending_ingestion_jobs(
+    *,
+    session: Any,
+    EvolutionJob: Any,
+    JobStatus: Any,
+    select: Any,
+    func: Any,
+) -> int:
+    status_norm = func.lower(func.trim(func.coalesce(EvolutionJob.ingestion_status, "")))
+    commit_norm = func.trim(func.coalesce(EvolutionJob.result_commit_hash, ""))
+    stmt = (
+        select(func.count(EvolutionJob.id))
+        .where(EvolutionJob.status == JobStatus.SUCCEEDED)
+        .where(status_norm.not_in(("succeeded", "skipped")))
+        .where(commit_norm != "")
+    )
+    return _count_status_rows(session, stmt)
+
+
+def _count_running_jobs(
+    *,
+    session: Any,
+    EvolutionJob: Any,
+    JobStatus: Any,
+    select: Any,
+    func: Any,
+) -> int:
+    stmt = select(func.count(EvolutionJob.id)).where(EvolutionJob.status == JobStatus.RUNNING)
+    return _count_status_rows(session, stmt)
+
+
+def _count_stale_running_jobs(
+    *,
+    session: Any,
+    EvolutionJob: Any,
+    JobStatus: Any,
+    select: Any,
+    func: Any,
+    current_time: datetime,
+) -> int:
+    stmt = (
+        select(func.count(EvolutionJob.id))
+        .where(EvolutionJob.status == JobStatus.RUNNING)
+        .where(EvolutionJob.lease_expires_at.is_not(None))
+        .where(EvolutionJob.lease_expires_at < current_time)
+    )
+    return _count_status_rows(session, stmt)
+
+
+def _count_running_without_lease_jobs(
+    *,
+    session: Any,
+    EvolutionJob: Any,
+    JobStatus: Any,
+    select: Any,
+    func: Any,
+    or_: Any,
+) -> int:
+    stmt = (
+        select(func.count(EvolutionJob.id))
+        .where(EvolutionJob.status == JobStatus.RUNNING)
+        .where(
+            or_(
+                EvolutionJob.run_token.is_(None),
+                EvolutionJob.worker_id.is_(None),
+                EvolutionJob.lease_expires_at.is_(None),
+            )
+        )
+    )
+    return _count_status_rows(session, stmt)
+
+
+def _count_recovery_exhausted_failed_jobs(
+    *,
+    session: Any,
+    EvolutionJob: Any,
+    JobStatus: Any,
+    select: Any,
+    func: Any,
+    max_recovery_attempts: int,
+) -> int:
+    stmt = select(func.count(EvolutionJob.id)).where(
+        *_failed_stale_job_conditions(
+            EvolutionJob=EvolutionJob,
+            JobStatus=JobStatus,
+            func=func,
+            max_recovery_attempts=max_recovery_attempts,
+        )
+    )
+    return _count_status_rows(session, stmt)
+
+
+def _load_status_job_payloads(
+    *,
+    session: Any,
+    settings: Settings,
+    current_time: datetime,
+) -> tuple[dict[str, int], dict[str, int]]:
+    select, func, or_, EvolutionJob, JobStatus = _status_query_deps()
+
+    unfinished_jobs = _count_unfinished_jobs(
+        session=session,
+        EvolutionJob=EvolutionJob,
+        JobStatus=JobStatus,
+        select=select,
+        func=func,
+    )
+    pending_ingestion_jobs = _count_pending_ingestion_jobs(
+        session=session,
+        EvolutionJob=EvolutionJob,
+        JobStatus=JobStatus,
+        select=select,
+        func=func,
+    )
+    running_jobs = _count_running_jobs(
+        session=session,
+        EvolutionJob=EvolutionJob,
+        JobStatus=JobStatus,
+        select=select,
+        func=func,
+    )
+    stale_running_jobs = _count_stale_running_jobs(
+        session=session,
+        EvolutionJob=EvolutionJob,
+        JobStatus=JobStatus,
+        select=select,
+        func=func,
+        current_time=current_time,
+    )
+    running_without_lease_jobs = _count_running_without_lease_jobs(
+        session=session,
+        EvolutionJob=EvolutionJob,
+        JobStatus=JobStatus,
+        select=select,
+        func=func,
+        or_=or_,
+    )
+    recovery_exhausted_failed_jobs = _count_recovery_exhausted_failed_jobs(
+        session=session,
+        EvolutionJob=EvolutionJob,
+        JobStatus=JobStatus,
+        select=select,
+        func=func,
+        max_recovery_attempts=int(settings.scheduler_stale_running_max_recovery_attempts),
+    )
+
+    return (
+        _jobs_status_payload(
+            unfinished_jobs=unfinished_jobs,
+            pending_ingestion_jobs=pending_ingestion_jobs,
+        ),
+        _lease_status_payload(
+            settings=settings,
+            running_jobs=running_jobs,
+            stale_running_jobs=stale_running_jobs,
+            running_without_lease_jobs=running_without_lease_jobs,
+            recovery_exhausted_failed_jobs=recovery_exhausted_failed_jobs,
+        ),
+    )
+
+
+def _load_best_commit_status_payload(
+    *,
+    session: Any,
+    settings: Settings,
+    instance: Any,
+    CommitCard: Any,
+    Metric: Any,
+) -> dict[str, object] | None:
+    from sqlalchemy import select
+
+    metric_name = str(settings.mapelites_fitness_metric or "").strip()
+    if not metric_name:
+        return None
+
+    order_column = (
+        Metric.value.desc()
+        if bool(settings.mapelites_fitness_higher_is_better)
+        else Metric.value.asc()
+    )
+    conditions = [Metric.name == metric_name]
+    root_commit = str(getattr(instance, "root_commit_hash", "") or "").strip()
+    if root_commit:
+        conditions.append(CommitCard.commit_hash != root_commit)
+    stmt_best = (
+        select(
+            CommitCard.commit_hash,
+            CommitCard.subject,
+            CommitCard.island_id,
+            Metric.value,
+            CommitCard.created_at,
+        )
+        .join(Metric, Metric.commit_card_id == CommitCard.id)
+        .where(*conditions)
+        .order_by(order_column)
+        .limit(1)
+    )
+    row = session.execute(stmt_best).first()
+    if not row:
+        return None
+    return _best_commit_status_payload(row=row, metric_name=metric_name)
 
 
 def _job_retry_state(*, job: Any, now: datetime) -> tuple[bool, str | None]:
@@ -221,6 +528,64 @@ def _retry_job_row(*, job: Any, reason: str, now: datetime) -> dict[str, object]
         "recovery_count_reset_from": previous_recovery_count,
         "reason": job.last_error,
     }
+
+
+def _retry_failed_stale_jobs_payload(
+    *,
+    session: Any,
+    settings: Settings,
+    retry_all: bool,
+    limit: int | None,
+    reason: str,
+    now: datetime,
+) -> dict[str, object]:
+    rows = _load_failed_stale_retry_rows(
+        session=session,
+        max_recovery_attempts=int(settings.scheduler_stale_running_max_recovery_attempts),
+        retry_all=retry_all,
+        limit=limit,
+    )
+    retried_jobs = [_retry_job_row(job=row, reason=reason, now=now) for row in rows]
+    return {
+        "filters": {
+            "failed_stale": True,
+            "all": bool(retry_all),
+            "limit": None if retry_all else int(limit or 0),
+        },
+        "count": len(retried_jobs),
+        "retried_jobs": retried_jobs,
+    }
+
+
+def _load_failed_stale_retry_rows(
+    *,
+    session: Any,
+    max_recovery_attempts: int,
+    retry_all: bool,
+    limit: int | None,
+) -> list[Any]:
+    from sqlalchemy import func, select
+
+    from loreley.db.models import EvolutionJob, JobStatus
+
+    stmt = (
+        select(EvolutionJob)
+        .where(
+            *_failed_stale_job_conditions(
+                EvolutionJob=EvolutionJob,
+                JobStatus=JobStatus,
+                func=func,
+                max_recovery_attempts=max_recovery_attempts,
+            )
+        )
+        .order_by(
+            EvolutionJob.completed_at.desc().nullslast(),
+            EvolutionJob.created_at.desc(),
+        )
+    )
+    if not retry_all and limit is not None:
+        stmt = stmt.limit(int(limit))
+    return list(session.execute(stmt).scalars())
 
 
 def _run_doctor(
@@ -533,10 +898,8 @@ def status(
         return raw[:12] if len(raw) > 12 else raw
 
     try:
-        from sqlalchemy import func, or_, select
-
         from loreley.db.base import session_scope
-        from loreley.db.models import CommitCard, EvolutionJob, InstanceMetadata, JobStatus, Metric
+        from loreley.db.models import CommitCard, InstanceMetadata, Metric
 
         with session_scope() as session:
             instance = session.get(InstanceMetadata, 1)
@@ -546,125 +909,20 @@ def status(
                 console.print(f"[bold red]Instance metadata is missing[/] {INIT_DB_HINT}")
                 raise typer.Exit(code=1)
 
-            unfinished_statuses = (
-                JobStatus.PENDING,
-                JobStatus.QUEUED,
-                JobStatus.RUNNING,
-            )
-            stmt_unfinished = select(func.count(EvolutionJob.id)).where(
-                EvolutionJob.status.in_(unfinished_statuses),
-            )
-            unfinished_jobs = int(session.execute(stmt_unfinished).scalar_one())
-
-            status_norm = func.lower(func.trim(func.coalesce(EvolutionJob.ingestion_status, "")))
-            commit_norm = func.trim(func.coalesce(EvolutionJob.result_commit_hash, ""))
-            stmt_pending_ingest = (
-                select(func.count(EvolutionJob.id))
-                .where(EvolutionJob.status == JobStatus.SUCCEEDED)
-                .where(status_norm.not_in(("succeeded", "skipped")))
-                .where(commit_norm != "")
-            )
-            pending_ingestion_jobs = int(session.execute(stmt_pending_ingest).scalar_one())
             current_time = _db_utc_now(session)
-
-            stmt_running = select(func.count(EvolutionJob.id)).where(
-                EvolutionJob.status == JobStatus.RUNNING,
+            jobs_payload, lease_payload = _load_status_job_payloads(
+                session=session,
+                settings=settings,
+                current_time=current_time,
             )
-            running_jobs = int(session.execute(stmt_running).scalar_one())
-
-            stmt_stale_running = (
-                select(func.count(EvolutionJob.id))
-                .where(EvolutionJob.status == JobStatus.RUNNING)
-                .where(EvolutionJob.lease_expires_at.is_not(None))
-                .where(EvolutionJob.lease_expires_at < current_time)
+            best_commit = _load_best_commit_status_payload(
+                session=session,
+                settings=settings,
+                instance=instance,
+                CommitCard=CommitCard,
+                Metric=Metric,
             )
-            stale_running_jobs = int(session.execute(stmt_stale_running).scalar_one())
-
-            stmt_running_without_lease = (
-                select(func.count(EvolutionJob.id))
-                .where(EvolutionJob.status == JobStatus.RUNNING)
-                .where(
-                    or_(
-                        EvolutionJob.run_token.is_(None),
-                        EvolutionJob.worker_id.is_(None),
-                        EvolutionJob.lease_expires_at.is_(None),
-                    )
-                )
-            )
-            running_without_lease_jobs = int(session.execute(stmt_running_without_lease).scalar_one())
-
-            stmt_recovery_exhausted = (
-                select(func.count(EvolutionJob.id))
-                .where(
-                    *_failed_stale_job_conditions(
-                        EvolutionJob=EvolutionJob,
-                        JobStatus=JobStatus,
-                        func=func,
-                        max_recovery_attempts=int(
-                            settings.scheduler_stale_running_max_recovery_attempts,
-                        ),
-                    )
-                )
-            )
-            recovery_exhausted_failed_jobs = int(session.execute(stmt_recovery_exhausted).scalar_one())
-
-            best_commit: dict[str, object] | None = None
-            metric_name = str(settings.mapelites_fitness_metric or "").strip()
-            if metric_name:
-                order_column = (
-                    Metric.value.desc()
-                    if bool(settings.mapelites_fitness_higher_is_better)
-                    else Metric.value.asc()
-                )
-                conditions = [Metric.name == metric_name]
-                root_commit = str(getattr(instance, "root_commit_hash", "") or "").strip()
-                if root_commit:
-                    conditions.append(CommitCard.commit_hash != root_commit)
-                stmt_best = (
-                    select(
-                        CommitCard.commit_hash,
-                        CommitCard.subject,
-                        CommitCard.island_id,
-                        Metric.value,
-                        CommitCard.created_at,
-                    )
-                    .join(Metric, Metric.commit_card_id == CommitCard.id)
-                    .where(*conditions)
-                    .order_by(order_column)
-                    .limit(1)
-                )
-                row = session.execute(stmt_best).first()
-                if row:
-                    commit_hash, subject, best_island, fitness_value, created_at = row
-                    best_commit = {
-                        "commit_hash": str(commit_hash),
-                        "subject": str(subject),
-                        "island_id": str(best_island) if best_island is not None else None,
-                        "metric": metric_name,
-                        "fitness": float(fitness_value) if fitness_value is not None else None,
-                        "created_at": created_at.isoformat() if created_at is not None else None,
-                    }
-
-            instance_payload: dict[str, object] = {
-                "experiment_id_raw": str(getattr(instance, "experiment_id_raw", "") or ""),
-                "experiment_uuid": str(getattr(instance, "experiment_uuid", "") or ""),
-                "root_commit_hash": str(getattr(instance, "root_commit_hash", "") or ""),
-                "repository_slug": getattr(instance, "repository_slug", None),
-                "repository_canonical_origin": getattr(instance, "repository_canonical_origin", None),
-            }
-            jobs_payload: dict[str, int] = {
-                "unfinished": unfinished_jobs,
-                "pending_ingestion": pending_ingestion_jobs,
-            }
-            lease_payload: dict[str, int] = {
-                "lease_ttl_seconds": int(settings.worker_job_lease_ttl_seconds),
-                "heartbeat_interval_seconds": int(settings.worker_job_heartbeat_interval_seconds),
-                "max_recovery_attempts": int(settings.scheduler_stale_running_max_recovery_attempts),
-                "running": running_jobs,
-                "stale_running": stale_running_jobs,
-                "running_without_lease": running_without_lease_jobs,
-                "recovery_exhausted_failed": recovery_exhausted_failed_jobs,
-            }
+            instance_payload = _instance_status_payload(instance)
     except typer.Exit:
         raise
     except Exception as exc:  # pragma: no cover - defensive
@@ -673,13 +931,13 @@ def status(
 
     archive_stats = _load_archive_stats_or_exit(settings=settings, island_id=effective_island)
 
-    payload: dict[str, object] = {
-        "instance": instance_payload,
-        "jobs": jobs_payload,
-        "job_leases": lease_payload,
-        "archive": archive_stats,
-        "best_commit": best_commit,
-    }
+    payload = _status_response_payload(
+        instance_payload=instance_payload,
+        jobs_payload=jobs_payload,
+        lease_payload=lease_payload,
+        archive_stats=archive_stats,
+        best_commit=best_commit,
+    )
 
     if json_output:
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
@@ -701,8 +959,8 @@ def status(
         table.add_row("origin", str(origin))
 
     table.add_section()
-    table.add_row("unfinished_jobs", str(unfinished_jobs))
-    table.add_row("pending_ingestion", str(pending_ingestion_jobs))
+    table.add_row("unfinished_jobs", str(jobs_payload["unfinished"]))
+    table.add_row("pending_ingestion", str(jobs_payload["pending_ingestion"]))
 
     table.add_section()
     table.add_row("running_jobs", str(lease_payload["running"]))
@@ -817,8 +1075,6 @@ def retry_job(
             raise typer.Exit(code=1)
 
     try:
-        from sqlalchemy import select
-
         from loreley.db.base import session_scope
         from loreley.db.models import EvolutionJob, JobStatus
 
@@ -843,39 +1099,15 @@ def retry_job(
                     raise typer.Exit(code=1)
                 payload = _retry_job_row(job=job, reason=reason, now=now)
             else:
-                from sqlalchemy import func
-
-                stmt = (
-                    select(EvolutionJob)
-                    .where(
-                        *_failed_stale_job_conditions(
-                            EvolutionJob=EvolutionJob,
-                            JobStatus=JobStatus,
-                            func=func,
-                            max_recovery_attempts=int(
-                                settings.scheduler_stale_running_max_recovery_attempts,
-                            ),
-                        )
-                    )
-                    .order_by(
-                        EvolutionJob.completed_at.desc().nullslast(),
-                        EvolutionJob.created_at.desc(),
-                    )
-                )
-                if not retry_all and limit is not None:
-                    stmt = stmt.limit(int(limit))
-                rows = list(session.execute(stmt).scalars())
                 now = _db_utc_now(session)
-                retried_jobs = [_retry_job_row(job=row, reason=reason, now=now) for row in rows]
-                payload = {
-                    "filters": {
-                        "failed_stale": True,
-                        "all": bool(retry_all),
-                        "limit": None if retry_all else int(limit or 0),
-                    },
-                    "count": len(retried_jobs),
-                    "retried_jobs": retried_jobs,
-                }
+                payload = _retry_failed_stale_jobs_payload(
+                    session=session,
+                    settings=settings,
+                    retry_all=bool(retry_all),
+                    limit=limit,
+                    reason=reason,
+                    now=now,
+                )
     except typer.Exit:
         raise
     except Exception as exc:  # pragma: no cover - defensive
@@ -935,14 +1167,7 @@ def inspect_job(
                 raise typer.Exit(code=1)
 
             now = _db_utc_now(session)
-            payload = {
-                **_job_summary_payload(job=job, now=now),
-                "scheduled_at": _iso_or_none(getattr(job, "scheduled_at", None)),
-                "started_at": _iso_or_none(getattr(job, "started_at", None)),
-                "heartbeat_at": _iso_or_none(getattr(job, "heartbeat_at", None)),
-                "lease_expires_at": _iso_or_none(getattr(job, "lease_expires_at", None)),
-                "lease": _job_lease_payload(job=job, now=now),
-            }
+            payload = _job_detail_payload(job=job, now=now)
     except typer.Exit:
         raise
     except Exception as exc:  # pragma: no cover - defensive

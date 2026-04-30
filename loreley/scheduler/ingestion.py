@@ -23,7 +23,7 @@ from loreley.core.contracts import clamp_text, normalize_single_line
 from loreley.core.git import RepositoryError as GitRepositoryError, require_commit
 from loreley.core.map_elites.map_elites import MapElitesManager
 from loreley.core.repo_lock import repo_lock
-from loreley.core.worker.evaluator import EvaluationContext, EvaluationError, Evaluator
+from loreley.core.worker.evaluator import EvaluationContext, EvaluationError, EvaluationResult, Evaluator
 from loreley.core.worker.repository import RepositoryError, WorkerRepository
 from loreley.db.base import session_scope
 from loreley.db.models import CommitCard, EvolutionJob, JobStatus, Metric
@@ -63,6 +63,14 @@ class _IngestionStatePayload:
     status_code: int | None
     message: str | None
     record: Any | None
+
+
+@dataclass(slots=True, frozen=True)
+class _RootRepoStateBootstrapReport:
+    canonical_commit_hash: str
+    eligible_files: int
+    files_aggregated: int
+    dimensions: int
 
 
 @dataclass(slots=True)
@@ -181,14 +189,7 @@ class MapElitesIngestion:
         Repo-state bootstrap failures are fatal because runtime ingestion is incremental-only.
         """
 
-        try:
-            commit_hash = self._ensure_commit_available(commit_hash)
-        except IngestionError as exc:
-            self.console.log(
-                f"[bold red]Failed to initialise root commit[/] commit={commit_hash} reason={exc}",
-            )
-            log.error("Failed to initialise root commit {}: {}", commit_hash, exc)
-            raise
+        commit_hash = self._resolve_root_commit_for_initialisation(commit_hash)
 
         # Commit metadata is required for downstream observability / UI.
         self._ensure_root_commit_metadata(commit_hash)
@@ -204,6 +205,16 @@ class MapElitesIngestion:
                 f"[bold red]Root commit evaluation failed[/] commit={commit_hash} reason={exc}",
             )
             log.exception("Root commit evaluation failed for {}: {}", commit_hash, exc)
+
+    def _resolve_root_commit_for_initialisation(self, commit_hash: str) -> str:
+        try:
+            return self._ensure_commit_available(commit_hash)
+        except IngestionError as exc:
+            self.console.log(
+                f"[bold red]Failed to initialise root commit[/] commit={commit_hash} reason={exc}",
+            )
+            log.error("Failed to initialise root commit {}: {}", commit_hash, exc)
+            raise
 
     # Job result ingestion --------------------------------------------------
 
@@ -829,23 +840,46 @@ class MapElitesIngestion:
         prevent the scheduler from running.
         """
 
-        # Skip evaluation when metrics already exist for this commit.
+        if self._root_commit_has_metrics(commit_hash):
+            return
+
+        worker_repo = self._root_evaluation_worker_repository(commit_hash)
+        if worker_repo is None:
+            return
+
+        result = self._evaluate_root_commit_with_worker_repo(
+            commit_hash=commit_hash,
+            worker_repo=worker_repo,
+        )
+        if result is None:
+            return
+
+        metrics_count = self._persist_root_commit_evaluation(
+            commit_hash=commit_hash,
+            result=result,
+        )
+        self._log_root_commit_evaluation_completed(
+            commit_hash=commit_hash,
+            metrics_count=metrics_count,
+        )
+
+    def _root_commit_has_metrics(self, commit_hash: str) -> bool:
         with session_scope() as session:
             commit_row = session.execute(
                 select(CommitCard).where(CommitCard.commit_hash == commit_hash)
             ).scalar_one_or_none()
-            if commit_row is not None:
-                existing = session.execute(
-                    select(Metric.id)
-                    .where(Metric.commit_card_id == commit_row.id)
-                    .limit(1)
-                ).first()
-                if existing is not None:
-                    return
+            if commit_row is None:
+                return False
+            existing = session.execute(
+                select(Metric.id)
+                .where(Metric.commit_card_id == commit_row.id)
+                .limit(1)
+            ).first()
+            return existing is not None
 
-        # Prepare a detached checkout of the root commit using the worker repo.
+    def _root_evaluation_worker_repository(self, commit_hash: str) -> WorkerRepository | None:
         try:
-            worker_repo = WorkerRepository(self.settings)
+            return WorkerRepository(self.settings)
         except RepositoryError as exc:
             self.console.log(
                 "[yellow]Skipping root commit evaluation; worker repository is not configured[/] "
@@ -857,52 +891,24 @@ class MapElitesIngestion:
                 commit_hash,
                 exc,
             )
-            return
+            return None
 
+    def _evaluate_root_commit_with_worker_repo(
+        self,
+        *,
+        commit_hash: str,
+        worker_repo: WorkerRepository,
+    ) -> EvaluationResult | None:
         try:
             with worker_repo.checkout_lease_for_job(
                 job_id=None,
                 base_commit=commit_hash,
                 create_branch=False,
             ) as checkout:
-                goal = f"Baseline evaluation for root commit {commit_hash}"
-                default_island = resolve_default_island_id(self.settings)
-                payload: dict[str, Any] = {
-                    "job": {
-                        "id": None,
-                        "island_id": default_island,
-                        "goal": goal,
-                        "constraints": [],
-                        "acceptance_criteria": [],
-                        "notes": [],
-                    },
-                    "plan": {
-                        "summary": goal,
-                    },
-                }
-
-                evaluator = Evaluator(self.settings)
-                context = EvaluationContext(
+                return self._evaluate_root_checkout(
+                    commit_hash=commit_hash,
                     worktree=checkout.worktree,
-                    base_commit_hash=None,
-                    candidate_commit_hash=commit_hash,
-                    job_id=None,
-                    goal=goal,
-                    payload=payload,
-                    plan_summary=goal,
-                    metadata={
-                        "root_commit": True,
-                    },
-                )  # type: ignore[call-arg]
-
-                try:
-                    result = evaluator.evaluate(context)
-                except EvaluationError as exc:
-                    self.console.log(
-                        f"[bold red]Root commit evaluation failed[/] commit={commit_hash} reason={exc}",
-                    )
-                    log.error("Root commit evaluation failed for {}: {}", commit_hash, exc)
-                    return
+                )
         except RepositoryError as exc:
             self.console.log(
                 "[yellow]Skipping root commit evaluation; checkout failed[/] "
@@ -913,8 +919,58 @@ class MapElitesIngestion:
                 commit_hash,
                 exc,
             )
-            return
+            return None
 
+    def _evaluate_root_checkout(self, *, commit_hash: str, worktree: Path) -> EvaluationResult | None:
+        evaluator = Evaluator(self.settings)
+        context = self._root_evaluation_context(
+            commit_hash=commit_hash,
+            worktree=worktree,
+        )
+        try:
+            return evaluator.evaluate(context)
+        except EvaluationError as exc:
+            self.console.log(
+                f"[bold red]Root commit evaluation failed[/] commit={commit_hash} reason={exc}",
+            )
+            log.error("Root commit evaluation failed for {}: {}", commit_hash, exc)
+            return None
+
+    def _root_evaluation_context(self, *, commit_hash: str, worktree: Path) -> EvaluationContext:
+        goal = f"Baseline evaluation for root commit {commit_hash}"
+        default_island = resolve_default_island_id(self.settings)
+        payload: dict[str, Any] = {
+            "job": {
+                "id": None,
+                "island_id": default_island,
+                "goal": goal,
+                "constraints": [],
+                "acceptance_criteria": [],
+                "notes": [],
+            },
+            "plan": {
+                "summary": goal,
+            },
+        }
+        return EvaluationContext(
+            worktree=worktree,
+            base_commit_hash=None,
+            candidate_commit_hash=commit_hash,
+            job_id=None,
+            goal=goal,
+            payload=payload,
+            plan_summary=goal,
+            metadata={
+                "root_commit": True,
+            },
+        )  # type: ignore[call-arg]
+
+    def _persist_root_commit_evaluation(
+        self,
+        *,
+        commit_hash: str,
+        result: Any,
+    ) -> int:
         metrics_payload = [metric.as_dict() for metric in result.metrics]
 
         with session_scope() as session:
@@ -922,76 +978,78 @@ class MapElitesIngestion:
                 select(CommitCard).where(CommitCard.commit_hash == commit_hash)
             ).scalar_one_or_none()
             if commit_row is None:
-                # Ensure the commit record exists before writing metrics so that
-                # FK constraints are satisfied even if metadata initialisation
-                # was skipped or the DB was manually reset.
-                git_commit = self.repo.commit(commit_hash)
-                parent_hash = git_commit.parents[0].hexsha if git_commit.parents else None
-                author = getattr(getattr(git_commit, "author", None), "name", None)
-                message = getattr(git_commit, "message", None)
-                subject = (
-                    str(message or "").splitlines()[0].strip()
-                    if message
-                    else f"Commit {commit_hash}"
-                )
-                subject = subject[:72].strip() or f"Commit {commit_hash}"
-                default_island = resolve_default_island_id(self.settings)
-
-                commit_row = CommitCard(
-                    commit_hash=commit_hash,
-                    parent_commit_hash=parent_hash,
-                    island_id=default_island,
-                    author=author,
-                    subject=subject,
-                    change_summary="Root baseline commit.",
+                commit_row = self._build_root_commit_card(
+                    commit_hash,
                     evaluation_summary=result.summary,
-                    tags=[],
-                    key_files=[],
-                    highlights=["Root baseline commit."],
-                    job_id=None,
                 )
                 session.add(commit_row)
             else:
                 commit_row.evaluation_summary = result.summary
 
             for metric in result.metrics:
-                existing_metric = session.execute(
-                    select(Metric).where(
-                        Metric.commit_card_id == commit_row.id,
-                        Metric.name == metric.name,
-                    )
-                ).scalar_one_or_none()
-                if existing_metric:
-                    existing_metric.value = float(metric.value)
-                    existing_metric.unit = metric.unit
-                    existing_metric.higher_is_better = bool(metric.higher_is_better)
-                    existing_metric.details = dict(metric.details or {})
-                else:
-                    session.add(
-                        Metric(
-                            commit=commit_row,
-                            name=metric.name,
-                            value=metric.value,
-                            unit=metric.unit,
-                            higher_is_better=metric.higher_is_better,
-                            details=dict(metric.details or {}),
-                        )
-                    )
+                self._upsert_root_commit_metric(
+                    session=session,
+                    commit_row=commit_row,
+                    metric=metric,
+                )
 
+        return len(metrics_payload)
+
+    @staticmethod
+    def _upsert_root_commit_metric(
+        *,
+        session: Session,
+        commit_row: CommitCard,
+        metric: Any,
+    ) -> None:
+        existing_metric = session.execute(
+            select(Metric).where(
+                Metric.commit_card_id == commit_row.id,
+                Metric.name == metric.name,
+            )
+        ).scalar_one_or_none()
+        if existing_metric:
+            existing_metric.value = float(metric.value)
+            existing_metric.unit = metric.unit
+            existing_metric.higher_is_better = bool(metric.higher_is_better)
+            existing_metric.details = dict(metric.details or {})
+            return
+
+        session.add(
+            Metric(
+                commit=commit_row,
+                name=metric.name,
+                value=metric.value,
+                unit=metric.unit,
+                higher_is_better=metric.higher_is_better,
+                details=dict(metric.details or {}),
+            )
+        )
+
+    def _log_root_commit_evaluation_completed(
+        self,
+        *,
+        commit_hash: str,
+        metrics_count: int,
+    ) -> None:
         self.console.log(
             "[green]Evaluated root commit[/] commit={} metrics={}".format(
                 commit_hash,
-                len(metrics_payload),
+                metrics_count,
             ),
         )
         log.info(
             "Root commit evaluation completed for {} with {} metrics",
             commit_hash,
-            len(metrics_payload),
+            metrics_count,
         )
 
     def _ensure_root_commit_repo_state_bootstrap(self, commit_hash: str) -> None:
         """Bootstrap the repo-state aggregate for the experiment baseline commit."""
+        report = self._bootstrap_root_repo_state_aggregate(commit_hash)
+        self._log_root_repo_state_bootstrap(report)
+
+    def _bootstrap_root_repo_state_aggregate(self, commit_hash: str) -> _RootRepoStateBootstrapReport:
         from loreley.core.map_elites.repository_state_embedding import (
             bootstrap_repository_state_aggregate,
         )
@@ -1010,53 +1068,43 @@ class MapElitesIngestion:
                 f"skipped_failed_embedding={stats.skipped_failed_embedding} commit={commit_hash}."
             )
         canonical = str(getattr(self.repo.commit(commit_hash), "hexsha", "") or "").strip()
+        return _RootRepoStateBootstrapReport(
+            canonical_commit_hash=canonical,
+            eligible_files=int(stats.eligible_files),
+            files_aggregated=int(stats.files_aggregated),
+            dimensions=int(embedding.dimensions),
+        )
 
+    def _log_root_repo_state_bootstrap(self, report: _RootRepoStateBootstrapReport) -> None:
         self.console.log(
             "[green]Bootstrapped repo-state baseline aggregate[/] commit={} eligible_files={} files_aggregated={} dims={}".format(
-                canonical,
-                stats.eligible_files,
-                stats.files_aggregated,
-                embedding.dimensions,
+                report.canonical_commit_hash,
+                report.eligible_files,
+                report.files_aggregated,
+                report.dimensions,
             )
         )
         log.info(
             "Bootstrapped repo-state baseline aggregate commit={} eligible_files={} files_aggregated={} dims={}",
-            canonical,
-            stats.eligible_files,
-            stats.files_aggregated,
-            embedding.dimensions,
+            report.canonical_commit_hash,
+            report.eligible_files,
+            report.files_aggregated,
+            report.dimensions,
         )
 
     def _ensure_root_commit_metadata(self, commit_hash: str) -> None:
         """Create or update CommitCard for the root commit."""
 
-        git_commit = self.repo.commit(commit_hash)
-        parent_hash = git_commit.parents[0].hexsha if git_commit.parents else None
-        author = getattr(getattr(git_commit, "author", None), "name", None)
-        message = getattr(git_commit, "message", None)
+        metadata = self._root_commit_metadata_fields(commit_hash)
 
         with session_scope() as session:
             stmt = select(CommitCard).where(
                 CommitCard.commit_hash == commit_hash,
             )
             existing = session.execute(stmt).scalar_one_or_none()
-            default_island = resolve_default_island_id(self.settings)
 
             if existing:
-                updated = False
-                if existing.island_id is None:
-                    existing.island_id = default_island
-                    updated = True
-                if not getattr(existing, "highlights", None):
-                    existing.highlights = ["Root baseline commit."]
-                    updated = True
-                if not getattr(existing, "subject", None):
-                    subject = str(message or "").splitlines()[0].strip() if message else f"Commit {commit_hash}"
-                    existing.subject = subject[:72].strip() or f"Commit {commit_hash}"
-                    updated = True
-                if not getattr(existing, "change_summary", None):
-                    existing.change_summary = "Root baseline commit."
-                    updated = True
+                updated = self._apply_missing_root_commit_metadata(existing, metadata)
                 if updated:
                     self.console.log(
                         "[cyan]Updated root commit metadata[/] commit={} island={}".format(
@@ -1066,33 +1114,77 @@ class MapElitesIngestion:
                     )
                 return
 
-            subject = str(message or "").splitlines()[0].strip() if message else f"Commit {commit_hash}"
-            subject = subject[:72].strip() or f"Commit {commit_hash}"
-            metadata = CommitCard(
-                commit_hash=commit_hash,
-                parent_commit_hash=parent_hash,
-                island_id=default_island,
-                author=author,
-                subject=subject,
-                change_summary="Root baseline commit.",
-                evaluation_summary=None,
-                tags=[],
-                key_files=[],
-                highlights=["Root baseline commit."],
-                job_id=None,
-            )
-            session.add(metadata)
+            commit_row = self._build_root_commit_card(commit_hash, evaluation_summary=None)
+            session.add(commit_row)
             self.console.log(
                 "[bold green]Registered root commit[/] commit={} island={}".format(
                     commit_hash,
-                    default_island,
+                    metadata["island_id"],
                 ),
             )
             log.info(
                 "Registered root commit {} on island {}",
                 commit_hash,
-                default_island,
+                metadata["island_id"],
             )
+
+    def _root_commit_metadata_fields(self, commit_hash: str) -> dict[str, Any]:
+        git_commit = self.repo.commit(commit_hash)
+        parent_hash = git_commit.parents[0].hexsha if git_commit.parents else None
+        author = getattr(getattr(git_commit, "author", None), "name", None)
+        message = getattr(git_commit, "message", None)
+        subject = str(message or "").splitlines()[0].strip() if message else f"Commit {commit_hash}"
+        subject = subject[:72].strip() or f"Commit {commit_hash}"
+        return {
+            "commit_hash": commit_hash,
+            "parent_commit_hash": parent_hash,
+            "island_id": resolve_default_island_id(self.settings),
+            "author": author,
+            "subject": subject,
+            "change_summary": "Root baseline commit.",
+            "highlights": ["Root baseline commit."],
+        }
+
+    def _build_root_commit_card(
+        self,
+        commit_hash: str,
+        *,
+        evaluation_summary: str | None,
+    ) -> CommitCard:
+        fields = self._root_commit_metadata_fields(commit_hash)
+        return CommitCard(
+            commit_hash=str(fields["commit_hash"]),
+            parent_commit_hash=fields["parent_commit_hash"],
+            island_id=str(fields["island_id"]),
+            author=fields["author"],
+            subject=str(fields["subject"]),
+            change_summary=str(fields["change_summary"]),
+            evaluation_summary=evaluation_summary,
+            tags=[],
+            key_files=[],
+            highlights=list(fields["highlights"]),
+            job_id=None,
+        )
+
+    @staticmethod
+    def _apply_missing_root_commit_metadata(
+        existing: CommitCard,
+        metadata: dict[str, Any],
+    ) -> bool:
+        updated = False
+        if existing.island_id is None:
+            existing.island_id = str(metadata["island_id"])
+            updated = True
+        if not getattr(existing, "highlights", None):
+            existing.highlights = list(metadata["highlights"])
+            updated = True
+        if not getattr(existing, "subject", None):
+            existing.subject = str(metadata["subject"])
+            updated = True
+        if not getattr(existing, "change_summary", None):
+            existing.change_summary = str(metadata["change_summary"])
+            updated = True
+        return updated
 
     # Misc helpers ----------------------------------------------------------
 

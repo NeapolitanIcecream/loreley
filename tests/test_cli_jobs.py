@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from loreley.cli import main
+from loreley.cli import _job_detail_payload, main
 from loreley.db.models import JobStatus
 from tests.support import TestSettings
 
@@ -271,6 +271,36 @@ def test_jobs_inspect_json_reports_stale_lease_state(
     assert payload["lease"]["worker_id"] == "worker-02"
     assert payload["lease"]["run_token"] == str(run_token)
     assert payload["recovery_count"] == 2
+
+
+def test_job_detail_payload_includes_summary_and_nested_lease_state() -> None:
+    now = datetime(2026, 3, 25, 8, 0, tzinfo=timezone.utc)
+    run_token = uuid.uuid4()
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        status=JobStatus.RUNNING,
+        base_commit_hash="abc123",
+        island_id="main",
+        created_at=now - timedelta(hours=2),
+        scheduled_at=now - timedelta(hours=1, minutes=55),
+        started_at=now - timedelta(hours=1, minutes=50),
+        completed_at=None,
+        heartbeat_at=now - timedelta(minutes=40),
+        lease_expires_at=now - timedelta(minutes=10),
+        run_token=run_token,
+        worker_id="worker-02",
+        recovery_count=2,
+        result_commit_hash=None,
+        last_error="still running",
+    )
+
+    payload = _job_detail_payload(job=job, now=now)
+
+    assert payload["status"] == "running"
+    assert payload["lease_state"] == "stale"
+    assert payload["lease"]["state"] == "stale"
+    assert payload["lease"]["run_token"] == str(run_token)
+    assert payload["scheduled_at"] == (now - timedelta(hours=1, minutes=55)).isoformat()
 
 
 def test_jobs_inspect_table_preserves_zero_recovery_count(

@@ -18,7 +18,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 import subprocess
-from typing import Iterable, Sequence, TypeVar, cast
+from typing import Iterable, Mapping, Sequence, TypeVar, cast
 
 from git import Repo
 from git.exc import GitCommandError
@@ -127,6 +127,27 @@ class _IncrementalCacheMissResult:
     files_embedded: int
     skipped_empty_after_preprocess: int
     skipped_failed_embedding: int
+
+
+@dataclass(frozen=True, slots=True)
+class _WeightedVectorAggregation:
+    commit_vector: Vector
+    sum_vector: Vector
+    files_aggregated: int
+    skipped_failed_embedding: int
+
+
+@dataclass(frozen=True, slots=True)
+class _CacheMissWorkItem:
+    blob_sha: str
+    file: RepositoryFile
+
+
+@dataclass(frozen=True, slots=True)
+class _PreprocessedCacheMissBatch:
+    files: tuple[PreprocessedFile, ...]
+    blob_for_path: dict[Path, str]
+    skipped_empty: int
 
 
 @dataclass(slots=True)
@@ -384,9 +405,7 @@ class RepositoryStateEmbedder:
             )
             return None, stats
 
-        blob_shas = [entry.blob_sha for entry in repo_files if entry.blob_sha]
-        blob_weights = Counter(blob_shas)
-        unique_blob_shas = sorted(blob_weights.keys())
+        blob_weights, unique_blob_shas = _blob_weights_for_files(repo_files)
         cached = self.cache.get_many(unique_blob_shas)
 
         misses = [sha for sha in unique_blob_shas if sha not in cached]
@@ -402,62 +421,32 @@ class RepositoryStateEmbedder:
             self.cache.put_many(vectors_for_misses)
             cached.update(vectors_for_misses)
 
-        sum_array = np.zeros(0, dtype=np.float64)
-        aggregated_count = 0
-        skipped_failed = len(repo_files) - len(blob_shas)
-        dims = 0
-        for blob_sha in unique_blob_shas:
-            weight = int(blob_weights.get(blob_sha, 0) or 0)
-            if weight <= 0:
-                continue
-
-            vec = cached.get(blob_sha)
-            if not vec:
-                skipped_failed += weight
-                continue
-
-            vector_array = np.asarray(vec, dtype=np.float64)
-            if vector_array.ndim != 1:
-                raise ValueError("Embedding dimension mismatch during repo-state aggregation.")
-            if vector_array.size <= 0:
-                skipped_failed += weight
-                continue
-
-            if dims == 0:
-                dims = int(vector_array.size)
-                sum_array = np.zeros(dims, dtype=np.float64)
-            elif int(vector_array.size) != dims:
-                raise ValueError("Embedding dimension mismatch during repo-state aggregation.")
-
-            sum_array += vector_array * float(weight)
-            aggregated_count += weight
-
-        if aggregated_count <= 0 or sum_array.size <= 0:
-            commit_vector, sum_vector = (), ()
-        else:
-            sum_vector = tuple(float(value) for value in sum_array.tolist())
-            commit_vector = divide_vector(sum_array, float(aggregated_count))
+        aggregation = _aggregate_weighted_blob_vectors(
+            repo_files=repo_files,
+            blob_weights=blob_weights,
+            vectors_by_blob=cached,
+        )
         stats = RepoStateEmbeddingStats(
             commit_hash=commit_hash,
             eligible_files=len(repo_files),
             files_embedded=embedded_count,
-            files_aggregated=aggregated_count,
+            files_aggregated=aggregation.files_aggregated,
             unique_blobs=len(unique_blob_shas),
             cache_hits=cache_hits,
             cache_misses=len(misses),
             skipped_empty_after_preprocess=skipped_empty,
-            skipped_failed_embedding=skipped_failed,
+            skipped_failed_embedding=aggregation.skipped_failed_embedding,
             source="full_recompute",
         )
 
-        if not commit_vector:
+        if not aggregation.commit_vector:
             return None, stats
 
         embedding = CommitCodeEmbedding(
             files=(),  # keep lightweight; file-level vectors are cached externally
-            vector=commit_vector,
+            vector=aggregation.commit_vector,
             model=self.cache.embedding_model,
-            dimensions=len(commit_vector),
+            dimensions=len(aggregation.commit_vector),
         )
         log.info(
             "Repo-state embedding for commit {}: files={} blobs={} hits={} misses={} agg_files={} dims={}",
@@ -473,8 +462,8 @@ class RepositoryStateEmbedder:
         self._persist_aggregate(
             commit_hash=commit_hash,
             repo_root=repo_root,
-            sum_vector=sum_vector,
-            file_count=aggregated_count,
+            sum_vector=aggregation.sum_vector,
+            file_count=aggregation.files_aggregated,
             session=session,
         )
         return embedding, stats
@@ -1223,14 +1212,11 @@ class RepositoryStateEmbedder:
         if not missing_blob_shas:
             return {}, 0, 0
 
-        missing_set = set(str(sha).strip() for sha in missing_blob_shas if str(sha).strip())
-
-        # Pick one representative path per missing blob.
-        wanted: dict[str, RepositoryFile] = {}
-        for entry in repo_files:
-            if entry.blob_sha in missing_set and entry.blob_sha not in wanted:
-                wanted[entry.blob_sha] = entry
-        if not wanted:
+        work_items = _cache_miss_work_items(
+            repo_files=repo_files,
+            missing_blob_shas=missing_blob_shas,
+        )
+        if not work_items:
             return {}, 0, 0
 
         preprocessor = CodePreprocessor(
@@ -1240,73 +1226,194 @@ class RepositoryStateEmbedder:
             repo=self._repo,
         )
 
-        wanted_items = sorted(
-            wanted.items(),
-            key=lambda item: item[1].path.as_posix(),
-        )
-
         vectors: dict[str, Vector] = {}
         skipped_empty_total = 0
 
         # Embed in batches to keep memory and request payloads bounded.
         batch_size = 64
-        for batch in _batched(wanted_items, batch_size):
-            preprocessed: list[PreprocessedFile] = []
-            blob_for_path: dict[Path, str] = {}
-            skipped_empty = 0
-            blob_texts: dict[str, str] = {}
-
-            if self._repo is not None:
-                blob_texts = _load_blob_texts(
-                    self._repo,
-                    [blob_sha for blob_sha, _entry in batch],
-                )
-
-            for blob_sha, entry in batch:
-                raw = blob_texts.get(blob_sha)
-                if raw is None:
-                    raw = preprocessor.load_text(entry.path)
-                if raw is None:
-                    continue
-                cleaned = preprocessor.cleanup_text(raw)
-                if not cleaned.strip():
-                    skipped_empty += 1
-                    continue
-                preprocessed.append(
-                    PreprocessedFile(
-                        path=entry.path,
-                        change_count=1,  # uniform weighting per file
-                        content=cleaned,
-                    )
-                )
-                blob_for_path[entry.path] = blob_sha
-
-            skipped_empty_total += skipped_empty
-            if not preprocessed:
-                continue
-
-            chunked = chunk_preprocessed_files(
-                cast(Sequence[PreprocessedArtifact], preprocessed),
-                settings=self.settings,
+        for batch in _batched(work_items, batch_size):
+            blob_texts = self._load_cache_miss_blob_texts(batch)
+            preprocessed_batch = self._build_cache_miss_preprocessed_batch(
+                preprocessor=preprocessor,
+                batch=batch,
+                blob_texts=blob_texts,
             )
-            log.debug(
-                "Embedding {} cache-miss files for commit {}",
-                len(chunked),
-                commit_hash,
+            skipped_empty_total += preprocessed_batch.skipped_empty
+            vectors.update(
+                self._embed_preprocessed_cache_miss_batch(
+                    preprocessed_batch,
+                    commit_hash=commit_hash,
+                )
             )
-            commit_embedding = embed_chunked_files(chunked, settings=self.settings)
-            if not commit_embedding:
-                continue
-
-            for file_embedding in commit_embedding.files:
-                blob_sha = blob_for_path.get(file_embedding.file.path)
-                if not blob_sha:
-                    continue
-                vec = tuple(float(v) for v in file_embedding.vector)
-                if vec:
-                    vectors[blob_sha] = vec
 
         return vectors, len(vectors), skipped_empty_total
+
+    def _load_cache_miss_blob_texts(
+        self,
+        batch: Sequence[_CacheMissWorkItem],
+    ) -> dict[str, str]:
+        if self._repo is None:
+            return {}
+        return _load_blob_texts(
+            self._repo,
+            [item.blob_sha for item in batch],
+        )
+
+    def _build_cache_miss_preprocessed_batch(
+        self,
+        *,
+        preprocessor: CodePreprocessor,
+        batch: Sequence[_CacheMissWorkItem],
+        blob_texts: Mapping[str, str],
+    ) -> _PreprocessedCacheMissBatch:
+        preprocessed: list[PreprocessedFile] = []
+        blob_for_path: dict[Path, str] = {}
+        skipped_empty = 0
+
+        for item in batch:
+            raw = blob_texts.get(item.blob_sha)
+            if raw is None:
+                raw = preprocessor.load_text(item.file.path)
+            if raw is None:
+                continue
+            cleaned = preprocessor.cleanup_text(raw)
+            if not cleaned.strip():
+                skipped_empty += 1
+                continue
+            preprocessed.append(
+                PreprocessedFile(
+                    path=item.file.path,
+                    change_count=1,  # uniform weighting per file
+                    content=cleaned,
+                )
+            )
+            blob_for_path[item.file.path] = item.blob_sha
+
+        return _PreprocessedCacheMissBatch(
+            files=tuple(preprocessed),
+            blob_for_path=blob_for_path,
+            skipped_empty=skipped_empty,
+        )
+
+    def _embed_preprocessed_cache_miss_batch(
+        self,
+        batch: _PreprocessedCacheMissBatch,
+        *,
+        commit_hash: str,
+    ) -> dict[str, Vector]:
+        if not batch.files:
+            return {}
+
+        chunked = chunk_preprocessed_files(
+            cast(Sequence[PreprocessedArtifact], batch.files),
+            settings=self.settings,
+        )
+        log.debug(
+            "Embedding {} cache-miss files for commit {}",
+            len(chunked),
+            commit_hash,
+        )
+        commit_embedding = embed_chunked_files(chunked, settings=self.settings)
+        if not commit_embedding:
+            return {}
+
+        vectors: dict[str, Vector] = {}
+        for file_embedding in commit_embedding.files:
+            blob_sha = batch.blob_for_path.get(file_embedding.file.path)
+            if not blob_sha:
+                continue
+            vec = tuple(float(v) for v in file_embedding.vector)
+            if vec:
+                vectors[blob_sha] = vec
+        return vectors
+
+
+def _blob_weights_for_files(repo_files: Sequence[RepositoryFile]) -> tuple[Counter[str], list[str]]:
+    blob_shas = [entry.blob_sha for entry in repo_files if entry.blob_sha]
+    blob_weights: Counter[str] = Counter(blob_shas)
+    return blob_weights, sorted(blob_weights.keys())
+
+
+def _aggregate_weighted_blob_vectors(
+    *,
+    repo_files: Sequence[RepositoryFile],
+    blob_weights: Mapping[str, int],
+    vectors_by_blob: Mapping[str, Sequence[float]],
+) -> _WeightedVectorAggregation:
+    sum_array = np.zeros(0, dtype=np.float64)
+    aggregated_count = 0
+    known_blob_file_count = sum(int(value or 0) for value in blob_weights.values())
+    skipped_failed = max(len(repo_files) - known_blob_file_count, 0)
+    dims = 0
+
+    for blob_sha in sorted(blob_weights):
+        weight = int(blob_weights.get(blob_sha, 0) or 0)
+        if weight <= 0:
+            continue
+
+        vector_array = _aggregation_vector_array(vectors_by_blob.get(blob_sha))
+        if vector_array is None:
+            skipped_failed += weight
+            continue
+
+        if dims == 0:
+            dims = int(vector_array.size)
+            sum_array = np.zeros(dims, dtype=np.float64)
+        elif int(vector_array.size) != dims:
+            raise ValueError("Embedding dimension mismatch during repo-state aggregation.")
+
+        sum_array += vector_array * float(weight)
+        aggregated_count += weight
+
+    if aggregated_count <= 0 or sum_array.size <= 0:
+        return _WeightedVectorAggregation(
+            commit_vector=(),
+            sum_vector=(),
+            files_aggregated=0,
+            skipped_failed_embedding=skipped_failed,
+        )
+
+    return _WeightedVectorAggregation(
+        commit_vector=divide_vector(sum_array, float(aggregated_count)),
+        sum_vector=tuple(float(value) for value in sum_array.tolist()),
+        files_aggregated=aggregated_count,
+        skipped_failed_embedding=skipped_failed,
+    )
+
+
+def _aggregation_vector_array(vector: Sequence[float] | None) -> np.ndarray | None:
+    if not vector:
+        return None
+    vector_array = np.asarray(vector, dtype=np.float64)
+    if vector_array.ndim != 1:
+        raise ValueError("Embedding dimension mismatch during repo-state aggregation.")
+    if vector_array.size <= 0:
+        return None
+    return vector_array
+
+
+def _cache_miss_work_items(
+    *,
+    repo_files: Sequence[RepositoryFile],
+    missing_blob_shas: Sequence[str],
+) -> tuple[_CacheMissWorkItem, ...]:
+    missing_set = set(str(sha).strip() for sha in missing_blob_shas if str(sha).strip())
+    if not missing_set:
+        return ()
+
+    wanted: dict[str, RepositoryFile] = {}
+    for entry in repo_files:
+        blob_sha = str(entry.blob_sha or "").strip()
+        if blob_sha in missing_set and blob_sha not in wanted:
+            wanted[blob_sha] = entry
+
+    return tuple(
+        _CacheMissWorkItem(blob_sha=blob_sha, file=entry)
+        for blob_sha, entry in sorted(
+            wanted.items(),
+            key=lambda item: item[1].path.as_posix(),
+        )
+    )
 
 
 def embed_repository_state_incremental(

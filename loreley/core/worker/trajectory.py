@@ -60,6 +60,19 @@ class TrajectoryRollup:
     meta: dict[str, Any]
 
 
+@dataclass(frozen=True, slots=True)
+class _RawTrajectoryWindow:
+    recent_start_index: int
+    earliest_raw_end: int
+    covered_indices: frozenset[int]
+
+
+@dataclass(frozen=True, slots=True)
+class _FallbackRawTail:
+    lines: tuple[str, ...]
+    omitted_steps: int
+
+
 def _get_commit_card(
     commit_hash: str,
     *,
@@ -479,102 +492,53 @@ def build_inspiration_trajectory_rollup(
         for card in steps
     ]
     if not depths_raw or any(depth is None for depth in depths_raw):
-        # Always include the freshest raw steps; reuse max_raw_steps knob as K (bounded).
-        recent_raw_count = min(max_raw_steps, unique_steps_count) if max_raw_steps > 0 else 0
-        recent_start_index = unique_steps_count - recent_raw_count
-        recent_raw = list(steps[recent_start_index:]) if recent_raw_count else []
-        included_indices: set[int] = set(range(recent_start_index, unique_steps_count))
-
-        # If the depth index is incomplete, fall back to a pure raw-tail rendering.
-        omitted = max(0, unique_steps_count - len(included_indices))
-        meta["omitted_steps"] = omitted
-        lines = [f"  - unique_steps_count: {unique_steps_count} (lca={lca[:12]})"]
-        if recent_raw:
-            lines.append(f"  - Recent unique steps (raw, last {len(recent_raw)}):")
-            for card in recent_raw:
-                lines.append(f"    - {_format_step(card)}")
-        if omitted:
-            lines.append(f"  - Omitted {omitted} older unique step(s).")
-        return TrajectoryRollup(lines=tuple(lines), meta=meta)
+        fallback = _fallback_raw_tail_rollup(
+            steps=steps,
+            unique_steps_count=unique_steps_count,
+            lca_commit_hash=lca,
+            max_raw_steps=max_raw_steps,
+        )
+        meta["omitted_steps"] = fallback.omitted_steps
+        return TrajectoryRollup(lines=fallback.lines, meta=meta)
 
     depths: list[int] = [depth for depth in depths_raw if depth is not None]
     if len(depths) != unique_steps_count:
-        recent_raw_count = min(max_raw_steps, unique_steps_count) if max_raw_steps > 0 else 0
-        recent_start_index = unique_steps_count - recent_raw_count
-        recent_raw = list(steps[recent_start_index:]) if recent_raw_count else []
-        included_indices = set(range(recent_start_index, unique_steps_count))
-
-        omitted = max(0, unique_steps_count - len(included_indices))
-        meta["omitted_steps"] = omitted
-        lines = [f"  - unique_steps_count: {unique_steps_count} (lca={lca[:12]})"]
-        if recent_raw:
-            lines.append(f"  - Recent unique steps (raw, last {len(recent_raw)}):")
-            for card in recent_raw:
-                lines.append(f"    - {_format_step(card)}")
-        if omitted:
-            lines.append(f"  - Omitted {omitted} older unique step(s).")
-        return TrajectoryRollup(lines=tuple(lines), meta=meta)
+        fallback = _fallback_raw_tail_rollup(
+            steps=steps,
+            unique_steps_count=unique_steps_count,
+            lca_commit_hash=lca,
+            max_raw_steps=max_raw_steps,
+        )
+        meta["omitted_steps"] = fallback.omitted_steps
+        return TrajectoryRollup(lines=fallback.lines, meta=meta)
 
     # Recent raw steps: align the start to the nearest root-aligned chunk boundary
     # so we do not create a "gap" when MAX_RAW_STEPS < block_size.
-    base_recent_raw_count = min(max_raw_steps, unique_steps_count) if max_raw_steps > 0 else 0
-    recent_start_index = unique_steps_count - base_recent_raw_count
-    if base_recent_raw_count > 0:
-        depth_at_recent_start = depths[recent_start_index]
-        offset_within_chunk = (depth_at_recent_start - 1) % block_size
-        recent_start_index = max(0, recent_start_index - offset_within_chunk)
-    recent_raw = list(steps[recent_start_index:]) if base_recent_raw_count > 0 else []
-    included_indices = set(range(recent_start_index, unique_steps_count))
-
-    first_depth = depths[0]
-    partial_len = 0
-    if first_depth % block_size != 1:
-        partial_len = min(
-            block_size - ((first_depth - 1) % block_size),
-            unique_steps_count,
-        )
-    earliest_raw_end = min(partial_len, max_raw_steps, recent_start_index) if max_raw_steps > 0 else 0
-    if earliest_raw_end == 0 and max_raw_steps > 0 and recent_start_index > 0:
-        # Even when the unique path starts on a chunk boundary, show 1-2 earliest
-        # raw steps to make the divergence from the base more legible.
-        earliest_raw_end = min(2, max_raw_steps, recent_start_index)
+    raw_window = _raw_trajectory_window(
+        unique_steps_count=unique_steps_count,
+        depths=depths,
+        block_size=block_size,
+        max_raw_steps=max_raw_steps,
+    )
+    recent_start_index = raw_window.recent_start_index
+    recent_raw = list(steps[recent_start_index:]) if raw_window.covered_indices else []
+    included_indices = set(raw_window.covered_indices)
+    earliest_raw_end = raw_window.earliest_raw_end
     earliest_raw = list(steps[:earliest_raw_end]) if earliest_raw_end else []
 
     # Identify root-aligned full chunks within the unique path.
-    full_chunks: list[tuple[int, int, str, str]] = []
-    idx = 0
-    while idx < unique_steps_count:
-        depth = depths[idx]
-        chunk_index = (depth - 1) // block_size
-        end = idx + 1
-        while end < unique_steps_count:
-            next_depth = depths[end]
-            if (next_depth - 1) // block_size != chunk_index:
-                break
-            end += 1
-        group_size = end - idx
-        last_depth = depths[end - 1]
-        is_full = group_size == block_size and last_depth % block_size == 0
-        if is_full:
-            start_hash = (getattr(steps[idx], "parent_commit_hash", None) or "").strip()
-            end_hash = (getattr(steps[end - 1], "commit_hash", None) or "").strip()
-            if start_hash and end_hash:
-                full_chunks.append((idx, end, start_hash, end_hash))
-        idx = end
+    full_chunks = _full_chunk_ranges(
+        steps=steps,
+        depths=depths,
+        block_size=block_size,
+    )
 
     # Eligible chunks must not overlap with the recent raw tail.
-    eligible = [chunk for chunk in full_chunks if chunk[1] <= recent_start_index]
-
-    # Select chunks with a bias towards baseline context: always include the oldest,
-    # then fill remaining slots from the newest side.
-    selected: list[tuple[int, int, str, str]] = []
-    if max_chunks > 0 and eligible:
-        selected.append(eligible[0])
-        if max_chunks > 1:
-            for chunk in reversed(eligible[1:]):
-                if len(selected) >= max_chunks:
-                    break
-                selected.append(chunk)
+    selected = _select_chunk_ranges(
+        full_chunks,
+        recent_start_index=recent_start_index,
+        max_chunks=max_chunks,
+    )
 
     chunk_summaries: list[tuple[int, int, str, str, str]] = []
     for start_i, end_i, start_hash, end_hash in selected:
@@ -589,13 +553,11 @@ def build_inspiration_trajectory_rollup(
         if summary:
             chunk_summaries.append((start_i, end_i, start_hash, end_hash, summary))
 
-    # Compute omission count as steps not covered by either raw items or chunk summaries.
-    covered = set(included_indices)
-    covered.update(range(0, earliest_raw_end))
-    for start_i, end_i, _start_hash, _end_hash, _summary in chunk_summaries:
-        covered.update(range(start_i, end_i))
-
-    omitted = max(0, unique_steps_count - len(covered))
+    omitted = _count_omitted_steps(
+        unique_steps_count,
+        raw_indices=included_indices | set(range(0, earliest_raw_end)),
+        chunk_ranges=[(start_i, end_i) for start_i, end_i, _start_hash, _end_hash, _summary in chunk_summaries],
+    )
     meta["omitted_steps"] = omitted
 
     lines: list[str] = []
@@ -631,6 +593,130 @@ def build_inspiration_trajectory_rollup(
 
 
 # Internal helpers -------------------------------------------------------------
+
+
+def _fallback_raw_tail_rollup(
+    *,
+    steps: Sequence[CommitCard],
+    unique_steps_count: int,
+    lca_commit_hash: str,
+    max_raw_steps: int,
+) -> _FallbackRawTail:
+    # Always include the freshest raw steps; reuse max_raw_steps knob as K (bounded).
+    recent_raw_count = min(max_raw_steps, unique_steps_count) if max_raw_steps > 0 else 0
+    recent_start_index = unique_steps_count - recent_raw_count
+    recent_raw = list(steps[recent_start_index:]) if recent_raw_count else []
+    included_indices = set(range(recent_start_index, unique_steps_count))
+
+    # If the depth index is incomplete, fall back to a pure raw-tail rendering.
+    omitted = max(0, unique_steps_count - len(included_indices))
+    lines = [f"  - unique_steps_count: {unique_steps_count} (lca={lca_commit_hash[:12]})"]
+    if recent_raw:
+        lines.append(f"  - Recent unique steps (raw, last {len(recent_raw)}):")
+        for card in recent_raw:
+            lines.append(f"    - {_format_step(card)}")
+    if omitted:
+        lines.append(f"  - Omitted {omitted} older unique step(s).")
+    return _FallbackRawTail(lines=tuple(lines), omitted_steps=omitted)
+
+
+def _raw_trajectory_window(
+    *,
+    unique_steps_count: int,
+    depths: Sequence[int],
+    block_size: int,
+    max_raw_steps: int,
+) -> _RawTrajectoryWindow:
+    base_recent_raw_count = min(max_raw_steps, unique_steps_count) if max_raw_steps > 0 else 0
+    recent_start_index = unique_steps_count - base_recent_raw_count
+    if base_recent_raw_count > 0:
+        depth_at_recent_start = depths[recent_start_index]
+        offset_within_chunk = (depth_at_recent_start - 1) % block_size
+        recent_start_index = max(0, recent_start_index - offset_within_chunk)
+
+    covered_indices = set(range(recent_start_index, unique_steps_count))
+
+    first_depth = depths[0] if depths else 0
+    partial_len = 0
+    if first_depth and first_depth % block_size != 1:
+        partial_len = min(
+            block_size - ((first_depth - 1) % block_size),
+            unique_steps_count,
+        )
+    earliest_raw_end = min(partial_len, max_raw_steps, recent_start_index) if max_raw_steps > 0 else 0
+    if earliest_raw_end == 0 and max_raw_steps > 0 and recent_start_index > 0:
+        # Even when the unique path starts on a chunk boundary, show 1-2 earliest
+        # raw steps to make the divergence from the base more legible.
+        earliest_raw_end = min(2, max_raw_steps, recent_start_index)
+
+    return _RawTrajectoryWindow(
+        recent_start_index=recent_start_index,
+        earliest_raw_end=earliest_raw_end,
+        covered_indices=frozenset(covered_indices),
+    )
+
+
+def _full_chunk_ranges(
+    *,
+    steps: Sequence[CommitCard],
+    depths: Sequence[int],
+    block_size: int,
+) -> list[tuple[int, int, str, str]]:
+    full_chunks: list[tuple[int, int, str, str]] = []
+    unique_steps_count = len(steps)
+    idx = 0
+    while idx < unique_steps_count:
+        depth = depths[idx]
+        chunk_index = (depth - 1) // block_size
+        end = idx + 1
+        while end < unique_steps_count:
+            next_depth = depths[end]
+            if (next_depth - 1) // block_size != chunk_index:
+                break
+            end += 1
+        group_size = end - idx
+        last_depth = depths[end - 1]
+        is_full = group_size == block_size and last_depth % block_size == 0
+        if is_full:
+            start_hash = (getattr(steps[idx], "parent_commit_hash", None) or "").strip()
+            end_hash = (getattr(steps[end - 1], "commit_hash", None) or "").strip()
+            if start_hash and end_hash:
+                full_chunks.append((idx, end, start_hash, end_hash))
+        idx = end
+    return full_chunks
+
+
+def _select_chunk_ranges(
+    full_chunks: Sequence[tuple[int, int, str, str]],
+    *,
+    recent_start_index: int,
+    max_chunks: int,
+) -> list[tuple[int, int, str, str]]:
+    eligible = [chunk for chunk in full_chunks if chunk[1] <= recent_start_index]
+
+    # Select chunks with a bias towards baseline context: always include the oldest,
+    # then fill remaining slots from the newest side.
+    selected: list[tuple[int, int, str, str]] = []
+    if max_chunks > 0 and eligible:
+        selected.append(eligible[0])
+        if max_chunks > 1:
+            for chunk in reversed(eligible[1:]):
+                if len(selected) >= max_chunks:
+                    break
+                selected.append(chunk)
+    return selected
+
+
+def _count_omitted_steps(
+    unique_steps_count: int,
+    *,
+    raw_indices: set[int],
+    chunk_ranges: Sequence[tuple[int, int]],
+) -> int:
+    covered = set(raw_indices)
+    for start_i, end_i in chunk_ranges:
+        covered.update(range(start_i, end_i))
+    return max(0, int(unique_steps_count) - len(covered))
 
 
 def _ancestor_hash(

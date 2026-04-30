@@ -52,6 +52,13 @@ class SchedulerLockError(SchedulerError):
     """Raised when a per-experiment scheduler lock cannot be obtained."""
 
 
+@dataclass(frozen=True, slots=True)
+class _RepoStateStartupApproval:
+    root_commit: str
+    eligible_files: int
+    details: dict[str, Any]
+
+
 class EvolutionScheduler:
     """Orchestrate job sampling, dispatching, and MAP-Elites maintenance."""
 
@@ -300,20 +307,51 @@ class EvolutionScheduler:
         return lock
 
     def _startup_scan_and_validate_repo_state_approval(self) -> None:
+        root_commit = self._require_repo_state_startup_root_commit()
+        canonical = self._resolve_repo_state_startup_root_commit(root_commit)
+        filters = self._repo_state_startup_filters()
+        scan = self._scan_repo_state_startup_root(canonical)
+        approval = self._build_repo_state_startup_approval(
+            root_commit=canonical,
+            eligible_files=int(scan.eligible_files),
+            filters=filters,
+        )
+        self._log_repo_state_startup_scan(approval, filters=filters)
+        self._request_repo_state_startup_approval(approval)
+
+        self.console.log(
+            "[green]Repo-state startup approved[/] root_commit={} eligible_files={}".format(
+                approval.root_commit,
+                approval.eligible_files,
+            )
+        )
+
+    def _require_repo_state_startup_root_commit(self) -> str:
         root_commit = (self._root_commit_hash or "").strip()
         if not root_commit:
             raise SchedulerError(
                 "MAPELITES_EXPERIMENT_ROOT_COMMIT is required for repo-state startup approval "
                 "and incremental-only ingestion."
             )
-        auto_approve = bool(getattr(self.settings, "scheduler_startup_approve", False))
+        return root_commit
+
+    def _resolve_repo_state_startup_root_commit(self, root_commit: str) -> str:
         try:
             with repo_lock(self.repo_root):
-                canonical = require_commit(self._repo, root_commit, console=self.console)
+                return require_commit(self._repo, root_commit, console=self.console)
         except RepositoryError as exc:
             raise SchedulerError(f"Cannot resolve root commit {root_commit!r} for repo-state scan: {exc}") from exc
 
-        filters = {
+    def _scan_repo_state_startup_root(self, canonical_root_commit: str):
+        return scan_repo_state_root(
+            settings=self.settings,
+            repo_root=self.repo_root,
+            repo=self._repo,
+            root_commit=canonical_root_commit,
+        )
+
+    def _repo_state_startup_filters(self) -> dict[str, object]:
+        return {
             "allowed_extensions": list(self.settings.mapelites_preprocess_allowed_extensions or []),
             "allowed_filenames": list(self.settings.mapelites_preprocess_allowed_filenames or []),
             "excluded_globs": list(self.settings.mapelites_preprocess_excluded_globs or []),
@@ -321,58 +359,69 @@ class EvolutionScheduler:
             "root_ignore_files": [".gitignore", ".loreleyignore"],
         }
 
-        scan = scan_repo_state_root(
-            settings=self.settings,
-            repo_root=self.repo_root,
-            repo=self._repo,
-            root_commit=canonical,
-        )
-        eligible = int(scan.eligible_files)
-        max_chunks_per_file = int(getattr(self.settings, "mapelites_chunk_max_chunks_per_file", 0) or 0)
-        if max_chunks_per_file <= 0:
-            max_chunks_per_file = 1
-        root_chunk_upper_bound = eligible * max_chunks_per_file
-        log.info(
-            "Repo-state root scan commit={} eligible_files={} filters={}",
-            canonical,
-            eligible,
-            filters,
+    def _build_repo_state_startup_approval(
+        self,
+        *,
+        root_commit: str,
+        eligible_files: int,
+        filters: Mapping[str, object],
+    ) -> _RepoStateStartupApproval:
+        max_chunks_per_file = self._repo_state_startup_max_chunks_per_file()
+        details = {
+            "profile": str(getattr(self.settings, "profile", "default")),
+            "embedding_model": str(self.settings.mapelites_code_embedding_model),
+            "embedding_dimensions": getattr(self.settings, "mapelites_code_embedding_dimensions", None),
+            "embedding_batch_size": int(getattr(self.settings, "mapelites_code_embedding_batch_size", 0) or 0),
+            "chunk_target_lines": int(getattr(self.settings, "mapelites_chunk_target_lines", 0) or 0),
+            "chunk_min_lines": int(getattr(self.settings, "mapelites_chunk_min_lines", 0) or 0),
+            "chunk_overlap_lines": int(getattr(self.settings, "mapelites_chunk_overlap_lines", 0) or 0),
+            "chunk_max_chunks_per_file": max_chunks_per_file,
+            "root_chunk_upper_bound": int(eligible_files) * max_chunks_per_file,
+            "pca_target_dims": int(getattr(self.settings, "mapelites_dimensionality_target_dims", 0) or 0),
+            "pca_min_fit_samples": int(getattr(self.settings, "mapelites_dimensionality_min_fit_samples", 0) or 0),
+            "pca_history_size": int(getattr(self.settings, "mapelites_dimensionality_history_size", 0) or 0),
+            "pca_refit_interval": int(getattr(self.settings, "mapelites_dimensionality_refit_interval", 0) or 0),
+            "seed_population_size": int(getattr(self.settings, "mapelites_seed_population_size", 0) or 0),
+            **dict(filters),
+        }
+        return _RepoStateStartupApproval(
+            root_commit=root_commit,
+            eligible_files=int(eligible_files),
+            details=details,
         )
 
+    def _repo_state_startup_max_chunks_per_file(self) -> int:
+        max_chunks_per_file = int(getattr(self.settings, "mapelites_chunk_max_chunks_per_file", 0) or 0)
+        if max_chunks_per_file <= 0:
+            return 1
+        return max_chunks_per_file
+
+    @staticmethod
+    def _log_repo_state_startup_scan(
+        approval: _RepoStateStartupApproval,
+        *,
+        filters: Mapping[str, object],
+    ) -> None:
+        log.info(
+            "Repo-state root scan commit={} eligible_files={} filters={}",
+            approval.root_commit,
+            approval.eligible_files,
+            dict(filters),
+        )
+
+    def _request_repo_state_startup_approval(self, approval: _RepoStateStartupApproval) -> None:
+        auto_approve = bool(getattr(self.settings, "scheduler_startup_approve", False))
         try:
             require_interactive_repo_state_root_approval(
-                root_commit=canonical,
-                eligible_files=eligible,
+                root_commit=approval.root_commit,
+                eligible_files=approval.eligible_files,
                 repo_root=self.repo_root,
-                details={
-                    "profile": str(getattr(self.settings, "profile", "default")),
-                    "embedding_model": str(self.settings.mapelites_code_embedding_model),
-                    "embedding_dimensions": getattr(self.settings, "mapelites_code_embedding_dimensions", None),
-                    "embedding_batch_size": int(getattr(self.settings, "mapelites_code_embedding_batch_size", 0) or 0),
-                    "chunk_target_lines": int(getattr(self.settings, "mapelites_chunk_target_lines", 0) or 0),
-                    "chunk_min_lines": int(getattr(self.settings, "mapelites_chunk_min_lines", 0) or 0),
-                    "chunk_overlap_lines": int(getattr(self.settings, "mapelites_chunk_overlap_lines", 0) or 0),
-                    "chunk_max_chunks_per_file": max_chunks_per_file,
-                    "root_chunk_upper_bound": root_chunk_upper_bound,
-                    "pca_target_dims": int(getattr(self.settings, "mapelites_dimensionality_target_dims", 0) or 0),
-                    "pca_min_fit_samples": int(getattr(self.settings, "mapelites_dimensionality_min_fit_samples", 0) or 0),
-                    "pca_history_size": int(getattr(self.settings, "mapelites_dimensionality_history_size", 0) or 0),
-                    "pca_refit_interval": int(getattr(self.settings, "mapelites_dimensionality_refit_interval", 0) or 0),
-                    "seed_population_size": int(getattr(self.settings, "mapelites_seed_population_size", 0) or 0),
-                    **filters,
-                },
+                details=approval.details,
                 console=self.console,
                 auto_approve=auto_approve,
             )
         except ValueError as exc:
             raise SchedulerError(str(exc)) from exc
-
-        self.console.log(
-            "[green]Repo-state startup approved[/] root_commit={} eligible_files={}".format(
-                canonical,
-                eligible,
-            )
-        )
 
     # Git helpers -----------------------------------------------------------
 
