@@ -30,6 +30,7 @@ from loreley.core.worker.planning import (
     CommitPlanningContext,
     IterationContext,
     PlanDocument,
+    SharedPromptPacketRequest,
     render_shared_prompt_packet,
 )
 
@@ -237,12 +238,15 @@ class CodingAgent(TruncationMixin):
         plan_block = (request.plan.markdown or "").strip() or request.plan.summary.strip() or "N/A"
         plan_block = self._truncate(plan_block, limit=3000)
         shared_packet = render_shared_prompt_packet(
-            goal=request.goal,
-            iteration_context=request.iteration_context,
-            base=request.base,
-            inspirations=request.inspirations,
-            truncate_limit=self._truncate_limit,
-            max_metrics=4,
+            SharedPromptPacketRequest(
+                goal=request.goal,
+                iteration_context=request.iteration_context,
+                base=request.base,
+                inspirations=request.inspirations,
+                truncate_limit=self._truncate_limit,
+                max_metrics=4,
+                settings=self.settings,
+            )
         )
 
         prompt = f"""

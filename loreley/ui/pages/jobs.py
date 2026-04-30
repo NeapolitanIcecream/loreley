@@ -6,7 +6,13 @@ import streamlit as st
 
 from loreley.db.models import JobStatus
 from loreley.ui.components.aggrid import render_table, selected_rows
-from loreley.ui.components.api import api_get_or_stop, api_get_page_or_stop, render_artifact_downloads
+from loreley.ui.components.api import (
+    api_get_or_stop,
+    api_get_page_or_stop,
+    render_agent_feedback_preview,
+    render_artifact_downloads,
+    render_evaluation_evidence,
+)
 from loreley.ui.paging import advance_cursor_pager, current_cursor, normalize_cursor_pager, pager_signature
 from loreley.ui.state import API_BASE_URL_KEY
 
@@ -95,70 +101,97 @@ def render() -> None:
 
     detail = api_get_or_stop(api_base_url, f"/api/v1/jobs/{job_id}")
     st.subheader(f"Job detail: {job_id}")
-    if isinstance(detail, dict):
-        top = {
-            k: detail.get(k)
-            for k in [
-                "status",
-                "priority",
-                "island_id",
-                "scheduled_at",
-                "started_at",
-                "completed_at",
-                "is_seed_job",
-                "candidate_commit_hash",
-                "candidate_branch_name",
-                "candidate_published_at",
-                "result_commit_hash",
-                "ingestion_status",
-                "ingestion_attempts",
-                "ingestion_cell_index",
-                "ingestion_delta",
-                "last_error",
-            ]
-        }
-        st.write(top)
-        st.text_area("Goal", value=str(detail.get("goal") or ""), height=100, disabled=True)
-        if detail.get("iteration_hint"):
-            st.caption(f"Iteration hint: {detail.get('iteration_hint')}")
-
-        with st.expander("Constraints", expanded=False):
-            items = detail.get("constraints") if isinstance(detail.get("constraints"), list) else []
-            if items:
-                for item in items:
-                    st.write(f"- {item}")
-            else:
-                st.write("None")
-
-        with st.expander("Acceptance criteria", expanded=False):
-            items = detail.get("acceptance_criteria") if isinstance(detail.get("acceptance_criteria"), list) else []
-            if items:
-                for item in items:
-                    st.write(f"- {item}")
-            else:
-                st.write("None")
-
-        with st.expander("Inspirations", expanded=False):
-            items = detail.get("inspiration_commit_hashes") if isinstance(detail.get("inspiration_commit_hashes"), list) else []
-            if items:
-                for item in items:
-                    st.write(f"- {item}")
-            else:
-                st.write("None")
-
-        artifacts = detail.get("artifacts") if isinstance(detail.get("artifacts"), dict) else {}
-        with st.expander("Artifacts", expanded=False):
-            render_artifact_downloads(
-                api_base_url=api_base_url,
-                artifacts=artifacts,
-                key_prefix=f"dl_job_{job_id}",
-                empty_message="No artifacts available for this job.",
-            )
-    else:
-        st.json(detail)
+    _render_job_detail(api_base_url=api_base_url, job_id=str(job_id), detail=detail)
 
 
 def _rerun() -> None:
     rerun = getattr(st, "rerun", None) or getattr(st, "experimental_rerun", None)
     if callable(rerun):
         rerun()
+
+
+def _render_job_detail(
+    *,
+    api_base_url: str,
+    job_id: str,
+    detail: object,
+) -> None:
+    if not isinstance(detail, dict):
+        st.json(detail)
+        return
+    st.write(_job_top_fields(detail))
+    st.text_area("Goal", value=str(detail.get("goal") or ""), height=100, disabled=True)
+    if detail.get("iteration_hint"):
+        st.caption(f"Iteration hint: {detail.get('iteration_hint')}")
+    _render_detail_list_expander("Constraints", detail.get("constraints"))
+    _render_detail_list_expander("Acceptance criteria", detail.get("acceptance_criteria"))
+    _render_detail_list_expander("Inspirations", detail.get("inspiration_commit_hashes"))
+    _render_evidence_sections(api_base_url=api_base_url, job_id=job_id, detail=detail)
+
+
+def _job_top_fields(detail: dict[str, object]) -> dict[str, object]:
+    return {
+        key: detail.get(key)
+        for key in [
+            "status",
+            "priority",
+            "island_id",
+            "scheduled_at",
+            "started_at",
+            "completed_at",
+            "is_seed_job",
+            "candidate_commit_hash",
+            "candidate_branch_name",
+            "candidate_published_at",
+            "result_commit_hash",
+            "ingestion_status",
+            "ingestion_attempts",
+            "ingestion_cell_index",
+            "ingestion_delta",
+            "last_error",
+        ]
+    }
+
+
+def _render_detail_list_expander(label: str, raw_items: object) -> None:
+    with st.expander(label, expanded=False):
+        items = raw_items if isinstance(raw_items, list) else []
+        if not items:
+            st.write("None")
+            return
+        for item in items:
+            st.write(f"- {item}")
+
+
+def _render_evidence_sections(
+    *,
+    api_base_url: str,
+    job_id: str,
+    detail: dict[str, object],
+) -> None:
+    with st.expander("Evaluation Evidence", expanded=True):
+        render_evaluation_evidence(
+            api_base_url=api_base_url,
+            artifacts=_list_value(detail, "evaluation_artifacts"),
+            key_prefix=f"evidence_job_{job_id}",
+            empty_message="No evaluation evidence available for this job.",
+        )
+    with st.expander("Agent Feedback Preview", expanded=False):
+        render_agent_feedback_preview(_dict_value(detail, "evaluation_agent_feedback"))
+    with st.expander("Worker Artifacts", expanded=False):
+        render_artifact_downloads(
+            api_base_url=api_base_url,
+            artifacts=_dict_value(detail, "artifacts"),
+            key_prefix=f"dl_job_{job_id}",
+            empty_message="No artifacts available for this job.",
+        )
+
+
+def _list_value(data: dict[str, object], key: str) -> list[dict[str, object]]:
+    value = data.get(key)
+    return value if isinstance(value, list) else []
+
+
+def _dict_value(data: dict[str, object], key: str) -> dict[str, object] | None:
+    value = data.get(key)
+    return value if isinstance(value, dict) else None

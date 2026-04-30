@@ -14,7 +14,7 @@ from loreley.core.worker.evaluator import EvaluationResult
 from loreley.core.worker.evolution import EvolutionWorker, JobContext
 from loreley.core.worker.planning import PlanDocument, PlanningAgentResponse
 from loreley.core.worker.repository import CheckoutContext
-from loreley.db.models import CommitCard, MapElitesArchiveCell, Metric
+from loreley.db.models import CommitCard, EvaluationArtifactRecord, MapElitesArchiveCell, Metric
 
 
 class _ResultList:
@@ -98,10 +98,17 @@ def _extract_values(params: dict[str, Any], prefix: str) -> tuple[Any, ...]:
 
 
 class _FakeSession:
-    def __init__(self, cards: dict[str, Any], metrics: dict[uuid.UUID, list[Any]], cells: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        cards: dict[str, Any],
+        metrics: dict[uuid.UUID, list[Any]],
+        cells: dict[str, Any],
+        artifacts: dict[str, list[Any]] | None = None,
+    ) -> None:
         self.cards = cards
         self.metrics = metrics
         self.cells = cells
+        self.artifacts = artifacts or {}
         self.query_count = 0
 
     def _entity(self, stmt: Any) -> Any:
@@ -141,6 +148,12 @@ class _FakeSession:
         if entity is MapElitesArchiveCell:
             hashes = _extract_values(params, "commit_hash")
             rows = [self.cells[h] for h in hashes if h in self.cells]
+            return _ResultList(rows)
+        if entity is EvaluationArtifactRecord:
+            hashes = _extract_values(params, "commit_hash")
+            rows = []
+            for commit_hash in hashes:
+                rows.extend(self.artifacts.get(commit_hash, ()))
             return _ResultList(rows)
         raise AssertionError(f"Unexpected scalars entity: {entity!r}")
 
@@ -421,13 +434,83 @@ def test_run_planning_batches_context_queries_for_base_and_inspirations_gh_n_plu
     prompt_context = worker._build_prompt_context(job_ctx)
     worker._run_planning(job_ctx, checkout, prompt_context)
 
-    assert fake_session.query_count == 3
+    assert fake_session.query_count == 4
     assert len(planning_agent.requests) == 1
     request, _working_dir = planning_agent.requests[0]
     assert request.base.commit_hash == "base"
     assert tuple(ctx.commit_hash for ctx in request.inspirations) == ("insp-a", "insp-b")
     assert request.inspirations[1].highlights == ()
     assert request.iteration_context.seed_job is False
+
+
+def test_seed_job_prompt_context_suppresses_historical_evaluation_artifacts(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    worker = EvolutionWorker(
+        settings=settings,
+        repository=object(),  # type: ignore[arg-type]
+        planning_agent=object(),  # type: ignore[arg-type]
+        coding_agent=object(),  # type: ignore[arg-type]
+        evaluator=object(),  # type: ignore[arg-type]
+        summarizer=object(),  # type: ignore[arg-type]
+        job_store=object(),  # type: ignore[arg-type]
+    )
+    card_id = uuid.uuid4()
+    cards = {
+        "base": type(
+            "Card",
+            (),
+            {
+                "id": card_id,
+                "commit_hash": "base",
+                "subject": "Base",
+                "change_summary": "base summary",
+                "key_files": ["base.py"],
+                "highlights": ["base highlight"],
+                "evaluation_summary": "historical summary",
+            },
+        )(),
+    }
+    artifacts = {
+        "base": [
+            type(
+                "ArtifactRow",
+                (),
+                {
+                        "job_id": uuid.uuid4(),
+                        "commit_hash": "base",
+                        "key": "benchmark_report",
+                    "kind": "benchmark_json",
+                    "mime_type": "application/json",
+                    "label": None,
+                    "summary": "historical artifact",
+                    "diagnostics": [],
+                    "agent_projection": "summary",
+                    "visibility": "agent_visible",
+                    "size_bytes": None,
+                    "sha256": None,
+                    "storage_path": None,
+                },
+            )()
+        ]
+    }
+    fake_session = _FakeSession(cards=cards, metrics={}, cells={}, artifacts=artifacts)
+
+    @contextmanager
+    def fake_session_scope() -> Any:
+        yield fake_session
+
+    monkeypatch.setattr(evolution_module, "session_scope", fake_session_scope)
+    job_ctx = _make_job_context()
+    job_ctx.is_seed_job = True
+    job_ctx.inspiration_commit_hashes = ()
+
+    prompt_context = worker._build_prompt_context(job_ctx)
+
+    assert prompt_context.base.evaluation_summary is None
+    assert prompt_context.base.metrics == ()
+    assert prompt_context.base.evaluation_artifacts == ()
 
 
 def test_start_job_requires_non_empty_base_commit_hash(settings: Settings) -> None:

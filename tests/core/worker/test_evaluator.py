@@ -7,11 +7,14 @@ import pytest
 
 from loreley.config import Settings
 from loreley.core.worker.evaluator import (
+    EvaluationArtifact,
     EvaluationContext,
+    EvaluationDiagnostic,
     EvaluationError,
     EvaluationMetric,
     EvaluationResult,
     Evaluator,
+    coerce_evaluation_artifacts,
 )
 
 
@@ -102,6 +105,7 @@ def test_coerce_result_from_mapping_and_truncates_metrics(settings: Settings) ->
     assert result.tests_executed == ("pytest -q",)
     assert result.logs == ("log1", "log2")
     assert result.extra == {"key": "value"}
+    assert result.artifacts == ()
 
     direct = EvaluationResult(summary="s", metrics=(EvaluationMetric(name="m", value=1.0),))
     again = evaluator._coerce_result(direct)  # type: ignore[attr-defined]
@@ -162,3 +166,91 @@ def test_evaluator_records_duration_in_extra(tmp_path: Path, settings: Settings)
     assert "evaluator_duration_seconds" in result.extra
     assert isinstance(result.extra["evaluator_duration_seconds"], float)
     assert result.extra["evaluator_duration_seconds"] >= 0.0
+
+
+def test_coerce_result_accepts_mapping_artifacts_and_sanitizes_invalid_entries(settings: Settings) -> None:
+    evaluator = Evaluator(settings=settings)
+
+    result = evaluator._coerce_result(  # type: ignore[attr-defined]
+        {
+            "summary": "ok",
+            "artifacts": [
+                {
+                    "key": "Benchmark Report",
+                    "kind": "benchmark_json",
+                    "mime_type": "application/json",
+                    "path": "reports/bench.json",
+                    "label": "Benchmark report",
+                    "summary": "Parser throughput improved.",
+                    "visibility": "agent_visible",
+                    "agent_projection": "summary",
+                    "diagnostics": [
+                        {
+                            "kind": "regression",
+                            "severity": "warning",
+                            "message": "p95 latency regressed in parser.normalize.",
+                            "metric": "p95_latency",
+                            "value": 92,
+                            "unit": "ms",
+                        }
+                    ],
+                    "metadata": {"command": "pytest"},
+                },
+                {
+                    "key": "Benchmark Report",
+                    "kind": "benchmark_json",
+                    "mime_type": "application/json",
+                    "summary": "duplicate",
+                },
+                {
+                    "kind": "log",
+                    "mime_type": "text/plain",
+                    "path": "/tmp/evaluator-secret.log",
+                },
+            ],
+        }
+    )
+
+    assert len(result.artifacts) == 1
+    artifact = result.artifacts[0]
+    assert artifact.key == "benchmark-report"
+    assert artifact.visibility == "agent_visible"
+    assert artifact.agent_projection == "summary"
+    assert artifact.diagnostics[0].message == "p95 latency regressed in parser.normalize."
+    warnings = [warning.as_dict() for warning in result.artifact_validation_warnings]
+    assert {warning["code"] for warning in warnings} == {"duplicate_key", "missing_key"}
+    warning_text = str(warnings)
+    assert "/tmp/evaluator-secret.log" not in warning_text
+
+
+def test_evaluation_artifact_dataclass_bounds_diagnostics_and_metadata() -> None:
+    artifact = EvaluationArtifact(
+        key="profile",
+        kind="flamegraph",
+        mime_type="text/plain",
+        summary="summary",
+        visibility="agent_visible",
+        diagnostics=(
+            EvaluationDiagnostic(
+                kind="hotspot",
+                severity="unexpected",
+                message="tokenizer._scan is hot",
+                value="37",  # type: ignore[arg-type]
+                unit="%",
+            ),
+        ),
+        metadata={"long": "x" * 1000},
+    )
+
+    assert artifact.key == "profile"
+    assert artifact.diagnostics[0].severity == "info"
+    assert artifact.diagnostics[0].value == 37.0
+    assert len(str(artifact.metadata["long"])) <= 512
+
+
+def test_coerce_evaluation_artifacts_reports_non_iterable_payload_without_raising() -> None:
+    artifacts, warnings = coerce_evaluation_artifacts(42)
+
+    assert artifacts == ()
+    assert len(warnings) == 1
+    assert warnings[0].code == "artifacts_not_iterable"

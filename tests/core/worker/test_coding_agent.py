@@ -10,8 +10,10 @@ from loreley.config import Settings
 from loreley.core.worker.agent import AgentInvocation
 from loreley.core.worker.coding import CodingAgent, CodingAgentRequest, CodingError
 from loreley.core.worker.planning import (
+    CommitEvaluationArtifactFeedback,
     CommitMetric,
     CommitPlanningContext,
+    EvaluationDiagnosticBrief,
     IterationContext,
     PlanDocument,
 )
@@ -218,6 +220,53 @@ def test_coding_prompt_includes_markdown_contract(tmp_path: Path, settings: Sett
     assert "Acceptance criteria:" not in prompt
     assert "Additional notes:" not in prompt
     assert "Commit message" not in prompt
+
+
+def test_coding_prompt_artifact_manifest_projection_omits_diagnostic_prose(
+    tmp_path: Path,
+    settings: Settings,
+) -> None:
+    settings.worker_evaluation_agent_feedback_mode = "path"
+    agent = CodingAgent(settings=settings, backend=_DummyBackend("ok"))
+    request = CodingAgentRequest(
+        goal="goal",
+        plan=_make_plan(),
+        base_commit="abc123",
+        base=CommitPlanningContext(
+            commit_hash="base",
+            subject="Base subject",
+            change_summary="base summary",
+            evaluation_artifacts=(
+                CommitEvaluationArtifactFeedback(
+                    key="manifest_only",
+                    kind="benchmark_json",
+                    mime_type="application/json",
+                    summary="summary prose must not reach coding",
+                    diagnostics=(
+                        EvaluationDiagnosticBrief(
+                            kind="regression",
+                            message="diagnostic prose must not reach coding",
+                        ),
+                    ),
+                    projection="manifest",
+                    visibility="agent_visible",
+                    size_bytes=128,
+                    artifact_uri="loreley://evaluation-artifacts/job-1/manifest_only",
+                ),
+            ),
+        ),
+        inspirations=(),
+        iteration_context=IterationContext(seed_job=False),
+    )
+
+    prompt = agent._render_prompt(request, worktree=tmp_path)  # type: ignore[attr-defined]
+
+    assert "manifest_only" in prompt
+    assert "mime=application/json" in prompt
+    assert "summary prose must not reach coding" not in prompt
+    assert "diagnostic prose must not reach coding" not in prompt
+    assert "loreley://evaluation-artifacts/job-1/manifest_only" not in prompt
+    assert "Evidence Guardrail:" in prompt
 
 
 # ---------------------------------------------------------------------------

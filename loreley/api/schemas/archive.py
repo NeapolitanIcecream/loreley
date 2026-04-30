@@ -35,6 +35,9 @@ class ArchiveRecordOut(OrmOutModel):
     measures: list[float] = Field(default_factory=list)
     solution: list[float] = Field(default_factory=list)
     timestamp: float
+    has_evaluation_evidence: bool = False
+    agent_visible_evidence_count: int = 0
+    top_evaluation_diagnosis: str | None = None
 
 
 class ArchiveSnapshotMetaOut(OrmOutModel):

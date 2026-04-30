@@ -7,6 +7,7 @@ from typing import Any
 
 from sqlalchemy import (
     Boolean,
+    BigInteger,
     CheckConstraint,
     DateTime,
     Enum as SAEnum,
@@ -326,6 +327,61 @@ class JobArtifacts(TimestampMixin, Base):
 
     evaluation_json_path: Mapped[str | None] = mapped_column(String(1024))
     evaluation_logs_path: Mapped[str | None] = mapped_column(String(1024))
+
+
+class EvaluationArtifactRecord(TimestampMixin, Base):
+    """Evaluator-declared diagnostic artifact metadata materialized by a job."""
+
+    __tablename__ = "evaluation_artifacts"
+    __table_args__ = (
+        UniqueConstraint("job_id", "key", name="uq_evaluation_artifacts_job_key"),
+        Index("ix_evaluation_artifacts_job_id", "job_id"),
+        Index("ix_evaluation_artifacts_commit_hash", "commit_hash"),
+        Index("ix_evaluation_artifacts_commit_card_id", "commit_card_id"),
+        Index(
+            "ix_evaluation_artifacts_visibility_projection",
+            "visibility",
+            "agent_projection",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("evolution_jobs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    commit_card_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("commit_cards.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    commit_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    key: Mapped[str] = mapped_column(String(128), nullable=False)
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    label: Mapped[str | None] = mapped_column(String(128))
+    summary: Mapped[str | None] = mapped_column(String(1024))
+    visibility: Mapped[str] = mapped_column(String(32), nullable=False)
+    agent_projection: Mapped[str] = mapped_column(String(32), nullable=False)
+    storage_path: Mapped[str | None] = mapped_column(String(1024))
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    sha256: Mapped[str | None] = mapped_column(String(64))
+    diagnostics: Mapped[list[dict[str, Any]]] = mapped_column(
+        MutableList.as_mutable(JSONB),
+        default=list,
+        nullable=False,
+    )
+    artifact_metadata: Mapped[dict[str, Any]] = mapped_column(
+        "metadata",
+        MutableDict.as_mutable(JSONB),
+        default=dict,
+        nullable=False,
+    )
 
 
 class MapElitesState(TimestampMixin, Base):

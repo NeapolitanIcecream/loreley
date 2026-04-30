@@ -5,12 +5,15 @@ import json
 from loreley.config import Settings
 from loreley.core.worker.agent import AgentInvocation
 from loreley.core.worker.planning import (
+    CommitEvaluationArtifactFeedback,
     CommitMetric,
     CommitPlanningContext,
+    EvaluationDiagnosticBrief,
     IterationContext,
     PlanDocument,
     PlanningAgent,
     PlanningAgentRequest,
+    render_evaluation_agent_feedback,
 )
 
 
@@ -214,3 +217,235 @@ def test_planning_prompt_formats_inspirations_as_transfer_cards(settings: Settin
     assert "introduce deterministic seed layout" in prompt
     assert "cache the final 26-circle arrangement" in prompt
     assert "No highlights available." not in prompt
+
+
+def test_planning_prompt_projects_only_agent_visible_evaluation_evidence(settings: Settings) -> None:
+    agent = PlanningAgent(settings=settings, backend=_DummyBackend())
+    base = CommitPlanningContext(
+        commit_hash="base",
+        subject="Base",
+        change_summary="base summary",
+        evaluation_artifacts=(
+            CommitEvaluationArtifactFeedback(
+                key="benchmark_report",
+                kind="benchmark_json",
+                mime_type="application/json",
+                summary="Parser throughput improved.",
+                diagnostics=(
+                    EvaluationDiagnosticBrief(
+                        kind="improvement",
+                        severity="info",
+                        message="throughput improved",
+                    ),
+                ),
+                visibility="agent_visible",
+            ),
+            CommitEvaluationArtifactFeedback(
+                key="full_stderr",
+                kind="log",
+                mime_type="text/plain",
+                summary="raw stderr",
+                visibility="human_only",
+            ),
+        ),
+    )
+    request = PlanningAgentRequest(
+        base=base,
+        inspirations=(),
+        goal="Improve docs",
+        iteration_context=IterationContext(seed_job=False),
+    )
+
+    prompt = agent._render_prompt(request)  # type: ignore[attr-defined]
+
+    assert "Evaluation Evidence:" in prompt
+    assert "Parser throughput improved." in prompt
+    assert "throughput improved" in prompt
+    assert "Evidence Guardrail:" in prompt
+    assert "full_stderr" not in prompt
+    assert "raw stderr" not in prompt
+
+
+def test_planning_prompt_manifest_mode_omits_diagnostic_prose(settings: Settings) -> None:
+    settings.worker_evaluation_agent_feedback_mode = "manifest"
+    agent = PlanningAgent(settings=settings, backend=_DummyBackend())
+    request = PlanningAgentRequest(
+        base=CommitPlanningContext(
+            commit_hash="base",
+            subject="Base",
+            change_summary="base summary",
+            evaluation_artifacts=(
+                CommitEvaluationArtifactFeedback(
+                    key="profile_hotspots",
+                    kind="flamegraph",
+                    mime_type="text/plain",
+                    summary="tokenizer._scan is hot",
+                    diagnostics=(
+                        EvaluationDiagnosticBrief(
+                            kind="hotspot",
+                            message="tokenizer._scan accounts for 37%",
+                        ),
+                    ),
+                    visibility="agent_visible",
+                    size_bytes=120,
+                ),
+            ),
+        ),
+        inspirations=(),
+        goal="Improve docs",
+    )
+
+    prompt = agent._render_prompt(request)  # type: ignore[attr-defined]
+
+    assert "profile_hotspots" in prompt
+    assert "mime=text/plain" in prompt
+    assert "tokenizer._scan is hot" not in prompt
+    assert "accounts for 37%" not in prompt
+
+
+def test_planning_prompt_artifact_manifest_projection_omits_diagnostic_prose(
+    settings: Settings,
+) -> None:
+    settings.worker_evaluation_agent_feedback_mode = "summary"
+    agent = PlanningAgent(settings=settings, backend=_DummyBackend())
+    request = PlanningAgentRequest(
+        base=CommitPlanningContext(
+            commit_hash="base",
+            subject="Base",
+            change_summary="base summary",
+            evaluation_artifacts=(
+                CommitEvaluationArtifactFeedback(
+                    key="manifest_only",
+                    kind="benchmark_json",
+                    mime_type="application/json",
+                    summary="summary prose must not reach agents",
+                    diagnostics=(
+                        EvaluationDiagnosticBrief(
+                            kind="regression",
+                            message="diagnostic prose must not reach agents",
+                        ),
+                    ),
+                    projection="manifest",
+                    visibility="agent_visible",
+                    size_bytes=120,
+                ),
+            ),
+        ),
+        inspirations=(),
+        goal="Improve docs",
+    )
+
+    prompt = agent._render_prompt(request)  # type: ignore[attr-defined]
+
+    assert "manifest_only" in prompt
+    assert "mime=application/json" in prompt
+    assert "summary prose must not reach agents" not in prompt
+    assert "diagnostic prose must not reach agents" not in prompt
+    assert "Evidence Guardrail:" in prompt
+
+
+def test_planning_prompt_path_mode_uses_stable_uri_without_filesystem_path(settings: Settings) -> None:
+    settings.worker_evaluation_agent_feedback_mode = "path"
+    agent = PlanningAgent(settings=settings, backend=_DummyBackend())
+    local_path = "/tmp/evaluator/benchmark.json"
+    request = PlanningAgentRequest(
+        base=CommitPlanningContext(
+            commit_hash="base",
+            subject="Base",
+            change_summary="base summary",
+            evaluation_artifacts=(
+                CommitEvaluationArtifactFeedback(
+                    key="benchmark_report",
+                    kind="benchmark_json",
+                    mime_type="application/json",
+                    summary="bounded summary",
+                    projection="path",
+                    visibility="agent_visible",
+                    size_bytes=128,
+                    artifact_uri="loreley://evaluation-artifacts/job-1/benchmark_report",
+                ),
+            ),
+        ),
+        inspirations=(),
+        goal="Improve docs",
+    )
+
+    prompt = agent._render_prompt(request)  # type: ignore[attr-defined]
+
+    assert "loreley://evaluation-artifacts/job-1/benchmark_report" in prompt
+    assert local_path not in prompt
+
+
+def test_path_mode_includes_uri_for_artifacts_without_prose(settings: Settings) -> None:
+    settings.worker_evaluation_agent_feedback_mode = "path"
+    projection = render_evaluation_agent_feedback(
+        (
+            CommitEvaluationArtifactFeedback(
+                key="flamegraph",
+                kind="profile",
+                mime_type="image/svg+xml",
+                projection="path",
+                visibility="agent_visible",
+                size_bytes=512,
+                artifact_uri="loreley://evaluation-artifacts/job-1/flamegraph",
+            ),
+        ),
+        settings=settings,
+    )
+
+    assert "flamegraph" in projection.text
+    assert "loreley://evaluation-artifacts/job-1/flamegraph" in projection.text
+    assert "path_policy" not in projection.omitted_reasons
+
+
+def test_agent_feedback_budget_keeps_guardrail_and_accurate_omissions(
+    settings: Settings,
+) -> None:
+    settings.worker_evaluation_agent_feedback_max_chars = 850
+    artifacts = tuple(
+        CommitEvaluationArtifactFeedback(
+            key=f"bench_{idx}",
+            kind="benchmark_json",
+            mime_type="application/json",
+            summary=f"summary {idx} " + ("x" * 900),
+            visibility="agent_visible",
+        )
+        for idx in range(4)
+    )
+
+    projection = render_evaluation_agent_feedback(artifacts, settings=settings)
+
+    assert len(projection.text) <= 850
+    assert "Evidence Guardrail:" in projection.text
+    assert "char_budget" in projection.omitted_reasons
+    assert projection.omitted_artifact_count == 4 - len(projection.included_artifact_keys)
+    for key in projection.included_artifact_keys:
+        assert key in projection.text
+    for idx in range(4):
+        key = f"bench_{idx}"
+        if key not in projection.included_artifact_keys:
+            assert key not in projection.text
+
+
+def test_agent_feedback_omits_evidence_when_budget_cannot_fit_guardrail(
+    settings: Settings,
+) -> None:
+    settings.worker_evaluation_agent_feedback_max_chars = 40
+
+    projection = render_evaluation_agent_feedback(
+        (
+            CommitEvaluationArtifactFeedback(
+                key="bench",
+                kind="benchmark_json",
+                mime_type="application/json",
+                summary="summary prose must not appear without a guardrail",
+                visibility="agent_visible",
+            ),
+        ),
+        settings=settings,
+    )
+
+    assert projection.text == ""
+    assert projection.included_artifact_keys == ()
+    assert projection.omitted_artifact_count == 1
+    assert "char_budget" in projection.omitted_reasons

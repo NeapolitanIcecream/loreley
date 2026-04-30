@@ -8,7 +8,14 @@ from fastapi import APIRouter, HTTPException, Query
 
 from loreley.api.artifacts import build_artifact_urls
 from loreley.api.pagination import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, PaginationCursorError
+from loreley.api.schemas.evidence import EvaluationArtifactOut
 from loreley.api.schemas.commits import CommitArtifactsOut, CommitDetailOut, CommitOut, CommitPageOut, MetricOut
+from loreley.api.services.evidence import (
+    build_agent_feedback_payload,
+    build_evaluation_artifact_payload,
+    list_evaluation_artifacts_for_commit,
+    load_evidence_indicators_by_commit_hash,
+)
 from loreley.api.services.commits import get_commit, list_commits, list_commits_page, list_metrics
 from loreley.api.services.jobs import get_job_artifacts
 
@@ -23,7 +30,8 @@ def get_commits(
     offset: int = Query(default=0, ge=0),
 ) -> list[CommitOut]:
     rows = list_commits(island_id=island_id, query=query, limit=limit, offset=offset)
-    return [CommitOut.model_validate(row) for row in rows]
+    indicators = load_evidence_indicators_by_commit_hash([row.commit_hash for row in rows])
+    return [_commit_out(row, indicators) for row in rows]
 
 
 @router.get("/commits/page", response_model=CommitPageOut)
@@ -37,8 +45,9 @@ def get_commits_page(
         page = list_commits_page(island_id=island_id, query=query, limit=limit, cursor=cursor)
     except PaginationCursorError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    indicators = load_evidence_indicators_by_commit_hash([row.commit_hash for row in page.items])
     return CommitPageOut(
-        items=[CommitOut.model_validate(row) for row in page.items],
+        items=[_commit_out(row, indicators) for row in page.items],
         next_cursor=page.next_cursor,
     )
 
@@ -58,4 +67,35 @@ def get_commit_detail(
         if artifacts_row is not None:
             artifacts = CommitArtifactsOut(**build_artifact_urls(job_id=job_id, row=artifacts_row))
     base = CommitOut.model_validate(commit)
-    return CommitDetailOut(**base.model_dump(), metrics=metrics, artifacts=artifacts)
+    evidence_rows = list_evaluation_artifacts_for_commit(commit_hash=commit_hash)
+    indicators = load_evidence_indicators_by_commit_hash([commit_hash])
+    indicator = indicators.get(commit_hash)
+    update = indicator.as_dict() if indicator is not None else {}
+    base = base.model_copy(update=update)
+    return CommitDetailOut(
+        **base.model_dump(),
+        metrics=metrics,
+        artifacts=artifacts,
+        evaluation_artifacts=[
+            EvaluationArtifactOut.model_validate(build_evaluation_artifact_payload(row))
+            for row in evidence_rows
+        ],
+        evaluation_agent_feedback=build_agent_feedback_payload(evidence_rows),
+    )
+
+
+@router.get("/commits/{commit_hash}/evaluation-artifacts", response_model=list[EvaluationArtifactOut])
+def get_commit_evaluation_artifacts(commit_hash: str) -> list[EvaluationArtifactOut]:
+    rows = list_evaluation_artifacts_for_commit(commit_hash=commit_hash)
+    return [
+        EvaluationArtifactOut.model_validate(build_evaluation_artifact_payload(row))
+        for row in rows
+    ]
+
+
+def _commit_out(row: object, indicators: dict[str, object]) -> CommitOut:
+    out = CommitOut.model_validate(row)
+    indicator = indicators.get(str(getattr(row, "commit_hash", "") or ""))
+    if indicator is None:
+        return out
+    return out.model_copy(update=indicator.as_dict())

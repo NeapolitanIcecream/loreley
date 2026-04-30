@@ -8,6 +8,10 @@ from uuid import UUID
 from pydantic import Field, field_validator, model_validator
 
 from loreley.api.schemas import OrmOutModel
+from loreley.api.schemas.evidence import (
+    EvaluationAgentFeedbackOut,
+    EvaluationArtifactOut,
+)
 
 
 class MetricOut(OrmOutModel):
@@ -42,6 +46,9 @@ class CommitOut(OrmOutModel):
     highlights: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
+    has_evaluation_evidence: bool = False
+    agent_visible_evidence_count: int = 0
+    top_evaluation_diagnosis: str | None = None
 
     @field_validator("tags", "key_files", "highlights", mode="before")
     @classmethod
@@ -63,6 +70,8 @@ class CommitOut(OrmOutModel):
 class CommitDetailOut(CommitOut):
     metrics: list[MetricOut] = Field(default_factory=list)
     artifacts: "CommitArtifactsOut | None" = None
+    evaluation_artifacts: list[EvaluationArtifactOut] = Field(default_factory=list)
+    evaluation_agent_feedback: EvaluationAgentFeedbackOut | None = None
 
 
 class CommitArtifactsOut(OrmOutModel):
@@ -81,4 +90,3 @@ class CommitArtifactsOut(OrmOutModel):
 class CommitPageOut(OrmOutModel):
     items: list[CommitOut] = Field(default_factory=list)
     next_cursor: str | None = None
-
