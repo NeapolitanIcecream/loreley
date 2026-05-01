@@ -721,6 +721,60 @@ def test_persist_success_rejects_stale_run_token(
     assert added == []
 
 
+def test_persist_success_validates_run_token_before_artifact_side_effects(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    """Regression: stale workers must not write success artifacts before lease validation."""
+
+    job_id = uuid.uuid4()
+    stale_token = uuid.uuid4()
+    side_effects: list[str] = []
+
+    class DummyResult:
+        def scalar_one_or_none(self) -> Any:
+            return None
+
+    class DummySession:
+        def execute(self, _stmt: Any) -> DummyResult:
+            return DummyResult()
+
+        def add(self, _obj: Any) -> None:
+            side_effects.append("db_add")
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    def record_git_inspection(**_kwargs: Any) -> Any:
+        side_effects.append("git_inspection")
+        return type("Build", (), {"key_files": [], "highlights": []})()
+
+    def record_artifact_write(_request: Any) -> JobArtifactWriteResult:
+        side_effects.append("artifact_write")
+        return JobArtifactWriteResult(
+            fixed=FixedJobArtifactPaths(evaluation_json_path="/tmp/evaluation.json"),
+        )
+
+    monkeypatch.setattr(job_store, "session_scope", fake_scope)
+    monkeypatch.setattr(job_store, "build_commit_card_from_git", record_git_inspection)
+    monkeypatch.setattr(job_store, "write_job_artifacts", record_artifact_write)
+    store = EvolutionJobStore(settings=settings)
+
+    with pytest.raises(JobLeaseLost):
+        store.persist_success(
+            job_ctx=_sample_job_context(job_id=job_id, run_token=stale_token),
+            plan=_sample_plan_response(),
+            coding=_sample_coding_response(),
+            evaluation=EvaluationResult(summary="eval"),
+            worktree=Path("."),
+            commit_hash="newcommit",
+            commit_message="msg",
+        )
+
+    assert side_effects == []
+
+
 def test_mark_job_failed_updates_running_job_when_run_token_matches(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,

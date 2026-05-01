@@ -283,7 +283,6 @@ class EvolutionJobStore:
             commit_hash=commit_hash,
             commit_message=commit_message,
         )
-        payload = self._build_success_payload(request)
         try:
             with session_scope() as session:
                 job = self._lock_active_job_for_run(
@@ -292,6 +291,7 @@ class EvolutionJobStore:
                     run_token=job_ctx.run_token,
                     action="persisting success",
                 )
+                payload = self._build_success_payload(request)
                 self._mark_job_row_succeeded(job, plan=plan, commit_hash=commit_hash)
                 card = self._add_commit_card(
                     session=session,
