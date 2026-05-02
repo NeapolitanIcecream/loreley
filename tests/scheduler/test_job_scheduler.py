@@ -98,6 +98,53 @@ def test_enqueue_jobs_logs_marked_vs_sent_mismatch(
     assert args[1] == 0
 
 
+def test_fetch_pending_job_ids_includes_stale_queued_jobs_for_redispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    """Regression: broker loss or restart could leave QUEUED jobs undispatchable."""
+
+    sender = DummySenderActor()
+    monkeypatch.setattr(
+        job_scheduler,
+        "build_evolution_job_sender_actor",
+        lambda **_kwargs: sender,
+    )
+    settings.worker_job_lease_ttl_seconds = 600
+    scheduler = cast(Any, JobScheduler)(
+        settings=settings,
+        console=Console(record=True),
+        sampler=cast(MapElitesSampler, object()),
+    )
+    db_now = datetime(2026, 3, 25, 8, 30, tzinfo=timezone.utc)
+    captured_stmt: list[Any] = []
+
+    class DummyExecuteResult:
+        def scalars(self) -> list[uuid.UUID]:
+            return []
+
+    class DummySession:
+        def execute(self, stmt: Any) -> DummyExecuteResult:
+            captured_stmt.append(stmt)
+            return DummyExecuteResult()
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    monkeypatch.setattr(job_scheduler, "session_scope", fake_scope)
+    monkeypatch.setattr(job_scheduler, "_db_utc_now", lambda _session: db_now)
+
+    fetched = scheduler._fetch_pending_job_ids(limit=10)
+
+    assert fetched == []
+    stmt = captured_stmt[0]
+    params = stmt.compile().params
+    assert JobStatus.PENDING in params.values()
+    assert JobStatus.QUEUED in params.values()
+    assert db_now - timedelta(seconds=600) in params.values()
+
+
 def test_schedule_jobs_reuses_single_sampling_snapshot_and_avoids_duplicate_bases(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,

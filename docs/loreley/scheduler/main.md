@@ -16,7 +16,7 @@ Central orchestration loop that keeps the Loreley evolution pipeline moving by c
   - reclaims stale or malformed `RUNNING` rows before dispatch,
   - enforces `SCHEDULER_MAX_UNFINISHED_JOBS` and the required `SCHEDULER_MAX_TOTAL_JOBS` cap,
   - calls `MapElitesSampler.schedule_job()` to produce new work, and
-  - sends job messages to the `run_evolution_job` actor and only then marks the corresponding rows as `QUEUED`, which avoids stuck-`QUEUED` rows when broker submission fails.
+  - sends job messages to the `run_evolution_job` actor and only then marks the corresponding rows as `QUEUED`, which avoids stuck-`QUEUED` rows when broker submission fails, and redispatches stale `QUEUED` rows after the worker lease TTL to recover broker-loss or restart cases.
 - **MAP-Elites maintenance**: ingestion of succeeded jobs is handled by `loreley.scheduler.ingestion.MapElitesIngestion`, which:
   - scans for `SUCCEEDED` jobs that have not yet been fully ingested,
   - reads `result_commit_hash` and ensures the corresponding git commit is available locally (fetching from remotes when needed),
@@ -33,7 +33,7 @@ The scheduler consumes the following `Settings` fields (all exposed as environme
 - `SCHEDULER_MAX_UNFINISHED_JOBS`: hard cap on the number of jobs that are not yet finished (`pending`, `queued`, `running`).
 - `SCHEDULER_MAX_TOTAL_JOBS`: **required** cap on the total number of `EvolutionJob` rows in the database. The scheduler stops once the cap is reached and all jobs are finished, then updates the best-fitness branch deliverable.
 - `SCHEDULER_SCHEDULE_BATCH_SIZE`: maximum number of new jobs sampled from MAP-Elites per tick (bounded by the unused capacity).
-- `SCHEDULER_DISPATCH_BATCH_SIZE`: number of pending jobs promoted to `QUEUED` and sent to Dramatiq per tick.
+- `SCHEDULER_DISPATCH_BATCH_SIZE`: number of eligible jobs sent to Dramatiq per tick. Eligible jobs include `PENDING` rows and stale `QUEUED` rows older than `WORKER_JOB_LEASE_TTL_SECONDS`.
 - `SCHEDULER_INGEST_BATCH_SIZE`: number of newly succeeded jobs ingested into MAP-Elites per tick.
 - `SCHEDULER_STALE_RUNNING_RECLAIM_BATCH_SIZE`: maximum number of stale or malformed `RUNNING` jobs reclaimed per tick. When set to `0`, automatic reclaim is disabled.
 - `SCHEDULER_STALE_RUNNING_MAX_RECOVERY_ATTEMPTS`: number of automatic recoveries allowed before a reclaimed job is marked `FAILED`.
