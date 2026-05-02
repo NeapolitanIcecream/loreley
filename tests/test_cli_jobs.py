@@ -85,6 +85,59 @@ def test_jobs_retry_requeues_failed_job_and_resets_lease_state(
     assert job.result_commit_hash is None
 
 
+def test_jobs_retry_clears_candidate_metadata_from_previous_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Regression: retried jobs exposed stale candidate refs before the new attempt."""
+
+    settings = _make_settings()
+    monkeypatch.setattr("loreley.cli.get_settings", lambda: settings)
+    monkeypatch.setattr("loreley.cli._configure_logging_or_exit", lambda **_kwargs: None)
+    published_at = datetime(2026, 3, 25, 7, 30, tzinfo=timezone.utc)
+    _patch_cli_db_now(monkeypatch)
+
+    job_id = uuid.uuid4()
+    job = SimpleNamespace(
+        id=job_id,
+        status=JobStatus.FAILED,
+        scheduled_at=None,
+        started_at=object(),
+        completed_at=object(),
+        heartbeat_at=object(),
+        lease_expires_at=object(),
+        run_token=uuid.uuid4(),
+        worker_id="worker-01",
+        recovery_count=1,
+        candidate_commit_hash="oldcandidate",
+        candidate_branch_name="exp/job-old",
+        candidate_published_at=published_at,
+        result_commit_hash=None,
+        last_error="published candidate failed evaluation",
+    )
+
+    class DummySession:
+        def get(self, _model: Any, key: Any) -> Any:
+            if key == job_id:
+                return job
+            return None
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    monkeypatch.setattr("loreley.db.base.session_scope", fake_scope)
+
+    code = main(["jobs", "retry", str(job_id), "--json"])
+    capsys.readouterr()
+
+    assert code == 0
+    assert job.status is JobStatus.PENDING
+    assert job.candidate_commit_hash is None
+    assert job.candidate_branch_name is None
+    assert job.candidate_published_at is None
+
+
 def test_jobs_retry_rejects_non_failed_jobs(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

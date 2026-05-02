@@ -519,6 +519,9 @@ def _retry_job_row(*, job: Any, reason: str, now: datetime) -> dict[str, object]
     job.run_token = None
     job.worker_id = None
     job.recovery_count = 0
+    job.candidate_commit_hash = None
+    job.candidate_branch_name = None
+    job.candidate_published_at = None
     job.result_commit_hash = None
     job.last_error = str(reason or "").strip() or "manual retry requested via CLI"
     return {
