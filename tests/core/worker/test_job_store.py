@@ -25,6 +25,7 @@ from loreley.core.worker.evaluator import EvaluationDiagnostic, EvaluationMetric
 from loreley.core.worker.evolution import JobContext
 from loreley.core.worker.job_store import (
     EvolutionJobStore,
+    EvolutionWorkerError,
     JobLeaseLost,
     JobPreconditionError,
 )
@@ -311,6 +312,50 @@ def test_record_candidate_commit_rejects_stale_run_token(
     assert job_row.candidate_commit_hash == "cand-old"
     assert job_row.candidate_branch_name == "exp/old-branch"
     assert job_row.candidate_published_at is not None
+
+
+def test_record_candidate_commit_without_run_token_preserves_failed_job(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    """Regression: no-token candidate writes could mutate jobs already marked FAILED."""
+
+    job_id = uuid.uuid4()
+    published_at = datetime(2026, 3, 25, 8, 40, tzinfo=timezone.utc)
+
+    class DummyJob:
+        def __init__(self) -> None:
+            self.id = job_id
+            self.status = JobStatus.FAILED
+            self.candidate_commit_hash = "cand-old"
+            self.candidate_branch_name = "exp/old-branch"
+            self.candidate_published_at = published_at
+
+    job_row = DummyJob()
+
+    class DummySession:
+        def get(self, _model: Any, row_id: uuid.UUID) -> DummyJob | None:
+            assert row_id == job_id
+            return job_row
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    monkeypatch.setattr(job_store, "session_scope", fake_scope)
+    store = EvolutionJobStore(settings=settings)
+
+    with pytest.raises(EvolutionWorkerError, match="cannot record a candidate"):
+        store.record_candidate_commit(
+            job_id,
+            "cand-new",
+            "exp/new-branch",
+            published=True,
+        )
+
+    assert job_row.candidate_commit_hash == "cand-old"
+    assert job_row.candidate_branch_name == "exp/old-branch"
+    assert job_row.candidate_published_at == published_at
 
 
 def test_start_job_rejects_missing_or_invalid_jobs(

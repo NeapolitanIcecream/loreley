@@ -216,7 +216,11 @@ class EvolutionJobStore:
                         raise EvolutionWorkerError(
                             f"Evolution job {job_id} disappeared while recording candidate metadata.",
                         )
-                if run_token is None and job.status in {JobStatus.SUCCEEDED, JobStatus.CANCELLED}:
+                if run_token is None and job.status in {
+                    JobStatus.SUCCEEDED,
+                    JobStatus.FAILED,
+                    JobStatus.CANCELLED,
+                }:
                     raise EvolutionWorkerError(
                         f"Evolution job {job_id} cannot record a candidate in status {job.status}.",
                     )
