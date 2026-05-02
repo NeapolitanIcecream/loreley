@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
+from queue import Empty
 import time
 from multiprocessing import get_context
 from typing import Any, cast
@@ -15,27 +16,13 @@ import loreley.scheduler.main as scheduler_main
 from loreley.scheduler.ingestion import MapElitesIngestion
 from loreley.scheduler.startup_approval import RepoStateRootScan
 from loreley.naming import resolve_experiment_namespace
+from tests._shared_repo_locking import hold_repo_lock
 
 
 pytestmark = pytest.mark.skipif(
     os.name != "posix",
     reason="Shared repo lock coordination tests require POSIX flock semantics.",
 )
-
-
-def _hold_repo_lock(lock_path: str, hold_seconds: float, ready_queue: Any) -> None:
-    import fcntl
-
-    path = Path(lock_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fh = open(path, "a+", encoding="utf-8")
-    try:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-        ready_queue.put("locked")
-        time.sleep(hold_seconds)
-    finally:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-        fh.close()
 
 
 def _worker_lock_path(repo_root: Path) -> Path:
@@ -48,12 +35,25 @@ def _assert_waits_for_repo_lock(repo_root: Path, action: Any) -> None:
     ctx = get_context("spawn")
     ready_queue = ctx.Queue()
     proc = ctx.Process(
-        target=_hold_repo_lock,
+        target=hold_repo_lock,
         args=(str(_worker_lock_path(repo_root)), hold_seconds, ready_queue),
     )
     proc.start()
     try:
-        assert ready_queue.get(timeout=5) == "locked"
+        deadline = time.monotonic() + 5.0
+        while True:
+            if proc.exitcode is not None:
+                raise AssertionError(
+                    f"repo lock holder exited before readiness (exitcode={proc.exitcode})",
+                )
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise AssertionError("repo lock holder did not report readiness before timeout")
+            try:
+                assert ready_queue.get(timeout=min(0.1, remaining)) == "locked"
+                break
+            except Empty:
+                continue
         started = time.perf_counter()
         action()
         elapsed = time.perf_counter() - started
