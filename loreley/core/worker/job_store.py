@@ -517,7 +517,7 @@ class EvolutionJobStore:
                     job = session.get(EvolutionJob, job_id)
                     if not job:
                         return False
-                    if job.status in {JobStatus.SUCCEEDED, JobStatus.CANCELLED}:
+                    if job.status in {JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELLED}:
                         return False
                 job.status = JobStatus.FAILED
                 job.completed_at = _utc_now()

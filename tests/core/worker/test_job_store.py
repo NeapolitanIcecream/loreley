@@ -852,3 +852,46 @@ def test_mark_job_failed_rejects_stale_run_token_without_overwriting_state(
     recorded = store.mark_job_failed(job_id, "boom", run_token=uuid.uuid4())
 
     assert recorded is False
+
+
+def test_mark_job_failed_without_run_token_preserves_existing_failed_job(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    """Regression: unowned failure writes must not erase stale-lease failure signals."""
+
+    job_id = uuid.uuid4()
+    completed_at = datetime(2026, 3, 25, 8, 45, tzinfo=timezone.utc)
+    stale_failure = "Lease expired after missing heartbeat; recovered by scheduler (attempt=4)."
+
+    class DummyJob:
+        def __init__(self) -> None:
+            self.id = job_id
+            self.status = JobStatus.FAILED
+            self.completed_at = completed_at
+            self.run_token = None
+            self.worker_id = None
+            self.heartbeat_at = None
+            self.lease_expires_at = None
+            self.last_error = stale_failure
+
+    job_row = DummyJob()
+
+    class DummySession:
+        def get(self, _model: Any, row_id: uuid.UUID) -> DummyJob | None:
+            assert row_id == job_id
+            return job_row
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    monkeypatch.setattr(job_store, "session_scope", fake_scope)
+    store = EvolutionJobStore(settings=settings)
+
+    recorded = store.mark_job_failed(job_id, "late worker startup failure")
+
+    assert recorded is False
+    assert job_row.status is JobStatus.FAILED
+    assert job_row.completed_at == completed_at
+    assert job_row.last_error == stale_failure
