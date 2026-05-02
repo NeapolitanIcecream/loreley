@@ -384,18 +384,21 @@ class JobScheduler:
         ready: list[UUID] = []
         if not job_ids:
             return ready
-        now = datetime.now(timezone.utc)
         with session_scope() as session:
+            now = _db_utc_now(session)
             stmt = (
                 select(EvolutionJob)
                 .where(EvolutionJob.id.in_(job_ids))
                 .with_for_update(skip_locked=True)
             )
             for job in session.execute(stmt).scalars():
-                if job.status != JobStatus.PENDING:
+                if job.status == JobStatus.PENDING:
+                    job.status = JobStatus.QUEUED
+                    job.scheduled_at = job.scheduled_at or now
+                elif job.status == JobStatus.QUEUED:
+                    job.scheduled_at = now
+                else:
                     continue
-                job.status = JobStatus.QUEUED
-                job.scheduled_at = job.scheduled_at or now
                 ready.append(job.id)
         return ready
 

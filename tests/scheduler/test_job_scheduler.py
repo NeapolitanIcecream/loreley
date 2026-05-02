@@ -145,6 +145,53 @@ def test_fetch_pending_job_ids_includes_stale_queued_jobs_for_redispatch(
     assert db_now - timedelta(seconds=600) in params.values()
 
 
+def test_mark_jobs_queued_refreshes_stale_queued_redispatch_timestamp_pr24(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    """Regression PR #24: stale QUEUED redispatches kept an old queue timestamp."""
+
+    sender = DummySenderActor()
+    monkeypatch.setattr(
+        job_scheduler,
+        "build_evolution_job_sender_actor",
+        lambda **_kwargs: sender,
+    )
+    scheduler = cast(Any, JobScheduler)(
+        settings=settings,
+        console=Console(record=True),
+        sampler=cast(MapElitesSampler, object()),
+    )
+    db_now = datetime(2026, 3, 25, 8, 30, tzinfo=timezone.utc)
+    stale_scheduled_at = db_now - timedelta(hours=2)
+    job_row = SimpleNamespace(
+        id=uuid.uuid4(),
+        status=JobStatus.QUEUED,
+        scheduled_at=stale_scheduled_at,
+    )
+
+    class DummyExecuteResult:
+        def scalars(self) -> list[object]:
+            return [job_row]
+
+    class DummySession:
+        def execute(self, _stmt: Any) -> DummyExecuteResult:
+            return DummyExecuteResult()
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    monkeypatch.setattr(job_scheduler, "session_scope", fake_scope)
+    monkeypatch.setattr(job_scheduler, "_db_utc_now", lambda _session: db_now)
+
+    marked = scheduler._mark_jobs_queued([job_row.id])
+
+    assert marked == [job_row.id]
+    assert job_row.status is JobStatus.QUEUED
+    assert job_row.scheduled_at == db_now
+
+
 def test_schedule_jobs_reuses_single_sampling_snapshot_and_avoids_duplicate_bases(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,
