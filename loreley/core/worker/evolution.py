@@ -179,6 +179,7 @@ class _JobFailureContext:
     coding: CodingAgentResponse | None = None
     worktree: Any | None = None
     candidate_commit_hash: str | None = None
+    evaluation_outcome: EvaluationOutcome | None = None
 
 
 @dataclass(slots=True)
@@ -313,6 +314,7 @@ class EvolutionWorker:
                         coding=state.coding_response,
                         worktree=state.checkout.worktree if state.checkout is not None else None,
                         candidate_commit_hash=state.candidate_commit,
+                        evaluation_outcome=state.evaluation_outcome,
                     ),
                 )
             raise
@@ -871,11 +873,14 @@ class EvolutionWorker:
         persist_failure = getattr(self.job_store, "persist_failure", None)
         if not callable(persist_failure):
             return False
+        outcome = context.evaluation_outcome
+        if outcome is None or outcome.outcome_kind == "passed":
+            outcome = _infrastructure_failure_outcome(message, context.candidate_commit_hash)
         return bool(
             persist_failure(
                 job_ctx=context.job_ctx,
                 message=message,
-                outcome=_infrastructure_failure_outcome(message, context.candidate_commit_hash),
+                outcome=outcome,
                 plan=context.plan,
                 coding=context.coding,
                 worktree=context.worktree,

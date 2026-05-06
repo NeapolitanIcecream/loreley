@@ -10,7 +10,11 @@ import pytest
 import loreley.core.worker.evolution as evolution_module
 from loreley.config import Settings
 from loreley.core.worker.coding import CodingAgentResponse, ExecutionReport
-from loreley.core.worker.evaluator import EvaluationResult
+from loreley.core.worker.evaluator import (
+    EvaluationFailureResult,
+    EvaluationOutcome,
+    EvaluationResult,
+)
 from loreley.core.worker.evolution import EvolutionWorker, JobContext
 from loreley.core.worker.planning import PlanDocument, PlanningAgentResponse
 from loreley.core.worker.repository import CheckoutContext
@@ -78,6 +82,21 @@ class _FakeCodingAgent:
 class _FakeEvaluator:
     def evaluate(self, _context: Any) -> EvaluationResult:
         return EvaluationResult(summary="evaluation ok")
+
+
+class _FakeCandidateFailureEvaluator:
+    def evaluate_outcome(self, context: Any) -> EvaluationOutcome:
+        return EvaluationOutcome(
+            evaluator_name="fake",
+            candidate_commit_hash=context.candidate_commit_hash,
+            outcome_kind="candidate_failed",
+            failure=EvaluationFailureResult(
+                failure_stage="evaluation",
+                failure_kind="typecheck_failed",
+                repairability="repairable",
+                safe_failure_summary="typecheck failed",
+            ),
+        )
 
 
 class _FakeSummarizer:
@@ -279,6 +298,21 @@ class _FakeJobStoreForPublishFailure:
                 "run_token": run_token,
             }
         )
+
+
+class _FakeJobStoreForEvaluationFailureRetry(_FakeJobStoreForPublishFailure):
+    def __init__(self, *, job_id: uuid.UUID, events: list[str]) -> None:
+        super().__init__(
+            job_id=job_id,
+            events=events,
+            persist_error=evolution_module.EvolutionWorkerError("unused"),
+        )
+        self.persist_failure_outcomes: list[EvaluationOutcome] = []
+
+    def persist_failure(self, **kwargs: Any) -> bool:
+        self._events.append("store.persist_failure")
+        self.persist_failure_outcomes.append(kwargs["outcome"])
+        return len(self.persist_failure_outcomes) > 1
 
 
 def _patch_empty_planning_context_session(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -641,3 +675,38 @@ def test_run_keeps_candidate_metadata_when_post_push_persistence_fails_gh_candid
             "run_token": store.recorded_candidates[1]["run_token"],
         }
     ]
+
+
+def test_run_preserves_evaluator_failure_outcome_when_structured_retry_succeeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    """Regression: fallback persistence must not relabel evaluator failures as infrastructure failures."""
+
+    job_id = uuid.uuid4()
+    events: list[str] = []
+    _patch_empty_planning_context_session(monkeypatch)
+    store = _FakeJobStoreForEvaluationFailureRetry(job_id=job_id, events=events)
+    worker = EvolutionWorker(
+        settings=settings,
+        repository=_FakeRepositoryForRun(worktree=tmp_path, events=events),  # type: ignore[arg-type]
+        planning_agent=_FakePlanningAgent(),  # type: ignore[arg-type]
+        coding_agent=_FakeCodingAgent(),  # type: ignore[arg-type]
+        evaluator=_FakeCandidateFailureEvaluator(),  # type: ignore[arg-type]
+        summarizer=_FakeSummarizer(),  # type: ignore[arg-type]
+        job_store=store,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(evolution_module.EvolutionWorkerError, match="typecheck failed"):
+        worker.run(job_id)
+
+    assert [outcome.outcome_kind for outcome in store.persist_failure_outcomes] == [
+        "candidate_failed",
+        "candidate_failed",
+    ]
+    assert [outcome.failure.failure_kind for outcome in store.persist_failure_outcomes if outcome.failure] == [
+        "typecheck_failed",
+        "typecheck_failed",
+    ]
+    assert store.failures == []
