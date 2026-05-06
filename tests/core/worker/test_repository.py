@@ -522,6 +522,49 @@ def test_load_protected_job_branch_state_keeps_failed_candidate_refs_when_publis
     assert protected_branches == {failed_branch}
 
 
+def test_load_protected_job_branch_state_uses_candidate_ledger_for_repair_pool_refs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    settings: Settings,
+) -> None:
+    repo = _make_repo(settings, tmp_path)
+    repair_branch = f"{repo.job_branch_prefix}/repair-source"
+
+    class _FakeSession:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def execute(self, _stmt: Any) -> _FakeQueryResult:
+            self.calls += 1
+            if self.calls == 1:
+                return _FakeQueryResult([])
+            if self.calls == 2:
+                return _FakeQueryResult([])
+            if self.calls == 3:
+                return _FakeQueryResult(
+                    [
+                        (
+                            "repair-source-commit",
+                            repair_branch,
+                            "eligible",
+                            "published",
+                        ),
+                    ]
+                )
+            raise AssertionError("unexpected query count")
+
+    @contextmanager
+    def _session_scope():
+        yield _FakeSession()
+
+    monkeypatch.setattr(repository_module, "session_scope", _session_scope, raising=False)
+
+    protected_commits, protected_branches = repo._load_protected_job_branch_state()
+
+    assert protected_commits == {"repair-source-commit"}
+    assert protected_branches == {repair_branch}
+
+
 def test_prune_stale_job_branches_skips_protected_commits(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,

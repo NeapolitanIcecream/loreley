@@ -645,6 +645,7 @@ class MapElitesSampler:
             sampling_radius_used=int(selection_stats.get("radius_used", 0)),
             sampling_fallback_inspirations=int(selection_stats.get("fallback_inspirations", 0)),
             is_seed_job=False,
+            job_kind="evolution",
             priority=job_priority,
             scheduled_at=datetime.now(timezone.utc),
         )

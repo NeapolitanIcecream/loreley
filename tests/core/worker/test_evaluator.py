@@ -11,7 +11,9 @@ from loreley.core.worker.evaluator import (
     EvaluationContext,
     EvaluationDiagnostic,
     EvaluationError,
+    EvaluationFailureResult,
     EvaluationMetric,
+    EvaluationOutcome,
     EvaluationResult,
     Evaluator,
     coerce_evaluation_artifacts,
@@ -110,6 +112,64 @@ def test_coerce_result_from_mapping_and_truncates_metrics(settings: Settings) ->
     direct = EvaluationResult(summary="s", metrics=(EvaluationMetric(name="m", value=1.0),))
     again = evaluator._coerce_result(direct)  # type: ignore[attr-defined]
     assert again is direct
+
+
+def test_coerce_outcome_accepts_candidate_failed_mapping(
+    tmp_path: Path,
+    settings: Settings,
+) -> None:
+    evaluator = Evaluator(settings=settings)
+    payload: Mapping[str, Any] = {
+        "schema_version": 1,
+        "evaluator_name": "pytest",
+        "evaluator_version": "1",
+        "outcome_kind": "candidate_failed",
+        "failure": {
+            "failure_stage": "evaluation",
+            "failure_kind": "test_failed",
+            "repairability": "repairable",
+            "repairability_reason": "single regression",
+            "safe_failure_summary": "Unit test failed in parser.",
+            "agent_visible_evidence_refs": ["pytest-summary"],
+            "human_only_artifact_refs": ["raw-log"],
+            "hidden_artifact_refs": ["env"],
+        },
+    }
+
+    outcome = evaluator._coerce_outcome(  # type: ignore[attr-defined]
+        payload,
+        context=EvaluationContext(worktree=tmp_path, candidate_commit_hash="abc"),
+        evaluator_name="fallback",
+        started_at=None,  # type: ignore[arg-type]
+        finished_at=None,  # type: ignore[arg-type]
+    )
+
+    assert isinstance(outcome, EvaluationOutcome)
+    assert outcome.outcome_kind == "candidate_failed"
+    assert outcome.result is None
+    assert outcome.failure is not None
+    assert outcome.failure.failure_stage == "evaluation"
+    assert outcome.failure.failure_kind == "test_failed"
+    assert outcome.failure.repairability == "repairable"
+    assert outcome.candidate_commit_hash == "abc"
+
+
+def test_evaluate_outcome_synthesizes_nonrepairable_failure_on_plugin_error(
+    tmp_path: Path,
+    settings: Settings,
+) -> None:
+    evaluator = Evaluator(settings=settings)
+    evaluator._plugin_callable = object()  # type: ignore[assignment]  # noqa: SLF001
+    evaluator._execute_with_timeout = lambda *_args, **_kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        EvaluationError("plugin exploded")
+    )
+
+    outcome = evaluator.evaluate_outcome(EvaluationContext(worktree=tmp_path))
+
+    assert outcome.outcome_kind == "evaluator_failed"
+    assert isinstance(outcome.failure, EvaluationFailureResult)
+    assert outcome.failure.repairability == "unknown"
+    assert "not repairable" in str(outcome.failure.repairability_reason)
 
 
 def test_coerce_metrics_and_normalise_sequence(settings: Settings) -> None:

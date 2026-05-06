@@ -207,6 +207,203 @@ class Metric(TimestampMixin, Base):
         )
 
 
+class CandidateCommit(TimestampMixin, Base):
+    """Durable ledger row for a worker-produced candidate commit."""
+
+    __tablename__ = "candidate_commits"
+    __table_args__ = (
+        UniqueConstraint("commit_hash", name="uq_candidate_commits_commit_hash"),
+        Index("ix_candidate_commits_produced_by_job_id", "produced_by_job_id"),
+        Index(
+            "ix_candidate_commits_repair_pool",
+            "island_id",
+            "repair_state",
+            "evaluation_status",
+            "updated_at",
+        ),
+        Index("ix_candidate_commits_repair_source", "repair_source_candidate_id"),
+        Index("ix_candidate_commits_git_parent", "git_parent_commit_hash"),
+        Index("ix_candidate_commits_nearest_viable_ancestor", "nearest_viable_ancestor_hash"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    commit_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    git_parent_commit_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    nearest_viable_ancestor_hash: Mapped[str | None] = mapped_column(String(64))
+    island_id: Mapped[str | None] = mapped_column(String(64))
+
+    produced_by_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("evolution_jobs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    run_token: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    job_kind: Mapped[str] = mapped_column(String(32), default="evolution", nullable=False)
+    repair_source_candidate_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("candidate_commits.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    repair_mode: Mapped[str | None] = mapped_column(String(32))
+
+    candidate_branch_name: Mapped[str | None] = mapped_column(String(255))
+    candidate_published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    publication_status: Mapped[str] = mapped_column(String(32), default="created", nullable=False)
+
+    evaluation_status: Mapped[str] = mapped_column(
+        String(32),
+        default="not_evaluated",
+        nullable=False,
+    )
+    latest_evaluation_attempt_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "evaluation_attempts.id",
+            name="fk_candidate_commits_latest_evaluation_attempt_id",
+            use_alter=True,
+        ),
+        nullable=True,
+    )
+
+    archive_status: Mapped[str] = mapped_column(
+        String(32),
+        default="not_considered",
+        nullable=False,
+    )
+    lifecycle_status: Mapped[str] = mapped_column(String(32), default="active", nullable=False)
+
+    failure_stage: Mapped[str | None] = mapped_column(String(32))
+    failure_kind: Mapped[str | None] = mapped_column(String(64))
+    failure_summary: Mapped[str | None] = mapped_column(Text)
+    failure_evidence_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("diagnostic_capsules.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    repair_state: Mapped[str] = mapped_column(String(32), default="audit_only", nullable=False)
+    failed_depth: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    repair_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_repair_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("evolution_jobs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    repo_state_aggregate_status: Mapped[str] = mapped_column(
+        String(32),
+        default="not_required",
+        nullable=False,
+    )
+    repo_state_aggregate_error: Mapped[str | None] = mapped_column(Text)
+
+    commit_card_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("commit_cards.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return (
+            f"<CandidateCommit id={self.id!r} commit_hash={self.commit_hash!r} "
+            f"evaluation_status={self.evaluation_status!r}>"
+        )
+
+
+class DiagnosticCapsule(TimestampMixin, Base):
+    """Sanitized evaluator failure evidence safe for repair prompts."""
+
+    __tablename__ = "diagnostic_capsules"
+    __table_args__ = (
+        Index("ix_diagnostic_capsules_candidate_commit_id", "candidate_commit_id"),
+        Index("ix_diagnostic_capsules_job_id", "job_id"),
+        Index("ix_diagnostic_capsules_policy", "policy_version", "policy_passed"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    candidate_commit_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("candidate_commits.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("evolution_jobs.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    evaluation_attempt_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("evaluation_attempts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    schema_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    policy_passed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JSONB),
+        default=dict,
+        nullable=False,
+    )
+    omitted_reasons: Mapped[list[str]] = mapped_column(
+        MutableList.as_mutable(ARRAY(String(64))),
+        default=list,
+        nullable=False,
+    )
+
+
+class EvaluationAttempt(TimestampMixin, Base):
+    """One evaluator outcome observed for a candidate commit."""
+
+    __tablename__ = "evaluation_attempts"
+    __table_args__ = (
+        Index("ix_evaluation_attempts_candidate_started", "candidate_commit_id", "started_at"),
+        Index("ix_evaluation_attempts_job_id", "job_id"),
+        Index("ix_evaluation_attempts_outcome_kind", "outcome_kind"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    candidate_commit_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("candidate_commits.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("evolution_jobs.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    evaluator_name: Mapped[str | None] = mapped_column(String(128))
+    evaluator_version: Mapped[str | None] = mapped_column(String(128))
+    outcome_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    failure_kind: Mapped[str | None] = mapped_column(String(64))
+    failure_stage: Mapped[str | None] = mapped_column(String(32))
+    repairability: Mapped[str | None] = mapped_column(String(32))
+    safe_failure_summary: Mapped[str | None] = mapped_column(Text)
+    diagnostic_capsule_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("diagnostic_capsules.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    artifact_policy_version: Mapped[str | None] = mapped_column(String(64))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class EvolutionJob(TimestampMixin, Base):
     """Job produced by the scheduler that drives one evolution iteration."""
 
@@ -229,6 +426,8 @@ class EvolutionJob(TimestampMixin, Base):
             "completed_at",
             "result_commit_hash",
         ),
+        Index("ix_evolution_jobs_kind_status_scheduled", "job_kind", "status", "scheduled_at"),
+        Index("ix_evolution_jobs_repair_source_status", "repair_source_candidate_id", "status"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -279,6 +478,13 @@ class EvolutionJob(TimestampMixin, Base):
     sampling_radius_used: Mapped[int | None] = mapped_column(Integer)
     sampling_fallback_inspirations: Mapped[int | None] = mapped_column(Integer)
     is_seed_job: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    job_kind: Mapped[str] = mapped_column(String(32), default="evolution", nullable=False)
+    repair_source_candidate_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("candidate_commits.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    repair_mode: Mapped[str | None] = mapped_column(String(32))
     candidate_commit_hash: Mapped[str | None] = mapped_column(String(64))
     candidate_branch_name: Mapped[str | None] = mapped_column(String(255))
     candidate_published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

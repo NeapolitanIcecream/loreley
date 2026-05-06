@@ -225,6 +225,55 @@ class Settings(BaseSettings):
         alias="SCHEDULER_STALE_RUNNING_MAX_RECOVERY_ATTEMPTS",
     )
 
+    failed_candidate_repair_enabled: bool = Field(
+        default=False,
+        alias="FAILED_CANDIDATE_REPAIR_ENABLED",
+    )
+    failed_candidate_repair_mode: str = Field(
+        default="rebase_from_nearest_viable",
+        alias="FAILED_CANDIDATE_REPAIR_MODE",
+    )
+    failed_candidate_repair_max_depth: int = Field(
+        default=1,
+        alias="FAILED_CANDIDATE_REPAIR_MAX_DEPTH",
+    )
+    failed_candidate_repair_max_attempts: int = Field(
+        default=1,
+        alias="FAILED_CANDIDATE_REPAIR_MAX_ATTEMPTS",
+    )
+    failed_candidate_repair_normal_jobs_per_token: int = Field(
+        default=9,
+        alias="FAILED_CANDIDATE_REPAIR_NORMAL_JOBS_PER_TOKEN",
+    )
+    failed_candidate_repair_max_tokens: int = Field(
+        default=3,
+        alias="FAILED_CANDIDATE_REPAIR_MAX_TOKENS",
+    )
+    failed_candidate_repair_max_active_jobs: int = Field(
+        default=1,
+        alias="FAILED_CANDIDATE_REPAIR_MAX_ACTIVE_JOBS",
+    )
+    failed_candidate_repair_max_jobs_per_tick: int = Field(
+        default=1,
+        alias="FAILED_CANDIDATE_REPAIR_MAX_JOBS_PER_TICK",
+    )
+    failed_candidate_repair_failure_kinds: str = Field(
+        default="validation_failed,test_failed,typecheck_failed,lint_failed",
+        alias="FAILED_CANDIDATE_REPAIR_FAILURE_KINDS",
+    )
+    failed_candidate_repair_agent_feedback_mode: str = Field(
+        default="diagnostic_capsule",
+        alias="FAILED_CANDIDATE_REPAIR_AGENT_FEEDBACK_MODE",
+    )
+    failed_candidate_repair_max_diff_bytes: int = Field(
+        default=65_536,
+        alias="FAILED_CANDIDATE_REPAIR_MAX_DIFF_BYTES",
+    )
+    failed_candidate_repair_max_diagnostic_bytes: int = Field(
+        default=16_384,
+        alias="FAILED_CANDIDATE_REPAIR_MAX_DIAGNOSTIC_BYTES",
+    )
+
     worker_repo_remote_url: str | None = Field(
         default=None,
         alias="WORKER_REPO_REMOTE_URL",
@@ -957,6 +1006,30 @@ def _build_safe_export_payload(settings: Settings, *, mask_secrets: bool) -> dic
         ),
         "scheduler_stale_running_max_recovery_attempts": (
             settings.scheduler_stale_running_max_recovery_attempts
+        ),
+        "failed_candidate_repair_enabled": settings.failed_candidate_repair_enabled,
+        "failed_candidate_repair_mode": settings.failed_candidate_repair_mode,
+        "failed_candidate_repair_max_depth": settings.failed_candidate_repair_max_depth,
+        "failed_candidate_repair_max_attempts": settings.failed_candidate_repair_max_attempts,
+        "failed_candidate_repair_normal_jobs_per_token": (
+            settings.failed_candidate_repair_normal_jobs_per_token
+        ),
+        "failed_candidate_repair_max_tokens": settings.failed_candidate_repair_max_tokens,
+        "failed_candidate_repair_max_active_jobs": (
+            settings.failed_candidate_repair_max_active_jobs
+        ),
+        "failed_candidate_repair_max_jobs_per_tick": (
+            settings.failed_candidate_repair_max_jobs_per_tick
+        ),
+        "failed_candidate_repair_failure_kinds": (
+            settings.failed_candidate_repair_failure_kinds
+        ),
+        "failed_candidate_repair_agent_feedback_mode": (
+            settings.failed_candidate_repair_agent_feedback_mode
+        ),
+        "failed_candidate_repair_max_diff_bytes": settings.failed_candidate_repair_max_diff_bytes,
+        "failed_candidate_repair_max_diagnostic_bytes": (
+            settings.failed_candidate_repair_max_diagnostic_bytes
         ),
     }
 

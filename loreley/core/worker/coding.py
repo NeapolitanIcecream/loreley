@@ -237,6 +237,15 @@ class CodingAgent(TruncationMixin):
     ) -> str:
         plan_block = (request.plan.markdown or "").strip() or request.plan.summary.strip() or "N/A"
         plan_block = self._truncate(plan_block, limit=3000)
+        notes_block = ""
+        if request.additional_notes:
+            notes = "\n".join(
+                f"- {self._truncate(str(note), limit=300)}"
+                for note in request.additional_notes
+                if str(note).strip()
+            )
+            if notes:
+                notes_block = f"\nAdditional notes:\n{notes}\n"
         shared_packet = render_shared_prompt_packet(
             SharedPromptPacketRequest(
                 goal=request.goal,
@@ -257,6 +266,7 @@ Apply the plan to the repository at {worktree}, starting from base commit {reque
 
 Plan (Markdown):
 {plan_block}
+{notes_block}
 
 Output requirements:
 - Execute the plan directly.

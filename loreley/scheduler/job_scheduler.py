@@ -9,6 +9,7 @@ high-level control flow.
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+import random
 from typing import Any, Sequence
 from uuid import UUID
 
@@ -18,8 +19,19 @@ from sqlalchemy import and_, func, or_, select
 
 from loreley.config import Settings, resolve_default_island_id
 from loreley.core.map_elites.sampler import MapElitesSampler, SamplingSnapshot, ScheduledSamplerJob
+from loreley.core.worker.repair import (
+    REPAIR_MODE_REBASE_FROM_NEAREST_VIABLE,
+    repair_failure_kind_allowlist,
+)
 from loreley.db.base import session_scope
-from loreley.db.models import EvolutionJob, JobStatus
+from loreley.db.models import (
+    CandidateCommit,
+    DiagnosticCapsule,
+    EvaluationAttempt,
+    EvolutionJob,
+    JobStatus,
+    MapElitesRepoStateAggregate,
+)
 from loreley.tasks.workers import build_evolution_job_sender_actor
 
 log = logger.bind(module="scheduler.job_scheduler")
@@ -42,6 +54,175 @@ class JobLeaseReclaimResult:
     failed: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class ScheduledRepairJob:
+    """Result descriptor for a failed-candidate repair job."""
+
+    job_id: UUID
+    repair_source_candidate_id: UUID
+    base_commit_hash: str
+
+
+class FailedCandidateRepairSampler:
+    """Strict repair-pool sampler for ADR 0048 MVP repair jobs."""
+
+    def __init__(self, *, settings: Settings, rng: random.Random | None = None) -> None:
+        self.settings = settings
+        self._rng = rng or random.Random(int(getattr(settings, "mapelites_sampler_seed", 0) or 0))
+
+    def count_active_repair_jobs(self) -> int:
+        active = (JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING)
+        with session_scope() as session:
+            return int(
+                session.execute(
+                    select(func.count(EvolutionJob.id)).where(
+                        EvolutionJob.job_kind == "repair",
+                        EvolutionJob.status.in_(active),
+                    )
+                ).scalar_one()
+            )
+
+    def schedule_one(self) -> ScheduledRepairJob | None:
+        if not bool(self.settings.failed_candidate_repair_enabled):
+            return None
+        with session_scope() as session:
+            candidate = self._select_candidate(session=session)
+            if candidate is None:
+                return None
+            if self._has_active_repair_job(session=session, source_id=candidate.id):
+                return None
+            goal = self._repair_goal(candidate)
+            now = _db_utc_now(session)
+            job = EvolutionJob(
+                status=JobStatus.PENDING,
+                base_commit_hash=candidate.nearest_viable_ancestor_hash,
+                island_id=candidate.island_id,
+                inspiration_commit_hashes=[],
+                goal=goal,
+                constraints=[],
+                acceptance_criteria=[],
+                notes=[],
+                tags=["repair"],
+                iteration_hint="Repair failed candidate from nearest viable ancestor.",
+                sampling_strategy="failed_candidate_repair",
+                sampling_initial_radius=None,
+                sampling_radius_used=None,
+                sampling_fallback_inspirations=None,
+                is_seed_job=False,
+                job_kind="repair",
+                repair_source_candidate_id=candidate.id,
+                repair_mode=REPAIR_MODE_REBASE_FROM_NEAREST_VIABLE,
+                priority=self.settings.mapelites_sampler_default_priority,
+                scheduled_at=now,
+            )
+            session.add(job)
+            session.flush()
+            candidate.repair_state = "scheduled"
+            candidate.repair_attempts = int(candidate.repair_attempts or 0) + 1
+            candidate.last_repair_job_id = job.id
+            log.info(
+                "Repair job scheduled repair_mode={} failure_kind={}",
+                job.repair_mode,
+                candidate.failure_kind or "unknown",
+            )
+            return ScheduledRepairJob(
+                job_id=job.id,
+                repair_source_candidate_id=candidate.id,
+                base_commit_hash=str(candidate.nearest_viable_ancestor_hash),
+            )
+
+    def _select_candidate(self, *, session: Any) -> CandidateCommit | None:
+        allowlist = repair_failure_kind_allowlist(self.settings.failed_candidate_repair_failure_kinds)
+        rows = list(
+            session.execute(
+                select(CandidateCommit)
+                .where(
+                    CandidateCommit.publication_status == "published",
+                    CandidateCommit.evaluation_status == "candidate_failed",
+                    CandidateCommit.failure_stage == "evaluation",
+                    CandidateCommit.failure_kind.in_(tuple(sorted(allowlist))),
+                    CandidateCommit.repair_state == "eligible",
+                    CandidateCommit.lifecycle_status == "active",
+                    CandidateCommit.nearest_viable_ancestor_hash.is_not(None),
+                    CandidateCommit.nearest_viable_ancestor_hash != "",
+                    CandidateCommit.repair_source_candidate_id.is_(None),
+                    CandidateCommit.failed_depth
+                    <= max(0, int(self.settings.failed_candidate_repair_max_depth)),
+                    CandidateCommit.repair_attempts
+                    < max(0, int(self.settings.failed_candidate_repair_max_attempts)),
+                )
+                .order_by(
+                    CandidateCommit.failed_depth.asc(),
+                    CandidateCommit.updated_at.asc(),
+                    CandidateCommit.id.asc(),
+                )
+                .limit(32)
+                .with_for_update(skip_locked=True)
+            ).scalars()
+        )
+        eligible = [row for row in rows if self._strictly_eligible(session=session, candidate=row)]
+        if not eligible:
+            return None
+        top = eligible[: min(8, len(eligible))]
+        return self._rng.choice(top)
+
+    def _strictly_eligible(self, *, session: Any, candidate: CandidateCommit) -> bool:
+        attempt = None
+        if candidate.latest_evaluation_attempt_id is not None:
+            attempt = session.get(EvaluationAttempt, candidate.latest_evaluation_attempt_id)
+        if attempt is None or attempt.repairability != "repairable":
+            return False
+        if self._has_active_repair_job(session=session, source_id=candidate.id):
+            return False
+        if candidate.failure_evidence_id is None:
+            return False
+        capsule = session.get(DiagnosticCapsule, candidate.failure_evidence_id)
+        if capsule is None or not capsule.policy_passed:
+            return False
+        if not self._ancestor_aggregate_ready(
+            session=session,
+            commit_hash=str(candidate.nearest_viable_ancestor_hash or ""),
+        ):
+            return False
+        return True
+
+    @staticmethod
+    def _has_active_repair_job(*, session: Any, source_id: UUID) -> bool:
+        active = (JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING)
+        return (
+            session.execute(
+                select(EvolutionJob.id)
+                .where(
+                    EvolutionJob.job_kind == "repair",
+                    EvolutionJob.repair_source_candidate_id == source_id,
+                    EvolutionJob.status.in_(active),
+                )
+                .limit(1)
+            ).first()
+            is not None
+        )
+
+    @staticmethod
+    def _ancestor_aggregate_ready(*, session: Any, commit_hash: str) -> bool:
+        if not commit_hash:
+            return False
+        return (
+            session.execute(
+                select(MapElitesRepoStateAggregate.commit_hash)
+                .where(MapElitesRepoStateAggregate.commit_hash == commit_hash)
+                .limit(1)
+            ).first()
+            is not None
+        )
+
+    def _repair_goal(self, candidate: CandidateCommit) -> str:
+        base_goal = (self.settings.worker_evolution_global_goal or "").strip()
+        summary = normalize_repair_text(candidate.failure_summary)
+        if summary:
+            return f"Repair failed candidate validation while preserving useful work. Failure: {summary}"
+        return base_goal or "Repair failed candidate validation while preserving useful work."
+
+
 @dataclass(slots=True)
 class JobScheduler:
     """Encapsulate all logic for producing and dispatching evolution jobs.
@@ -56,12 +237,18 @@ class JobScheduler:
     console: Console
     sampler: MapElitesSampler
     _sender_actor: object = field(init=False, repr=False)
+    repair_sampler: FailedCandidateRepairSampler = field(init=False, repr=False)
+    _repair_tokens: int = field(default=0, init=False, repr=False)
+    _repair_completed_normal_jobs_seen: int = field(default=0, init=False, repr=False)
 
     def __post_init__(self) -> None:
         # Build a sender-only actor that targets the experiment-scoped queue.
         self._sender_actor = build_evolution_job_sender_actor(
             settings=self.settings,
         )
+        self.repair_sampler = FailedCandidateRepairSampler(settings=self.settings)
+        if bool(self.settings.failed_candidate_repair_enabled):
+            self._repair_completed_normal_jobs_seen = self._count_completed_normal_jobs_best_effort()
 
     # Measuring -------------------------------------------------------------
 
@@ -146,6 +333,7 @@ class JobScheduler:
                 if attempts >= max_recoveries:
                     job.status = JobStatus.FAILED
                     job.completed_at = current_time
+                    self._update_repair_source_after_terminal_failure(session=session, job=job)
                     failed += 1
                     self.console.log(
                         f"[yellow]Failed stale running job[/] id={job.id} recovery_count={next_attempt}",
@@ -170,6 +358,27 @@ class JobScheduler:
                     job.recovery_count,
                 )
         return JobLeaseReclaimResult(requeued=requeued, failed=failed)
+
+    def _update_repair_source_after_terminal_failure(
+        self,
+        *,
+        session: Any,
+        job: EvolutionJob,
+    ) -> None:
+        if str(getattr(job, "job_kind", "") or "").strip().lower() != "repair":
+            return
+        source_id = getattr(job, "repair_source_candidate_id", None)
+        if source_id is None:
+            return
+        source = session.get(CandidateCommit, source_id)
+        if source is None:
+            return
+        max_attempts = max(0, int(self.settings.failed_candidate_repair_max_attempts))
+        source.repair_state = (
+            "exhausted"
+            if int(getattr(source, "repair_attempts", 0) or 0) >= max_attempts
+            else "eligible"
+        )
 
     # Scheduling ------------------------------------------------------------
 
@@ -211,15 +420,49 @@ class JobScheduler:
                 return 0
             target = min(target, remaining_total)
 
-        sampling_snapshot = self.sampler.get_sampling_snapshot()
-        if sampling_snapshot is None:
-            self.console.log("[yellow]Sampler returned no job[/]")
-            return 0
-        effective_island = sampling_snapshot.island_id
-
         scheduled_ids: list[UUID] = []
+        sampling_snapshot = self.sampler.get_sampling_snapshot()
+        repair_reservation = self._available_repair_slots(capacity=target)
+        normal_target = max(0, target - repair_reservation)
         selected_base_commits: set[str] = set()
-        for _ in range(target):
+        if sampling_snapshot is not None:
+            scheduled_ids.extend(
+                self._schedule_normal_jobs(
+                    capacity=normal_target,
+                    sampling_snapshot=sampling_snapshot,
+                    selected_base_commits=selected_base_commits,
+                )
+            )
+        else:
+            self.console.log("[yellow]Sampler returned no job[/]")
+
+        remaining_capacity = max(0, target - len(scheduled_ids))
+        repair_jobs = self._schedule_repair_jobs(capacity=remaining_capacity, accrue_tokens=False)
+        scheduled_ids.extend(repair_jobs)
+        if len(repair_jobs) < repair_reservation and sampling_snapshot is not None:
+            scheduled_ids.extend(
+                self._schedule_normal_jobs(
+                    capacity=max(0, target - len(scheduled_ids)),
+                    sampling_snapshot=sampling_snapshot,
+                    selected_base_commits=selected_base_commits,
+                )
+            )
+        if scheduled_ids:
+            self._enqueue_jobs(scheduled_ids)
+        return len(scheduled_ids)
+
+    def _schedule_normal_jobs(
+        self,
+        *,
+        capacity: int,
+        sampling_snapshot: SamplingSnapshot,
+        selected_base_commits: set[str],
+    ) -> list[UUID]:
+        if capacity <= 0:
+            return []
+        scheduled_ids: list[UUID] = []
+        effective_island = sampling_snapshot.island_id
+        for _ in range(capacity):
             job = self._schedule_single_job(
                 island_id=effective_island,
                 sampling_snapshot=sampling_snapshot,
@@ -229,9 +472,83 @@ class JobScheduler:
                 break
             scheduled_ids.append(job.job_id)
             selected_base_commits.add(str(job.base_commit_hash))
-        if scheduled_ids:
-            self._enqueue_jobs(scheduled_ids)
-        return len(scheduled_ids)
+        return scheduled_ids
+
+    def _available_repair_slots(self, *, capacity: int) -> int:
+        if capacity <= 0 or not bool(self.settings.failed_candidate_repair_enabled):
+            return 0
+        self._accrue_repair_tokens()
+        max_per_tick = max(0, int(self.settings.failed_candidate_repair_max_jobs_per_tick))
+        max_active = max(0, int(self.settings.failed_candidate_repair_max_active_jobs))
+        if max_per_tick <= 0 or max_active <= 0 or self._repair_tokens <= 0:
+            return 0
+        active = self.repair_sampler.count_active_repair_jobs()
+        available_active = max(0, max_active - active)
+        return min(capacity, max_per_tick, available_active, self._repair_tokens)
+
+    def _schedule_repair_jobs(self, *, capacity: int, accrue_tokens: bool = True) -> list[UUID]:
+        if capacity <= 0 or not bool(self.settings.failed_candidate_repair_enabled):
+            return []
+        if accrue_tokens:
+            self._accrue_repair_tokens()
+        max_per_tick = max(0, int(self.settings.failed_candidate_repair_max_jobs_per_tick))
+        max_active = max(0, int(self.settings.failed_candidate_repair_max_active_jobs))
+        if max_per_tick <= 0 or max_active <= 0 or self._repair_tokens <= 0:
+            return []
+        active = self.repair_sampler.count_active_repair_jobs()
+        available_active = max(0, max_active - active)
+        count = min(capacity, max_per_tick, available_active, self._repair_tokens)
+        if count <= 0:
+            return []
+        scheduled_ids: list[UUID] = []
+        for _ in range(count):
+            repair = self.repair_sampler.schedule_one()
+            if repair is None:
+                break
+            self._repair_tokens = max(0, self._repair_tokens - 1)
+            scheduled_ids.append(repair.job_id)
+            log.info(
+                "Repair token consumed tokens_remaining={}",
+                self._repair_tokens,
+            )
+        return scheduled_ids
+
+    def _accrue_repair_tokens(self) -> None:
+        normal_jobs_per_token = max(1, int(self.settings.failed_candidate_repair_normal_jobs_per_token))
+        max_tokens = max(0, int(self.settings.failed_candidate_repair_max_tokens))
+        if max_tokens <= 0:
+            self._repair_tokens = 0
+            return
+        completed = self._count_completed_normal_jobs_best_effort()
+        delta = max(0, completed - self._repair_completed_normal_jobs_seen)
+        if delta <= 0:
+            return
+        earned = delta // normal_jobs_per_token
+        if earned <= 0:
+            return
+        self._repair_completed_normal_jobs_seen += earned * normal_jobs_per_token
+        self._repair_tokens = min(max_tokens, self._repair_tokens + earned)
+        log.info(
+            "Repair tokens accrued earned={} tokens={} normal_jobs_seen={}",
+            earned,
+            self._repair_tokens,
+            self._repair_completed_normal_jobs_seen,
+        )
+
+    def _count_completed_normal_jobs_best_effort(self) -> int:
+        try:
+            with session_scope() as session:
+                return int(
+                    session.execute(
+                        select(func.count(EvolutionJob.id)).where(
+                            EvolutionJob.status == JobStatus.SUCCEEDED,
+                            EvolutionJob.job_kind != "repair",
+                        )
+                    ).scalar_one()
+                )
+        except Exception as exc:  # pragma: no cover - defensive scheduler accounting
+            log.warning("Failed to count completed normal jobs for repair tokens: {}", exc)
+            return self._repair_completed_normal_jobs_seen
 
     def create_seed_jobs(
         self,
@@ -275,6 +592,7 @@ class JobScheduler:
                         "Cold-start seed job: design diverse initial directions "
                         "from the root baseline."
                     ),
+                    job_kind="seed",
                     sampling_strategy="seed",
                     sampling_initial_radius=None,
                     sampling_radius_used=None,
@@ -440,3 +758,11 @@ class JobScheduler:
                 [str(job_id) for job_id in missing[:10]],
             )
         return len(sent)
+
+
+def normalize_repair_text(value: str | None) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    text = " ".join(text.split())
+    return text[:400] or None

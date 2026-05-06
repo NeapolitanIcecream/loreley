@@ -471,7 +471,10 @@ should:
    DiagnosticCapsule policy.
 
 Failures before a candidate commit exists remain ordinary failed jobs. They are
-not repair-pool entries.
+not repair-pool entries. If the failed job is itself a repair job, the source
+failed candidate must still receive a terminal attempt-state update: move it
+back to `eligible` when attempts remain, or to `exhausted` when the consumed
+attempt reaches the configured maximum.
 
 Failures caused by publish errors, lost leases, database errors, artifact-store
 errors, or success-persistence errors should default to `repair_state='audit_only'`
@@ -650,8 +653,11 @@ Rules:
 - scheduling one repair job consumes one token;
 - repair tokens are capped by `max_repair_tokens`;
 - repair jobs still count against global unfinished and total job limits;
-- when normal work is idle, repair may use spare capacity but remains capped by
-  `max_active_repair_jobs`;
+- accrued tokens reserve up to `max_repair_jobs_per_scheduler_tick` repair slots
+  before normal archive sampling fills the scheduler batch;
+- if no eligible repair can be scheduled, normal archive sampling may use the
+  unused reserved slots;
+- repair remains capped by `max_active_repair_jobs`;
 - seed jobs retain priority while the archive is empty.
 
 Repair attempts should increment when a repair job is created, not only after it
@@ -896,6 +902,8 @@ Future phase: true descendant repair
   as exceptions.
 - Worker-synthesized exception fallback outcomes are not repairable by default.
 - A failed job with no candidate commit creates no repair-pool entry.
+- A repair job that fails before producing a candidate still updates its source
+  failed candidate to `eligible` or `exhausted`.
 - A failed job with a candidate commit but no durable branch is audit-only by
   default.
 - A repair-eligible failed candidate has safe DiagnosticCapsule evidence.

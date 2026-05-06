@@ -26,6 +26,9 @@ class JobOut(OrmOutModel):
     last_error: str | None
 
     is_seed_job: bool = False
+    job_kind: str = "evolution"
+    repair_source_candidate_id: UUID | None = None
+    repair_mode: str | None = None
     result_commit_hash: str | None = None
     ingestion_status: str | None = None
     has_evaluation_evidence: bool = False

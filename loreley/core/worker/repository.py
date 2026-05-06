@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from contextlib import contextmanager
@@ -23,7 +24,7 @@ from loreley.config import Settings, get_settings
 from loreley.core.git import RepositoryError, fetch_origin, require_commit, wrap_git_error
 from loreley.core.repo_lock import file_lock, resolve_repo_lock_path
 from loreley.db.base import session_scope
-from loreley.db.models import EvolutionJob, JobStatus, MapElitesArchiveCell
+from loreley.db.models import CandidateCommit, EvolutionJob, JobStatus, MapElitesArchiveCell
 from loreley.naming import worker_job_branch_prefix
 
 console = Console()
@@ -381,6 +382,88 @@ class WorkerRepository:
         )
         log.info("Pushed branch {} to {}", branch, remote_name)
 
+    def diff_summary_between_commits(
+        self,
+        *,
+        base_commit: str,
+        candidate_commit: str,
+        worktree: Path | None = None,
+    ) -> str:
+        """Return a bounded, human-readable summary of a candidate diff."""
+
+        base = str(base_commit or "").strip()
+        candidate = str(candidate_commit or "").strip()
+        if not base or not candidate:
+            raise RepositoryError("Both base and candidate commits are required for repair diff.")
+        target = self._resolve_worktree_path(worktree)
+        try:
+            result = subprocess.run(
+                [self.git_bin or "git", "-C", str(target), "diff", "--stat", f"{base}..{candidate}"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=self._env,
+            )
+        except subprocess.CalledProcessError as exc:
+            raise RepositoryError(
+                f"Failed to summarize repair diff {base}..{candidate}: {exc.stderr or exc}"
+            ) from exc
+        return result.stdout.strip()
+
+    def apply_diff_between_commits(
+        self,
+        *,
+        base_commit: str,
+        candidate_commit: str,
+        worktree: Path | None = None,
+        max_bytes: int = 65_536,
+    ) -> None:
+        """Apply the patch represented by base..candidate into a checked-out worktree."""
+
+        base = str(base_commit or "").strip()
+        candidate = str(candidate_commit or "").strip()
+        if not base or not candidate:
+            raise RepositoryError("Both base and candidate commits are required for repair patch.")
+        target = self._resolve_worktree_path(worktree)
+        try:
+            diff_result = subprocess.run(
+                [self.git_bin or "git", "-C", str(target), "diff", "--binary", f"{base}..{candidate}"],
+                check=True,
+                capture_output=True,
+                env=self._env,
+            )
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or b"").decode("utf-8", errors="replace")
+            raise RepositoryError(
+                f"Failed to build repair patch {base}..{candidate}: {stderr or exc}"
+            ) from exc
+        patch = diff_result.stdout or b""
+        if not patch:
+            return
+        if len(patch) > max(0, int(max_bytes)):
+            raise RepositoryError(
+                f"Repair patch exceeds configured byte budget ({len(patch)} > {max_bytes})."
+            )
+        try:
+            subprocess.run(
+                [self.git_bin or "git", "-C", str(target), "apply", "--whitespace=nowarn"],
+                input=patch,
+                check=True,
+                capture_output=True,
+                env=self._env,
+            )
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or b"").decode("utf-8", errors="replace")
+            log.warning(
+                "Repair patch application failed base={} candidate={}: {}",
+                base,
+                candidate,
+                stderr or exc,
+            )
+            raise RepositoryError(
+                f"Failed to apply repair patch {base}..{candidate}: {stderr or exc}"
+            ) from exc
+
     def delete_remote_branch(
         self,
         branch_name: str,
@@ -552,6 +635,32 @@ class WorkerRepository:
                     )
                 )
             ).all()
+
+            try:
+                protected_candidate_rows = session.execute(
+                    select(
+                        CandidateCommit.commit_hash,
+                        CandidateCommit.candidate_branch_name,
+                        CandidateCommit.repair_state,
+                        CandidateCommit.publication_status,
+                    ).where(
+                        CandidateCommit.commit_hash.is_not(None),
+                        CandidateCommit.commit_hash != "",
+                        CandidateCommit.candidate_branch_name.is_not(None),
+                        CandidateCommit.candidate_branch_name != "",
+                        CandidateCommit.repair_state.in_(("eligible", "scheduled", "repairing")),
+                        CandidateCommit.publication_status == "published",
+                    )
+                ).all()
+            except Exception as exc:  # pragma: no cover - compatibility with narrow test doubles
+                log.debug("Skipping candidate-ledger branch protection lookup: {}", exc)
+                protected_candidate_rows = []
+            for row in protected_candidate_rows:
+                if len(row) < 2:
+                    continue
+                commit_hash, branch_name = row[0], row[1]
+                _remember_commit(commit_hash)
+                _remember_branch(branch_name)
 
         for (
             base_commit_hash,

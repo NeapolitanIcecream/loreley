@@ -26,7 +26,7 @@ from loreley.core.repo_lock import repo_lock
 from loreley.core.worker.evaluator import EvaluationContext, EvaluationError, EvaluationResult, Evaluator
 from loreley.core.worker.repository import RepositoryError, WorkerRepository
 from loreley.db.base import session_scope
-from loreley.db.models import CommitCard, EvolutionJob, JobStatus, Metric
+from loreley.db.models import CandidateCommit, CommitCard, EvolutionJob, JobStatus, Metric
 
 log = logger.bind(module="scheduler.ingestion")
 
@@ -811,6 +811,31 @@ class MapElitesIngestion:
         job.ingestion_status_code = payload.status_code
         job.ingestion_message = payload.message
         job.ingestion_cell_index = self._ingestion_record_cell_index(payload.record)
+        result_commit_hash = getattr(job, "result_commit_hash", None) or snapshot.result_commit_hash
+        if result_commit_hash and hasattr(session, "execute"):
+            self._apply_candidate_archive_state(
+                session=session,
+                commit_hash=result_commit_hash,
+                payload=payload,
+            )
+
+    @staticmethod
+    def _apply_candidate_archive_state(
+        *,
+        session: Session,
+        commit_hash: str,
+        payload: _IngestionStatePayload,
+    ) -> None:
+        candidate = session.execute(
+            select(CandidateCommit).where(CandidateCommit.commit_hash == commit_hash)
+        ).scalar_one_or_none()
+        if candidate is None:
+            return
+        if payload.status == "succeeded" and payload.record is not None:
+            candidate.archive_status = "member"
+            candidate.archived_at = datetime.now(timezone.utc)
+        elif payload.status == "skipped":
+            candidate.archive_status = "rejected"
 
     @staticmethod
     def _clamp_ingestion_text(value: str | None, *, max_chars: int) -> str | None:
