@@ -98,25 +98,21 @@ def _load_protected_job_rows(session: Any) -> Sequence[Any]:
 
 
 def _load_protected_candidate_rows(session: Any) -> Sequence[Any]:
-    try:
-        return session.execute(
-            select(
-                CandidateCommit.commit_hash,
-                CandidateCommit.candidate_branch_name,
-                CandidateCommit.repair_state,
-                CandidateCommit.publication_status,
-            ).where(
-                CandidateCommit.commit_hash.is_not(None),
-                CandidateCommit.commit_hash != "",
-                CandidateCommit.candidate_branch_name.is_not(None),
-                CandidateCommit.candidate_branch_name != "",
-                CandidateCommit.repair_state.in_(("eligible", "scheduled", "repairing")),
-                CandidateCommit.publication_status == "published",
-            )
-        ).all()
-    except Exception as exc:  # pragma: no cover - compatibility with narrow test doubles
-        log.debug("Skipping candidate-ledger branch protection lookup: {}", exc)
-        return ()
+    return session.execute(
+        select(
+            CandidateCommit.commit_hash,
+            CandidateCommit.candidate_branch_name,
+            CandidateCommit.repair_state,
+            CandidateCommit.publication_status,
+        ).where(
+            CandidateCommit.commit_hash.is_not(None),
+            CandidateCommit.commit_hash != "",
+            CandidateCommit.candidate_branch_name.is_not(None),
+            CandidateCommit.candidate_branch_name != "",
+            CandidateCommit.repair_state.in_(("eligible", "scheduled", "repairing")),
+            CandidateCommit.publication_status == "published",
+        )
+    ).all()
 
 
 def _remember_candidate_branch_row(row: Any, state: _ProtectedBranchState) -> None:
