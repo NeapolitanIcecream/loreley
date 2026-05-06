@@ -77,15 +77,18 @@ are touched in the database.
 ### Dispatching pending jobs
 
 - **`dispatch_pending_jobs() -> int`**:
-  - Selects up to `SCHEDULER_DISPATCH_BATCH_SIZE` jobs with status `PENDING`,
+  - Selects up to `SCHEDULER_DISPATCH_BATCH_SIZE` jobs with status `PENDING`
+    plus stale `QUEUED` jobs older than `WORKER_JOB_LEASE_TTL_SECONDS`,
     ordered by:
     1. `priority` (descending),
     2. `scheduled_at` (ascending),
     3. `created_at` (ascending),
     so that higher-priority and older jobs drain first.
   - Uses a `SELECT ... FOR UPDATE` window to safely select eligible jobs.
+  - Redispatching stale `QUEUED` rows repairs broker-loss or restart cases where
+    a row was marked queued but no worker ever started it.
   - Sends each selected job id to the Dramatiq `run_evolution_job` actor, then
-    marks successfully submitted rows as `QUEUED` and stamps `scheduled_at`.
+    marks successfully submitted `PENDING` rows as `QUEUED` and stamps `scheduled_at`.
   - Returns the number of jobs successfully dispatched this tick.
 
 Any failures while enqueuing individual jobs are logged with Loguru and

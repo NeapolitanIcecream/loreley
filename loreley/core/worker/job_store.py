@@ -216,7 +216,11 @@ class EvolutionJobStore:
                         raise EvolutionWorkerError(
                             f"Evolution job {job_id} disappeared while recording candidate metadata.",
                         )
-                if run_token is None and job.status in {JobStatus.SUCCEEDED, JobStatus.CANCELLED}:
+                if run_token is None and job.status in {
+                    JobStatus.SUCCEEDED,
+                    JobStatus.FAILED,
+                    JobStatus.CANCELLED,
+                }:
                     raise EvolutionWorkerError(
                         f"Evolution job {job_id} cannot record a candidate in status {job.status}.",
                     )
@@ -283,7 +287,6 @@ class EvolutionJobStore:
             commit_hash=commit_hash,
             commit_message=commit_message,
         )
-        payload = self._build_success_payload(request)
         try:
             with session_scope() as session:
                 job = self._lock_active_job_for_run(
@@ -292,6 +295,7 @@ class EvolutionJobStore:
                     run_token=job_ctx.run_token,
                     action="persisting success",
                 )
+                payload = self._build_success_payload(request)
                 self._mark_job_row_succeeded(job, plan=plan, commit_hash=commit_hash)
                 card = self._add_commit_card(
                     session=session,
@@ -517,7 +521,7 @@ class EvolutionJobStore:
                     job = session.get(EvolutionJob, job_id)
                     if not job:
                         return False
-                    if job.status in {JobStatus.SUCCEEDED, JobStatus.CANCELLED}:
+                    if job.status in {JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELLED}:
                         return False
                 job.status = JobStatus.FAILED
                 job.completed_at = _utc_now()

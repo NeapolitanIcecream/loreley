@@ -25,6 +25,7 @@ from loreley.core.worker.evaluator import EvaluationDiagnostic, EvaluationMetric
 from loreley.core.worker.evolution import JobContext
 from loreley.core.worker.job_store import (
     EvolutionJobStore,
+    EvolutionWorkerError,
     JobLeaseLost,
     JobPreconditionError,
 )
@@ -311,6 +312,50 @@ def test_record_candidate_commit_rejects_stale_run_token(
     assert job_row.candidate_commit_hash == "cand-old"
     assert job_row.candidate_branch_name == "exp/old-branch"
     assert job_row.candidate_published_at is not None
+
+
+def test_record_candidate_commit_without_run_token_preserves_failed_job(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    """Regression: no-token candidate writes could mutate jobs already marked FAILED."""
+
+    job_id = uuid.uuid4()
+    published_at = datetime(2026, 3, 25, 8, 40, tzinfo=timezone.utc)
+
+    class DummyJob:
+        def __init__(self) -> None:
+            self.id = job_id
+            self.status = JobStatus.FAILED
+            self.candidate_commit_hash = "cand-old"
+            self.candidate_branch_name = "exp/old-branch"
+            self.candidate_published_at = published_at
+
+    job_row = DummyJob()
+
+    class DummySession:
+        def get(self, _model: Any, row_id: uuid.UUID) -> DummyJob | None:
+            assert row_id == job_id
+            return job_row
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    monkeypatch.setattr(job_store, "session_scope", fake_scope)
+    store = EvolutionJobStore(settings=settings)
+
+    with pytest.raises(EvolutionWorkerError, match="cannot record a candidate"):
+        store.record_candidate_commit(
+            job_id,
+            "cand-new",
+            "exp/new-branch",
+            published=True,
+        )
+
+    assert job_row.candidate_commit_hash == "cand-old"
+    assert job_row.candidate_branch_name == "exp/old-branch"
+    assert job_row.candidate_published_at == published_at
 
 
 def test_start_job_rejects_missing_or_invalid_jobs(
@@ -721,6 +766,60 @@ def test_persist_success_rejects_stale_run_token(
     assert added == []
 
 
+def test_persist_success_validates_run_token_before_artifact_side_effects(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    """Regression: stale workers must not write success artifacts before lease validation."""
+
+    job_id = uuid.uuid4()
+    stale_token = uuid.uuid4()
+    side_effects: list[str] = []
+
+    class DummyResult:
+        def scalar_one_or_none(self) -> Any:
+            return None
+
+    class DummySession:
+        def execute(self, _stmt: Any) -> DummyResult:
+            return DummyResult()
+
+        def add(self, _obj: Any) -> None:
+            side_effects.append("db_add")
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    def record_git_inspection(**_kwargs: Any) -> Any:
+        side_effects.append("git_inspection")
+        return type("Build", (), {"key_files": [], "highlights": []})()
+
+    def record_artifact_write(_request: Any) -> JobArtifactWriteResult:
+        side_effects.append("artifact_write")
+        return JobArtifactWriteResult(
+            fixed=FixedJobArtifactPaths(evaluation_json_path="/tmp/evaluation.json"),
+        )
+
+    monkeypatch.setattr(job_store, "session_scope", fake_scope)
+    monkeypatch.setattr(job_store, "build_commit_card_from_git", record_git_inspection)
+    monkeypatch.setattr(job_store, "write_job_artifacts", record_artifact_write)
+    store = EvolutionJobStore(settings=settings)
+
+    with pytest.raises(JobLeaseLost):
+        store.persist_success(
+            job_ctx=_sample_job_context(job_id=job_id, run_token=stale_token),
+            plan=_sample_plan_response(),
+            coding=_sample_coding_response(),
+            evaluation=EvaluationResult(summary="eval"),
+            worktree=Path("."),
+            commit_hash="newcommit",
+            commit_message="msg",
+        )
+
+    assert side_effects == []
+
+
 def test_mark_job_failed_updates_running_job_when_run_token_matches(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,
@@ -798,3 +897,46 @@ def test_mark_job_failed_rejects_stale_run_token_without_overwriting_state(
     recorded = store.mark_job_failed(job_id, "boom", run_token=uuid.uuid4())
 
     assert recorded is False
+
+
+def test_mark_job_failed_without_run_token_preserves_existing_failed_job(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    """Regression: unowned failure writes must not erase stale-lease failure signals."""
+
+    job_id = uuid.uuid4()
+    completed_at = datetime(2026, 3, 25, 8, 45, tzinfo=timezone.utc)
+    stale_failure = "Lease expired after missing heartbeat; recovered by scheduler (attempt=4)."
+
+    class DummyJob:
+        def __init__(self) -> None:
+            self.id = job_id
+            self.status = JobStatus.FAILED
+            self.completed_at = completed_at
+            self.run_token = None
+            self.worker_id = None
+            self.heartbeat_at = None
+            self.lease_expires_at = None
+            self.last_error = stale_failure
+
+    job_row = DummyJob()
+
+    class DummySession:
+        def get(self, _model: Any, row_id: uuid.UUID) -> DummyJob | None:
+            assert row_id == job_id
+            return job_row
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    monkeypatch.setattr(job_store, "session_scope", fake_scope)
+    store = EvolutionJobStore(settings=settings)
+
+    recorded = store.mark_job_failed(job_id, "late worker startup failure")
+
+    assert recorded is False
+    assert job_row.status is JobStatus.FAILED
+    assert job_row.completed_at == completed_at
+    assert job_row.last_error == stale_failure

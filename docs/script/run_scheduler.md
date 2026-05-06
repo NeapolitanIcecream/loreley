@@ -61,6 +61,8 @@ Logs are written to:
 
 Each tick log also includes `reclaimed_pending` and `reclaimed_failed`, which show how many stale or malformed `RUNNING` jobs were requeued or failed during that tick.
 
+Dispatch also includes stale `QUEUED` rows older than `WORKER_JOB_LEASE_TTL_SECONDS`. This repairs broker-loss or scheduler-restart cases where a row was persisted as queued but no worker started it.
+
 For lease recovery triage and manual retry steps, see [Job lease recovery](job_leases.md).
 
 ## Exit codes

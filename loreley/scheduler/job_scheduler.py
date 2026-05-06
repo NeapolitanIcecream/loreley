@@ -8,13 +8,13 @@ high-level control flow.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Sequence
+from datetime import datetime, timedelta, timezone
+from typing import Any, Sequence
 from uuid import UUID
 
 from loguru import logger
 from rich.console import Console
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 
 from loreley.config import Settings, resolve_default_island_id
 from loreley.core.map_elites.sampler import MapElitesSampler, SamplingSnapshot, ScheduledSamplerJob
@@ -352,10 +352,24 @@ class JobScheduler:
 
     def _fetch_pending_job_ids(self, *, limit: int) -> list[UUID]:
         with session_scope() as session:
+            current_time = _db_utc_now(session)
+            queued_stale_after = timedelta(
+                seconds=max(1, int(self.settings.worker_job_lease_ttl_seconds))
+            )
+            queued_stale_before = current_time - queued_stale_after
             stmt = (
                 select(EvolutionJob.id)
                 .where(
-                    EvolutionJob.status == JobStatus.PENDING,
+                    or_(
+                        EvolutionJob.status == JobStatus.PENDING,
+                        and_(
+                            EvolutionJob.status == JobStatus.QUEUED,
+                            or_(
+                                EvolutionJob.scheduled_at.is_(None),
+                                EvolutionJob.scheduled_at < queued_stale_before,
+                            ),
+                        ),
+                    ),
                 )
                 .order_by(
                     EvolutionJob.priority.desc(),
@@ -370,18 +384,21 @@ class JobScheduler:
         ready: list[UUID] = []
         if not job_ids:
             return ready
-        now = datetime.now(timezone.utc)
         with session_scope() as session:
+            now = _db_utc_now(session)
             stmt = (
                 select(EvolutionJob)
                 .where(EvolutionJob.id.in_(job_ids))
                 .with_for_update(skip_locked=True)
             )
             for job in session.execute(stmt).scalars():
-                if job.status != JobStatus.PENDING:
+                if job.status == JobStatus.PENDING:
+                    job.status = JobStatus.QUEUED
+                    job.scheduled_at = job.scheduled_at or now
+                elif job.status == JobStatus.QUEUED:
+                    job.scheduled_at = now
+                else:
                     continue
-                job.status = JobStatus.QUEUED
-                job.scheduled_at = job.scheduled_at or now
                 ready.append(job.id)
         return ready
 
