@@ -26,7 +26,14 @@ from loreley.core.repo_lock import repo_lock
 from loreley.core.worker.evaluator import EvaluationContext, EvaluationError, EvaluationResult, Evaluator
 from loreley.core.worker.repository import RepositoryError, WorkerRepository
 from loreley.db.base import session_scope
-from loreley.db.models import CandidateCommit, CommitCard, EvolutionJob, JobStatus, Metric
+from loreley.db.models import (
+    CandidateCommit,
+    CommitCard,
+    EvolutionJob,
+    JobStatus,
+    MapElitesArchiveCell,
+    Metric,
+)
 
 log = logger.bind(module="scheduler.ingestion")
 
@@ -835,7 +842,29 @@ class MapElitesIngestion:
             candidate.archive_status = "member"
             candidate.archived_at = datetime.now(timezone.utc)
         elif payload.status == "skipped":
-            candidate.archive_status = "rejected"
+            known_archive_member = candidate.archive_status == "member"
+            if not known_archive_member:
+                known_archive_member = MapElitesIngestion._commit_is_archive_member(
+                    session=session,
+                    commit_hash=commit_hash,
+                )
+            if known_archive_member:
+                candidate.archive_status = "member"
+                if candidate.archived_at is None:
+                    candidate.archived_at = datetime.now(timezone.utc)
+            else:
+                candidate.archive_status = "rejected"
+
+    @staticmethod
+    def _commit_is_archive_member(*, session: Session, commit_hash: str) -> bool:
+        return (
+            session.execute(
+                select(MapElitesArchiveCell.commit_hash)
+                .where(MapElitesArchiveCell.commit_hash == commit_hash)
+                .limit(1)
+            ).scalar_one_or_none()
+            is not None
+        )
 
     @staticmethod
     def _clamp_ingestion_text(value: str | None, *, max_chars: int) -> str | None:
