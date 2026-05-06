@@ -742,6 +742,116 @@ def test_record_ingestion_state_records_result_payload(monkeypatch, tmp_path) ->
     assert dummy_job.ingestion_cell_index == 7
 
 
+class _ScalarOneOrNone:
+    def __init__(self, value: object | None) -> None:
+        self.value = value
+
+    def scalar_one_or_none(self) -> object | None:
+        return self.value
+
+
+def test_skipped_ingestion_does_not_downgrade_existing_archive_member() -> None:
+    """Regression: skipped duplicate ingests must not mark archive members rejected."""
+    archived_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    candidate = SimpleNamespace(archive_status="member", archived_at=archived_at)
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.execute_calls = 0
+
+        def execute(self, _stmt: Any) -> _ScalarOneOrNone:
+            self.execute_calls += 1
+            return _ScalarOneOrNone(candidate)
+
+    payload = ingestion_mod._IngestionStatePayload(
+        status="skipped",
+        reason=None,
+        delta=None,
+        status_code=0,
+        message=None,
+        record=None,
+    )
+    session = DummySession()
+
+    ingestion_mod.MapElitesIngestion._apply_candidate_archive_state(
+        session=cast(Any, session),
+        commit_hash="abc123",
+        payload=payload,
+    )
+
+    assert candidate.archive_status == "member"
+    assert candidate.archived_at is archived_at
+    assert session.execute_calls == 1
+
+
+def test_skipped_ingestion_reconciles_archive_cell_membership() -> None:
+    candidate = SimpleNamespace(archive_status="not_considered", archived_at=None)
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.execute_calls = 0
+
+        def execute(self, _stmt: Any) -> _ScalarOneOrNone:
+            self.execute_calls += 1
+            if self.execute_calls == 1:
+                return _ScalarOneOrNone(candidate)
+            return _ScalarOneOrNone(1)
+
+    payload = ingestion_mod._IngestionStatePayload(
+        status="skipped",
+        reason=None,
+        delta=None,
+        status_code=0,
+        message=None,
+        record=None,
+    )
+    session = DummySession()
+
+    ingestion_mod.MapElitesIngestion._apply_candidate_archive_state(
+        session=cast(Any, session),
+        commit_hash="abc123",
+        payload=payload,
+    )
+
+    assert candidate.archive_status == "member"
+    assert candidate.archived_at is not None
+    assert session.execute_calls == 2
+
+
+def test_skipped_ingestion_marks_non_member_candidate_rejected() -> None:
+    candidate = SimpleNamespace(archive_status="not_considered", archived_at=None)
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.execute_calls = 0
+
+        def execute(self, _stmt: Any) -> _ScalarOneOrNone:
+            self.execute_calls += 1
+            if self.execute_calls == 1:
+                return _ScalarOneOrNone(candidate)
+            return _ScalarOneOrNone(None)
+
+    payload = ingestion_mod._IngestionStatePayload(
+        status="skipped",
+        reason=None,
+        delta=None,
+        status_code=0,
+        message=None,
+        record=None,
+    )
+    session = DummySession()
+
+    ingestion_mod.MapElitesIngestion._apply_candidate_archive_state(
+        session=cast(Any, session),
+        commit_hash="abc123",
+        payload=payload,
+    )
+
+    assert candidate.archive_status == "rejected"
+    assert candidate.archived_at is None
+    assert session.execute_calls == 2
+
+
 def test_backoff_computation_skips_recent_failures(tmp_path) -> None:
     settings = Settings.model_validate(
         {

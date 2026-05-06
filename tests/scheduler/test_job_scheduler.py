@@ -13,7 +13,7 @@ import loreley.scheduler.job_scheduler as job_scheduler
 from loreley.config import Settings
 from loreley.core.map_elites.sampler import MapElitesSampler, SamplingSnapshot
 from loreley.db.models import JobStatus
-from loreley.scheduler.job_scheduler import JobLeaseReclaimResult, JobScheduler
+from loreley.scheduler.job_scheduler import JobLeaseReclaimResult, JobScheduler, ScheduledRepairJob
 
 
 class DummySenderActor:
@@ -264,6 +264,166 @@ def test_schedule_jobs_reuses_single_sampling_snapshot_and_avoids_duplicate_base
     ]
 
 
+def test_repair_scheduler_consumes_token_for_scheduled_repair_job(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    sender = DummySenderActor()
+    monkeypatch.setattr(
+        job_scheduler,
+        "build_evolution_job_sender_actor",
+        lambda **_kwargs: sender,
+    )
+    monkeypatch.setattr(
+        JobScheduler,
+        "_count_completed_normal_jobs_best_effort",
+        lambda _self: 0,
+    )
+    settings.failed_candidate_repair_enabled = True
+    settings.failed_candidate_repair_normal_jobs_per_token = 9
+    settings.failed_candidate_repair_max_tokens = 3
+    settings.failed_candidate_repair_max_active_jobs = 1
+    settings.failed_candidate_repair_max_jobs_per_tick = 1
+    repair_job_id = uuid.uuid4()
+    repair_source_id = uuid.uuid4()
+
+    class DummyRepairSampler:
+        def __init__(self) -> None:
+            self.scheduled = 0
+
+        def count_active_repair_jobs(self) -> int:
+            return 0
+
+        def schedule_one(self) -> ScheduledRepairJob:
+            self.scheduled += 1
+            return ScheduledRepairJob(
+                job_id=repair_job_id,
+                repair_source_candidate_id=repair_source_id,
+                base_commit_hash="base",
+            )
+
+    scheduler = cast(Any, JobScheduler)(
+        settings=settings,
+        console=Console(record=True),
+        sampler=cast(MapElitesSampler, object()),
+    )
+    scheduler.repair_sampler = DummyRepairSampler()
+    scheduler._repair_completed_normal_jobs_seen = 0
+    monkeypatch.setattr(
+        JobScheduler,
+        "_count_completed_normal_jobs_best_effort",
+        lambda _self: 9,
+    )
+
+    scheduled = scheduler._schedule_repair_jobs(capacity=1)
+
+    assert scheduled == [repair_job_id]
+    assert scheduler._repair_tokens == 0
+    assert scheduler.repair_sampler.scheduled == 1
+
+
+def test_schedule_jobs_reserves_repair_slot_when_normal_sampling_can_fill_batch(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    """Regression: normal MAP-Elites scheduling could consume every repair-capable tick."""
+
+    sender = DummySenderActor()
+    monkeypatch.setattr(
+        job_scheduler,
+        "build_evolution_job_sender_actor",
+        lambda **_kwargs: sender,
+    )
+    settings.scheduler_max_unfinished_jobs = 4
+    settings.scheduler_schedule_batch_size = 2
+    settings.failed_candidate_repair_enabled = True
+    settings.failed_candidate_repair_normal_jobs_per_token = 1
+    settings.failed_candidate_repair_max_tokens = 3
+    settings.failed_candidate_repair_max_active_jobs = 1
+    settings.failed_candidate_repair_max_jobs_per_tick = 1
+    normal_job_ids = [uuid.uuid4(), uuid.uuid4()]
+    repair_job_id = uuid.uuid4()
+    enqueued: list[uuid.UUID] = []
+
+    class DummySampler:
+        def __init__(self) -> None:
+            self.normal_scheduled = 0
+
+        def get_sampling_snapshot(self, island_id: str | None = None):
+            return SamplingSnapshot(
+                island_id=island_id or "main",
+                cell_commits={0: "base-a", 1: "base-b"},
+                cell_objectives={0: 1.0, 1: 2.0},
+                items=((0, "base-a"), (1, "base-b")),
+                neighbor_cell_indices=None,
+                neighbor_commits=(),
+                neighbor_coords=None,
+            )
+
+        def schedule_job(
+            self,
+            *,
+            island_id: str | None = None,
+            sampling_snapshot: SamplingSnapshot | None = None,
+            excluded_base_commits=None,
+            **_kwargs: object,
+        ):
+            excluded = set(str(commit) for commit in (excluded_base_commits or ()))
+            for index, (_cell_index, commit_hash) in enumerate(sampling_snapshot.items):
+                if commit_hash in excluded:
+                    continue
+                self.normal_scheduled += 1
+                return SimpleNamespace(
+                    job_id=normal_job_ids[index],
+                    island_id=island_id or "main",
+                    base_commit_hash=commit_hash,
+                    inspiration_commit_hashes=(),
+                )
+            return None
+
+    class DummyRepairSampler:
+        def __init__(self) -> None:
+            self.scheduled = 0
+
+        def count_active_repair_jobs(self) -> int:
+            return 0
+
+        def schedule_one(self) -> ScheduledRepairJob:
+            self.scheduled += 1
+            return ScheduledRepairJob(
+                job_id=repair_job_id,
+                repair_source_candidate_id=uuid.uuid4(),
+                base_commit_hash="base",
+            )
+
+    monkeypatch.setattr(
+        JobScheduler,
+        "_count_completed_normal_jobs_best_effort",
+        lambda _self: 1,
+    )
+    sampler = DummySampler()
+    scheduler = cast(Any, JobScheduler)(
+        settings=settings,
+        console=Console(record=True),
+        sampler=cast(MapElitesSampler, sampler),
+    )
+    scheduler.repair_sampler = DummyRepairSampler()
+    scheduler._repair_completed_normal_jobs_seen = 0
+    monkeypatch.setattr(
+        JobScheduler,
+        "_enqueue_jobs",
+        lambda _self, ids: enqueued.extend(list(ids)) or len(list(ids)),
+    )
+
+    scheduled = scheduler.schedule_jobs(unfinished_jobs=0, total_jobs=0)
+
+    assert scheduled == 2
+    assert sampler.normal_scheduled == 1
+    assert scheduler.repair_sampler.scheduled == 1
+    assert repair_job_id in enqueued
+    assert len(enqueued) == 2
+
+
 def test_reclaim_stale_running_jobs_requeues_expired_attempts(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,
@@ -489,3 +649,81 @@ def test_reclaim_stale_running_jobs_fails_after_recovery_budget_and_logs_signal(
         and "failed after stale lease reclaim" in record["message"].lower()
         for record in captured_logs
     )
+
+
+@pytest.mark.parametrize(
+    ("repair_attempts", "max_attempts", "expected_state"),
+    [
+        (1, 1, "exhausted"),
+        (1, 2, "eligible"),
+    ],
+)
+def test_reclaim_stale_running_repair_job_restores_source_after_recovery_budget(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+    repair_attempts: int,
+    max_attempts: int,
+    expected_state: str,
+) -> None:
+    """Regression: stale repair jobs could strand their source in repairing."""
+
+    sender = DummySenderActor()
+    monkeypatch.setattr(
+        job_scheduler,
+        "build_evolution_job_sender_actor",
+        lambda **_kwargs: sender,
+    )
+    settings.scheduler_stale_running_reclaim_batch_size = 10
+    settings.scheduler_stale_running_max_recovery_attempts = 1
+    settings.failed_candidate_repair_max_attempts = max_attempts
+    scheduler = cast(Any, JobScheduler)(
+        settings=settings,
+        console=Console(record=True),
+        sampler=cast(MapElitesSampler, object()),
+    )
+    now = datetime.now(timezone.utc)
+    source_id = uuid.uuid4()
+    source = SimpleNamespace(repair_state="repairing", repair_attempts=repair_attempts)
+    job_row = SimpleNamespace(
+        id=uuid.uuid4(),
+        status=JobStatus.RUNNING,
+        recovery_count=1,
+        run_token=uuid.uuid4(),
+        worker_id="worker-01",
+        lease_expires_at=now - timedelta(minutes=5),
+        heartbeat_at=now - timedelta(minutes=10),
+        started_at=now - timedelta(hours=1),
+        completed_at=None,
+        scheduled_at=None,
+        last_error=None,
+        job_kind="repair",
+        repair_source_candidate_id=source_id,
+    )
+
+    class DummyExecuteResult:
+        def __init__(self, rows: list[object]) -> None:
+            self._rows = rows
+
+        def scalars(self) -> list[object]:
+            return list(self._rows)
+
+    class DummySession:
+        def execute(self, _stmt: Any) -> DummyExecuteResult:
+            return DummyExecuteResult([job_row])
+
+        def get(self, model: Any, row_id: uuid.UUID) -> object | None:
+            if model is job_scheduler.CandidateCommit and row_id == source_id:
+                return source
+            return None
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    monkeypatch.setattr(job_scheduler, "session_scope", fake_scope)
+
+    reclaimed = scheduler.reclaim_stale_running_jobs(now=now)
+
+    assert reclaimed == JobLeaseReclaimResult(requeued=0, failed=1)
+    assert job_row.status is JobStatus.FAILED
+    assert source.repair_state == expected_state

@@ -162,10 +162,12 @@ class IterationContext:
     seed_job: bool = False
     sampling_strategy: str | None = None
     facts: Sequence[str] = field(default_factory=tuple)
+    repair_context: str | None = None
 
     def __post_init__(self) -> None:
         self.sampling_strategy = (self.sampling_strategy or "").strip() or None
         self.facts = tuple(str(item).strip() for item in (self.facts or ()) if str(item).strip())
+        self.repair_context = (self.repair_context or "").strip() or None
 
 
 @dataclass(slots=True)
@@ -623,6 +625,8 @@ Inspiration Commits:
         if context.facts:
             lines.append("- sampler_facts:")
             lines.extend(f"  - {self._truncate(fact, limit=200)}" for fact in context.facts)
+        if context.repair_context:
+            lines.append(context.repair_context)
         return "\n".join(lines)
 
     def _format_base_commit_block(self, context: CommitPlanningContext) -> str:

@@ -6,6 +6,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy.exc import SQLAlchemyError
@@ -21,7 +22,14 @@ from loreley.core.worker.coding import (
     CodingAgentResponse,
     ExecutionReport,
 )
-from loreley.core.worker.evaluator import EvaluationDiagnostic, EvaluationMetric, EvaluationResult
+from loreley.core.worker.evaluator import (
+    EvaluationArtifact,
+    EvaluationDiagnostic,
+    EvaluationFailureResult,
+    EvaluationMetric,
+    EvaluationOutcome,
+    EvaluationResult,
+)
 from loreley.core.worker.evolution import JobContext
 from loreley.core.worker.job_store import (
     EvolutionJobStore,
@@ -221,6 +229,7 @@ def test_record_candidate_commit_updates_job_metadata(
             self.candidate_published_at = None
 
     job_row = DummyJob()
+    added: list[Any] = []
 
     class DummyResult:
         def __init__(self, obj: Any) -> None:
@@ -232,6 +241,9 @@ def test_record_candidate_commit_updates_job_metadata(
     class DummySession:
         def execute(self, _stmt: Any) -> DummyResult:
             return DummyResult(job_row)
+
+        def add(self, obj: Any) -> None:
+            added.append(obj)
 
     @contextmanager
     def fake_scope() -> Any:
@@ -250,6 +262,7 @@ def test_record_candidate_commit_updates_job_metadata(
     assert job_row.candidate_commit_hash == "cand123"
     assert job_row.candidate_branch_name == "exp/job-branch"
     assert job_row.candidate_published_at is None
+    assert any(isinstance(obj, job_store.CandidateCommit) for obj in added)
 
     store.record_candidate_commit(
         job_id,
@@ -514,6 +527,68 @@ def test_persist_success_updates_job_and_records_metadata(
     assert artifacts[0].diagnostics[0]["message"] == "throughput improved"
 
 
+def test_persist_success_materializes_passed_outcome_artifact_records(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    """Regression: ADR envelope artifact_records were dropped on successful evaluations."""
+
+    job_id = uuid.uuid4()
+    run_token = uuid.uuid4()
+    added: list[Any] = []
+    captured_artifacts: list[EvaluationArtifact] = []
+    job_row = _PersistSuccessDummyJob(job_id=job_id, run_token=run_token)
+
+    _install_persist_success_fakes(monkeypatch, job_row=job_row, added=added)
+
+    def record_artifact_write(request: Any) -> JobArtifactWriteResult:
+        captured_artifacts.extend(request.evaluation.artifacts)
+        materialized = (
+            _materialized_benchmark_artifact(key=captured_artifacts[0].key)
+            if captured_artifacts
+            else ()
+        )
+        return JobArtifactWriteResult(
+            fixed=FixedJobArtifactPaths(evaluation_json_path="/worker/artifacts/evaluation.json"),
+            evaluation_artifacts=materialized if isinstance(materialized, tuple) else (materialized,),
+        )
+
+    monkeypatch.setattr(job_store, "write_job_artifacts", record_artifact_write)
+    store = EvolutionJobStore(settings=settings)
+    evaluation = _sample_evaluation_result()
+    outcome_artifact = EvaluationArtifact(
+        key="adr-envelope-report",
+        kind="benchmark_json",
+        mime_type="application/json",
+        inline_payload={"score": 1.0},
+        summary="Declared only on EvaluationOutcome.artifact_records.",
+        visibility="agent_visible",
+    )
+    outcome = EvaluationOutcome(
+        evaluator_name="pytest",
+        candidate_commit_hash="newcommit",
+        outcome_kind="passed",
+        result=evaluation,
+        artifacts=(outcome_artifact,),
+    )
+
+    store.persist_success(
+        job_ctx=_sample_job_context(job_id=job_id, run_token=run_token),
+        plan=_sample_plan_response(),
+        coding=_sample_coding_response(),
+        evaluation=evaluation,
+        evaluation_outcome=outcome,
+        worktree=Path("."),
+        commit_hash="newcommit",
+        commit_message="msg",
+    )
+
+    artifacts = [obj for obj in added if isinstance(obj, job_store.EvaluationArtifactRecord)]
+    assert [artifact.key for artifact in captured_artifacts] == ["adr-envelope-report"]
+    assert len(artifacts) == 1
+    assert artifacts[0].key == "adr-envelope-report"
+
+
 class _PersistSuccessDummyJob:
     def __init__(self, *, job_id: uuid.UUID, run_token: uuid.UUID) -> None:
         self.id = job_id
@@ -564,6 +639,71 @@ class _PersistSuccessSession:
         for obj in self.added:
             if isinstance(obj, job_store.CommitCard) and obj.id is None:
                 obj.id = uuid.uuid4()
+            if isinstance(obj, job_store.CandidateCommit) and obj.id is None:
+                obj.id = uuid.uuid4()
+            if isinstance(obj, job_store.EvaluationAttempt) and obj.id is None:
+                obj.id = uuid.uuid4()
+            if isinstance(obj, job_store.DiagnosticCapsule) and obj.id is None:
+                obj.id = uuid.uuid4()
+
+
+class _PersistFailureResult:
+    def __init__(self, obj: Any = None, *, first: Any = None) -> None:
+        self.obj = obj
+        self._first = first
+
+    def scalar_one_or_none(self) -> Any:
+        return self.obj
+
+    def first(self) -> Any:
+        return self._first
+
+
+class _PersistFailureSession:
+    def __init__(self, *, job_row: _PersistSuccessDummyJob, added: list[Any]) -> None:
+        self.job_row = job_row
+        self.added = added
+        self.execute_calls = 0
+
+    def execute(self, _stmt: Any) -> _PersistFailureResult:
+        self.execute_calls += 1
+        if self.execute_calls == 1:
+            return _PersistFailureResult(self.job_row)
+        return _PersistFailureResult(None)
+
+    def get(self, _model: Any, _row_id: uuid.UUID) -> Any:
+        return None
+
+    def add(self, obj: Any) -> None:
+        self.added.append(obj)
+
+    def flush(self) -> None:
+        for obj in self.added:
+            if isinstance(obj, job_store.CandidateCommit) and obj.id is None:
+                obj.id = uuid.uuid4()
+            if isinstance(obj, job_store.DiagnosticCapsule) and obj.id is None:
+                obj.id = uuid.uuid4()
+            if isinstance(obj, job_store.EvaluationAttempt) and obj.id is None:
+                obj.id = uuid.uuid4()
+
+
+class _PersistFailureSessionWithRepairSource(_PersistFailureSession):
+    def __init__(
+        self,
+        *,
+        job_row: _PersistSuccessDummyJob,
+        added: list[Any],
+        source_id: uuid.UUID,
+        source: Any,
+    ) -> None:
+        super().__init__(job_row=job_row, added=added)
+        self.source_id = source_id
+        self.source = source
+
+    def get(self, model: Any, row_id: uuid.UUID) -> Any:
+        if model is job_store.CandidateCommit and row_id == self.source_id:
+            return self.source
+        return None
 
 
 def _install_persist_success_fakes(
@@ -592,9 +732,49 @@ def _install_persist_success_fakes(
     )
 
 
-def _materialized_benchmark_artifact() -> MaterializedEvaluationArtifact:
+def _install_persist_failure_fakes(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    job_row: _PersistSuccessDummyJob,
+    added: list[Any],
+) -> None:
+    @contextmanager
+    def fake_scope() -> Any:
+        yield _PersistFailureSession(job_row=job_row, added=added)
+
+    monkeypatch.setattr(job_store, "session_scope", fake_scope)
+    monkeypatch.setattr(
+        job_store,
+        "write_failure_job_artifacts",
+        lambda _request: JobArtifactWriteResult(fixed=FixedJobArtifactPaths()),
+    )
+    monkeypatch.setattr(
+        EvolutionJobStore,
+        "_ancestor_aggregate_ready",
+        lambda _self, **_kwargs: True,
+    )
+
+
+def _repairable_candidate_failed_outcome() -> EvaluationOutcome:
+    return EvaluationOutcome(
+        evaluator_name="pytest",
+        candidate_commit_hash="failedcommit",
+        outcome_kind="candidate_failed",
+        failure=EvaluationFailureResult(
+            failure_stage="evaluation",
+            failure_kind="test_failed",
+            repairability="repairable",
+            safe_failure_summary="One focused regression failed.",
+            agent_visible_evidence_refs=("pytest-summary",),
+        ),
+        started_at=datetime.now(timezone.utc),
+        finished_at=datetime.now(timezone.utc),
+    )
+
+
+def _materialized_benchmark_artifact(*, key: str = "benchmark_report") -> MaterializedEvaluationArtifact:
     return MaterializedEvaluationArtifact(
-        key="benchmark_report",
+        key=key,
         kind="benchmark_json",
         mime_type="application/json",
         label="Benchmark report",
@@ -820,6 +1000,153 @@ def test_persist_success_validates_run_token_before_artifact_side_effects(
     assert side_effects == []
 
 
+def test_persist_failure_records_failed_candidate_without_commit_card_and_logs_eligibility(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+    captured_logs: list[dict[str, Any]],
+) -> None:
+    job_id = uuid.uuid4()
+    run_token = uuid.uuid4()
+    added: list[Any] = []
+    job_row = _PersistSuccessDummyJob(job_id=job_id, run_token=run_token)
+    job_row.candidate_commit_hash = "failedcommit"
+    job_row.candidate_branch_name = "exp/job-branch"
+    job_row.candidate_published_at = datetime.now(timezone.utc)
+    _install_persist_failure_fakes(monkeypatch, job_row=job_row, added=added)
+    store = EvolutionJobStore(settings=settings)
+
+    recorded = store.persist_failure(
+        job_ctx=_sample_job_context(job_id=job_id, run_token=run_token),
+        message="failed",
+        outcome=_repairable_candidate_failed_outcome(),
+        plan=_sample_plan_response(),
+        coding=_sample_coding_response(),
+        worktree=Path("."),
+        candidate_commit_hash="failedcommit",
+    )
+
+    candidates = [obj for obj in added if isinstance(obj, job_store.CandidateCommit)]
+    attempts = [obj for obj in added if isinstance(obj, job_store.EvaluationAttempt)]
+    capsules = [obj for obj in added if isinstance(obj, job_store.DiagnosticCapsule)]
+    cards = [obj for obj in added if isinstance(obj, job_store.CommitCard)]
+    assert recorded is True
+    assert job_row.status is JobStatus.FAILED
+    assert cards == []
+    assert len(candidates) == 1
+    assert candidates[0].evaluation_status == "candidate_failed"
+    assert candidates[0].repair_state == "eligible"
+    assert candidates[0].commit_card_id is None
+    assert len(attempts) == 1
+    assert attempts[0].outcome_kind == "candidate_failed"
+    assert len(capsules) == 1
+    assert capsules[0].policy_passed is True
+    assert any(
+        record["module"] == "worker.job_store"
+        and "Repair eligibility decided" in record["message"]
+        for record in captured_logs
+    )
+
+
+def test_persist_failure_restores_repair_source_when_candidate_row_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    """Regression: repair failures without a candidate row must not strand the source."""
+
+    settings.failed_candidate_repair_max_attempts = 1
+    job_id = uuid.uuid4()
+    run_token = uuid.uuid4()
+    source_id = uuid.uuid4()
+    source = SimpleNamespace(repair_state="repairing", repair_attempts=1)
+    added: list[Any] = []
+    job_row = _PersistSuccessDummyJob(job_id=job_id, run_token=run_token)
+    job_row.candidate_commit_hash = "repaircommit"
+    job_row.candidate_branch_name = None
+    job_row.job_kind = "repair"
+    job_row.repair_source_candidate_id = source_id
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield _PersistFailureSessionWithRepairSource(
+            job_row=job_row,
+            added=added,
+            source_id=source_id,
+            source=source,
+        )
+
+    monkeypatch.setattr(job_store, "session_scope", fake_scope)
+    monkeypatch.setattr(
+        job_store,
+        "write_failure_job_artifacts",
+        lambda _request: JobArtifactWriteResult(fixed=FixedJobArtifactPaths()),
+    )
+    job_ctx = _sample_job_context(job_id=job_id, run_token=run_token)
+    job_ctx.job_kind = "repair"
+    job_ctx.repair_source_candidate_id = source_id
+    store = EvolutionJobStore(settings=settings)
+
+    recorded = store.persist_failure(
+        job_ctx=job_ctx,
+        message="repair failed",
+        outcome=_repairable_candidate_failed_outcome(),
+        plan=_sample_plan_response(),
+        coding=_sample_coding_response(),
+        worktree=Path("."),
+        candidate_commit_hash="repaircommit",
+    )
+
+    assert recorded is True
+    assert job_row.status is JobStatus.FAILED
+    assert source.repair_state == "exhausted"
+    assert [obj for obj in added if isinstance(obj, job_store.CandidateCommit)] == []
+
+
+def test_repair_eligibility_rejects_non_whitelisted_failure_kind(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    store = EvolutionJobStore(settings=settings)
+    monkeypatch.setattr(
+        EvolutionJobStore,
+        "_ancestor_aggregate_ready",
+        lambda _self, **_kwargs: True,
+    )
+    candidate = job_store.CandidateCommit(
+        commit_hash="failed",
+        git_parent_commit_hash="base",
+        nearest_viable_ancestor_hash="base",
+        publication_status="published",
+        evaluation_status="candidate_failed",
+        failure_stage="evaluation",
+        failure_kind="evaluator_error",
+        repair_state="audit_only",
+        lifecycle_status="active",
+        failed_depth=0,
+        repair_attempts=0,
+    )
+    outcome = EvaluationOutcome(
+        outcome_kind="candidate_failed",
+        failure=EvaluationFailureResult(
+            failure_stage="evaluation",
+            failure_kind="evaluator_error",
+            repairability="repairable",
+            safe_failure_summary="Evaluator exploded.",
+        ),
+    )
+    capsule = job_store.DiagnosticCapsule(policy_version="v", policy_passed=True, payload={})
+
+    state = store._decide_repair_state(  # type: ignore[attr-defined]
+        session=SimpleNamespace(),
+        job=SimpleNamespace(job_kind="evolution", is_seed_job=False),
+        job_ctx=_sample_job_context(job_id=uuid.uuid4(), run_token=uuid.uuid4()),
+        candidate=candidate,
+        outcome=outcome,
+        capsule=capsule,
+    )
+
+    assert state == "ineligible"
+
+
 def test_mark_job_failed_updates_running_job_when_run_token_matches(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,
@@ -868,6 +1195,63 @@ def test_mark_job_failed_updates_running_job_when_run_token_matches(
     assert job_row.heartbeat_at is None
     assert job_row.lease_expires_at is None
     assert job_row.last_error == "boom"
+
+
+def test_mark_job_failed_exhausts_repair_source_after_pre_candidate_repair_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    """Regression: repair jobs that failed before commit creation stranded sources in repairing."""
+
+    settings.failed_candidate_repair_max_attempts = 1
+    job_id = uuid.uuid4()
+    run_token = uuid.uuid4()
+    source_id = uuid.uuid4()
+    source = SimpleNamespace(repair_state="repairing", repair_attempts=1)
+
+    class DummyJob:
+        def __init__(self) -> None:
+            self.id = job_id
+            self.status = JobStatus.RUNNING
+            self.completed_at = None
+            self.run_token = run_token
+            self.worker_id = "worker-01"
+            self.heartbeat_at = datetime.now(timezone.utc)
+            self.lease_expires_at = datetime.now(timezone.utc)
+            self.last_error = None
+            self.job_kind = "repair"
+            self.repair_source_candidate_id = source_id
+
+    job_row = DummyJob()
+
+    class DummyResult:
+        def __init__(self, obj: Any) -> None:
+            self.obj = obj
+
+        def scalar_one_or_none(self) -> Any:
+            return self.obj
+
+    class DummySession:
+        def execute(self, _stmt: Any) -> DummyResult:
+            return DummyResult(job_row)
+
+        def get(self, model: Any, row_id: uuid.UUID) -> Any:
+            if model is job_store.CandidateCommit and row_id == source_id:
+                return source
+            return None
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    monkeypatch.setattr(job_store, "session_scope", fake_scope)
+    store = EvolutionJobStore(settings=settings)
+
+    recorded = store.mark_job_failed(job_id, "patch conflict", run_token=run_token)
+
+    assert recorded is True
+    assert job_row.status is JobStatus.FAILED
+    assert source.repair_state == "exhausted"
 
 
 def test_mark_job_failed_rejects_stale_run_token_without_overwriting_state(

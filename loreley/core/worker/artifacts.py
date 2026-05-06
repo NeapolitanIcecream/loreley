@@ -28,6 +28,7 @@ from loreley.core.worker.evaluator import (
     ArtifactVisibility,
     EvaluationArtifact,
     EvaluationDiagnostic,
+    EvaluationOutcome,
     EvaluationResult,
 )
 from loreley.core.worker.planning import PlanningAgentResponse
@@ -36,11 +37,13 @@ log = logger.bind(module="worker.artifacts")
 
 __all__ = [
     "FixedJobArtifactPaths",
+    "FailureJobArtifactWriteRequest",
     "JobArtifactWriteResult",
     "JobArtifactWriteRequest",
     "MaterializedEvaluationArtifact",
     "resolve_worker_instance_id",
     "worker_runtime_metadata",
+    "write_failure_job_artifacts",
     "write_job_artifacts",
 ]
 
@@ -119,6 +122,20 @@ class JobArtifactWriteRequest:
     candidate_commit_hash: str
     commit_message: str
     run_token: UUID | None = None
+    worktree: Path | None = None
+    settings: Settings | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class FailureJobArtifactWriteRequest:
+    job_id: UUID
+    base_commit_hash: str
+    candidate_commit_hash: str | None
+    message: str
+    outcome: EvaluationOutcome
+    run_token: UUID | None = None
+    plan: PlanningAgentResponse | None = None
+    coding: CodingAgentResponse | None = None
     worktree: Path | None = None
     settings: Settings | None = None
 
@@ -550,6 +567,150 @@ def write_job_artifacts(request: JobArtifactWriteRequest) -> JobArtifactWriteRes
         evaluation_artifacts=evaluation_artifacts,
         validation_warnings=validation_warnings,
     )
+
+
+def write_failure_job_artifacts(request: FailureJobArtifactWriteRequest) -> JobArtifactWriteResult:
+    """Write available worker artifacts for a failed candidate attempt."""
+
+    settings = request.settings or get_settings()
+    root = _resolve_artifacts_dir(settings, request.job_id, run_token=request.run_token)
+    worker = worker_runtime_metadata()
+    fixed = _write_failure_fixed_job_artifacts(root=root, request=request, worker=worker)
+    evaluation_artifacts, validation_warnings = _write_failure_outcome_artifacts(
+        root=root,
+        request=request,
+        settings=settings,
+        worker=worker,
+    )
+    log.info(
+        "Wrote failure fixed_artifacts={} evaluation_artifacts={} validation_warnings={} for job {}",
+        len(fixed.as_dict()),
+        len(evaluation_artifacts),
+        len(validation_warnings),
+        request.job_id,
+    )
+    return JobArtifactWriteResult(
+        fixed=fixed,
+        evaluation_artifacts=evaluation_artifacts,
+        validation_warnings=validation_warnings,
+    )
+
+
+def _write_failure_fixed_job_artifacts(
+    *,
+    root: Path,
+    request: FailureJobArtifactWriteRequest,
+    worker: Mapping[str, Any],
+) -> FixedJobArtifactPaths:
+    planning_prompt_path: str | None = None
+    planning_raw_path: str | None = None
+    planning_plan_path: str | None = None
+    coding_prompt_path: str | None = None
+    coding_raw_path: str | None = None
+    coding_execution_path: str | None = None
+
+    if request.plan is not None:
+        planning_prompt = root / "planning_prompt.txt"
+        planning_raw = root / "planning_raw_output.txt"
+        planning_plan = root / "planning_plan.json"
+        _write_text(planning_prompt, request.plan.prompt)
+        _write_text(planning_raw, request.plan.raw_output)
+        _write_json(
+            planning_plan,
+            {
+                "job_id": str(request.job_id),
+                "base_commit_hash": request.base_commit_hash,
+                "candidate_commit_hash": request.candidate_commit_hash,
+                "worker": worker,
+                "plan": request.plan.plan.as_dict(),
+                "backend": {
+                    "command": list(request.plan.command),
+                    "stderr": request.plan.stderr,
+                    "attempts": request.plan.attempts,
+                    "duration_seconds": request.plan.duration_seconds,
+                },
+            },
+        )
+        planning_prompt_path = str(planning_prompt)
+        planning_raw_path = str(planning_raw)
+        planning_plan_path = str(planning_plan)
+
+    if request.coding is not None:
+        coding_prompt = root / "coding_prompt.txt"
+        coding_raw = root / "coding_raw_output.txt"
+        coding_exec = root / "coding_execution.json"
+        _write_text(coding_prompt, request.coding.prompt)
+        _write_text(coding_raw, request.coding.raw_output)
+        _write_json(
+            coding_exec,
+            {
+                "job_id": str(request.job_id),
+                "base_commit_hash": request.base_commit_hash,
+                "candidate_commit_hash": request.candidate_commit_hash,
+                "worker": worker,
+                "report": request.coding.report.as_dict(),
+                "backend": {
+                    "command": list(request.coding.command),
+                    "stderr": request.coding.stderr,
+                    "attempts": request.coding.attempts,
+                    "duration_seconds": request.coding.duration_seconds,
+                },
+            },
+        )
+        coding_prompt_path = str(coding_prompt)
+        coding_raw_path = str(coding_raw)
+        coding_execution_path = str(coding_exec)
+
+    return FixedJobArtifactPaths(
+        planning_prompt_path=planning_prompt_path,
+        planning_raw_output_path=planning_raw_path,
+        planning_plan_json_path=planning_plan_path,
+        coding_prompt_path=coding_prompt_path,
+        coding_raw_output_path=coding_raw_path,
+        coding_execution_json_path=coding_execution_path,
+        evaluation_json_path=str(root / "evaluation.json"),
+        evaluation_logs_path=str(root / "evaluation_logs.txt"),
+    )
+
+
+def _write_failure_outcome_artifacts(
+    *,
+    root: Path,
+    request: FailureJobArtifactWriteRequest,
+    settings: Settings,
+    worker: Mapping[str, Any],
+) -> tuple[tuple[MaterializedEvaluationArtifact, ...], tuple[ArtifactValidationWarning, ...]]:
+    evaluation_json = root / "evaluation.json"
+    evaluation_logs = root / "evaluation_logs.txt"
+    synthetic = EvaluationResult(
+        summary=request.message or request.outcome.outcome_kind,
+        artifacts=request.outcome.artifacts,
+        artifact_validation_warnings=request.outcome.artifact_validation_warnings,
+    )
+    evaluation_artifacts, validation_warnings = _materialize_evaluation_artifacts(
+        root=root,
+        evaluation=synthetic,
+        worktree=request.worktree,
+        settings=settings,
+    )
+    _write_json(
+        evaluation_json,
+        {
+            "job_id": str(request.job_id),
+            "base_commit_hash": request.base_commit_hash,
+            "candidate_commit_hash": request.candidate_commit_hash,
+            "worker": worker,
+            "message": request.message,
+            "outcome": request.outcome.as_dict(),
+            "evaluation_artifacts": [artifact.manifest() for artifact in evaluation_artifacts],
+            "artifact_validation_warnings": [warning.as_dict() for warning in validation_warnings],
+        },
+    )
+    failure_summary = ""
+    if request.outcome.failure is not None:
+        failure_summary = request.outcome.failure.safe_failure_summary
+    _write_text(evaluation_logs, failure_summary or request.message)
+    return evaluation_artifacts, validation_warnings
 
 
 def _write_fixed_job_artifacts(
