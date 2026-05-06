@@ -91,53 +91,13 @@ def build_diagnostic_capsule(
         "evaluator_name": _clean_text(outcome.evaluator_name, budget=128),
         "evaluator_version": _clean_text(outcome.evaluator_version, budget=128),
     }
-    if failure is None:
-        omitted.append("missing_failure")
-        policy_passed = False
-    else:
-        payload.update(
-            {
-                "failure_stage": _clean_text(failure.failure_stage, budget=32),
-                "failure_kind": _clean_text(failure.failure_kind, budget=64),
-                "repairability": failure.repairability,
-                "safe_failure_summary": _clean_text(
-                    failure.safe_failure_summary,
-                    budget=min(4096, budget),
-                ),
-                "failing_tests_summary": _clean_text(
-                    failure.failing_tests_summary,
-                    budget=min(2048, budget),
-                ),
-                "compiler_errors_summary": _clean_text(
-                    failure.compiler_errors_summary,
-                    budget=min(2048, budget),
-                ),
-                "stack_trace_summary": _clean_text(
-                    failure.stack_trace_summary,
-                    budget=min(2048, budget),
-                ),
-                "artifact_manifest": [
-                    _clean_text(ref, budget=256)
-                    for ref in failure.agent_visible_evidence_refs[:8]
-                    if _clean_text(ref, budget=256)
-                ],
-            }
-        )
-        if failure.human_only_artifact_refs:
-            omitted.append("human_only_artifacts")
-        if failure.hidden_artifact_refs:
-            omitted.append("hidden_artifacts")
-        default_summary = str(payload.get("safe_failure_summary") or "").startswith(
-            "Evaluator reported a candidate failure without"
-        )
-        if not payload.get("safe_failure_summary") or default_summary:
-            omitted.append("missing_safe_summary")
-        policy_passed = (
-            outcome.outcome_kind == "candidate_failed"
-            and failure.repairability == "repairable"
-            and bool(payload.get("safe_failure_summary"))
-            and not default_summary
-        )
+    failure_payload, policy_passed = _failure_capsule_payload(
+        failure=failure,
+        outcome_kind=outcome.outcome_kind,
+        budget=budget,
+        omitted=omitted,
+    )
+    payload.update(failure_payload)
 
     cleaned_diff = _clean_text(diff_summary, budget=min(4096, budget))
     if cleaned_diff:
@@ -158,6 +118,72 @@ def build_diagnostic_capsule(
         policy_passed=policy_passed,
         omitted_reasons=omitted_reasons,
     )
+
+
+def _failure_capsule_payload(
+    *,
+    failure: Any,
+    outcome_kind: str,
+    budget: int,
+    omitted: list[str],
+) -> tuple[dict[str, Any], bool]:
+    if failure is None:
+        omitted.append("missing_failure")
+        return {}, False
+    payload = {
+        "failure_stage": _clean_text(failure.failure_stage, budget=32),
+        "failure_kind": _clean_text(failure.failure_kind, budget=64),
+        "repairability": failure.repairability,
+        "safe_failure_summary": _clean_text(
+            failure.safe_failure_summary,
+            budget=min(4096, budget),
+        ),
+        "failing_tests_summary": _clean_text(
+            failure.failing_tests_summary,
+            budget=min(2048, budget),
+        ),
+        "compiler_errors_summary": _clean_text(
+            failure.compiler_errors_summary,
+            budget=min(2048, budget),
+        ),
+        "stack_trace_summary": _clean_text(
+            failure.stack_trace_summary,
+            budget=min(2048, budget),
+        ),
+        "artifact_manifest": _agent_visible_artifact_manifest(
+            failure.agent_visible_evidence_refs,
+        ),
+    }
+    _append_hidden_artifact_reasons(failure, omitted=omitted)
+    default_summary = _uses_default_failure_summary(payload.get("safe_failure_summary"))
+    if not payload.get("safe_failure_summary") or default_summary:
+        omitted.append("missing_safe_summary")
+    return payload, (
+        outcome_kind == "candidate_failed"
+        and failure.repairability == "repairable"
+        and bool(payload.get("safe_failure_summary"))
+        and not default_summary
+    )
+
+
+def _agent_visible_artifact_manifest(refs: Sequence[Any]) -> list[str]:
+    manifest: list[str] = []
+    for ref in refs[:8]:
+        cleaned = _clean_text(ref, budget=256)
+        if cleaned:
+            manifest.append(cleaned)
+    return manifest
+
+
+def _append_hidden_artifact_reasons(failure: Any, *, omitted: list[str]) -> None:
+    if failure.human_only_artifact_refs:
+        omitted.append("human_only_artifacts")
+    if failure.hidden_artifact_refs:
+        omitted.append("hidden_artifacts")
+
+
+def _uses_default_failure_summary(summary: Any) -> bool:
+    return str(summary or "").startswith("Evaluator reported a candidate failure without")
 
 
 def repair_failure_kind_allowlist(raw: str | Sequence[str] | None) -> set[str]:

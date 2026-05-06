@@ -405,6 +405,17 @@ class EvaluationOutcome:
         }
 
 
+@dataclass(slots=True, frozen=True)
+class _OutcomeMappingInput:
+    payload: Mapping[str, Any]
+    context: EvaluationContext
+    evaluator_name: str
+    started_at: datetime
+    finished_at: datetime
+    artifacts: tuple[EvaluationArtifact, ...]
+    artifact_warnings: tuple[ArtifactValidationWarning, ...]
+
+
 class EvaluationPlugin(Protocol):
     """Protocol implemented by evaluation plugins."""
 
@@ -726,6 +737,24 @@ def _coerce_datetime(value: Any) -> datetime | None:
             return None
         return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
     return None
+
+
+def _outcome_identity(mapping: _OutcomeMappingInput) -> dict[str, Any]:
+    payload = mapping.payload
+    return {
+        "schema_version": int(payload.get("schema_version") or 1),
+        "evaluator_name": (
+            _optional_bounded_line(payload.get("evaluator_name"), 128)
+            or mapping.evaluator_name
+        ),
+        "evaluator_version": _optional_bounded_line(payload.get("evaluator_version"), 128),
+        "candidate_commit_hash": (
+            _optional_bounded_line(payload.get("candidate_commit_hash"), 64)
+            or mapping.context.candidate_commit_hash
+        ),
+        "started_at": _coerce_datetime(payload.get("started_at")) or mapping.started_at,
+        "finished_at": _coerce_datetime(payload.get("finished_at")) or mapping.finished_at,
+    }
 
 
 def _evaluation_result_dict(result: EvaluationResult) -> dict[str, Any]:
@@ -1084,58 +1113,57 @@ class Evaluator:
         artifacts, artifact_warnings = coerce_evaluation_artifacts(
             payload.get("artifact_records", payload.get("artifacts"))
         )
+        mapping = _OutcomeMappingInput(
+            payload=payload,
+            context=context,
+            evaluator_name=evaluator_name,
+            started_at=started_at,
+            finished_at=finished_at,
+            artifacts=artifacts,
+            artifact_warnings=artifact_warnings,
+        )
         if outcome_kind == "passed":
-            result_payload = payload.get("result")
-            if result_payload is None:
-                result_payload = {
-                    "summary": payload.get("summary"),
-                    "metrics": payload.get("metrics"),
-                    "tests_executed": payload.get("tests_executed"),
-                    "logs": payload.get("logs"),
-                    "extra": payload.get("extra"),
-                    "artifacts": payload.get("artifacts"),
-                }
-            result = self._coerce_result(result_payload)
-            return EvaluationOutcome(
-                schema_version=int(payload.get("schema_version") or 1),
-                evaluator_name=(
-                    _optional_bounded_line(payload.get("evaluator_name"), 128)
-                    or evaluator_name
-                ),
-                evaluator_version=_optional_bounded_line(payload.get("evaluator_version"), 128),
-                candidate_commit_hash=(
-                    _optional_bounded_line(payload.get("candidate_commit_hash"), 64)
-                    or context.candidate_commit_hash
-                ),
-                outcome_kind="passed",
-                result=result,
-                artifacts=artifacts,
-                artifact_validation_warnings=artifact_warnings,
-                started_at=_coerce_datetime(payload.get("started_at")) or started_at,
-                finished_at=_coerce_datetime(payload.get("finished_at")) or finished_at,
-            )
+            return self._passed_outcome_from_mapping(mapping)
+        return self._failure_outcome_from_mapping(mapping, outcome_kind=outcome_kind)
 
+    def _passed_outcome_from_mapping(
+        self,
+        mapping: _OutcomeMappingInput,
+    ) -> EvaluationOutcome:
+        payload = mapping.payload
+        result_payload = payload.get("result")
+        if result_payload is None:
+            result_payload = {
+                "summary": payload.get("summary"),
+                "metrics": payload.get("metrics"),
+                "tests_executed": payload.get("tests_executed"),
+                "logs": payload.get("logs"),
+                "extra": payload.get("extra"),
+            }
+        return EvaluationOutcome(
+            **_outcome_identity(mapping),
+            outcome_kind="passed",
+            result=self._coerce_result(result_payload),
+            artifacts=mapping.artifacts,
+            artifact_validation_warnings=mapping.artifact_warnings,
+        )
+
+    def _failure_outcome_from_mapping(
+        self,
+        mapping: _OutcomeMappingInput,
+        *,
+        outcome_kind: str,
+    ) -> EvaluationOutcome:
+        payload = mapping.payload
         failure_payload = payload.get("failure")
         if not isinstance(failure_payload, Mapping):
             failure_payload = payload
-        failure = self._failure_from_mapping(failure_payload)
         return EvaluationOutcome(
-            schema_version=int(payload.get("schema_version") or 1),
-            evaluator_name=(
-                _optional_bounded_line(payload.get("evaluator_name"), 128)
-                or evaluator_name
-            ),
-            evaluator_version=_optional_bounded_line(payload.get("evaluator_version"), 128),
-            candidate_commit_hash=(
-                _optional_bounded_line(payload.get("candidate_commit_hash"), 64)
-                or context.candidate_commit_hash
-            ),
+            **_outcome_identity(mapping),
             outcome_kind=cast(EvaluationOutcomeKind, outcome_kind),
-            failure=failure,
-            artifacts=artifacts,
-            artifact_validation_warnings=artifact_warnings,
-            started_at=_coerce_datetime(payload.get("started_at")) or started_at,
-            finished_at=_coerce_datetime(payload.get("finished_at")) or finished_at,
+            failure=self._failure_from_mapping(failure_payload),
+            artifacts=mapping.artifacts,
+            artifact_validation_warnings=mapping.artifact_warnings,
         )
 
     def _failure_from_mapping(self, payload: Mapping[str, Any]) -> EvaluationFailureResult:

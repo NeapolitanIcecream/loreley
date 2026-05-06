@@ -283,6 +283,37 @@ def test_coerce_result_accepts_mapping_artifacts_and_sanitizes_invalid_entries(s
     assert "/tmp/evaluator-secret.log" not in warning_text
 
 
+def test_coerce_passed_outcome_with_legacy_artifacts_keeps_artifacts_on_outcome_only(
+    tmp_path: Path,
+    settings: Settings,
+) -> None:
+    """Regression: top-level passed artifacts were also injected into the result."""
+    evaluator = Evaluator(settings=settings)
+
+    outcome = evaluator._coerce_outcome(  # type: ignore[attr-defined]
+        {
+            "outcome_kind": "passed",
+            "summary": "ok",
+            "artifacts": [
+                {
+                    "key": "test-log",
+                    "kind": "log",
+                    "mime_type": "text/plain",
+                    "summary": "pytest passed",
+                }
+            ],
+        },
+        context=EvaluationContext(worktree=tmp_path, candidate_commit_hash="abc"),
+        evaluator_name="pytest",
+        started_at=None,  # type: ignore[arg-type]
+        finished_at=None,  # type: ignore[arg-type]
+    )
+
+    assert len(outcome.artifacts) == 1
+    assert outcome.result is not None
+    assert outcome.result.artifacts == ()
+
+
 def test_evaluation_artifact_dataclass_bounds_diagnostics_and_metadata() -> None:
     artifact = EvaluationArtifact(
         key="profile",

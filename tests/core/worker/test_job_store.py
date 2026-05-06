@@ -647,6 +647,46 @@ class _PersistSuccessSession:
                 obj.id = uuid.uuid4()
 
 
+class _PersistFailureResult:
+    def __init__(self, obj: Any = None, *, first: Any = None) -> None:
+        self.obj = obj
+        self._first = first
+
+    def scalar_one_or_none(self) -> Any:
+        return self.obj
+
+    def first(self) -> Any:
+        return self._first
+
+
+class _PersistFailureSession:
+    def __init__(self, *, job_row: _PersistSuccessDummyJob, added: list[Any]) -> None:
+        self.job_row = job_row
+        self.added = added
+        self.execute_calls = 0
+
+    def execute(self, _stmt: Any) -> _PersistFailureResult:
+        self.execute_calls += 1
+        if self.execute_calls == 1:
+            return _PersistFailureResult(self.job_row)
+        return _PersistFailureResult(None)
+
+    def get(self, _model: Any, _row_id: uuid.UUID) -> Any:
+        return None
+
+    def add(self, obj: Any) -> None:
+        self.added.append(obj)
+
+    def flush(self) -> None:
+        for obj in self.added:
+            if isinstance(obj, job_store.CandidateCommit) and obj.id is None:
+                obj.id = uuid.uuid4()
+            if isinstance(obj, job_store.DiagnosticCapsule) and obj.id is None:
+                obj.id = uuid.uuid4()
+            if isinstance(obj, job_store.EvaluationAttempt) and obj.id is None:
+                obj.id = uuid.uuid4()
+
+
 def _install_persist_success_fakes(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -670,6 +710,46 @@ def _install_persist_success_fakes(
             fixed=FixedJobArtifactPaths(evaluation_json_path="/worker/artifacts/evaluation.json"),
             evaluation_artifacts=(_materialized_benchmark_artifact(),),
         ),
+    )
+
+
+def _install_persist_failure_fakes(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    job_row: _PersistSuccessDummyJob,
+    added: list[Any],
+) -> None:
+    @contextmanager
+    def fake_scope() -> Any:
+        yield _PersistFailureSession(job_row=job_row, added=added)
+
+    monkeypatch.setattr(job_store, "session_scope", fake_scope)
+    monkeypatch.setattr(
+        job_store,
+        "write_failure_job_artifacts",
+        lambda _request: JobArtifactWriteResult(fixed=FixedJobArtifactPaths()),
+    )
+    monkeypatch.setattr(
+        EvolutionJobStore,
+        "_ancestor_aggregate_ready",
+        lambda _self, **_kwargs: True,
+    )
+
+
+def _repairable_candidate_failed_outcome() -> EvaluationOutcome:
+    return EvaluationOutcome(
+        evaluator_name="pytest",
+        candidate_commit_hash="failedcommit",
+        outcome_kind="candidate_failed",
+        failure=EvaluationFailureResult(
+            failure_stage="evaluation",
+            failure_kind="test_failed",
+            repairability="repairable",
+            safe_failure_summary="One focused regression failed.",
+            agent_visible_evidence_refs=("pytest-summary",),
+        ),
+        started_at=datetime.now(timezone.utc),
+        finished_at=datetime.now(timezone.utc),
     )
 
 
@@ -913,78 +993,13 @@ def test_persist_failure_records_failed_candidate_without_commit_card_and_logs_e
     job_row.candidate_commit_hash = "failedcommit"
     job_row.candidate_branch_name = "exp/job-branch"
     job_row.candidate_published_at = datetime.now(timezone.utc)
-
-    class DummyResult:
-        def __init__(self, obj: Any = None, *, first: Any = None) -> None:
-            self.obj = obj
-            self._first = first
-
-        def scalar_one_or_none(self) -> Any:
-            return self.obj
-
-        def first(self) -> Any:
-            return self._first
-
-    class DummySession:
-        def __init__(self) -> None:
-            self.execute_calls = 0
-
-        def execute(self, _stmt: Any) -> DummyResult:
-            self.execute_calls += 1
-            if self.execute_calls == 1:
-                return DummyResult(job_row)
-            return DummyResult(None)
-
-        def get(self, _model: Any, _row_id: uuid.UUID) -> Any:
-            return None
-
-        def add(self, obj: Any) -> None:
-            added.append(obj)
-
-        def flush(self) -> None:
-            for obj in added:
-                if isinstance(obj, job_store.CandidateCommit) and obj.id is None:
-                    obj.id = uuid.uuid4()
-                if isinstance(obj, job_store.DiagnosticCapsule) and obj.id is None:
-                    obj.id = uuid.uuid4()
-                if isinstance(obj, job_store.EvaluationAttempt) and obj.id is None:
-                    obj.id = uuid.uuid4()
-
-    @contextmanager
-    def fake_scope() -> Any:
-        yield DummySession()
-
-    monkeypatch.setattr(job_store, "session_scope", fake_scope)
-    monkeypatch.setattr(
-        job_store,
-        "write_failure_job_artifacts",
-        lambda _request: JobArtifactWriteResult(fixed=FixedJobArtifactPaths()),
-    )
-    monkeypatch.setattr(
-        EvolutionJobStore,
-        "_ancestor_aggregate_ready",
-        lambda _self, **_kwargs: True,
-    )
+    _install_persist_failure_fakes(monkeypatch, job_row=job_row, added=added)
     store = EvolutionJobStore(settings=settings)
-    outcome = EvaluationOutcome(
-        evaluator_name="pytest",
-        candidate_commit_hash="failedcommit",
-        outcome_kind="candidate_failed",
-        failure=EvaluationFailureResult(
-            failure_stage="evaluation",
-            failure_kind="test_failed",
-            repairability="repairable",
-            safe_failure_summary="One focused regression failed.",
-            agent_visible_evidence_refs=("pytest-summary",),
-        ),
-        started_at=datetime.now(timezone.utc),
-        finished_at=datetime.now(timezone.utc),
-    )
 
     recorded = store.persist_failure(
         job_ctx=_sample_job_context(job_id=job_id, run_token=run_token),
         message="failed",
-        outcome=outcome,
+        outcome=_repairable_candidate_failed_outcome(),
         plan=_sample_plan_response(),
         coding=_sample_coding_response(),
         worktree=Path("."),

@@ -42,6 +42,155 @@ class CheckoutContext:
     worktree: Path
 
 
+@dataclass(slots=True)
+class _ProtectedBranchState:
+    commits: set[str]
+    branches: set[str]
+    prefix: str
+
+    def remember_commit(self, raw_value: str | None) -> None:
+        commit = str(raw_value or "").strip()
+        if commit:
+            self.commits.add(commit)
+
+    def remember_branch(self, raw_value: str | None) -> None:
+        branch = str(raw_value or "").strip()
+        if not branch:
+            return
+        if self.prefix and not branch.startswith(f"{self.prefix}/") and branch != self.prefix:
+            return
+        self.branches.add(branch)
+
+
+_UNFINISHED_JOB_STATUSES = (JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING)
+
+
+def _remember_archive_commits(session: Any, state: _ProtectedBranchState) -> None:
+    rows = session.execute(
+        select(MapElitesArchiveCell.commit_hash).where(
+            MapElitesArchiveCell.commit_hash.is_not(None),
+            MapElitesArchiveCell.commit_hash != "",
+        )
+    ).all()
+    for (commit_hash,) in rows:
+        state.remember_commit(commit_hash)
+
+
+def _load_protected_job_rows(session: Any) -> Sequence[Any]:
+    return session.execute(
+        select(
+            EvolutionJob.base_commit_hash,
+            EvolutionJob.result_commit_hash,
+            EvolutionJob.candidate_commit_hash,
+            EvolutionJob.candidate_branch_name,
+            EvolutionJob.inspiration_commit_hashes,
+            EvolutionJob.status,
+            EvolutionJob.ingestion_status,
+            EvolutionJob.candidate_published_at,
+        ).where(
+            or_(
+                EvolutionJob.status.in_(_UNFINISHED_JOB_STATUSES),
+                and_(EvolutionJob.status == JobStatus.SUCCEEDED, _ingestion_pending()),
+                _failed_candidate_ref_present(),
+            )
+        )
+    ).all()
+
+
+def _load_protected_candidate_rows(session: Any) -> Sequence[Any]:
+    try:
+        return session.execute(
+            select(
+                CandidateCommit.commit_hash,
+                CandidateCommit.candidate_branch_name,
+                CandidateCommit.repair_state,
+                CandidateCommit.publication_status,
+            ).where(
+                CandidateCommit.commit_hash.is_not(None),
+                CandidateCommit.commit_hash != "",
+                CandidateCommit.candidate_branch_name.is_not(None),
+                CandidateCommit.candidate_branch_name != "",
+                CandidateCommit.repair_state.in_(("eligible", "scheduled", "repairing")),
+                CandidateCommit.publication_status == "published",
+            )
+        ).all()
+    except Exception as exc:  # pragma: no cover - compatibility with narrow test doubles
+        log.debug("Skipping candidate-ledger branch protection lookup: {}", exc)
+        return ()
+
+
+def _remember_candidate_branch_row(row: Any, state: _ProtectedBranchState) -> None:
+    if len(row) < 2:
+        return
+    state.remember_commit(row[0])
+    state.remember_branch(row[1])
+
+
+def _remember_job_branch_row(row: Any, state: _ProtectedBranchState) -> None:
+    (
+        base_commit_hash,
+        result_commit_hash,
+        candidate_commit_hash,
+        candidate_branch_name,
+        inspiration_commit_hashes,
+        status,
+        ingestion_status,
+        _candidate_published_at,
+    ) = row
+    if _job_row_protects_full_lineage(status, ingestion_status):
+        state.remember_commit(base_commit_hash)
+        state.remember_commit(result_commit_hash)
+        state.remember_commit(candidate_commit_hash)
+        state.remember_branch(candidate_branch_name)
+        for commit_hash in inspiration_commit_hashes or ():
+            state.remember_commit(commit_hash)
+        return
+    if status == JobStatus.FAILED and candidate_branch_name:
+        state.remember_commit(candidate_commit_hash)
+        state.remember_branch(candidate_branch_name)
+
+
+def _job_row_protects_full_lineage(status: Any, ingestion_status: Any) -> bool:
+    normalized = str(ingestion_status or "").strip().lower()
+    return status in _UNFINISHED_JOB_STATUSES or (
+        status == JobStatus.SUCCEEDED and normalized not in {"succeeded", "skipped"}
+    )
+
+
+def _ingestion_pending() -> Any:
+    return or_(
+        EvolutionJob.ingestion_status.is_(None),
+        EvolutionJob.ingestion_status == "",
+        EvolutionJob.ingestion_status.not_in(("succeeded", "skipped")),
+    )
+
+
+def _failed_candidate_ref_present() -> Any:
+    return and_(
+        EvolutionJob.status == JobStatus.FAILED,
+        EvolutionJob.candidate_commit_hash.is_not(None),
+        EvolutionJob.candidate_commit_hash != "",
+        EvolutionJob.candidate_branch_name.is_not(None),
+        EvolutionJob.candidate_branch_name != "",
+    )
+
+
+def _validated_commit_range(base_commit: str, candidate_commit: str) -> tuple[str, str]:
+    base = str(base_commit or "").strip()
+    candidate = str(candidate_commit or "").strip()
+    if not base or not candidate:
+        raise RepositoryError("Both base and candidate commits are required for repair patch.")
+    return base, candidate
+
+
+def _ensure_patch_budget(patch: bytes, *, max_bytes: int) -> None:
+    if len(patch) <= max(0, int(max_bytes)):
+        return
+    raise RepositoryError(
+        f"Repair patch exceeds configured byte budget ({len(patch)} > {max_bytes})."
+    )
+
+
 class WorkerRepository:
     """Manage the git worktree used by a worker process."""
 
@@ -420,11 +569,15 @@ class WorkerRepository:
     ) -> None:
         """Apply the patch represented by base..candidate into a checked-out worktree."""
 
-        base = str(base_commit or "").strip()
-        candidate = str(candidate_commit or "").strip()
-        if not base or not candidate:
-            raise RepositoryError("Both base and candidate commits are required for repair patch.")
+        base, candidate = _validated_commit_range(base_commit, candidate_commit)
         target = self._resolve_worktree_path(worktree)
+        patch = self._diff_patch_bytes(base=base, candidate=candidate, target=target)
+        if not patch:
+            return
+        _ensure_patch_budget(patch, max_bytes=max_bytes)
+        self._apply_patch_bytes(patch, base=base, candidate=candidate, target=target)
+
+    def _diff_patch_bytes(self, *, base: str, candidate: str, target: Path) -> bytes:
         try:
             diff_result = subprocess.run(
                 [self.git_bin or "git", "-C", str(target), "diff", "--binary", f"{base}..{candidate}"],
@@ -437,13 +590,16 @@ class WorkerRepository:
             raise RepositoryError(
                 f"Failed to build repair patch {base}..{candidate}: {stderr or exc}"
             ) from exc
-        patch = diff_result.stdout or b""
-        if not patch:
-            return
-        if len(patch) > max(0, int(max_bytes)):
-            raise RepositoryError(
-                f"Repair patch exceeds configured byte budget ({len(patch)} > {max_bytes})."
-            )
+        return diff_result.stdout or b""
+
+    def _apply_patch_bytes(
+        self,
+        patch: bytes,
+        *,
+        base: str,
+        candidate: str,
+        target: Path,
+    ) -> None:
         try:
             subprocess.run(
                 [self.git_bin or "git", "-C", str(target), "apply", "--whitespace=nowarn"],
@@ -570,127 +726,20 @@ class WorkerRepository:
     def _load_protected_job_branch_state(self) -> tuple[set[str], set[str]]:
         """Return commit hashes and branch names that must not lose their last ref."""
 
-        protected_commits: set[str] = set()
-        protected_branches: set[str] = set()
-        prefix = self.job_branch_prefix.strip("/")
-        unfinished_statuses = (
-            JobStatus.PENDING,
-            JobStatus.QUEUED,
-            JobStatus.RUNNING,
-        )
-
-        def _remember_commit(raw_value: str | None) -> None:
-            commit = str(raw_value or "").strip()
-            if commit:
-                protected_commits.add(commit)
-
-        def _remember_branch(raw_value: str | None) -> None:
-            branch = str(raw_value or "").strip()
-            if not branch:
-                return
-            if prefix and not branch.startswith(f"{prefix}/") and branch != prefix:
-                return
-            protected_branches.add(branch)
-
-        ingestion_pending = or_(
-            EvolutionJob.ingestion_status.is_(None),
-            EvolutionJob.ingestion_status == "",
-            EvolutionJob.ingestion_status.not_in(("succeeded", "skipped")),
-        )
-        failed_candidate_ref_present = and_(
-            EvolutionJob.status == JobStatus.FAILED,
-            EvolutionJob.candidate_commit_hash.is_not(None),
-            EvolutionJob.candidate_commit_hash != "",
-            EvolutionJob.candidate_branch_name.is_not(None),
-            EvolutionJob.candidate_branch_name != "",
+        state = _ProtectedBranchState(
+            commits=set(),
+            branches=set(),
+            prefix=self.job_branch_prefix.strip("/"),
         )
         with session_scope() as session:
-            archive_rows = session.execute(
-                select(MapElitesArchiveCell.commit_hash).where(
-                    MapElitesArchiveCell.commit_hash.is_not(None),
-                    MapElitesArchiveCell.commit_hash != "",
-                )
-            ).all()
-            for (commit_hash,) in archive_rows:
-                _remember_commit(commit_hash)
-
-            job_rows = session.execute(
-                select(
-                    EvolutionJob.base_commit_hash,
-                    EvolutionJob.result_commit_hash,
-                    EvolutionJob.candidate_commit_hash,
-                    EvolutionJob.candidate_branch_name,
-                    EvolutionJob.inspiration_commit_hashes,
-                    EvolutionJob.status,
-                    EvolutionJob.ingestion_status,
-                    EvolutionJob.candidate_published_at,
-                ).where(
-                    or_(
-                        EvolutionJob.status.in_(unfinished_statuses),
-                        and_(
-                            EvolutionJob.status == JobStatus.SUCCEEDED,
-                            ingestion_pending,
-                        ),
-                        failed_candidate_ref_present,
-                    )
-                )
-            ).all()
-
-            try:
-                protected_candidate_rows = session.execute(
-                    select(
-                        CandidateCommit.commit_hash,
-                        CandidateCommit.candidate_branch_name,
-                        CandidateCommit.repair_state,
-                        CandidateCommit.publication_status,
-                    ).where(
-                        CandidateCommit.commit_hash.is_not(None),
-                        CandidateCommit.commit_hash != "",
-                        CandidateCommit.candidate_branch_name.is_not(None),
-                        CandidateCommit.candidate_branch_name != "",
-                        CandidateCommit.repair_state.in_(("eligible", "scheduled", "repairing")),
-                        CandidateCommit.publication_status == "published",
-                    )
-                ).all()
-            except Exception as exc:  # pragma: no cover - compatibility with narrow test doubles
-                log.debug("Skipping candidate-ledger branch protection lookup: {}", exc)
-                protected_candidate_rows = []
-            for row in protected_candidate_rows:
-                if len(row) < 2:
-                    continue
-                commit_hash, branch_name = row[0], row[1]
-                _remember_commit(commit_hash)
-                _remember_branch(branch_name)
-
-        for (
-            base_commit_hash,
-            result_commit_hash,
-            candidate_commit_hash,
-            candidate_branch_name,
-            inspiration_commit_hashes,
-            status,
-            ingestion_status,
-            _candidate_published_at,
-        ) in job_rows:
-            normalized_ingestion_status = str(ingestion_status or "").strip().lower()
-            protects_full_job_lineage = status in unfinished_statuses or (
-                status == JobStatus.SUCCEEDED
-                and normalized_ingestion_status not in {"succeeded", "skipped"}
-            )
-            if protects_full_job_lineage:
-                _remember_commit(base_commit_hash)
-                _remember_commit(result_commit_hash)
-                _remember_commit(candidate_commit_hash)
-                _remember_branch(candidate_branch_name)
-                for commit_hash in inspiration_commit_hashes or ():
-                    _remember_commit(commit_hash)
-                continue
-
-            if status == JobStatus.FAILED and candidate_branch_name:
-                _remember_commit(candidate_commit_hash)
-                _remember_branch(candidate_branch_name)
-
-        return protected_commits, protected_branches
+            _remember_archive_commits(session, state)
+            job_rows = _load_protected_job_rows(session)
+            candidate_rows = _load_protected_candidate_rows(session)
+            for row in candidate_rows:
+                _remember_candidate_branch_row(row, state)
+        for row in job_rows:
+            _remember_job_branch_row(row, state)
+        return state.commits, state.branches
 
     @staticmethod
     def _commit_matches_protected_commit(head_commit: str, protected_commits: set[str]) -> bool:
