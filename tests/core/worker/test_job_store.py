@@ -687,6 +687,25 @@ class _PersistFailureSession:
                 obj.id = uuid.uuid4()
 
 
+class _PersistFailureSessionWithRepairSource(_PersistFailureSession):
+    def __init__(
+        self,
+        *,
+        job_row: _PersistSuccessDummyJob,
+        added: list[Any],
+        source_id: uuid.UUID,
+        source: Any,
+    ) -> None:
+        super().__init__(job_row=job_row, added=added)
+        self.source_id = source_id
+        self.source = source
+
+    def get(self, model: Any, row_id: uuid.UUID) -> Any:
+        if model is job_store.CandidateCommit and row_id == self.source_id:
+            return self.source
+        return None
+
+
 def _install_persist_success_fakes(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -1026,6 +1045,60 @@ def test_persist_failure_records_failed_candidate_without_commit_card_and_logs_e
         and "Repair eligibility decided" in record["message"]
         for record in captured_logs
     )
+
+
+def test_persist_failure_restores_repair_source_when_candidate_row_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    """Regression: repair failures without a candidate row must not strand the source."""
+
+    settings.failed_candidate_repair_max_attempts = 1
+    job_id = uuid.uuid4()
+    run_token = uuid.uuid4()
+    source_id = uuid.uuid4()
+    source = SimpleNamespace(repair_state="repairing", repair_attempts=1)
+    added: list[Any] = []
+    job_row = _PersistSuccessDummyJob(job_id=job_id, run_token=run_token)
+    job_row.candidate_commit_hash = "repaircommit"
+    job_row.candidate_branch_name = None
+    job_row.job_kind = "repair"
+    job_row.repair_source_candidate_id = source_id
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield _PersistFailureSessionWithRepairSource(
+            job_row=job_row,
+            added=added,
+            source_id=source_id,
+            source=source,
+        )
+
+    monkeypatch.setattr(job_store, "session_scope", fake_scope)
+    monkeypatch.setattr(
+        job_store,
+        "write_failure_job_artifacts",
+        lambda _request: JobArtifactWriteResult(fixed=FixedJobArtifactPaths()),
+    )
+    job_ctx = _sample_job_context(job_id=job_id, run_token=run_token)
+    job_ctx.job_kind = "repair"
+    job_ctx.repair_source_candidate_id = source_id
+    store = EvolutionJobStore(settings=settings)
+
+    recorded = store.persist_failure(
+        job_ctx=job_ctx,
+        message="repair failed",
+        outcome=_repairable_candidate_failed_outcome(),
+        plan=_sample_plan_response(),
+        coding=_sample_coding_response(),
+        worktree=Path("."),
+        candidate_commit_hash="repaircommit",
+    )
+
+    assert recorded is True
+    assert job_row.status is JobStatus.FAILED
+    assert source.repair_state == "exhausted"
+    assert [obj for obj in added if isinstance(obj, job_store.CandidateCommit)] == []
 
 
 def test_repair_eligibility_rejects_non_whitelisted_failure_kind(

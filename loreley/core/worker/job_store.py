@@ -793,7 +793,9 @@ class EvolutionJobStore:
                         capsule=capsule_row,
                     )
                     if candidate is not None
-                    else None
+                    else None,
+                    session=session,
+                    job_ctx=request.job_ctx,
                 )
                 return True
         except SQLAlchemyError as exc:
@@ -899,9 +901,17 @@ class EvolutionJobStore:
     def _update_candidate_after_failure(
         self,
         update: _FailedCandidateUpdateInput | None,
+        *,
+        session: Any,
+        job_ctx: "JobContext",
     ) -> None:
         if update is not None:
             self._update_failed_candidate(update)
+        elif job_ctx.repair_source_candidate_id is not None:
+            self._update_repair_source_after_failed_attempt(
+                session=session,
+                source_id=job_ctx.repair_source_candidate_id,
+            )
 
     def _write_failure_artifacts(
         self,
