@@ -92,6 +92,8 @@ class MapElitesRecord:
     baseline_key_hash: str | None = None
     baseline_status: str | None = None
     delta_from_root_baseline: float | None = None
+    candidate_fate_label: str | None = None
+    candidate_fate_reason: str | None = None
 
     @property
     def dimensions(self) -> int:

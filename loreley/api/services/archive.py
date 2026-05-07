@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 
 from loreley.api.pagination import PaginationCursorError, decode_cursor, encode_cursor, normalize_pagination
 from loreley.config import Settings, get_settings, resolve_default_island_id
+from loreley.core.candidate_fate import derive_candidate_fate
 from loreley.core.map_elites.types import MapElitesRecord, materialize_solution
 from loreley.core.map_elites.snapshot import ensure_supported_snapshot_meta
 from loreley.db.base import session_scope
@@ -291,6 +292,10 @@ def _record_from_archive_row(
 ) -> MapElitesRecord:
     commit_hash = str(row.commit_hash or "")
     objective = float(row.objective or 0.0)
+    fate = derive_candidate_fate(
+        current_archive_cell_index=int(row.cell_index),
+        current_archive_member=True,
+    )
     return MapElitesRecord(
         commit_hash=commit_hash,
         island_id=str(row.island_id or island_id),
@@ -307,6 +312,8 @@ def _record_from_archive_row(
             candidate_value=metric_value,
             baseline=baseline,
         ),
+        candidate_fate_label=fate.label,
+        candidate_fate_reason=fate.reason,
         measures=tuple(float(v) for v in (row.measures or ())),
         solution=materialize_solution(
             measures=row.measures or (),

@@ -34,6 +34,8 @@ class JobOut(OrmOutModel):
     has_evaluation_evidence: bool = False
     agent_visible_evidence_count: int = 0
     top_evaluation_diagnosis: str | None = None
+    candidate_fate_label: str | None = None
+    candidate_fate_reason: str | None = None
 
     @field_validator("status", mode="before")
     @classmethod

@@ -135,6 +135,8 @@ def test_list_records_reads_archive_cells_without_manager(
     assert [record.commit_hash for record in records] == ["c1", "c2"]
     assert records[0].measures == pytest.approx((0.1, 0.2))
     assert records[0].solution == pytest.approx((0.1, 0.2))
+    assert records[0].candidate_fate_label == "elite_retained"
+    assert records[0].candidate_fate_reason == "Candidate is a current archive elite. cell=1."
     assert records[1].solution == pytest.approx((0.7, 0.8))
     stmt = session.statements[0]
     assert int(stmt._limit_clause.value) == 1

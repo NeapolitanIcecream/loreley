@@ -27,6 +27,20 @@ def test_build_scatter_points_falls_back_to_fitness_when_metric_value_missing() 
     )
 
     assert points == [
-        {"x": 0.1, "y": 0.2, "value": 1.5, "commit_hash": "a", "cell_index": 1},
-        {"x": 0.3, "y": 0.4, "value": 2.5, "commit_hash": "b", "cell_index": 2},
+        {
+            "x": 0.1,
+            "y": 0.2,
+            "value": 1.5,
+            "commit_hash": "a",
+            "cell_index": 1,
+            "candidate_fate_label": None,
+        },
+        {
+            "x": 0.3,
+            "y": 0.4,
+            "value": 2.5,
+            "commit_hash": "b",
+            "cell_index": 2,
+            "candidate_fate_label": None,
+        },
     ]

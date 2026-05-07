@@ -19,6 +19,7 @@ from loreley.api.services.commits import CommitPage
 from loreley.api.services.evidence import EvidenceIndicator
 from loreley.api.services.jobs import JobPage
 from loreley.config import Settings
+from loreley.core.candidate_fate import CandidateFate
 from loreley.db.models import JobStatus
 
 
@@ -34,6 +35,8 @@ def _patch_no_evidence(monkeypatch) -> None:
     monkeypatch.setattr(jobs_router, "load_evidence_indicators_by_commit_hash", lambda _hashes: {})
     monkeypatch.setattr(commits_router, "load_evidence_indicators_by_commit_hash", lambda _hashes: {})
     monkeypatch.setattr(archive_router, "load_evidence_indicators_by_commit_hash", lambda _hashes: {})
+    monkeypatch.setattr(jobs_router, "load_candidate_fates_for_jobs", lambda _rows: {})
+    monkeypatch.setattr(commits_router, "load_candidate_fates_for_commits", lambda _rows: {})
 
 
 def _commit_row(commit_hash: str = "abc") -> SimpleNamespace:
@@ -83,6 +86,47 @@ def test_jobs_page_route_returns_items_and_next_cursor(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json()["next_cursor"] == "next-job"
     assert response.json()["items"][0]["id"] == str(row.id)
+
+
+def test_jobs_page_route_serializes_candidate_fate(monkeypatch) -> None:
+    _patch_no_evidence(monkeypatch)
+    row = SimpleNamespace(
+        id=uuid4(),
+        status=JobStatus.SUCCEEDED,
+        priority=0,
+        island_id="main",
+        base_commit_hash="abc",
+        scheduled_at=None,
+        started_at=None,
+        completed_at=datetime(2026, 3, 11, tzinfo=timezone.utc),
+        last_error=None,
+        is_seed_job=False,
+        result_commit_hash="def",
+        ingestion_status="succeeded",
+    )
+    monkeypatch.setattr(
+        jobs_router,
+        "list_jobs_page",
+        lambda **_kwargs: JobPage(items=[row], next_cursor=None),
+    )
+    monkeypatch.setattr(
+        jobs_router,
+        "load_candidate_fates_for_jobs",
+        lambda _rows: {
+            str(row.id): CandidateFate(
+                label="elite_inserted",
+                reason="Candidate entered an empty archive niche.",
+            )
+        },
+    )
+
+    client = _build_test_client()
+    response = client.get("/api/v1/jobs/page")
+
+    assert response.status_code == 200
+    item = response.json()["items"][0]
+    assert item["candidate_fate_label"] == "elite_inserted"
+    assert item["candidate_fate_reason"] == "Candidate entered an empty archive niche."
 
 
 def test_commits_page_route_returns_items_and_next_cursor(monkeypatch) -> None:
@@ -138,6 +182,7 @@ def test_commit_routes_serialize_evidence_indicators(monkeypatch) -> None:
     monkeypatch.setattr(commits_router, "list_metrics", lambda **_kwargs: [])
     monkeypatch.setattr(commits_router, "list_evaluation_artifacts_for_commit", lambda **_kwargs: [])
     monkeypatch.setattr(commits_router, "build_agent_feedback_payload", lambda _rows: None)
+    monkeypatch.setattr(commits_router, "load_candidate_fates_for_commits", lambda _rows: {})
     monkeypatch.setattr(
         commits_router,
         "load_evidence_indicators_by_commit_hash",
@@ -154,6 +199,41 @@ def test_commit_routes_serialize_evidence_indicators(monkeypatch) -> None:
         assert payload["has_evaluation_evidence"] is True
         assert payload["agent_visible_evidence_count"] == 2
         assert payload["top_evaluation_diagnosis"] == "p95 latency regressed"
+
+
+def test_commit_routes_serialize_candidate_fate(monkeypatch) -> None:
+    _patch_no_evidence(monkeypatch)
+    row = _commit_row()
+    monkeypatch.setattr(commits_router, "list_commits", lambda **_kwargs: [row])
+    monkeypatch.setattr(
+        commits_router,
+        "list_commits_page",
+        lambda **_kwargs: CommitPage(items=[row], next_cursor=None),
+    )
+    monkeypatch.setattr(commits_router, "get_commit", lambda **_kwargs: row)
+    monkeypatch.setattr(commits_router, "list_metrics", lambda **_kwargs: [])
+    monkeypatch.setattr(commits_router, "list_evaluation_artifacts_for_commit", lambda **_kwargs: [])
+    monkeypatch.setattr(commits_router, "build_agent_feedback_payload", lambda _rows: None)
+    monkeypatch.setattr(
+        commits_router,
+        "load_candidate_fates_for_commits",
+        lambda _rows: {
+            "abc": CandidateFate(
+                label="valid_not_elite",
+                reason="Candidate passed evaluation but did not enter the archive.",
+            )
+        },
+    )
+
+    client = _build_test_client()
+
+    list_payload = client.get("/api/v1/commits").json()[0]
+    page_payload = client.get("/api/v1/commits/page").json()["items"][0]
+    detail_payload = client.get("/api/v1/commits/abc").json()
+
+    for payload in (list_payload, page_payload, detail_payload):
+        assert payload["candidate_fate_label"] == "valid_not_elite"
+        assert payload["candidate_fate_reason"] == "Candidate passed evaluation but did not enter the archive."
 
 
 def test_archive_records_page_route_returns_items_and_next_cursor(monkeypatch) -> None:

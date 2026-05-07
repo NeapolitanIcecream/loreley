@@ -146,6 +146,8 @@ def _job_top_fields(detail: dict[str, object]) -> dict[str, object]:
             "candidate_commit_hash",
             "candidate_branch_name",
             "candidate_published_at",
+            "candidate_fate_label",
+            "candidate_fate_reason",
             "result_commit_hash",
             "ingestion_status",
             "ingestion_attempts",
