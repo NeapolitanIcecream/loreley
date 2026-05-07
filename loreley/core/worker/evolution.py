@@ -13,6 +13,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import MultipleResultsFound
 
 from loreley.config import Settings, get_settings
+from loreley.core.campaign_program import (
+    CampaignProgramSnapshot,
+    campaign_program_evaluator_payload,
+    load_campaign_program_snapshot_by_hash,
+)
 from loreley.core.worker.coding import (
     CodingAgent,
     CodingAgentRequest,
@@ -20,6 +25,7 @@ from loreley.core.worker.coding import (
     CodingError,
 )
 from loreley.core.worker.evaluator import (
+    EvaluationArtifact,
     Evaluator,
     EvaluationContext,
     EvaluationError,
@@ -53,6 +59,7 @@ from loreley.core.worker.job_store import (
 )
 from loreley.core.worker.repository import CheckoutContext, WorkerRepository, RepositoryError
 from loreley.core.worker.repair import REPAIR_MODE_REBASE_FROM_NEAREST_VIABLE
+from loreley.core.worker.scope_gate import ScopeGateResult, validate_campaign_scope
 from loreley.db.base import session_scope
 from loreley.db.models import (
     CandidateCommit,
@@ -97,6 +104,8 @@ class JobContext:
     job_kind: str = "evolution"
     repair_source_candidate_id: UUID | None = None
     repair_mode: str | None = None
+    campaign_program_hash: str | None = None
+    campaign_program: CampaignProgramSnapshot | None = None
 
 
 @dataclass(slots=True)
@@ -409,6 +418,8 @@ class EvolutionWorker:
         heartbeat: _JobLeaseHeartbeat,
         state: _EvolutionRunState,
     ) -> None:
+        self._enforce_campaign_scope(job_ctx, checkout, state)
+        heartbeat.raise_if_lease_lost()
         state.commit_message = self._prepare_commit_message(
             job_ctx=job_ctx,
             plan=_required(state.plan_response, "plan_response"),
@@ -449,6 +460,35 @@ class EvolutionWorker:
             run_token=job_ctx.run_token,
             published=published,
         )
+
+    def _enforce_campaign_scope(
+        self,
+        job_ctx: JobContext,
+        checkout: CheckoutContext,
+        state: _EvolutionRunState,
+    ) -> None:
+        if job_ctx.campaign_program is None:
+            return
+        result = validate_campaign_scope(
+            worktree=checkout.worktree,
+            program=job_ctx.campaign_program,
+            git_bin=self.settings.worker_repo_git_bin,
+        )
+        if result.passed:
+            return
+        outcome = _campaign_scope_failure_outcome(result)
+        message = outcome.failure.safe_failure_summary if outcome.failure else result.summary()
+        state.evaluation_outcome = outcome
+        state.failure_persisted = self.job_store.persist_failure(
+            job_ctx=job_ctx,
+            message=message,
+            outcome=outcome,
+            plan=state.plan_response,
+            coding=state.coding_response,
+            worktree=checkout.worktree,
+            candidate_commit_hash=None,
+        )
+        raise EvolutionWorkerError(message)
 
     def _persist_evaluation_outcome(
         self,
@@ -516,6 +556,10 @@ class EvolutionWorker:
                 and base_commit_hash == root_hash
                 and not inspiration_commit_hashes
             )
+        campaign_program_hash = (
+            str(getattr(locked_job, "campaign_program_hash", "") or "").strip() or None
+        )
+        campaign_program = self._load_campaign_program(campaign_program_hash)
 
         return JobContext(
             job_id=locked_job.job_id,
@@ -537,7 +581,32 @@ class EvolutionWorker:
             job_kind=getattr(locked_job, "job_kind", "seed" if is_seed_job else "evolution"),
             repair_source_candidate_id=getattr(locked_job, "repair_source_candidate_id", None),
             repair_mode=getattr(locked_job, "repair_mode", None),
+            campaign_program_hash=campaign_program_hash,
+            campaign_program=campaign_program,
         )
+
+    def _load_campaign_program(
+        self,
+        campaign_program_hash: str | None,
+    ) -> CampaignProgramSnapshot | None:
+        if not campaign_program_hash:
+            return None
+        with session_scope() as session:
+            snapshot = load_campaign_program_snapshot_by_hash(
+                session=session,
+                program_hash=campaign_program_hash,
+            )
+        if snapshot is None:
+            message = (
+                "Job references missing campaign program "
+                f"hash={campaign_program_hash}; refusing to run without contract."
+            )
+            log.error(
+                "Job references missing campaign program hash={} action=fail_closed",
+                campaign_program_hash,
+            )
+            raise EvolutionWorkerError(message)
+        return snapshot
 
     def _build_prompt_context(
         self,
@@ -670,6 +739,8 @@ class EvolutionWorker:
             base=prompt_context.base,
             inspirations=prompt_context.inspirations,
             goal=job_ctx.goal,
+            constraints=job_ctx.constraints,
+            acceptance_criteria=job_ctx.acceptance_criteria,
             iteration_context=prompt_context.iteration_context,
         )
         try:
@@ -690,6 +761,8 @@ class EvolutionWorker:
             base_commit=job_ctx.base_commit_hash,
             base=prompt_context.base,
             inspirations=prompt_context.inspirations,
+            constraints=job_ctx.constraints,
+            acceptance_criteria=job_ctx.acceptance_criteria,
             iteration_context=prompt_context.iteration_context,
             additional_notes=(*job_ctx.notes, *self._repair_coding_notes(job_ctx)),
         )
@@ -788,6 +861,7 @@ class EvolutionWorker:
                 "notes": list(job_ctx.notes),
                 "tags": list(job_ctx.tags),
             },
+            "campaign_program": campaign_program_evaluator_payload(job_ctx.campaign_program),
             "plan": {
                 "summary": plan.plan.summary,
                 "focus_metrics": list(plan.plan.focus_metrics),
@@ -805,6 +879,9 @@ class EvolutionWorker:
                 plan_summary=plan.plan.summary,
                 metadata={
                     "is_seed_job": bool(job_ctx.is_seed_job),
+                    "campaign_program_hash": job_ctx.campaign_program_hash,
+                    "runtime_profile": str(getattr(self.settings, "profile", "default")),
+                    "effective_settings_fingerprint": self.settings.effective_fingerprint(),
                     "sampling": {
                         "strategy": job_ctx.sampling_strategy,
                         "initial_radius": job_ctx.sampling_initial_radius,
@@ -1198,6 +1275,43 @@ def _infrastructure_failure_outcome(
             repairability="unknown",
             repairability_reason="Worker exception fallback outcomes are not repairable by default.",
             safe_failure_summary=message,
+        ),
+    )
+
+
+def _campaign_scope_failure_outcome(result: ScopeGateResult) -> EvaluationOutcome:
+    payload = result.as_dict()
+    summary = (
+        "Campaign scope gate rejected candidate changes "
+        f"({len(result.violations)} violation(s))."
+    )
+    return EvaluationOutcome(
+        evaluator_name="campaign_scope_gate",
+        candidate_commit_hash=None,
+        outcome_kind="candidate_failed",
+        failure=EvaluationFailureResult(
+            failure_stage="policy",
+            failure_kind="campaign_scope_violation",
+            repairability="not_repairable",
+            repairability_reason="The worker must not publish candidates that modify protected or out-of-scope paths.",
+            safe_failure_summary=summary,
+            policy_version="campaign-scope-gate-v1",
+        ),
+        artifacts=(
+            EvaluationArtifact(
+                key="campaign_scope_violation",
+                kind="policy_failure",
+                mime_type="application/json",
+                inline_payload=payload,
+                label="Campaign scope violation",
+                summary=result.summary(),
+                visibility="human_only",
+                agent_projection="manifest",
+                metadata={
+                    "violation_count": len(result.violations),
+                    "checked_path_count": len(result.checked_paths),
+                },
+            ),
         ),
     )
 

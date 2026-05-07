@@ -228,6 +228,48 @@ def test_evaluator_records_duration_in_extra(tmp_path: Path, settings: Settings)
     assert result.extra["evaluator_duration_seconds"] >= 0.0
 
 
+def test_evaluator_records_campaign_primary_metric_warning_without_overriding_result(
+    tmp_path: Path,
+    settings: Settings,
+) -> None:
+    evaluator = Evaluator(settings=settings)
+    evaluator._plugin_callable = object()  # type: ignore[assignment]  # noqa: SLF001
+    evaluator._execute_with_timeout = lambda *_args, **_kwargs: {  # type: ignore[method-assign]
+        "summary": "ok",
+        "metrics": [{"name": "latency", "value": 10, "higher_is_better": True}],
+    }
+    context = EvaluationContext(
+        worktree=tmp_path,
+        payload={
+            "campaign_program": {
+                "hash": "abc123",
+                "snapshot": {
+                    "primary_metric": {
+                        "name": "latency",
+                        "direction": "lower_is_better",
+                        "unit": "ms",
+                    }
+                },
+            }
+        },
+    )
+
+    outcome = evaluator.evaluate_outcome(context)
+
+    assert outcome.outcome_kind == "passed"
+    assert outcome.result is not None
+    assert outcome.result.metrics[0].higher_is_better is True
+    assert outcome.result.extra["campaign_program_warnings"] == [
+        {
+            "code": "primary_metric_direction_conflict",
+            "campaign_program_hash": "abc123",
+            "metric_name": "latency",
+            "campaign_higher_is_better": False,
+            "evaluator_higher_is_better": True,
+        }
+    ]
+
+
 def test_coerce_result_accepts_mapping_artifacts_and_sanitizes_invalid_entries(settings: Settings) -> None:
     evaluator = Evaluator(settings=settings)
 

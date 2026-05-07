@@ -105,6 +105,7 @@ class EvolutionScheduler:
             settings=self.settings,
             console=self.console,
             sampler=self.sampler,
+            repo_root=self.repo_root,
         )
         self._total_jobs_count = int(self.job_scheduler.count_total_jobs())
         self.ingestion = MapElitesIngestion(

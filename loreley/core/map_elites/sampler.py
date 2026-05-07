@@ -17,6 +17,11 @@ from rich.console import Console
 from sqlalchemy.exc import SQLAlchemyError
 
 from loreley.config import Settings, get_settings, resolve_default_island_id
+from loreley.core.campaign_program import (
+    CampaignProjectionInput,
+    CampaignProgramSnapshot,
+    apply_campaign_program_projection,
+)
 from loreley.db.base import session_scope
 from loreley.db.models import EvolutionJob, JobStatus
 
@@ -183,6 +188,7 @@ class MapElitesSampler:
         cell_commits: Mapping[int, str] | None = None,
         cell_objectives: Mapping[int, float] | None = None,
         excluded_base_commits: Collection[str] | None = None,
+        campaign_program: CampaignProgramSnapshot | None = None,
     ) -> ScheduledSamplerJob | None:
         """Select base/inspiration commits and persist an EvolutionJob."""
         effective_island = island_id or self._default_island
@@ -225,14 +231,17 @@ class MapElitesSampler:
         if radius_used is not None:
             iteration_hint = f"MAP-Elites radius {radius_used} (initial {initial_radius})"
 
-        job = self._persist_job(
-            island_id=effective_island,
-            base_commit_hash=base_commit_hash,
-            inspiration_commit_hashes=inspirations,
-            selection_stats=selection_stats,
-            iteration_hint=iteration_hint,
-            priority=priority,
-        )
+        persist_kwargs: dict[str, Any] = {
+            "island_id": effective_island,
+            "base_commit_hash": base_commit_hash,
+            "inspiration_commit_hashes": inspirations,
+            "selection_stats": selection_stats,
+            "iteration_hint": iteration_hint,
+            "priority": priority,
+        }
+        if campaign_program is not None:
+            persist_kwargs["campaign_program"] = campaign_program
+        job = self._persist_job(**persist_kwargs)
         if not job:
             return None
 
@@ -623,9 +632,21 @@ class MapElitesSampler:
         selection_stats: Mapping[str, Any],
         iteration_hint: str | None,
         priority: int | None,
+        campaign_program: CampaignProgramSnapshot | None = None,
     ) -> EvolutionJob | None:
         job_priority = self._default_priority if priority is None else priority
-        goal = (self.settings.worker_evolution_global_goal or "").strip() or None
+        default_goal = (self.settings.worker_evolution_global_goal or "").strip() or None
+        projection = apply_campaign_program_projection(
+            CampaignProjectionInput(
+                snapshot=campaign_program,
+                goal=default_goal,
+                constraints=(),
+                acceptance_criteria=(),
+                notes=(),
+                default_goal=default_goal,
+            )
+        )
+        goal = projection.goal
         if not goal:
             log.error("Cannot schedule job; WORKER_EVOLUTION_GLOBAL_GOAL is empty.")
             return None
@@ -635,9 +656,9 @@ class MapElitesSampler:
             island_id=island_id,
             inspiration_commit_hashes=list(inspiration_commit_hashes),
             goal=goal,
-            constraints=[],
-            acceptance_criteria=[],
-            notes=[],
+            constraints=projection.constraints,
+            acceptance_criteria=projection.acceptance_criteria,
+            notes=projection.notes,
             tags=[],
             iteration_hint=iteration_hint,
             sampling_strategy="grid_neighbors",
@@ -646,6 +667,7 @@ class MapElitesSampler:
             sampling_fallback_inspirations=int(selection_stats.get("fallback_inspirations", 0)),
             is_seed_job=False,
             job_kind="evolution",
+            campaign_program_hash=campaign_program.raw_sha256 if campaign_program else None,
             priority=job_priority,
             scheduled_at=datetime.now(timezone.utc),
         )

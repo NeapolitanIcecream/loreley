@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from functools import lru_cache
+import hashlib
+import json
 import uuid
 from pathlib import Path
 from typing import Any, Literal
@@ -223,6 +225,10 @@ class Settings(BaseSettings):
     scheduler_stale_running_max_recovery_attempts: int = Field(
         default=3,
         alias="SCHEDULER_STALE_RUNNING_MAX_RECOVERY_ATTEMPTS",
+    )
+    campaign_program_change_policy: Literal["locked", "approve", "auto"] = Field(
+        default="locked",
+        alias="CAMPAIGN_PROGRAM_CHANGE_POLICY",
     )
 
     failed_candidate_repair_enabled: bool = Field(
@@ -866,6 +872,13 @@ class Settings(BaseSettings):
         """Return effective settings for debugging/logging."""
         return _build_safe_export_payload(self, mask_secrets=mask_secrets)
 
+    def effective_fingerprint(self) -> str:
+        """Return a stable fingerprint of the masked effective settings export."""
+
+        payload = self.export_safe(mask_secrets=True)
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
 
 def _safe_export_secret(value: str | None, *, mask_secrets: bool) -> str | None:
     normalized = (value or "").strip() or None
@@ -1007,6 +1020,7 @@ def _build_safe_export_payload(settings: Settings, *, mask_secrets: bool) -> dic
         "scheduler_stale_running_max_recovery_attempts": (
             settings.scheduler_stale_running_max_recovery_attempts
         ),
+        "campaign_program_change_policy": settings.campaign_program_change_policy,
         "failed_candidate_repair_enabled": settings.failed_candidate_repair_enabled,
         "failed_candidate_repair_mode": settings.failed_candidate_repair_mode,
         "failed_candidate_repair_max_depth": settings.failed_candidate_repair_max_depth,
