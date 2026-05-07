@@ -190,10 +190,12 @@ class MapElitesIngestion:
         return canonical or raw
 
     def initialise_root_commit(self, commit_hash: str) -> None:
-        """Ensure the configured root commit is present in DB and evaluated.
+        """Ensure the configured root commit is present in DB for ingestion.
 
         This helper is idempotent and safe to call on every scheduler startup.
         Repo-state bootstrap failures are fatal because runtime ingestion is incremental-only.
+        Campaign evaluator baseline bootstrap is handled separately by
+        BaselineBootstrapService before dispatch/scheduling.
         """
 
         commit_hash = self._resolve_root_commit_for_initialisation(commit_hash)
@@ -203,15 +205,6 @@ class MapElitesIngestion:
 
         # Bootstrap repo-state aggregates so runtime ingestion can stay incremental-only.
         self._ensure_root_commit_repo_state_bootstrap(commit_hash)
-
-        # Root commit evaluation is best-effort: failures do not prevent the scheduler loop.
-        try:
-            self._ensure_root_commit_evaluated(commit_hash)
-        except Exception as exc:
-            self.console.log(
-                f"[bold red]Root commit evaluation failed[/] commit={commit_hash} reason={exc}",
-            )
-            log.exception("Root commit evaluation failed for {}: {}", commit_hash, exc)
 
     def _resolve_root_commit_for_initialisation(self, commit_hash: str) -> str:
         try:

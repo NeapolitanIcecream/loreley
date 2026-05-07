@@ -234,6 +234,61 @@ class CampaignProgram(TimestampMixin, Base):
     )
 
 
+class CampaignBaseline(TimestampMixin, Base):
+    """Source-of-truth root baseline for a comparable campaign contract."""
+
+    __tablename__ = "campaign_baselines"
+    __table_args__ = (
+        UniqueConstraint("baseline_key_hash", name="uq_campaign_baselines_key_hash"),
+        Index("ix_campaign_baselines_root_commit", "root_commit_hash"),
+        Index("ix_campaign_baselines_campaign_program_hash", "campaign_program_hash"),
+        Index("ix_campaign_baselines_status", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    baseline_key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    root_commit_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    campaign_program_hash: Mapped[str | None] = mapped_column(String(64))
+    evaluator_name: Mapped[str | None] = mapped_column(String(128))
+    evaluator_version: Mapped[str | None] = mapped_column(String(128))
+    primary_metric_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    primary_metric_higher_is_better: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+        nullable=False,
+    )
+    runtime_profile: Mapped[str | None] = mapped_column(String(128))
+    effective_settings_fingerprint: Mapped[str | None] = mapped_column(String(64))
+
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    metric_value: Mapped[float | None] = mapped_column(Float)
+    metric_unit: Mapped[str | None] = mapped_column(String(32))
+    evaluation_summary: Mapped[str | None] = mapped_column(Text)
+    failure_kind: Mapped[str | None] = mapped_column(String(64))
+    failure_summary: Mapped[str | None] = mapped_column(Text)
+
+    commit_card_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("commit_cards.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    metric_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("metrics.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class CandidateCommit(TimestampMixin, Base):
     """Durable ledger row for a worker-produced candidate commit."""
 

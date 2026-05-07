@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from loreley.cli import _status_response_payload, main
+from loreley.core.campaign_program import parse_campaign_program
 from tests.support import TestSettings
 
 
@@ -102,6 +103,7 @@ def test_status_response_payload_preserves_nested_sections() -> None:
         "job_leases": {"running": 1, "stale_running": 0},
         "archive": {"island_id": "main"},
         "best_commit": {"commit_hash": "abc123"},
+        "baseline": None,
     }
 
 
@@ -155,3 +157,94 @@ def test_status_table_prints_job_lease_health_section(
     assert "stale_running" in captured.out
     assert "running_without_lease" in captured.out
     assert "recovery_exhausted_failed" in captured.out
+
+
+def test_status_json_scopes_baseline_to_current_campaign_program(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path,
+) -> None:
+    """Regression: status must not report a baseline from a different campaign program."""
+
+    raw_program = b"## Goal\nImprove program A.\n"
+    (tmp_path / "loreley.program.md").write_bytes(raw_program)
+    expected_program_hash = parse_campaign_program(
+        raw_program,
+        source_path="loreley.program.md",
+    ).raw_sha256
+    settings = _make_settings()
+    settings.mapelites_experiment_root_commit = "root123"
+    settings.mapelites_fitness_metric = "score"
+    settings.scheduler_repo_root = str(tmp_path)
+    monkeypatch.setattr("loreley.cli.get_settings", lambda: settings)
+    monkeypatch.setattr("loreley.cli._configure_logging_or_exit", lambda **_kwargs: None)
+    _patch_cli_db_now(monkeypatch)
+    monkeypatch.setattr(
+        "loreley.cli._load_archive_stats_or_exit",
+        lambda **_kwargs: {"island_id": "main", "occupied": 1, "cells": 4, "coverage": 0.25},
+    )
+
+    instance = SimpleNamespace(
+        experiment_id_raw="exp-demo",
+        experiment_uuid="11111111-1111-1111-1111-111111111111",
+        root_commit_hash="root123",
+        repository_slug="demo/repo",
+        repository_canonical_origin="https://example.com/demo/repo.git",
+    )
+    counts = iter([7, 2, 3, 1, 0, 2])
+    baseline_calls: list[str | None] = []
+
+    class DummyResult:
+        def __init__(self, *, value: Any = None, row: Any = None) -> None:
+            self._value = value
+            self._row = row
+
+        def scalar_one(self) -> Any:
+            return self._value
+
+        def first(self) -> Any:
+            return self._row
+
+    class DummySession:
+        def get(self, _model: Any, _key: Any) -> Any:
+            return instance
+
+        def execute(self, _stmt: Any) -> DummyResult:
+            try:
+                return DummyResult(value=next(counts))
+            except StopIteration:
+                return DummyResult(row=None)
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    def fake_load_latest_matching_baseline(**kwargs: Any) -> Any:
+        campaign_program_hash = kwargs.get("campaign_program_hash")
+        baseline_calls.append(campaign_program_hash)
+        return SimpleNamespace(
+            id="aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa",
+            baseline_key_hash="a" * 64,
+            root_commit_hash="root123",
+            primary_metric_name="score",
+            metric_value=1.0,
+            primary_metric_higher_is_better=True,
+            status="valid",
+            campaign_program_hash=campaign_program_hash,
+            failure_kind=None,
+            failure_summary=None,
+        )
+
+    monkeypatch.setattr("loreley.db.base.session_scope", fake_scope)
+    monkeypatch.setattr(
+        "loreley.scheduler.baselines.load_latest_matching_baseline",
+        fake_load_latest_matching_baseline,
+    )
+
+    code = main(["status", "--json"])
+    captured = capsys.readouterr()
+
+    assert code == 0
+    payload = json.loads(captured.out)
+    assert baseline_calls == [expected_program_hash]
+    assert payload["baseline"]["baseline_campaign_program_hash"] == expected_program_hash

@@ -15,7 +15,7 @@ from loreley.scheduler.ingestion import MapElitesIngestion
 
 - **Purpose**: ingest completed evolution jobs into MAP-Elites, record rich
   ingestion state back onto the job row, and ensure the experiment's root
-  commit is registered and evaluated as a baseline in the database.
+  commit has metadata plus repo-state bootstrap data in the database.
 - **Construction**: created by `EvolutionScheduler` with:
   - the shared `Settings` instance,
   - the interactive `rich` console,
@@ -71,17 +71,18 @@ When `MAPELITES_EXPERIMENT_ROOT_COMMIT` is set, `EvolutionScheduler` asks
    - the commit's parent, author, and message,
    - a default island id (from `MAPELITES_DEFAULT_ISLAND_ID` or `"main"`),
    - bounded commit-card fields (`subject`, `change_summary`, `highlights`).
-3. `_ensure_root_commit_repo_state_bootstrap(...)` bootstraps the baseline
+3. `_ensure_root_commit_repo_state_bootstrap(...)` bootstraps the root
    repo-state aggregate for incremental-only ingestion by computing and
    persisting the root commit aggregate (full enumeration allowed at bootstrap).
-4. `_ensure_root_commit_evaluated(...)` runs a one-off evaluation for the root
-   commit when no `Metric` rows already exist, writing baseline metrics into
-   the `metrics` table. These metrics act as an experiment-wide baseline but do
-   not insert the root commit into any MAP-Elites archive.
+4. Root evaluator baselines are not produced by ingestion. The scheduler calls
+   `loreley.scheduler.baselines.BaselineBootstrapService` separately to create
+   or load the matching row in `campaign_baselines`.
 
 Repo-state bootstrap failures are fatal because the scheduler runs repo-state
-ingestion in incremental-only mode at runtime. Root evaluation failures are
-best-effort and are logged without preventing the scheduler loop from running.
+ingestion in incremental-only mode at runtime. Campaign baseline failures are
+handled by `BASELINE_BOOTSTRAP_POLICY`: `required` blocks dispatch and
+scheduling, while `warn` records a degraded `campaign_baselines` row and keeps
+the scheduler moving with baseline deltas unavailable.
 
 ## Interaction with EvolutionScheduler
 
@@ -97,4 +98,3 @@ pipeline:
 Separating this logic into `MapElitesIngestion` keeps the main scheduler loop
 small and clarifies the boundary between **job lifecycle** and **archive
 maintenance**.
-

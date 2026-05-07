@@ -88,6 +88,10 @@ class MapElitesRecord:
     metric_value: float | None = None
     metric_name: str | None = None
     higher_is_better: bool | None = None
+    campaign_baseline_id: str | None = None
+    baseline_key_hash: str | None = None
+    baseline_status: str | None = None
+    delta_from_root_baseline: float | None = None
 
     @property
     def dimensions(self) -> int:

@@ -41,6 +41,11 @@ from loreley.db.models import (
     JobStatus,
     MapElitesRepoStateAggregate,
 )
+from loreley.scheduler.baselines import (
+    BASELINE_STATUS_DEGRADED,
+    BASELINE_STATUS_VALID,
+    load_latest_matching_baseline,
+)
 from loreley.tasks.workers import build_evolution_job_sender_actor
 
 log = logger.bind(module="scheduler.job_scheduler")
@@ -209,7 +214,54 @@ class FailedCandidateRepairSampler:
             commit_hash=str(candidate.nearest_viable_ancestor_hash or ""),
         ):
             return False
+        if not self._source_campaign_baseline_allows_repair(
+            session=session,
+            candidate=candidate,
+        ):
+            return False
         return True
+
+    def _source_campaign_baseline_allows_repair(
+        self,
+        *,
+        session: Any,
+        candidate: CandidateCommit,
+    ) -> bool:
+        policy = str(getattr(self.settings, "baseline_bootstrap_policy", "required") or "required")
+        if policy not in {"required", "warn"}:
+            policy = "required"
+        campaign_program_hash = getattr(candidate, "campaign_program_hash", None)
+        if policy == "warn":
+            baseline = load_latest_matching_baseline(
+                session=session,
+                settings=self.settings,
+                campaign_program_hash=campaign_program_hash,
+                valid_only=False,
+            )
+            if baseline is not None and getattr(baseline, "status", None) == BASELINE_STATUS_DEGRADED:
+                log.bind(
+                    repair_source_candidate_id=str(getattr(candidate, "id", "")),
+                    campaign_program_hash=campaign_program_hash,
+                    baseline_id=str(getattr(baseline, "id", "")),
+                    baseline_status=getattr(baseline, "status", None),
+                    baseline_policy=policy,
+                ).warning("Repair candidate allowed with degraded campaign baseline under warn policy")
+            return True
+
+        baseline = load_latest_matching_baseline(
+            session=session,
+            settings=self.settings,
+            campaign_program_hash=campaign_program_hash,
+            valid_only=True,
+        )
+        if baseline is not None and getattr(baseline, "status", None) == BASELINE_STATUS_VALID:
+            return True
+        log.bind(
+            repair_source_candidate_id=str(getattr(candidate, "id", "")),
+            campaign_program_hash=campaign_program_hash,
+            baseline_policy=policy,
+        ).info("Repair candidate blocked by campaign baseline")
+        return False
 
     @staticmethod
     def _has_active_repair_job(*, session: Any, source_id: UUID) -> bool:
@@ -799,6 +851,13 @@ class JobScheduler:
             active_hash,
             current_hash,
         )
+
+    @property
+    def campaign_program_snapshot(self) -> CampaignProgramSnapshot | None:
+        return self._campaign_program_snapshot
+
+    def refresh_campaign_program_for_policy(self) -> None:
+        self._refresh_campaign_program_for_policy()
 
     # Dispatching -----------------------------------------------------------
 

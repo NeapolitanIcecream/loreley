@@ -32,6 +32,10 @@ class ArchiveRecordOut(OrmOutModel):
     metric_value: float | None = None
     metric_name: str | None = None
     higher_is_better: bool | None = None
+    campaign_baseline_id: str | None = None
+    baseline_key_hash: str | None = None
+    baseline_status: str | None = None
+    delta_from_root_baseline: float | None = None
     measures: list[float] = Field(default_factory=list)
     solution: list[float] = Field(default_factory=list)
     timestamp: float

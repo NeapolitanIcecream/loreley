@@ -230,6 +230,10 @@ class Settings(BaseSettings):
         default="locked",
         alias="CAMPAIGN_PROGRAM_CHANGE_POLICY",
     )
+    baseline_bootstrap_policy: Literal["required", "warn"] = Field(
+        default="required",
+        alias="BASELINE_BOOTSTRAP_POLICY",
+    )
 
     failed_candidate_repair_enabled: bool = Field(
         default=False,
@@ -1021,6 +1025,7 @@ def _build_safe_export_payload(settings: Settings, *, mask_secrets: bool) -> dic
             settings.scheduler_stale_running_max_recovery_attempts
         ),
         "campaign_program_change_policy": settings.campaign_program_change_policy,
+        "baseline_bootstrap_policy": settings.baseline_bootstrap_policy,
         "failed_candidate_repair_enabled": settings.failed_candidate_repair_enabled,
         "failed_candidate_repair_mode": settings.failed_candidate_repair_mode,
         "failed_candidate_repair_max_depth": settings.failed_candidate_repair_max_depth,

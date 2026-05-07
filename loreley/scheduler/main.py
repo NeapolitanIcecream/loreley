@@ -29,6 +29,7 @@ from loreley.db.locks import (
     uuid_to_pg_bigint_lock_key,
 )
 from loreley.db.models import CommitCard, Metric
+from loreley.scheduler.baselines import BaselineBootstrapResult, BaselineBootstrapService
 from loreley.naming import resolve_experiment_namespace, resolve_experiment_uuid
 from loreley.scheduler.ingestion import MapElitesIngestion
 from loreley.scheduler.job_scheduler import JobScheduler
@@ -115,6 +116,11 @@ class EvolutionScheduler:
             repo=self._repo,
             manager=self.manager,
         )
+        self.baseline_bootstrap = BaselineBootstrapService(
+            settings=self.settings,
+            repo_root=self.repo_root,
+            console=self.console,
+        )
         self._stop_requested = False
 
         # Optionally initialise an explicit experiment root commit so that the
@@ -164,6 +170,23 @@ class EvolutionScheduler:
         reclaimed = reclaim_fn() if callable(reclaim_fn) else None
         stats["reclaimed_pending"] = int(getattr(reclaimed, "requeued", 0) or 0)
         stats["reclaimed_failed"] = int(getattr(reclaimed, "failed", 0) or 0)
+        baseline = self._ensure_campaign_baseline_ready()
+        stats["baseline_blocked"] = 0
+        if baseline is not None and not baseline.can_dispatch_or_schedule:
+            stats["baseline_blocked"] = 1
+            stats["dispatched"] = 0
+            stats["seed_scheduled"] = 0
+            stats["scheduled"] = 0
+            stats["unfinished"] = self.job_scheduler.count_unfinished_jobs()
+            self.console.log(
+                "[bold yellow]Scheduler tick blocked by campaign baseline[/] "
+                "status={} key={} reason={}".format(
+                    baseline.status,
+                    baseline.baseline_key_hash[:12],
+                    baseline.failure_kind or baseline.failure_summary or "n/a",
+                ),
+            )
+            return stats
         stats["dispatched"] = self.job_scheduler.dispatch_pending_jobs()
         unfinished = self.job_scheduler.count_unfinished_jobs()
         stats["seed_scheduled"] = self._maybe_schedule_seed_jobs(unfinished_jobs=unfinished)
@@ -287,6 +310,19 @@ class EvolutionScheduler:
         self._total_jobs_count = updated
         return updated
 
+    def _ensure_campaign_baseline_ready(self) -> BaselineBootstrapResult | None:
+        root_hash = getattr(self, "_root_commit_hash", None)
+        if not root_hash:
+            return None
+        refresh = getattr(self.job_scheduler, "refresh_campaign_program_for_policy", None)
+        if callable(refresh):
+            refresh()
+        campaign_program = getattr(self.job_scheduler, "campaign_program_snapshot", None)
+        return self.baseline_bootstrap.ensure_or_load_baseline(
+            root_commit_hash=root_hash,
+            campaign_program=campaign_program,
+        )
+
     # DB coordination helpers ----------------------------------------------
 
     def _acquire_experiment_lock(self) -> AdvisoryLock:
@@ -310,6 +346,7 @@ class EvolutionScheduler:
     def _startup_scan_and_validate_repo_state_approval(self) -> None:
         root_commit = self._require_repo_state_startup_root_commit()
         canonical = self._resolve_repo_state_startup_root_commit(root_commit)
+        self._root_commit_hash = canonical
         filters = self._repo_state_startup_filters()
         scan = self._scan_repo_state_startup_root(canonical)
         approval = self._build_repo_state_startup_approval(
