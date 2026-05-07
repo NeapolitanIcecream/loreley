@@ -49,8 +49,14 @@ class _RunnableJobScheduler(_BlockedJobScheduler):
         self.events.append("dispatch")
         return 1
 
-    def schedule_jobs(self, unfinished_jobs: int, *, total_jobs: int) -> int:
-        self.events.append(f"schedule:{unfinished_jobs}:{total_jobs}")
+    def schedule_jobs(
+        self,
+        unfinished_jobs: int,
+        *,
+        total_jobs: int,
+        refresh_campaign_program: bool = True,
+    ) -> int:
+        self.events.append(f"schedule:{unfinished_jobs}:{total_jobs}:{refresh_campaign_program}")
         return 2
 
     def count_total_jobs(self) -> int:
@@ -134,5 +140,5 @@ def test_tick_establishes_baseline_before_dispatch_seed_and_sampler_scheduling()
         "dispatch",
         "count_unfinished",
         "seed:3",
-        "schedule:4:1",
+        "schedule:4:1:False",
     ]

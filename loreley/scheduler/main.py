@@ -197,6 +197,7 @@ class EvolutionScheduler:
         stats["scheduled"] = self.job_scheduler.schedule_jobs(
             unfinished_jobs=effective_unfinished,
             total_jobs=total_jobs,
+            refresh_campaign_program=False,
         )
         stats["unfinished"] = unfinished + stats["seed_scheduled"] + stats["scheduled"]
         if stats["scheduled"] > 0:
@@ -655,6 +656,7 @@ class EvolutionScheduler:
             base_commit_hash=root_hash,
             count=to_create,
             island_id=default_island,
+            refresh_campaign_program=False,
         )
         if created:
             self.console.log(
