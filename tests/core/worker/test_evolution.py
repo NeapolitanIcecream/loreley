@@ -862,6 +862,53 @@ def test_run_persists_campaign_scope_violation_before_commit_push_or_evaluation(
     assert artifact.inline_payload["violations"][0]["path"] == "README.md"
 
 
+def test_run_fails_closed_when_referenced_campaign_program_is_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    """Regression: missing campaign program rows must not bypass scope policy."""
+
+    job_id = uuid.uuid4()
+    events: list[str] = []
+    missing_hash = "a" * 64
+    store = _FakeJobStoreForPublishFailure(
+        job_id=job_id,
+        events=events,
+        persist_error=evolution_module.EvolutionWorkerError("unused"),
+        campaign_program_hash=missing_hash,
+    )
+    worker = EvolutionWorker(
+        settings=settings,
+        repository=_FakeRepositoryForRun(worktree=tmp_path, events=events),  # type: ignore[arg-type]
+        planning_agent=_FakePlanningAgent(),  # type: ignore[arg-type]
+        coding_agent=_FakeCodingAgent(),  # type: ignore[arg-type]
+        evaluator=_EventCapturingEvaluator(events),  # type: ignore[arg-type]
+        summarizer=_FakeSummarizer(),  # type: ignore[arg-type]
+        job_store=store,  # type: ignore[arg-type]
+    )
+
+    @contextmanager
+    def fake_session_scope() -> Any:
+        yield object()
+
+    monkeypatch.setattr(evolution_module, "session_scope", fake_session_scope)
+    monkeypatch.setattr(
+        evolution_module,
+        "load_campaign_program_snapshot_by_hash",
+        lambda **_kwargs: None,
+    )
+
+    with pytest.raises(evolution_module.EvolutionWorkerError, match="refusing to run without contract"):
+        worker.run(job_id)
+
+    assert "repo.checkout" not in events
+    assert "coding.implement" not in events
+    assert "evaluator.evaluate" not in events
+    assert store.failures[0]["job_id"] == job_id
+    assert missing_hash in store.failures[0]["message"]
+
+
 def test_run_evaluation_payload_includes_campaign_program_and_runtime_provenance(
     tmp_path: Path,
     settings: Settings,

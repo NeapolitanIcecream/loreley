@@ -597,10 +597,15 @@ class EvolutionWorker:
                 program_hash=campaign_program_hash,
             )
         if snapshot is None:
-            log.warning(
-                "Job references missing campaign program hash={}",
+            message = (
+                "Job references missing campaign program "
+                f"hash={campaign_program_hash}; refusing to run without contract."
+            )
+            log.error(
+                "Job references missing campaign program hash={} action=fail_closed",
                 campaign_program_hash,
             )
+            raise EvolutionWorkerError(message)
         return snapshot
 
     def _build_prompt_context(
