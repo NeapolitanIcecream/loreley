@@ -73,11 +73,14 @@ evaluation_outcome_kind:
 policy_outcome:
   accepted | policy_failed | not_checked | unknown
 
-archive_decision:
+historical_archive_decision:
   inserted_empty_cell | replaced_cell_elite | retained_existing_elite |
   rejected_lower_fitness_same_cell | skipped_archive_not_ready |
   skipped_missing_metric | skipped_failed_evaluation | skipped_policy_failed |
   skipped_ingest_failed | not_considered | unknown
+
+current_archive_status:
+  current_elite | superseded | never_member | not_considered | unknown
 
 repair_decision:
   not_applicable | eligible | scheduled | repairing | repaired |
@@ -93,6 +96,12 @@ campaign_outcome:
 `campaign_outcome` is the summary label for UI, status output, and TSV exports.
 The other fields preserve the reason behind the summary. This avoids
 overloading one mutable enum with every subsystem concern.
+
+Use `historical_archive_decision` for what happened when the candidate was
+ingested into the archive, and `current_archive_status` for whether the
+candidate is still a current archive elite. A candidate can be
+`inserted_empty_cell` historically and later become `superseded` after another
+candidate replaces it. Both facts are important and must not be collapsed.
 
 The source of truth remains the underlying rows:
 
@@ -111,6 +120,27 @@ The derived outcome can initially be computed at query/export time. If UI or
 export performance later requires denormalization, a stored
 `candidate_outcome_summary` or materialized view can be added without changing
 the semantics.
+
+Query-time derivation is the canonical semantic path. SQL views, materialized
+views, or `candidate_commits` cache columns are permitted only as derived
+caches. If a cached summary is introduced, it must carry enough invalidation
+metadata to prove freshness:
+
+```text
+candidate_commits.outcome_summary_json nullable
+candidate_commits.outcome_summary_version
+candidate_commits.outcome_summary_derived_at
+candidate_commits.outcome_summary_source_revision
+```
+
+At minimum, cached outcome summaries are invalidated by candidate evaluation
+updates, policy check updates, repair-state updates, archive ingestion events,
+archive rebuilds, and PCA projection epoch changes.
+
+`unknown` is a migration and backfill escape hatch. New live-path outcomes that
+derive `unknown` should emit a warning or metric with a bounded reason code.
+Tests should document which legacy or partial-input combinations may produce
+`unknown`.
 
 ### QD Interpretation of Keep and Discard
 
@@ -140,6 +170,41 @@ Do not equate "passed evaluation" with "kept". A valid candidate can still be
 `valid_not_elite` when it lands in an occupied cell and does not beat the
 existing elite for that cell.
 
+### Outcome Precedence
+
+Use one shared derivation function for campaign outcomes. UI, CLI, API, and
+exports must not each implement their own precedence rules.
+
+The summary label precedence is:
+
+```text
+cancelled
+  > infrastructure_failed
+  > evaluator_failed
+  > candidate_failed / repair_pending / repair_exhausted
+  > policy_failed
+  > evaluation passed + historical archive decision
+  > valid_not_considered
+  > unknown
+```
+
+`repair_pending` is not an evaluation outcome. It is the summary label for a
+candidate-owned failure whose repair state is `eligible`, `scheduled`, or
+`repairing`. If the same candidate exhausts repair attempts, the summary label
+becomes `repair_exhausted`.
+
+Policy failures should also expose bounded reason fields:
+
+```text
+policy_stage:
+  pre_commit | pre_evaluation | post_evaluation | archive_ingestion | unknown
+
+policy_failure_kind:
+  protected_scope_violation | editable_scope_violation | budget_exceeded |
+  missing_primary_metric | complexity_policy_failed |
+  evaluator_contract_mismatch | unknown
+```
+
 ### Archive Decisions
 
 Archive ingestion should produce or expose enough structured information to
@@ -155,6 +220,30 @@ derive these decisions:
 - skipped ingestion because evaluation did not pass;
 - skipped ingestion because campaign policy rejected the candidate;
 - ingestion failure due to repository, embedding, database, or archive errors.
+
+These are historical archive decisions. They should be persisted as ingestion
+events or attempts rather than inferred later from current archive cells. The
+MVP schema is:
+
+```text
+archive_ingestion_attempts
+- id uuid primary key
+- candidate_commit_id uuid not null
+- island_id varchar(64) null
+- projection_epoch integer null
+- cell_key text null
+- decision varchar(64) not null
+- candidate_fitness double precision null
+- incumbent_candidate_id uuid null
+- incumbent_fitness double precision null
+- reason_code varchar(64) null
+- created_at timestamptz not null
+```
+
+`projection_epoch` identifies the PCA/archive projection state when the
+decision was made. Archive rebuilds may create new ingestion attempts or a
+separate rebuild event stream, but current archive state must still be derived
+from `MapElitesArchiveCell`.
 
 These decisions should be visible in:
 
@@ -195,9 +284,14 @@ effective_settings_fingerprint
 
 evaluation_outcome_kind
 policy_outcome
-archive_decision
+historical_archive_decision
+current_archive_status
 repair_decision
 campaign_outcome
+policy_stage
+policy_failure_kind
+current_inspiration_eligible
+sampler_eligibility_reason
 
 primary_metric_name
 primary_metric_value
@@ -218,6 +312,8 @@ lines_added
 lines_deleted
 dependency_changes
 complexity_cost
+complexity_formula_version
+complexity_unavailable_reason
 
 plan_summary
 change_summary
@@ -236,6 +332,7 @@ candidate
 base
 outcome
 archive_decision
+current_archive_status
 metric
 value
 delta_from_baseline
@@ -246,9 +343,35 @@ complexity_cost
 description
 ```
 
+In TSV, `archive_decision` is the short review-column alias for
+`historical_archive_decision`. Current membership is reported separately as
+`current_archive_status`.
+
 Use TSV rather than CSV for the human projection because short descriptions
 often contain commas. Long Markdown, raw logs, prompts, and evaluator artifacts
 must not be embedded in TSV rows.
+
+Ledger export is explicit by default:
+
+```bash
+loreley runs export --format jsonl
+loreley runs export --format tsv
+```
+
+Automatic export is opt-in snapshot generation, not worker append:
+
+```text
+RUN_LEDGER_AUTO_EXPORT=off | jsonl | tsv | both
+RUN_LEDGER_AUTO_EXPORT_INTERVAL_SECONDS=300
+RUN_LEDGER_AUTO_EXPORT_ON_SHUTDOWN=true
+RUN_LEDGER_AUTO_EXPORT_DEST=...
+```
+
+Automatic exports must be generated from the database, sorted stably by
+`completed_at` and `job_id`, written atomically through a temporary file plus
+rename, and include `schema_version`, `export_generated_at`, and
+`source_db_schema_version`. File names should include the experiment id and, if
+available, campaign program and baseline identifiers.
 
 ### Complexity Signals
 
@@ -259,22 +382,97 @@ The first implementation should expose cheap structural signals:
 
 ```text
 loreley.diff.files_changed
+loreley.diff.files_added
+loreley.diff.files_deleted
+loreley.diff.files_modified
+loreley.diff.renames
 loreley.diff.lines_added
 loreley.diff.lines_deleted
-loreley.diff.dependencies_added
-loreley.diff.dependencies_removed
+loreley.diff.binary_files_changed
+loreley.diff.max_file_churn
+loreley.diff.generated_or_vendor_files_changed
+
+loreley.deps.manifest_files_changed
+loreley.deps.lockfiles_changed
+loreley.deps.dependencies_added
+loreley.deps.dependencies_removed
+loreley.deps.dependencies_updated
+
+loreley.scope.protected_paths_touched
+loreley.scope.editable_scope_violations
+
 loreley.complexity.cost
+loreley.complexity.formula_version
+loreley.complexity.excluded_path_policy_hash
 ```
 
 These can be computed by the worker from the candidate diff or emitted by the
 evaluator when domain-specific complexity signals are available. Namespaced
 `loreley.*` metrics avoid collisions with target project metrics.
 
+The MVP should compute raw diff stats with git, for example
+`git diff --numstat --find-renames <base>..<candidate>`. Dependency changes
+can start path-based by detecting touched manifest and lock files such as
+`pyproject.toml`, `uv.lock`, `package.json`, `package-lock.json`,
+`pnpm-lock.yaml`, `Cargo.toml`, `Cargo.lock`, `go.mod`, and `go.sum`. Parsing
+specific dependency additions, removals, and updates can come later.
+
+Persist raw stats separately from `loreley.complexity.cost`.
+`complexity_cost` is a derived score and must include a formula version so old
+ledger rows remain interpretable after formula changes. If a candidate fails
+before a commit exists, complexity fields are null and
+`complexity_unavailable_reason` explains why:
+
+```text
+complexity_unavailable_reason:
+  no_candidate_commit | checkout_failed | diff_failed | unknown
+```
+
 Use the campaign program's complexity policy from ADR 0049 to explain these
 signals to planning and coding agents. For the MVP, complexity affects prompts,
 operator review, ledger exports, and optional policy checks. A later ADR should
 decide whether same-cell archive replacement should use a fitness epsilon plus
 complexity tie-breaker.
+
+### Valid Non-Elite Sampling
+
+`valid_not_elite` candidates may be sampled only through an explicit shadow
+pool strategy. They are not default base commits and must not enter default
+inspiration selection merely because their candidate branch exists.
+
+Expose sampler provenance with:
+
+```text
+base_selection_kind:
+  root_seed | archive_elite | repaired_candidate |
+  valid_non_elite_shadow_pool | operator_pinned
+
+inspiration_selection_kind:
+  archive_elite | valid_non_elite_shadow_pool |
+  recent_success | operator_pinned | none
+```
+
+The first sampler labels are:
+
+```text
+valid_non_elite_shadow_inspiration
+valid_non_elite_revisit
+```
+
+The shadow pool is disabled by default and must have explicit budget limits:
+
+```text
+VALID_NON_ELITE_SAMPLING_ENABLED=false
+VALID_NON_ELITE_MAX_FRACTION=0.05
+VALID_NON_ELITE_MAX_AGE_JOBS=200
+VALID_NON_ELITE_MIN_NORMALIZED_FITNESS_PERCENTILE=0.50
+VALID_NON_ELITE_REQUIRE_POLICY_ACCEPTED=true
+VALID_NON_ELITE_REQUIRE_EVALUATION_PASSED=true
+```
+
+Preferred shadow-pool candidates are close same-cell losers with low
+complexity, few dependency changes, useful local evaluation signals, or
+lineage from under-explored archive regions.
 
 ### Pilot and Local Review Compatibility
 
@@ -298,6 +496,9 @@ overnight" on the same review path.
 - Do not pass raw logs or unbounded evaluator output to future agents through
   the ledger.
 - Do not make complexity cost a primary archive objective in this ADR.
+- Do not sample valid non-elites through implicit branch existence. Shadow-pool
+  sampling must be explicitly configured and labelled.
+- Do not make automatic TSV/JSONL export the default scheduler behavior.
 - Do not allow uncapped "run forever" behavior as the production default.
   Scheduler job caps, leases, timeouts, and baseline policy still apply.
 
@@ -315,9 +516,9 @@ Archive, repair, and policy behavior become easier to audit. A candidate's
 outcome can be understood together with the campaign program hash, baseline
 identity, runtime profile, primary metric, and repair state.
 
-The implementation adds a small derived-model layer. The benefit is that
-subsystems can keep precise internal statuses while UI, CLI, and exports share
-one vocabulary.
+The implementation adds a small derived-model layer and one archive ingestion
+event stream. The benefit is that subsystems can keep precise internal
+statuses while UI, CLI, and exports share one vocabulary.
 
 Result exports may expose incomplete data while earlier ADRs are still being
 implemented. Missing program hashes, baseline ids, resource metrics, or
@@ -328,37 +529,51 @@ silently omitted from the schema.
 
 Phase 1:
 
-1. Add a small outcome derivation module that maps existing job, candidate,
-   evaluation, repair, and archive rows into the outcome dimensions above.
-2. Add unit tests for the mapping, including passed/not-elite, inserted elite,
+1. Add an `archive_ingestion_attempts` table or equivalent archive event
+   record so historical archive decisions are persisted.
+2. Add a pure outcome derivation module:
+
+```text
+derive_candidate_outcome(input: CandidateOutcomeInput) -> CandidateOutcomeView
+```
+
+The returned view includes all outcome dimensions, summary labels, reason
+codes, source row ids, and a derivation version.
+
+3. Add unit tests for the mapping, including passed/not-elite, inserted elite,
    replaced elite, failed candidate, evaluator failure, repair pending, and
    archive warmup cases.
-3. Expose the derived fields in service-layer responses used by CLI/UI.
+4. Expose the derived fields in service-layer responses used by CLI/UI.
 
 Phase 2:
 
 1. Add `loreley runs export --format jsonl|tsv`.
 2. Export core identifiers, primary metric, normalized fitness, archive
-   decision, campaign outcome, branch, summaries, and timestamps from existing
-   data.
+   decisions, current archive status, campaign outcome, branch, summaries, and
+   timestamps from existing data.
 3. Add baseline and campaign program fields as nullable columns in the export
    projection until ADR 0049 and ADR 0050 are fully implemented.
+4. Add opt-in automatic export as atomic snapshots if operators need periodic
+   review files.
 
 Phase 3:
 
 1. Add worker-computed diff statistics for successful and failed candidates
    when a candidate commit exists.
-2. Add optional evaluator-provided complexity metrics under the `loreley.*`
+2. Persist raw stats and a versioned `complexity_cost` separately.
+3. Add optional evaluator-provided complexity metrics under the `loreley.*`
    namespace.
-3. Surface complexity signals in exports and candidate detail views.
+4. Surface complexity signals in exports and candidate detail views.
 
 Phase 4:
 
 1. Add a materialized view or denormalized summary column only if export or UI
    queries become too expensive.
-2. Consider same-cell archive replacement tie-breakers based on campaign
+2. Add explicit valid-non-elite shadow-pool sampling only if campaign data
+   shows a need for non-elite reuse.
+3. Consider same-cell archive replacement tie-breakers based on campaign
    complexity policy in a separate ADR.
-3. Reuse the same ledger schema for future pilot mode.
+4. Reuse the same ledger schema for future pilot mode.
 
 ## Tests
 
@@ -376,16 +591,25 @@ Add tests for:
 - TSV export escaping tabs and newlines in descriptions;
 - JSONL export preserving null fields for unavailable program, baseline,
   memory, cost, and complexity data;
+- historical archive insertion remaining visible after the candidate is later
+  superseded in current archive cells;
+- archive rebuild or PCA epoch changes invalidating any cached outcome summary;
+- `unknown` appearing only for documented legacy or partial-input cases;
+- policy stage and policy failure kind appearing in policy failures;
 - archive membership, not mere candidate branch existence, controlling default
-  inspiration eligibility.
+  inspiration eligibility;
+- valid-non-elite shadow-pool sampling being disabled by default and labelled
+  when enabled;
+- automatic export, when enabled, writing atomically from database state rather
+  than worker appends.
 
-## Open Questions
+## Deferred Questions
 
-- Should the outcome derivation be purely query-time, or should high-volume
-  deployments store a denormalized summary on `candidate_commits`?
-- Which complexity signals are cheap and stable enough to compute in the
-  worker for every candidate, including failed ones?
-- Should `valid_not_elite` candidates ever be sampled by a deliberate
-  exploration strategy, and if so what sampler label should make that visible?
-- Should TSV exports be written automatically after each scheduler tick, or
-  remain an explicit CLI/API export generated from the database?
+- Which specific `complexity_cost` formula should be version 1?
+- Should archive rebuilds append archive ingestion attempts, use a separate
+  rebuild event table, or both?
+- Which UI and API endpoints need cached outcome summaries, if any, after
+  query-time derivation and SQL views are measured?
+- Should same-cell replacement eventually use a fitness epsilon plus
+  complexity tie-breaker, and how should that interact with MAP-Elites
+  objective semantics?
