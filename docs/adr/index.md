@@ -74,4 +74,4 @@ ADR numbers are unique and chronological. `ADR 0029` resolves an earlier duplica
 ## 0050-0059
 
 - [ADR 0050: Baseline-first campaign comparability contract](0050-baseline-first-campaign-bootstrap.md)
-- [ADR 0051: QD candidate outcomes and campaign run ledger](0051-qd-candidate-outcomes-and-run-ledger.md)
+- [ADR 0051: QD keep/discard candidate semantics](0051-qd-keep-discard-semantics.md)
