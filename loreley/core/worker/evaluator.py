@@ -1388,49 +1388,18 @@ def _record_campaign_primary_metric_warnings(
 ) -> None:
     if outcome.result is None:
         return
-    campaign_program = context.payload.get("campaign_program")
-    if not isinstance(campaign_program, Mapping):
-        return
-    snapshot = campaign_program.get("snapshot")
-    if not isinstance(snapshot, Mapping):
-        return
-    primary_metric = snapshot.get("primary_metric")
-    if not isinstance(primary_metric, Mapping):
-        return
-    metric_name = normalize_single_line(str(primary_metric.get("name") or ""))
-    if not metric_name:
-        return
-    expected_direction = normalize_single_line(str(primary_metric.get("direction") or "")).lower()
-    expected_higher: bool | None
-    if expected_direction == "higher_is_better":
-        expected_higher = True
-    elif expected_direction == "lower_is_better":
-        expected_higher = False
-    else:
-        expected_higher = None
 
-    matching = [metric for metric in outcome.result.metrics if metric.name == metric_name]
+    spec = _campaign_primary_metric_spec(context)
+    if spec is None:
+        return
+
     warnings = list(outcome.result.extra.get("campaign_program_warnings") or [])
-    if not matching:
-        warnings.append(
-            {
-                "code": "primary_metric_missing",
-                "campaign_program_hash": campaign_program.get("hash"),
-                "metric_name": clamp_text(metric_name, 128),
-            }
-        )
-    elif expected_higher is not None and matching[0].higher_is_better != expected_higher:
-        warnings.append(
-            {
-                "code": "primary_metric_direction_conflict",
-                "campaign_program_hash": campaign_program.get("hash"),
-                "metric_name": clamp_text(metric_name, 128),
-                "campaign_higher_is_better": expected_higher,
-                "evaluator_higher_is_better": matching[0].higher_is_better,
-            }
-        )
+    warning = _campaign_primary_metric_warning(result=outcome.result, spec=spec)
+    if warning is not None:
+        warnings.append(warning)
     if not warnings:
         return
+
     outcome.result.extra["campaign_program_warnings"] = warnings
     log.warning(
         "Campaign primary metric warning job={} commit={} warning_count={}",
@@ -1438,6 +1407,95 @@ def _record_campaign_primary_metric_warnings(
         context.candidate_commit_hash,
         len(warnings),
     )
+
+
+@dataclass(frozen=True, slots=True)
+class _CampaignPrimaryMetricSpec:
+    program_hash: Any
+    metric_name: str
+    expected_higher: bool | None
+
+
+def _campaign_primary_metric_spec(context: EvaluationContext) -> _CampaignPrimaryMetricSpec | None:
+    campaign_program = _mapping_or_none(context.payload.get("campaign_program"))
+    snapshot = _mapping_or_none(campaign_program.get("snapshot") if campaign_program else None)
+    primary_metric = _mapping_or_none(snapshot.get("primary_metric") if snapshot else None)
+    metric_name = _campaign_primary_metric_name(primary_metric)
+    if campaign_program is None or not metric_name:
+        return None
+    return _CampaignPrimaryMetricSpec(
+        program_hash=campaign_program.get("hash"),
+        metric_name=metric_name,
+        expected_higher=_campaign_primary_metric_expected_higher(primary_metric),
+    )
+
+
+def _mapping_or_none(value: Any) -> Mapping[str, Any] | None:
+    return value if isinstance(value, Mapping) else None
+
+
+def _campaign_primary_metric_name(primary_metric: Mapping[str, Any] | None) -> str:
+    if primary_metric is None:
+        return ""
+    return normalize_single_line(str(primary_metric.get("name") or ""))
+
+
+def _campaign_primary_metric_expected_higher(primary_metric: Mapping[str, Any] | None) -> bool | None:
+    if primary_metric is None:
+        return None
+    direction = normalize_single_line(str(primary_metric.get("direction") or "")).lower()
+    return {"higher_is_better": True, "lower_is_better": False}.get(direction)
+
+
+def _campaign_primary_metric_warning(
+    *,
+    result: EvaluationResult,
+    spec: _CampaignPrimaryMetricSpec,
+) -> dict[str, Any] | None:
+    matching = _matching_evaluation_metric(result=result, metric_name=spec.metric_name)
+    if matching is None:
+        return _missing_primary_metric_warning(spec)
+    if _metric_direction_matches(metric=matching, expected_higher=spec.expected_higher):
+        return None
+    return _primary_metric_direction_conflict_warning(metric=matching, spec=spec)
+
+
+def _matching_evaluation_metric(
+    *,
+    result: EvaluationResult,
+    metric_name: str,
+) -> EvaluationMetric | None:
+    return next((metric for metric in result.metrics if metric.name == metric_name), None)
+
+
+def _metric_direction_matches(
+    *,
+    metric: EvaluationMetric,
+    expected_higher: bool | None,
+) -> bool:
+    return expected_higher is None or metric.higher_is_better == expected_higher
+
+
+def _missing_primary_metric_warning(spec: _CampaignPrimaryMetricSpec) -> dict[str, Any]:
+    return {
+        "code": "primary_metric_missing",
+        "campaign_program_hash": spec.program_hash,
+        "metric_name": clamp_text(spec.metric_name, 128),
+    }
+
+
+def _primary_metric_direction_conflict_warning(
+    *,
+    metric: EvaluationMetric,
+    spec: _CampaignPrimaryMetricSpec,
+) -> dict[str, Any]:
+    return {
+        "code": "primary_metric_direction_conflict",
+        "campaign_program_hash": spec.program_hash,
+        "metric_name": clamp_text(spec.metric_name, 128),
+        "campaign_higher_is_better": spec.expected_higher,
+        "evaluator_higher_is_better": metric.higher_is_better,
+    }
 
 
 def _plugin_subprocess_entry(

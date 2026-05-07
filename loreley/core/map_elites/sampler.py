@@ -18,6 +18,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from loreley.config import Settings, get_settings, resolve_default_island_id
 from loreley.core.campaign_program import (
+    CampaignProjectionInput,
     CampaignProgramSnapshot,
     apply_campaign_program_projection,
 )
@@ -636,12 +637,14 @@ class MapElitesSampler:
         job_priority = self._default_priority if priority is None else priority
         default_goal = (self.settings.worker_evolution_global_goal or "").strip() or None
         projection = apply_campaign_program_projection(
-            snapshot=campaign_program,
-            goal=default_goal,
-            constraints=(),
-            acceptance_criteria=(),
-            notes=(),
-            default_goal=default_goal,
+            CampaignProjectionInput(
+                snapshot=campaign_program,
+                goal=default_goal,
+                constraints=(),
+                acceptance_criteria=(),
+                notes=(),
+                default_goal=default_goal,
+            )
         )
         goal = projection.goal
         if not goal:

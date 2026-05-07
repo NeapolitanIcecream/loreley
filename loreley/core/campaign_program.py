@@ -180,6 +180,19 @@ class CampaignJobProjection:
 
 
 @dataclass(frozen=True, slots=True)
+class CampaignProjectionInput:
+    """Caller-provided job fields to merge with a campaign projection."""
+
+    snapshot: CampaignProgramSnapshot | None
+    goal: str | None
+    constraints: Sequence[str] | None = None
+    acceptance_criteria: Sequence[str] | None = None
+    notes: Sequence[str] | None = None
+    default_goal: str | None = None
+    preserve_existing_goal: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class ProjectedJobFields:
     """Final job fields after caller values and campaign projection are merged."""
 
@@ -451,48 +464,23 @@ def project_campaign_program(
     )
 
 
-def apply_campaign_program_projection(
-    *,
-    snapshot: CampaignProgramSnapshot | None,
-    goal: str | None,
-    constraints: Sequence[str] | None = None,
-    acceptance_criteria: Sequence[str] | None = None,
-    notes: Sequence[str] | None = None,
-    default_goal: str | None = None,
-    preserve_existing_goal: bool = False,
-) -> ProjectedJobFields:
+def apply_campaign_program_projection(request: CampaignProjectionInput) -> ProjectedJobFields:
     """Merge caller-supplied job fields with program-derived defaults."""
 
-    projection = project_campaign_program(snapshot)
-    existing_goal = normalize_single_line(goal or "") or None
-    default_goal_norm = normalize_single_line(default_goal or "") or None
-    if projection.goal and (
-        not existing_goal
-        or (not preserve_existing_goal and existing_goal == default_goal_norm)
-    ):
-        existing_goal = projection.goal
-
-    existing_constraints = _bounded_dedupe(constraints or (), max_items=20, max_chars=200)
-    if not existing_constraints and projection.constraints:
-        existing_constraints = list(projection.constraints)
-
-    existing_acceptance = _bounded_dedupe(
-        acceptance_criteria or (),
-        max_items=20,
-        max_chars=200,
-    )
-    if not existing_acceptance and projection.acceptance_criteria:
-        existing_acceptance = list(projection.acceptance_criteria)
-
-    existing_notes = _bounded_dedupe(notes or (), max_items=20, max_chars=200)
-    if not existing_notes and projection.notes:
-        existing_notes = list(projection.notes)
-
+    projection = project_campaign_program(request.snapshot)
     return ProjectedJobFields(
-        goal=clamp_text(existing_goal or "", 512) or None,
-        constraints=existing_constraints,
-        acceptance_criteria=existing_acceptance,
-        notes=existing_notes,
+        goal=_merged_goal(
+            goal=request.goal,
+            default_goal=request.default_goal,
+            projected_goal=projection.goal,
+            preserve_existing_goal=request.preserve_existing_goal,
+        ),
+        constraints=_merged_list(request.constraints, projection.constraints),
+        acceptance_criteria=_merged_list(
+            request.acceptance_criteria,
+            projection.acceptance_criteria,
+        ),
+        notes=_merged_list(request.notes, projection.notes),
     )
 
 
@@ -574,10 +562,58 @@ def _parse_goal(bodies: Sequence[str]) -> str | None:
     return clamp_text(normalize_single_line(text), 512) or None
 
 
+def _merged_goal(
+    *,
+    goal: str | None,
+    default_goal: str | None,
+    projected_goal: str | None,
+    preserve_existing_goal: bool,
+) -> str | None:
+    existing_goal = normalize_single_line(goal or "") or None
+    default_goal_norm = normalize_single_line(default_goal or "") or None
+    if _should_use_projected_goal(
+        existing_goal=existing_goal,
+        default_goal=default_goal_norm,
+        projected_goal=projected_goal,
+        preserve_existing_goal=preserve_existing_goal,
+    ):
+        existing_goal = projected_goal
+    return clamp_text(existing_goal or "", 512) or None
+
+
+def _should_use_projected_goal(
+    *,
+    existing_goal: str | None,
+    default_goal: str | None,
+    projected_goal: str | None,
+    preserve_existing_goal: bool,
+) -> bool:
+    if not projected_goal:
+        return False
+    if not existing_goal:
+        return True
+    return not preserve_existing_goal and existing_goal == default_goal
+
+
+def _merged_list(
+    existing: Sequence[str] | None,
+    projected: Sequence[str],
+) -> list[str]:
+    bounded = _bounded_dedupe(existing or (), max_items=20, max_chars=200)
+    return bounded or list(projected)
+
+
 def _parse_primary_metric(body: str) -> tuple[PrimaryMetric | None, list[dict[str, Any]]]:
     if not body.strip():
         return None, []
-    warnings: list[dict[str, Any]] = []
+    values, prose = _primary_metric_fields(body)
+    warnings = _primary_metric_warnings(values=values, prose=prose)
+    if not values:
+        return None, warnings
+    return _primary_metric_from_values(values), warnings
+
+
+def _primary_metric_fields(body: str) -> tuple[dict[str, str], list[str]]:
     values: dict[str, str] = {}
     prose: list[str] = []
     for line in body.splitlines():
@@ -594,53 +630,86 @@ def _parse_primary_metric(body: str) -> tuple[PrimaryMetric | None, list[dict[st
             values[key] = value
         else:
             prose.append(stripped)
+    return values, prose
 
-    if not values:
-        warnings.append(
-            _warning(
-                "primary_metric_prose",
-                "Primary metric should use key/value lines: name, direction, unit.",
-                section="Primary metric",
-            )
-        )
-        return None, warnings
 
-    direction = values.get("direction")
-    normalized_direction = None
-    if direction:
-        normalized_direction = _DIRECTION_ALIASES.get(direction.strip().lower())
-        if normalized_direction is None:
-            warnings.append(
-                _warning(
-                    "primary_metric_direction_unknown",
-                    "Primary metric direction was not recognized.",
-                    section="Primary metric",
-                )
-            )
-    if prose:
-        warnings.append(
-            _warning(
-                "primary_metric_extra_prose",
-                "Primary metric contained prose outside supported key/value fields.",
-                section="Primary metric",
-            )
+def _primary_metric_warnings(
+    *,
+    values: Mapping[str, str],
+    prose: Sequence[str],
+) -> list[dict[str, Any]]:
+    warnings: list[dict[str, Any]] = []
+    warnings.extend(_primary_metric_form_warnings(values))
+    warnings.extend(_primary_metric_extra_prose_warnings(prose))
+    warnings.extend(_primary_metric_name_warnings(values))
+    warnings.extend(_primary_metric_direction_warnings(values.get("direction")))
+    return warnings
+
+
+def _primary_metric_form_warnings(values: Mapping[str, str]) -> list[dict[str, Any]]:
+    if values:
+        return []
+    return [
+        _warning(
+            "primary_metric_prose",
+            "Primary metric should use key/value lines: name, direction, unit.",
+            section="Primary metric",
         )
-    if not values.get("name"):
-        warnings.append(
-            _warning(
-                "primary_metric_missing_name",
-                "Primary metric key/value form did not include name.",
-                section="Primary metric",
-            )
+    ]
+
+
+def _primary_metric_extra_prose_warnings(prose: Sequence[str]) -> list[dict[str, Any]]:
+    if not prose:
+        return []
+    return [
+        _warning(
+            "primary_metric_extra_prose",
+            "Primary metric contained prose outside supported key/value fields.",
+            section="Primary metric",
         )
-    return (
-        PrimaryMetric(
-            name=_optional_line(values.get("name"), 128),
-            direction=normalized_direction,
-            unit=_optional_line(values.get("unit"), 32),
-        ),
-        warnings,
+    ]
+
+
+def _primary_metric_name_warnings(values: Mapping[str, str]) -> list[dict[str, Any]]:
+    if values.get("name"):
+        return []
+    return [
+        _warning(
+            "primary_metric_missing_name",
+            "Primary metric key/value form did not include name.",
+            section="Primary metric",
+        )
+    ]
+
+
+def _primary_metric_direction_warnings(direction: str | None) -> list[dict[str, Any]]:
+    if not _has_unknown_metric_direction(direction):
+        return []
+    return [
+        _warning(
+            "primary_metric_direction_unknown",
+            "Primary metric direction was not recognized.",
+            section="Primary metric",
+        )
+    ]
+
+
+def _has_unknown_metric_direction(direction: str | None) -> bool:
+    return bool(direction and _normalized_metric_direction(direction) is None)
+
+
+def _primary_metric_from_values(values: Mapping[str, str]) -> PrimaryMetric:
+    return PrimaryMetric(
+        name=_optional_line(values.get("name"), 128),
+        direction=_normalized_metric_direction(values.get("direction")),
+        unit=_optional_line(values.get("unit"), 32),
     )
+
+
+def _normalized_metric_direction(direction: str | None) -> str | None:
+    if not direction:
+        return None
+    return _DIRECTION_ALIASES.get(direction.strip().lower())
 
 
 def _parse_item_section(bodies: Sequence[str], *, max_items: int) -> tuple[str, ...]:

@@ -20,6 +20,7 @@ from sqlalchemy import and_, func, or_, select
 
 from loreley.config import Settings, resolve_default_island_id
 from loreley.core.campaign_program import (
+    CampaignProjectionInput,
     CampaignProgramSnapshot,
     apply_campaign_program_projection,
     load_campaign_program_from_repo,
@@ -105,13 +106,15 @@ class FailedCandidateRepairSampler:
                 program_hash=getattr(candidate, "campaign_program_hash", None),
             )
             projection = apply_campaign_program_projection(
-                snapshot=campaign_program,
-                goal=goal,
-                constraints=(),
-                acceptance_criteria=(),
-                notes=(),
-                default_goal=self.settings.worker_evolution_global_goal,
-                preserve_existing_goal=True,
+                CampaignProjectionInput(
+                    snapshot=campaign_program,
+                    goal=goal,
+                    constraints=(),
+                    acceptance_criteria=(),
+                    notes=(),
+                    default_goal=self.settings.worker_evolution_global_goal,
+                    preserve_existing_goal=True,
+                )
             )
             now = _db_utc_now(session)
             job = EvolutionJob(
@@ -603,12 +606,14 @@ class JobScheduler:
         jobs: list[EvolutionJob] = []
         default_goal = (self.settings.worker_evolution_global_goal or "").strip()
         projection = apply_campaign_program_projection(
-            snapshot=self._campaign_program_snapshot,
-            goal=default_goal,
-            constraints=(),
-            acceptance_criteria=(),
-            notes=(),
-            default_goal=default_goal,
+            CampaignProjectionInput(
+                snapshot=self._campaign_program_snapshot,
+                goal=default_goal,
+                constraints=(),
+                acceptance_criteria=(),
+                notes=(),
+                default_goal=default_goal,
+            )
         )
         goal = (projection.goal or "").strip()
         if not goal:

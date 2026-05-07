@@ -8,6 +8,7 @@ from typing import Any
 import loreley.core.map_elites.sampler as sampler_module
 from loreley.config import Settings
 from loreley.core.campaign_program import (
+    CampaignProjectionInput,
     apply_campaign_program_projection,
     campaign_program_artifact_payload,
     campaign_program_evaluator_payload,
@@ -120,13 +121,15 @@ Campaign goal.
     )
 
     projected = apply_campaign_program_projection(
-        snapshot=snapshot,
-        goal="Repair the failed candidate.",
-        constraints=(),
-        acceptance_criteria=(),
-        notes=(),
-        default_goal="Global goal",
-        preserve_existing_goal=True,
+        CampaignProjectionInput(
+            snapshot=snapshot,
+            goal="Repair the failed candidate.",
+            constraints=(),
+            acceptance_criteria=(),
+            notes=(),
+            default_goal="Global goal",
+            preserve_existing_goal=True,
+        )
     )
 
     assert projected.goal == "Repair the failed candidate."

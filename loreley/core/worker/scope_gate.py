@@ -78,6 +78,12 @@ class ScopeGateResult:
         return f"Campaign scope gate rejected {len(self.violations)} violation(s)."
 
 
+@dataclass(frozen=True, slots=True)
+class _PathScopeCheck:
+    checked_path: str | None
+    violations: tuple[ScopeViolation, ...] = field(default_factory=tuple)
+
+
 def validate_campaign_scope(
     *,
     worktree: Path,
@@ -95,59 +101,148 @@ def validate_campaign_scope(
     violations.extend(_pattern_violations(editable_patterns, code="invalid_editable_scope_pattern"))
     violations.extend(_pattern_violations(protected_patterns, code="invalid_protected_scope_pattern"))
 
-    paths = _changed_paths(worktree=worktree, git_bin=git_bin)
-    checked_paths: list[str] = []
-    for raw_path in paths:
-        path = _normalize_repo_path(raw_path)
-        if path is None or _ignored_path(raw_path):
-            continue
-        checked_paths.append(path)
-        unsafe_path_reason = _unsafe_repo_path_reason(path)
-        if unsafe_path_reason is not None:
-            violations.append(
-                ScopeViolation(
-                    code="unsafe_changed_path",
-                    path=path,
-                    reason=unsafe_path_reason,
-                    detail="Changed path is not a safe repo-relative POSIX path.",
-                )
-            )
-            continue
-        symlink_reason = _unsafe_symlink_reason(worktree=worktree, repo_path=path)
-        if symlink_reason is not None:
-            violations.append(
-                ScopeViolation(
-                    code="unsafe_symlink_target",
-                    path=path,
-                    reason=symlink_reason,
-                    detail="Changed symlink target escapes the repository or uses an unsafe target.",
-                )
-            )
-            continue
-        protected_match = _first_matching_pattern(path, protected_patterns)
-        if protected_match is not None:
-            violations.append(
-                ScopeViolation(
-                    code="protected_scope_modified",
-                    path=path,
-                    pattern=protected_match,
-                    detail="Protected scope wins over editable scope.",
-                )
-            )
-            continue
-        if editable_patterns and _first_matching_pattern(path, editable_patterns) is None:
-            violations.append(
-                ScopeViolation(
-                    code="outside_editable_scope",
-                    path=path,
-                    detail="Non-empty editable scope allows only matching paths.",
-                )
-            )
+    path_checks = _validate_changed_paths(
+        worktree=worktree,
+        git_bin=git_bin,
+        editable_patterns=editable_patterns,
+        protected_patterns=protected_patterns,
+    )
+    violations.extend(_path_check_violations(path_checks))
 
     result = ScopeGateResult(
-        checked_paths=tuple(dict.fromkeys(checked_paths)),
+        checked_paths=_checked_paths(path_checks),
         violations=tuple(violations),
     )
+    _log_scope_gate_result(result)
+    return result
+
+
+def _validate_changed_paths(
+    *,
+    worktree: Path,
+    git_bin: str,
+    editable_patterns: Sequence[str],
+    protected_patterns: Sequence[str],
+) -> tuple[_PathScopeCheck, ...]:
+    return tuple(
+        _validate_changed_path(
+            worktree=worktree,
+            raw_path=raw_path,
+            editable_patterns=editable_patterns,
+            protected_patterns=protected_patterns,
+        )
+        for raw_path in _changed_paths(worktree=worktree, git_bin=git_bin)
+    )
+
+
+def _validate_changed_path(
+    *,
+    worktree: Path,
+    raw_path: str,
+    editable_patterns: Sequence[str],
+    protected_patterns: Sequence[str],
+) -> _PathScopeCheck:
+    path = _normalize_repo_path(raw_path)
+    if path is None or _ignored_path(raw_path):
+        return _PathScopeCheck(checked_path=None)
+    return _PathScopeCheck(
+        checked_path=path,
+        violations=_path_scope_violations(
+            worktree=worktree,
+            path=path,
+            editable_patterns=editable_patterns,
+            protected_patterns=protected_patterns,
+        ),
+    )
+
+
+def _path_scope_violations(
+    *,
+    worktree: Path,
+    path: str,
+    editable_patterns: Sequence[str],
+    protected_patterns: Sequence[str],
+) -> tuple[ScopeViolation, ...]:
+    violation = _unsafe_changed_path_violation(path)
+    if violation is not None:
+        return (violation,)
+    violation = _unsafe_symlink_violation(worktree=worktree, path=path)
+    if violation is not None:
+        return (violation,)
+    violation = _protected_scope_violation(path=path, protected_patterns=protected_patterns)
+    if violation is not None:
+        return (violation,)
+    violation = _outside_editable_scope_violation(path=path, editable_patterns=editable_patterns)
+    if violation is not None:
+        return (violation,)
+    return ()
+
+
+def _unsafe_changed_path_violation(path: str) -> ScopeViolation | None:
+    reason = _unsafe_repo_path_reason(path)
+    if reason is None:
+        return None
+    return ScopeViolation(
+        code="unsafe_changed_path",
+        path=path,
+        reason=reason,
+        detail="Changed path is not a safe repo-relative POSIX path.",
+    )
+
+
+def _unsafe_symlink_violation(*, worktree: Path, path: str) -> ScopeViolation | None:
+    reason = _unsafe_symlink_reason(worktree=worktree, repo_path=path)
+    if reason is None:
+        return None
+    return ScopeViolation(
+        code="unsafe_symlink_target",
+        path=path,
+        reason=reason,
+        detail="Changed symlink target escapes the repository or uses an unsafe target.",
+    )
+
+
+def _protected_scope_violation(
+    *,
+    path: str,
+    protected_patterns: Sequence[str],
+) -> ScopeViolation | None:
+    protected_match = _first_matching_pattern(path, protected_patterns)
+    if protected_match is None:
+        return None
+    return ScopeViolation(
+        code="protected_scope_modified",
+        path=path,
+        pattern=protected_match,
+        detail="Protected scope wins over editable scope.",
+    )
+
+
+def _outside_editable_scope_violation(
+    *,
+    path: str,
+    editable_patterns: Sequence[str],
+) -> ScopeViolation | None:
+    if not editable_patterns or _first_matching_pattern(path, editable_patterns) is not None:
+        return None
+    return ScopeViolation(
+        code="outside_editable_scope",
+        path=path,
+        detail="Non-empty editable scope allows only matching paths.",
+    )
+
+
+def _checked_paths(path_checks: Sequence[_PathScopeCheck]) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(check.checked_path for check in path_checks if check.checked_path is not None)
+    )
+
+
+def _path_check_violations(path_checks: Sequence[_PathScopeCheck]) -> list[ScopeViolation]:
+    return [violation for check in path_checks for violation in check.violations]
+
+
+def _log_scope_gate_result(result: ScopeGateResult) -> None:
     if result.violations:
         log.warning(
             "Campaign scope gate failed checked_paths={} violations={}",
@@ -156,7 +251,6 @@ def validate_campaign_scope(
         )
     else:
         log.info("Campaign scope gate passed checked_paths={}", len(result.checked_paths))
-    return result
 
 
 def _changed_paths(*, worktree: Path, git_bin: str) -> tuple[str, ...]:

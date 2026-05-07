@@ -576,6 +576,16 @@ class SharedPromptPacketRequest:
     settings: Settings | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _PromptPacketBlocks:
+    goal: str
+    constraints: str
+    acceptance_criteria: str
+    iteration_context: str
+    base_commit: str
+    inspirations: str
+
+
 class _PromptPacketRenderer(TruncationMixin):
     """Render compact, transfer-friendly prompt context blocks."""
 
@@ -590,45 +600,59 @@ class _PromptPacketRenderer(TruncationMixin):
         self._max_metrics = max(1, int(max_metrics))
         self._settings = settings or get_settings()
 
-    def render(
-        self,
-        *,
-        goal: str,
-        constraints: Sequence[str],
-        acceptance_criteria: Sequence[str],
-        iteration_context: IterationContext | None,
-        base: CommitPlanningContext,
-        inspirations: Sequence[CommitPlanningContext],
-    ) -> str:
-        inspiration_blocks = "\n\n".join(
-            self._format_inspiration_block(index=idx + 1, base=base, context=ctx)
-            for idx, ctx in enumerate(inspirations)
+    def render(self, request: SharedPromptPacketRequest) -> str:
+        packet = self._render_packet(self._packet_blocks(request))
+        return textwrap.dedent(packet).strip()
+
+    def _packet_blocks(self, request: SharedPromptPacketRequest) -> _PromptPacketBlocks:
+        return _PromptPacketBlocks(
+            goal=_prompt_goal(request.goal),
+            constraints=self._format_bullets(request.constraints),
+            acceptance_criteria=self._format_bullets(request.acceptance_criteria),
+            iteration_context=self._format_iteration_context(request.iteration_context),
+            base_commit=self._format_base_commit_block(request.base),
+            inspirations=self._format_inspiration_blocks(
+                base=request.base,
+                inspirations=request.inspirations,
+            ),
         )
-        packet = f"""
+
+    def _render_packet(self, blocks: _PromptPacketBlocks) -> str:
+        return f"""
 You are working inside Loreley's evolution worker.
 
 Evolution Goal:
-{goal.strip() or "N/A"}
+{blocks.goal}
 
 Constraints:
-{self._format_bullets(constraints)}
+{blocks.constraints}
 
 Acceptance Criteria:
-{self._format_bullets(acceptance_criteria)}
+{blocks.acceptance_criteria}
 
 Worker Contract:
 {self._format_worker_contract()}
 
 Iteration Context:
-{self._format_iteration_context(iteration_context)}
+{blocks.iteration_context}
 
 Base Commit Context:
-{self._format_base_commit_block(base)}
+{blocks.base_commit}
 
 Inspiration Commits:
-{inspiration_blocks or "None"}
+{blocks.inspirations or "None"}
 """
-        return textwrap.dedent(packet).strip()
+
+    def _format_inspiration_blocks(
+        self,
+        *,
+        base: CommitPlanningContext,
+        inspirations: Sequence[CommitPlanningContext],
+    ) -> str:
+        return "\n\n".join(
+            self._format_inspiration_block(index=idx + 1, base=base, context=ctx)
+            for idx, ctx in enumerate(inspirations)
+        )
 
     def _format_worker_contract(self) -> str:
         return "\n".join(f"- {line}" for line in WORKER_CONTRACT_LINES)
@@ -843,14 +867,14 @@ def render_shared_prompt_packet(request: SharedPromptPacketRequest) -> str:
         max_metrics=request.max_metrics,
         settings=request.settings,
     )
-    return renderer.render(
-        goal=request.goal,
-        constraints=request.constraints,
-        acceptance_criteria=request.acceptance_criteria,
-        iteration_context=request.iteration_context,
-        base=request.base,
-        inspirations=request.inspirations,
-    )
+    return renderer.render(request)
+
+
+def _prompt_goal(goal: str) -> str:
+    stripped = goal.strip()
+    if stripped:
+        return stripped
+    return "N/A"
 
 
 class PlanningAgent(TruncationMixin):
