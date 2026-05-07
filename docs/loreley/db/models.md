@@ -24,6 +24,11 @@ ORM models and enums for single-tenant experiment databases.
 - **`CampaignProgram`** (`campaign_programs` table): content-addressed campaign contract snapshot.
   - Primary key: `hash`, the raw SHA-256 of `loreley.program.md`.
   - Stores source path, optional title, raw Markdown, normalized snapshot JSON, recognized sections, and parse warnings.
+- **`CampaignBaseline`** (`campaign_baselines` table): source-of-truth root evaluator baseline for a comparable campaign contract.
+  - Primary key: `id` (UUID).
+  - Unique constraint on `baseline_key_hash`, which covers the root commit, campaign program hash, evaluator identity, primary metric contract, runtime profile, and effective settings fingerprint.
+  - Stores the root commit hash, optional `campaign_program_hash`, evaluator name/version, primary metric name and direction, runtime profile, settings fingerprint, baseline status (`valid`, `failed`, or `degraded`), metric value/unit when valid, and failure details when invalid.
+  - Optionally links to the root `CommitCard` and `Metric` rows used for compatibility projections, but archive/status baseline reads should key off `campaign_baselines`.
 - **`EvolutionJob`** (`evolution_jobs` table): represents a single evolution iteration scheduled by the system.
   - Tracks current `status`, base commit, island ID, inspiration commit hashes, size-bounded job spec fields (`goal`, `constraints`, `acceptance_criteria`, `notes`, `tags`, sampling hints), human-readable `plan_summary`, priority, scheduling/processing timestamps, and last error if any.
   - Stores optional `campaign_program_hash` for the campaign contract used to create the job.

@@ -224,6 +224,47 @@ def _best_commit_status_payload(*, row: Any, metric_name: str) -> dict[str, obje
     }
 
 
+def _baseline_status_payload(*, row: Any | None) -> dict[str, object] | None:
+    if row is None:
+        return None
+    return {
+        "campaign_baseline_id": str(getattr(row, "id", "")) if getattr(row, "id", None) else None,
+        "baseline_key_hash": getattr(row, "baseline_key_hash", None),
+        "root_baseline_commit": getattr(row, "root_commit_hash", None),
+        "root_baseline_metric": getattr(row, "primary_metric_name", None),
+        "root_baseline_value": getattr(row, "metric_value", None),
+        "root_baseline_direction": (
+            "higher_is_better"
+            if bool(getattr(row, "primary_metric_higher_is_better", True))
+            else "lower_is_better"
+        ),
+        "root_baseline_status": getattr(row, "status", None),
+        "baseline_campaign_program_hash": getattr(row, "campaign_program_hash", None),
+        "failure_kind": getattr(row, "failure_kind", None),
+        "failure_summary": getattr(row, "failure_summary", None),
+    }
+
+
+def _load_status_baseline_payload(*, session: Any, settings: Settings) -> dict[str, object] | None:
+    from loreley.scheduler.baselines import (
+        load_latest_matching_baseline,
+        resolve_status_campaign_program_hash,
+    )
+
+    campaign_resolution = resolve_status_campaign_program_hash(
+        session=session,
+        settings=settings,
+    )
+    if not campaign_resolution.known:
+        return None
+    baseline_row = load_latest_matching_baseline(
+        session=session,
+        settings=settings,
+        campaign_program_hash=campaign_resolution.campaign_program_hash,
+    )
+    return _baseline_status_payload(row=baseline_row)
+
+
 def _status_response_payload(
     *,
     instance_payload: dict[str, object],
@@ -231,6 +272,7 @@ def _status_response_payload(
     lease_payload: dict[str, int],
     archive_stats: dict[str, object],
     best_commit: dict[str, object] | None,
+    baseline: dict[str, object] | None = None,
 ) -> dict[str, object]:
     return {
         "instance": instance_payload,
@@ -238,6 +280,7 @@ def _status_response_payload(
         "job_leases": lease_payload,
         "archive": archive_stats,
         "best_commit": best_commit,
+        "baseline": baseline,
     }
 
 
@@ -925,6 +968,10 @@ def status(
                 CommitCard=CommitCard,
                 Metric=Metric,
             )
+            baseline = _load_status_baseline_payload(
+                session=session,
+                settings=settings,
+            )
             instance_payload = _instance_status_payload(instance)
     except typer.Exit:
         raise
@@ -940,6 +987,7 @@ def status(
         lease_payload=lease_payload,
         archive_stats=archive_stats,
         best_commit=best_commit,
+        baseline=baseline,
     )
 
     if json_output:
@@ -1015,6 +1063,19 @@ def status(
             table.add_row("best_subject", str(subject))
     else:
         table.add_row("best_commit", "n/a")
+
+    if baseline:
+        table.add_section()
+        table.add_row("root_baseline_status", str(baseline.get("root_baseline_status") or "n/a"))
+        table.add_row("root_baseline_metric", str(baseline.get("root_baseline_metric") or "n/a"))
+        baseline_value = baseline.get("root_baseline_value")
+        if isinstance(baseline_value, (int, float)):
+            table.add_row("root_baseline_value", f"{float(baseline_value):.6f}")
+        else:
+            table.add_row("root_baseline_value", "n/a")
+        table.add_row("baseline_key", _short_hash(str(baseline.get("baseline_key_hash") or "")))
+        if baseline.get("failure_kind"):
+            table.add_row("baseline_failure", str(baseline.get("failure_kind")))
 
     console.print(table)
 

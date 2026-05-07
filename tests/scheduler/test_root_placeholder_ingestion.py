@@ -30,14 +30,14 @@ class DummyManager:
         self.ingest_calls.append({"args": args, "kwargs": kwargs})
 
 
-def test_root_initialisation_evaluates_without_ingesting_into_archive(
+def test_root_initialisation_bootstraps_repo_state_without_ingesting_into_archive(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    """Root initialisation should register and evaluate the root commit only.
+    """Root initialisation should register root metadata and repo-state only.
 
     In particular, it must not attempt to ingest the root into any MAP-Elites
-    archive or rely on placeholder files.
+    archive or run the campaign evaluator baseline service.
     """
 
     settings = TestSettings(MAPELITES_CODE_EMBEDDING_DIMENSIONS=8)
@@ -91,7 +91,7 @@ def test_root_initialisation_evaluates_without_ingesting_into_archive(
     assert calls["available"] == 1
     assert calls["metadata"] == 1
     assert calls["repo_state_bootstrap"] == 1
-    assert calls["evaluated"] == 1
+    assert calls["evaluated"] == 0
     # Root initialisation should not attempt to ingest the root commit into any
     # MAP-Elites archive.
     assert manager.ingest_calls == []

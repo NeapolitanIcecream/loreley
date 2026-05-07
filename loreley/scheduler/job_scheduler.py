@@ -41,6 +41,11 @@ from loreley.db.models import (
     JobStatus,
     MapElitesRepoStateAggregate,
 )
+from loreley.scheduler.baselines import (
+    BASELINE_STATUS_DEGRADED,
+    BASELINE_STATUS_VALID,
+    load_latest_matching_baseline,
+)
 from loreley.tasks.workers import build_evolution_job_sender_actor
 
 log = logger.bind(module="scheduler.job_scheduler")
@@ -209,7 +214,66 @@ class FailedCandidateRepairSampler:
             commit_hash=str(candidate.nearest_viable_ancestor_hash or ""),
         ):
             return False
+        if not self._source_campaign_baseline_allows_repair(
+            session=session,
+            candidate=candidate,
+        ):
+            return False
         return True
+
+    def _source_campaign_baseline_allows_repair(
+        self,
+        *,
+        session: Any,
+        candidate: CandidateCommit,
+    ) -> bool:
+        policy = str(getattr(self.settings, "baseline_bootstrap_policy", "required") or "required")
+        if policy not in {"required", "warn"}:
+            policy = "required"
+        campaign_program_hash = getattr(candidate, "campaign_program_hash", None)
+        if policy == "warn":
+            baseline = load_latest_matching_baseline(
+                session=session,
+                settings=self.settings,
+                campaign_program_hash=campaign_program_hash,
+                valid_only=False,
+            )
+            baseline_status = getattr(baseline, "status", None)
+            if baseline is not None and baseline_status == BASELINE_STATUS_DEGRADED:
+                log.bind(
+                    repair_source_candidate_id=str(getattr(candidate, "id", "")),
+                    campaign_program_hash=campaign_program_hash,
+                    baseline_id=str(getattr(baseline, "id", "")),
+                    baseline_status=baseline_status,
+                    baseline_policy=policy,
+                ).warning("Repair candidate allowed with degraded campaign baseline under warn policy")
+            if baseline is not None and baseline_status in {
+                BASELINE_STATUS_VALID,
+                BASELINE_STATUS_DEGRADED,
+            }:
+                return True
+            log.bind(
+                repair_source_candidate_id=str(getattr(candidate, "id", "")),
+                campaign_program_hash=campaign_program_hash,
+                baseline_status=baseline_status,
+                baseline_policy=policy,
+            ).info("Repair candidate blocked by missing campaign baseline under warn policy")
+            return False
+
+        baseline = load_latest_matching_baseline(
+            session=session,
+            settings=self.settings,
+            campaign_program_hash=campaign_program_hash,
+            valid_only=True,
+        )
+        if baseline is not None and getattr(baseline, "status", None) == BASELINE_STATUS_VALID:
+            return True
+        log.bind(
+            repair_source_candidate_id=str(getattr(candidate, "id", "")),
+            campaign_program_hash=campaign_program_hash,
+            baseline_policy=policy,
+        ).info("Repair candidate blocked by campaign baseline")
+        return False
 
     @staticmethod
     def _has_active_repair_job(*, session: Any, source_id: UUID) -> bool:
@@ -415,7 +479,13 @@ class JobScheduler:
 
     # Scheduling ------------------------------------------------------------
 
-    def schedule_jobs(self, unfinished_jobs: int, *, total_jobs: int) -> int:
+    def schedule_jobs(
+        self,
+        unfinished_jobs: int,
+        *,
+        total_jobs: int,
+        refresh_campaign_program: bool = True,
+    ) -> int:
         """Schedule new jobs from MAP-Elites if there is available capacity.
 
         Parameters
@@ -426,7 +496,8 @@ class JobScheduler:
             Total number of jobs recorded in the database (used to enforce the global job limit).
         """
 
-        self._refresh_campaign_program_for_policy()
+        if refresh_campaign_program:
+            self._refresh_campaign_program_for_policy()
         max_jobs = max(0, int(self.settings.scheduler_max_unfinished_jobs))
         if max_jobs == 0:
             return 0
@@ -590,6 +661,7 @@ class JobScheduler:
         base_commit_hash: str,
         count: int,
         island_id: str | None = None,
+        refresh_campaign_program: bool = True,
     ) -> int:
         """Create and enqueue cold-start seed jobs from the root commit.
 
@@ -600,7 +672,8 @@ class JobScheduler:
         if count <= 0:
             return 0
 
-        self._refresh_campaign_program_for_policy()
+        if refresh_campaign_program:
+            self._refresh_campaign_program_for_policy()
         effective_island = island_id or resolve_default_island_id(self.settings)
         now = datetime.now(timezone.utc)
         jobs: list[EvolutionJob] = []
@@ -799,6 +872,13 @@ class JobScheduler:
             active_hash,
             current_hash,
         )
+
+    @property
+    def campaign_program_snapshot(self) -> CampaignProgramSnapshot | None:
+        return self._campaign_program_snapshot
+
+    def refresh_campaign_program_for_policy(self) -> None:
+        self._refresh_campaign_program_for_policy()
 
     # Dispatching -----------------------------------------------------------
 

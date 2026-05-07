@@ -13,7 +13,13 @@ import loreley.scheduler.job_scheduler as job_scheduler
 from loreley.config import Settings
 from loreley.core.map_elites.sampler import MapElitesSampler, SamplingSnapshot
 from loreley.db.models import JobStatus
-from loreley.scheduler.job_scheduler import JobLeaseReclaimResult, JobScheduler, ScheduledRepairJob
+from loreley.scheduler.baselines import BASELINE_STATUS_DEGRADED, BASELINE_STATUS_VALID
+from loreley.scheduler.job_scheduler import (
+    FailedCandidateRepairSampler,
+    JobLeaseReclaimResult,
+    JobScheduler,
+    ScheduledRepairJob,
+)
 
 
 class DummySenderActor:
@@ -264,6 +270,74 @@ def test_schedule_jobs_reuses_single_sampling_snapshot_and_avoids_duplicate_base
     ]
 
 
+def test_schedule_jobs_can_reuse_baseline_checked_campaign_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    """Regression ADR 0050: scheduler tick must not refresh program after baseline gating."""
+
+    sender = DummySenderActor()
+    monkeypatch.setattr(
+        job_scheduler,
+        "build_evolution_job_sender_actor",
+        lambda **_kwargs: sender,
+    )
+    monkeypatch.setattr(
+        JobScheduler,
+        "_refresh_campaign_program_for_policy",
+        lambda _self: (_ for _ in ()).throw(AssertionError("unexpected campaign refresh")),
+    )
+    settings.scheduler_max_unfinished_jobs = 1
+    settings.scheduler_schedule_batch_size = 1
+
+    class DummySampler:
+        def get_sampling_snapshot(self, island_id: str | None = None) -> None:
+            return None
+
+    scheduler = cast(Any, JobScheduler)(
+        settings=settings,
+        console=Console(record=True),
+        sampler=cast(MapElitesSampler, DummySampler()),
+    )
+
+    assert scheduler.schedule_jobs(
+        unfinished_jobs=0,
+        total_jobs=0,
+        refresh_campaign_program=False,
+    ) == 0
+
+
+def test_seed_jobs_can_reuse_baseline_checked_campaign_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    """Regression ADR 0050: seed jobs must use the same program hash that passed the gate."""
+
+    sender = DummySenderActor()
+    monkeypatch.setattr(
+        job_scheduler,
+        "build_evolution_job_sender_actor",
+        lambda **_kwargs: sender,
+    )
+    monkeypatch.setattr(
+        JobScheduler,
+        "_refresh_campaign_program_for_policy",
+        lambda _self: (_ for _ in ()).throw(AssertionError("unexpected campaign refresh")),
+    )
+    settings.worker_evolution_global_goal = ""
+    scheduler = cast(Any, JobScheduler)(
+        settings=settings,
+        console=Console(record=True),
+        sampler=cast(MapElitesSampler, object()),
+    )
+
+    assert scheduler.create_seed_jobs(
+        base_commit_hash="root",
+        count=1,
+        refresh_campaign_program=False,
+    ) == 0
+
+
 def test_repair_scheduler_consumes_token_for_scheduled_repair_job(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,
@@ -422,6 +496,218 @@ def test_schedule_jobs_reserves_repair_slot_when_normal_sampling_can_fill_batch(
     assert scheduler.repair_sampler.scheduled == 1
     assert repair_job_id in enqueued
     assert len(enqueued) == 2
+
+
+@pytest.mark.parametrize("source_baseline_status", [None, BASELINE_STATUS_DEGRADED])
+def test_repair_candidate_requires_own_valid_campaign_baseline_under_required(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+    captured_logs: list[dict[str, Any]],
+    source_baseline_status: str | None,
+) -> None:
+    """Regression ADR 0050: an active program baseline cannot authorize another program's repair."""
+
+    settings.baseline_bootstrap_policy = "required"
+    source_program_hash = "a" * 64
+    active_program_hash = "b" * 64
+    attempt_id = uuid.uuid4()
+    capsule_id = uuid.uuid4()
+    candidate = SimpleNamespace(
+        id=uuid.uuid4(),
+        latest_evaluation_attempt_id=attempt_id,
+        failure_evidence_id=capsule_id,
+        nearest_viable_ancestor_hash="base",
+        campaign_program_hash=source_program_hash,
+    )
+    baselines = {
+        active_program_hash: SimpleNamespace(
+            status=BASELINE_STATUS_VALID,
+            campaign_program_hash=active_program_hash,
+        ),
+    }
+    if source_baseline_status is not None:
+        baselines[source_program_hash] = SimpleNamespace(
+            status=source_baseline_status,
+            campaign_program_hash=source_program_hash,
+        )
+    requested_hashes: list[tuple[str | None, bool]] = []
+
+    class DummySession:
+        def get(self, model: object, row_id: object) -> object | None:
+            if model is job_scheduler.EvaluationAttempt and row_id == attempt_id:
+                return SimpleNamespace(repairability="repairable")
+            if model is job_scheduler.DiagnosticCapsule and row_id == capsule_id:
+                return SimpleNamespace(policy_passed=True)
+            return None
+
+    def fake_load_latest_matching_baseline(
+        *,
+        session: object,
+        settings: Settings,
+        campaign_program_hash: str | None,
+        valid_only: bool = False,
+    ) -> object | None:
+        requested_hashes.append((campaign_program_hash, valid_only))
+        row = baselines.get(campaign_program_hash)
+        if row is None:
+            return None
+        if valid_only and row.status != BASELINE_STATUS_VALID:
+            return None
+        return row
+
+    monkeypatch.setattr(
+        job_scheduler,
+        "load_latest_matching_baseline",
+        fake_load_latest_matching_baseline,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        FailedCandidateRepairSampler,
+        "_has_active_repair_job",
+        staticmethod(lambda **_kwargs: False),
+    )
+    monkeypatch.setattr(
+        FailedCandidateRepairSampler,
+        "_ancestor_aggregate_ready",
+        staticmethod(lambda **_kwargs: True),
+    )
+
+    sampler = FailedCandidateRepairSampler(settings=settings)
+
+    assert sampler._strictly_eligible(session=DummySession(), candidate=candidate) is False
+    assert requested_hashes == [(source_program_hash, True)]
+    assert any(
+        record["module"] == "scheduler.job_scheduler"
+        and record["message"] == "Repair candidate blocked by campaign baseline"
+        and record["extra"].get("campaign_program_hash") == source_program_hash
+        and record["extra"].get("baseline_policy") == "required"
+        for record in captured_logs
+    )
+
+
+def test_repair_candidate_with_degraded_source_baseline_remains_eligible_under_warn(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    settings.baseline_bootstrap_policy = "warn"
+    source_program_hash = "a" * 64
+    attempt_id = uuid.uuid4()
+    capsule_id = uuid.uuid4()
+    candidate = SimpleNamespace(
+        id=uuid.uuid4(),
+        latest_evaluation_attempt_id=attempt_id,
+        failure_evidence_id=capsule_id,
+        nearest_viable_ancestor_hash="base",
+        campaign_program_hash=source_program_hash,
+    )
+
+    class DummySession:
+        def get(self, model: object, row_id: object) -> object | None:
+            if model is job_scheduler.EvaluationAttempt and row_id == attempt_id:
+                return SimpleNamespace(repairability="repairable")
+            if model is job_scheduler.DiagnosticCapsule and row_id == capsule_id:
+                return SimpleNamespace(policy_passed=True)
+            return None
+
+    def fake_load_latest_matching_baseline(
+        *,
+        session: object,
+        settings: Settings,
+        campaign_program_hash: str | None,
+        valid_only: bool = False,
+    ) -> object | None:
+        assert campaign_program_hash == source_program_hash
+        assert valid_only is False
+        return SimpleNamespace(
+            status=BASELINE_STATUS_DEGRADED,
+            campaign_program_hash=source_program_hash,
+        )
+
+    monkeypatch.setattr(
+        job_scheduler,
+        "load_latest_matching_baseline",
+        fake_load_latest_matching_baseline,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        FailedCandidateRepairSampler,
+        "_has_active_repair_job",
+        staticmethod(lambda **_kwargs: False),
+    )
+    monkeypatch.setattr(
+        FailedCandidateRepairSampler,
+        "_ancestor_aggregate_ready",
+        staticmethod(lambda **_kwargs: True),
+    )
+
+    sampler = FailedCandidateRepairSampler(settings=settings)
+
+    assert sampler._strictly_eligible(session=DummySession(), candidate=candidate) is True
+
+
+def test_repair_candidate_without_source_baseline_is_not_eligible_under_warn(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+    captured_logs: list[dict[str, Any]],
+) -> None:
+    settings.baseline_bootstrap_policy = "warn"
+    source_program_hash = "a" * 64
+    attempt_id = uuid.uuid4()
+    capsule_id = uuid.uuid4()
+    candidate = SimpleNamespace(
+        id=uuid.uuid4(),
+        latest_evaluation_attempt_id=attempt_id,
+        failure_evidence_id=capsule_id,
+        nearest_viable_ancestor_hash="base",
+        campaign_program_hash=source_program_hash,
+    )
+
+    class DummySession:
+        def get(self, model: object, row_id: object) -> object | None:
+            if model is job_scheduler.EvaluationAttempt and row_id == attempt_id:
+                return SimpleNamespace(repairability="repairable")
+            if model is job_scheduler.DiagnosticCapsule and row_id == capsule_id:
+                return SimpleNamespace(policy_passed=True)
+            return None
+
+    def fake_load_latest_matching_baseline(
+        *,
+        session: object,
+        settings: Settings,
+        campaign_program_hash: str | None,
+        valid_only: bool = False,
+    ) -> object | None:
+        assert campaign_program_hash == source_program_hash
+        assert valid_only is False
+        return None
+
+    monkeypatch.setattr(
+        job_scheduler,
+        "load_latest_matching_baseline",
+        fake_load_latest_matching_baseline,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        FailedCandidateRepairSampler,
+        "_has_active_repair_job",
+        staticmethod(lambda **_kwargs: False),
+    )
+    monkeypatch.setattr(
+        FailedCandidateRepairSampler,
+        "_ancestor_aggregate_ready",
+        staticmethod(lambda **_kwargs: True),
+    )
+
+    sampler = FailedCandidateRepairSampler(settings=settings)
+
+    assert sampler._strictly_eligible(session=DummySession(), candidate=candidate) is False
+    assert any(
+        record["module"] == "scheduler.job_scheduler"
+        and record["message"] == "Repair candidate blocked by missing campaign baseline under warn policy"
+        and record["extra"].get("campaign_program_hash") == source_program_hash
+        and record["extra"].get("baseline_policy") == "warn"
+        for record in captured_logs
+    )
 
 
 def test_reclaim_stale_running_jobs_requeues_expired_attempts(

@@ -62,12 +62,20 @@ class _DummyJobScheduler:
     created_calls: list[dict[str, object]]
     created_return: int = 0
 
-    def create_seed_jobs(self, *, base_commit_hash: str, count: int, island_id: str | None = None) -> int:
+    def create_seed_jobs(
+        self,
+        *,
+        base_commit_hash: str,
+        count: int,
+        island_id: str | None = None,
+        refresh_campaign_program: bool = True,
+    ) -> int:
         self.created_calls.append(
             {
                 "base_commit_hash": base_commit_hash,
                 "count": count,
                 "island_id": island_id,
+                "refresh_campaign_program": refresh_campaign_program,
             }
         )
         return self.created_return
@@ -175,6 +183,7 @@ def test_seed_scheduling_creates_limited_jobs_without_loading_rows(
             "base_commit_hash": "deadbeef",
             "count": 3,
             "island_id": "main",
+            "refresh_campaign_program": False,
         }
     ]
     assert len(executed) == 1
@@ -202,9 +211,16 @@ def test_tick_reuses_cached_total_job_count(settings: Settings) -> None:
         def count_total_jobs(self) -> int:
             raise AssertionError("tick should reuse the cached total job count")
 
-        def schedule_jobs(self, unfinished_jobs: int, *, total_jobs: int) -> int:
+        def schedule_jobs(
+            self,
+            unfinished_jobs: int,
+            *,
+            total_jobs: int,
+            refresh_campaign_program: bool = True,
+        ) -> int:
             assert unfinished_jobs == 1
             assert total_jobs == 4
+            assert refresh_campaign_program is False
             return 2
 
     scheduler.ingestion = _DummyIngestion()
@@ -241,9 +257,16 @@ def test_tick_accounts_for_seed_jobs_before_sampler_scheduling(settings: Setting
         def count_total_jobs(self) -> int:
             raise AssertionError("tick should not refresh total job count from the database")
 
-        def schedule_jobs(self, unfinished_jobs: int, *, total_jobs: int) -> int:
+        def schedule_jobs(
+            self,
+            unfinished_jobs: int,
+            *,
+            total_jobs: int,
+            refresh_campaign_program: bool = True,
+        ) -> int:
             assert unfinished_jobs == 3
             assert total_jobs == 6
+            assert refresh_campaign_program is False
             return 1
 
     scheduler.ingestion = _DummyIngestion()

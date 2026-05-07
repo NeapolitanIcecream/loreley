@@ -230,6 +230,10 @@ class Settings(BaseSettings):
         default="locked",
         alias="CAMPAIGN_PROGRAM_CHANGE_POLICY",
     )
+    baseline_bootstrap_policy: Literal["required", "warn"] = Field(
+        default="required",
+        alias="BASELINE_BOOTSTRAP_POLICY",
+    )
 
     failed_candidate_repair_enabled: bool = Field(
         default=False,
@@ -436,6 +440,10 @@ class Settings(BaseSettings):
     worker_evaluator_plugin: str | None = Field(
         default=None,
         alias="WORKER_EVALUATOR_PLUGIN",
+    )
+    worker_evaluator_version: str | None = Field(
+        default=None,
+        alias="WORKER_EVALUATOR_VERSION",
     )
     worker_evaluator_python_paths: list[str] = Field(
         default_factory=list,
@@ -999,6 +1007,7 @@ def _build_safe_export_payload(settings: Settings, *, mask_secrets: bool) -> dic
         ),
         "worker_kilocode_openai_model": settings.worker_kilocode_openai_model,
         "worker_evaluator_plugin": settings.worker_evaluator_plugin,
+        "worker_evaluator_version": settings.worker_evaluator_version,
         "worker_evaluator_timeout_seconds": settings.worker_evaluator_timeout_seconds,
         "worker_evaluator_max_metrics": settings.worker_evaluator_max_metrics,
         "worker_evolution_global_goal": settings.worker_evolution_global_goal,
@@ -1021,6 +1030,7 @@ def _build_safe_export_payload(settings: Settings, *, mask_secrets: bool) -> dic
             settings.scheduler_stale_running_max_recovery_attempts
         ),
         "campaign_program_change_policy": settings.campaign_program_change_policy,
+        "baseline_bootstrap_policy": settings.baseline_bootstrap_policy,
         "failed_candidate_repair_enabled": settings.failed_candidate_repair_enabled,
         "failed_candidate_repair_mode": settings.failed_candidate_repair_mode,
         "failed_candidate_repair_max_depth": settings.failed_candidate_repair_max_depth,
