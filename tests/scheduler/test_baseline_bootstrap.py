@@ -557,6 +557,28 @@ def test_status_campaign_program_hash_ignores_repair_jobs() -> None:
     assert "repair" in {str(value) for value in compiled.params.values()}
 
 
+def test_status_campaign_program_hash_uses_job_creation_time_not_redispatch_time() -> None:
+    """Redispatch can rewrite scheduled_at, so it must not drive active hash inference."""
+
+    captured: list[object] = []
+
+    class DummyResult:
+        def first(self) -> object:
+            return None
+
+    class DummySession:
+        def execute(self, stmt: object) -> DummyResult:
+            captured.append(stmt)
+            return DummyResult()
+
+    baselines._latest_job_campaign_program_hash(DummySession())  # type: ignore[arg-type]
+
+    compiled_sql = str(captured[0].compile())
+    assert "created_at" in compiled_sql
+    assert "scheduled_at" not in compiled_sql
+    assert "updated_at" not in compiled_sql
+
+
 @pytest.mark.parametrize(
     ("result", "expected_kind"),
     [

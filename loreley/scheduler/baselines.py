@@ -401,15 +401,11 @@ def _latest_job_campaign_program_hash(session: Session) -> _PersistedCampaignPro
     stmt = (
         select(
             EvolutionJob.campaign_program_hash,
-            EvolutionJob.scheduled_at,
             EvolutionJob.created_at,
-            EvolutionJob.updated_at,
         )
         .where(EvolutionJob.job_kind != "repair")
         .order_by(
-            EvolutionJob.scheduled_at.desc().nullslast(),
             EvolutionJob.created_at.desc().nullslast(),
-            EvolutionJob.updated_at.desc().nullslast(),
         )
         .limit(1)
     )
@@ -420,9 +416,7 @@ def _latest_job_campaign_program_hash(session: Session) -> _PersistedCampaignPro
         campaign_program_hash=_normalize_campaign_program_hash(_row_item(row, 0, "campaign_program_hash")),
         source="database:evolution_jobs",
         observed_at=_first_datetime(
-            _row_item(row, 1, "scheduled_at"),
-            _row_item(row, 2, "created_at"),
-            _row_item(row, 3, "updated_at"),
+            _row_item(row, 1, "created_at"),
         ),
     )
 
