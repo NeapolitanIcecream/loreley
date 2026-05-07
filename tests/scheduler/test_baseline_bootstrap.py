@@ -536,6 +536,27 @@ def test_status_campaign_program_hash_uses_newest_persisted_scheduler_provenance
     assert fallback_calls == []
 
 
+def test_status_campaign_program_hash_ignores_repair_jobs() -> None:
+    """Repair jobs copy historical source hashes and must not define active status."""
+
+    captured: list[object] = []
+
+    class DummyResult:
+        def first(self) -> object:
+            return None
+
+    class DummySession:
+        def execute(self, stmt: object) -> DummyResult:
+            captured.append(stmt)
+            return DummyResult()
+
+    baselines._latest_job_campaign_program_hash(DummySession())  # type: ignore[arg-type]
+
+    compiled = captured[0].compile()
+    assert "job_kind" in str(compiled)
+    assert "repair" in {str(value) for value in compiled.params.values()}
+
+
 @pytest.mark.parametrize(
     ("result", "expected_kind"),
     [

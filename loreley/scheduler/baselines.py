@@ -405,6 +405,7 @@ def _latest_job_campaign_program_hash(session: Session) -> _PersistedCampaignPro
             EvolutionJob.created_at,
             EvolutionJob.updated_at,
         )
+        .where(EvolutionJob.job_kind != "repair")
         .order_by(
             EvolutionJob.scheduled_at.desc().nullslast(),
             EvolutionJob.created_at.desc().nullslast(),
