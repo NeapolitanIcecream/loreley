@@ -390,11 +390,16 @@ def _load_campaign_program_hashes_by_commit(
         campaign_hash_by_commit=campaign_hash_by_commit,
     )
     if missing_commits:
+        resolved_commits = {
+            commit_hash
+            for commit_hash, campaign_program_hash in campaign_hash_by_commit.items()
+            if campaign_program_hash is not None
+        }
         campaign_hash_by_commit.update(
             _load_job_campaign_program_hashes(
                 session=session,
                 commit_hashes=missing_commits,
-                existing_commits=set(campaign_hash_by_commit),
+                existing_commits=resolved_commits,
             )
         )
     return campaign_hash_by_commit
@@ -418,7 +423,11 @@ def _campaign_hash_missing_commits(
     commit_hashes: list[str],
     campaign_hash_by_commit: dict[str, str | None],
 ) -> list[str]:
-    return [commit_hash for commit_hash in commit_hashes if commit_hash not in campaign_hash_by_commit]
+    return [
+        commit_hash
+        for commit_hash in commit_hashes
+        if campaign_hash_by_commit.get(commit_hash) is None
+    ]
 
 
 def _load_job_campaign_program_hashes(

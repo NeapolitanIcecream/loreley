@@ -387,3 +387,29 @@ def test_list_records_surfaces_degraded_baseline_without_delta(
     assert records[0].baseline_status == "degraded"
     assert records[0].delta_from_root_baseline is None
     assert baseline_calls == [("program-a", False)]
+
+
+def test_load_campaign_program_hashes_falls_back_for_null_candidate_hash() -> None:
+    """Regression: legacy candidate rows with NULL program hash still need job provenance."""
+
+    class _SequencedSession:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def execute(self, _stmt):
+            self.calls += 1
+            if self.calls == 1:
+                return _ExecResult(rows=[("commit-a", None), ("commit-b", "program-b")])
+            if self.calls == 2:
+                return _ExecResult(rows=[("commit-a", "program-a")])
+            raise AssertionError("unexpected extra query")
+
+    session = _SequencedSession()
+
+    campaign_hashes = archive_service._load_campaign_program_hashes_by_commit(
+        session=session,
+        commit_hashes=["commit-a", "commit-b"],
+    )
+
+    assert campaign_hashes == {"commit-a": "program-a", "commit-b": "program-b"}
+    assert session.calls == 2
