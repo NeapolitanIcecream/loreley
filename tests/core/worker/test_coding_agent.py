@@ -216,8 +216,8 @@ def test_coding_prompt_includes_markdown_contract(tmp_path: Path, settings: Sett
     assert "worktree contains meaningful tracked-file changes" in prompt
     assert "smallest relevant set of source changes" in prompt
     assert "Do not create git commits" in prompt
-    assert "Constraints:" not in prompt
-    assert "Acceptance criteria:" not in prompt
+    assert "Constraints:" in prompt
+    assert "Acceptance Criteria:" in prompt
     assert "Additional notes:" not in prompt
     assert "Commit message" not in prompt
 

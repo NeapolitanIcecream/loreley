@@ -21,8 +21,12 @@ ORM models and enums for single-tenant experiment databases.
 - **`Metric`** (`metrics` table): records individual evaluation metrics for a commit.
   - Stores metric `name`, numeric `value`, optional `unit`, whether higher values are better, and a JSONB `details` payload.
   - Links back to `CommitCard` via `commit_card_id` and maintains uniqueness per `(commit_card_id, name)`.
+- **`CampaignProgram`** (`campaign_programs` table): content-addressed campaign contract snapshot.
+  - Primary key: `hash`, the raw SHA-256 of `loreley.program.md`.
+  - Stores source path, optional title, raw Markdown, normalized snapshot JSON, recognized sections, and parse warnings.
 - **`EvolutionJob`** (`evolution_jobs` table): represents a single evolution iteration scheduled by the system.
   - Tracks current `status`, base commit, island ID, inspiration commit hashes, size-bounded job spec fields (`goal`, `constraints`, `acceptance_criteria`, `notes`, `tags`, sampling hints), human-readable `plan_summary`, priority, scheduling/processing timestamps, and last error if any.
+  - Stores optional `campaign_program_hash` for the campaign contract used to create the job.
   - Stores candidate-publication metadata (`candidate_commit_hash`, `candidate_branch_name`, `candidate_published_at`) so a worker can durably point to a locally created or remotely published candidate even if a later step fails.
   - Stores active lease ownership fields (`heartbeat_at`, `lease_expires_at`, `run_token`, `worker_id`) so workers can renew job ownership and stale attempts can be fenced off.
   - Stores `recovery_count` so the scheduler can limit automatic stale-job recovery and eventually mark repeatedly reclaimed jobs `FAILED`.

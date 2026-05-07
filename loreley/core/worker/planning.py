@@ -177,11 +177,17 @@ class PlanningAgentRequest:
     base: CommitPlanningContext
     inspirations: Sequence[CommitPlanningContext]
     goal: str
+    constraints: Sequence[str] = field(default_factory=tuple)
+    acceptance_criteria: Sequence[str] = field(default_factory=tuple)
     iteration_context: IterationContext | None = None
 
     def __post_init__(self) -> None:
         self.inspirations = tuple(self.inspirations or ())
         self.goal = (self.goal or "").strip()
+        self.constraints = tuple(str(item).strip() for item in (self.constraints or ()) if str(item).strip())
+        self.acceptance_criteria = tuple(
+            str(item).strip() for item in (self.acceptance_criteria or ()) if str(item).strip()
+        )
 
 
 WORKER_CONTRACT_LINES: tuple[str, ...] = (
@@ -563,6 +569,8 @@ class SharedPromptPacketRequest:
     iteration_context: IterationContext | None
     base: CommitPlanningContext
     inspirations: Sequence[CommitPlanningContext]
+    constraints: Sequence[str] = ()
+    acceptance_criteria: Sequence[str] = ()
     truncate_limit: int = 2000
     max_metrics: int = 4
     settings: Settings | None = None
@@ -586,6 +594,8 @@ class _PromptPacketRenderer(TruncationMixin):
         self,
         *,
         goal: str,
+        constraints: Sequence[str],
+        acceptance_criteria: Sequence[str],
         iteration_context: IterationContext | None,
         base: CommitPlanningContext,
         inspirations: Sequence[CommitPlanningContext],
@@ -599,6 +609,12 @@ You are working inside Loreley's evolution worker.
 
 Evolution Goal:
 {goal.strip() or "N/A"}
+
+Constraints:
+{self._format_bullets(constraints)}
+
+Acceptance Criteria:
+{self._format_bullets(acceptance_criteria)}
 
 Worker Contract:
 {self._format_worker_contract()}
@@ -616,6 +632,16 @@ Inspiration Commits:
 
     def _format_worker_contract(self) -> str:
         return "\n".join(f"- {line}" for line in WORKER_CONTRACT_LINES)
+
+    def _format_bullets(self, values: Sequence[str]) -> str:
+        lines = [
+            self._truncate(normalize_single_line(str(item)), limit=200)
+            for item in tuple(values or ())[:20]
+            if normalize_single_line(str(item))
+        ]
+        if not lines:
+            return "- None"
+        return "\n".join(f"- {line}" for line in lines)
 
     def _format_iteration_context(self, context: IterationContext | None) -> str:
         context = context or IterationContext()
@@ -819,6 +845,8 @@ def render_shared_prompt_packet(request: SharedPromptPacketRequest) -> str:
     )
     return renderer.render(
         goal=request.goal,
+        constraints=request.constraints,
+        acceptance_criteria=request.acceptance_criteria,
         iteration_context=request.iteration_context,
         base=request.base,
         inspirations=request.inspirations,
@@ -943,6 +971,8 @@ class PlanningAgent(TruncationMixin):
         shared_packet = render_shared_prompt_packet(
             SharedPromptPacketRequest(
                 goal=request.goal,
+                constraints=request.constraints,
+                acceptance_criteria=request.acceptance_criteria,
                 iteration_context=request.iteration_context,
                 base=request.base,
                 inspirations=request.inspirations,
@@ -1027,6 +1057,8 @@ Return:
                 "attempt": attempt,
                 "working_dir": str(worktree),
                 "goal": request.goal,
+                "constraints": list(request.constraints),
+                "acceptance_criteria": list(request.acceptance_criteria),
                 "base_commit": request.base.commit_hash,
                 "iteration_context": {
                     "seed_job": bool(request.iteration_context.seed_job)

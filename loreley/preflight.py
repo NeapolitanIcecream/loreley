@@ -277,6 +277,36 @@ def check_scheduler_max_total_jobs(settings: Settings) -> CheckResult:
     return CheckResult("scheduler_max_total_jobs", "ok", f"configured: {value}")
 
 
+def check_campaign_program(settings: Settings) -> CheckResult:
+    """Report the default campaign program parse status for the scheduler repo."""
+
+    candidate = settings.scheduler_repo_root or settings.worker_repo_worktree or str(Path.cwd())
+    repo_root = Path(candidate).expanduser().resolve()
+    try:
+        from loreley.core.campaign_program import load_campaign_program_from_repo
+
+        loaded = load_campaign_program_from_repo(repo_root)
+    except Exception as exc:
+        return CheckResult(
+            "campaign_program",
+            "warn",
+            f"failed to inspect loreley.program.md ({exc})",
+        )
+    if loaded.snapshot is None:
+        return CheckResult(
+            "campaign_program",
+            "ok",
+            "not found; campaign_program_hash will be null",
+        )
+    snapshot = loaded.snapshot
+    details = (
+        f"found hash={snapshot.raw_sha256[:12]} "
+        f"recognized_sections={list(snapshot.recognized_sections)} "
+        f"warnings={len(snapshot.parse_warnings)}"
+    )
+    return CheckResult("campaign_program", "ok", details)
+
+
 def check_instance_marker(*, schema_version: int) -> CheckResult:
     """Check that the instance metadata marker exists and matches schema_version."""
     try:
@@ -564,6 +594,7 @@ def preflight_scheduler(settings: Settings, *, timeout_seconds: float = 2.0) -> 
     )
     results.append(check_embedding_dimensions(settings))
     results.append(check_scheduler_max_total_jobs(settings))
+    results.append(check_campaign_program(settings))
 
     goal = (settings.worker_evolution_global_goal or "").strip()
     if goal:

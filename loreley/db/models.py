@@ -207,6 +207,33 @@ class Metric(TimestampMixin, Base):
         )
 
 
+class CampaignProgram(TimestampMixin, Base):
+    """Content-addressed campaign program snapshot."""
+
+    __tablename__ = "campaign_programs"
+
+    hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    title: Mapped[str | None] = mapped_column(String(256))
+    raw_markdown: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_snapshot: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JSONB),
+        default=dict,
+        nullable=False,
+    )
+    recognized_sections: Mapped[list[str]] = mapped_column(
+        MutableList.as_mutable(ARRAY(String(64))),
+        default=list,
+        nullable=False,
+    )
+    parse_warnings: Mapped[list[dict[str, Any]]] = mapped_column(
+        MutableList.as_mutable(JSONB),
+        default=list,
+        nullable=False,
+    )
+
+
 class CandidateCommit(TimestampMixin, Base):
     """Durable ledger row for a worker-produced candidate commit."""
 
@@ -224,6 +251,7 @@ class CandidateCommit(TimestampMixin, Base):
         Index("ix_candidate_commits_repair_source", "repair_source_candidate_id"),
         Index("ix_candidate_commits_git_parent", "git_parent_commit_hash"),
         Index("ix_candidate_commits_nearest_viable_ancestor", "nearest_viable_ancestor_hash"),
+        Index("ix_candidate_commits_campaign_program_hash", "campaign_program_hash"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -249,6 +277,7 @@ class CandidateCommit(TimestampMixin, Base):
         nullable=True,
     )
     repair_mode: Mapped[str | None] = mapped_column(String(32))
+    campaign_program_hash: Mapped[str | None] = mapped_column(String(64))
 
     candidate_branch_name: Mapped[str | None] = mapped_column(String(255))
     candidate_published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -370,6 +399,7 @@ class EvaluationAttempt(TimestampMixin, Base):
         Index("ix_evaluation_attempts_candidate_started", "candidate_commit_id", "started_at"),
         Index("ix_evaluation_attempts_job_id", "job_id"),
         Index("ix_evaluation_attempts_outcome_kind", "outcome_kind"),
+        Index("ix_evaluation_attempts_campaign_program_hash", "campaign_program_hash"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -389,6 +419,7 @@ class EvaluationAttempt(TimestampMixin, Base):
     )
     evaluator_name: Mapped[str | None] = mapped_column(String(128))
     evaluator_version: Mapped[str | None] = mapped_column(String(128))
+    campaign_program_hash: Mapped[str | None] = mapped_column(String(64))
     outcome_kind: Mapped[str] = mapped_column(String(32), nullable=False)
     failure_kind: Mapped[str | None] = mapped_column(String(64))
     failure_stage: Mapped[str | None] = mapped_column(String(32))
@@ -428,6 +459,7 @@ class EvolutionJob(TimestampMixin, Base):
         ),
         Index("ix_evolution_jobs_kind_status_scheduled", "job_kind", "status", "scheduled_at"),
         Index("ix_evolution_jobs_repair_source_status", "repair_source_candidate_id", "status"),
+        Index("ix_evolution_jobs_campaign_program_hash", "campaign_program_hash"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -485,6 +517,7 @@ class EvolutionJob(TimestampMixin, Base):
         nullable=True,
     )
     repair_mode: Mapped[str | None] = mapped_column(String(32))
+    campaign_program_hash: Mapped[str | None] = mapped_column(String(64))
     candidate_commit_hash: Mapped[str | None] = mapped_column(String(64))
     candidate_branch_name: Mapped[str | None] = mapped_column(String(255))
     candidate_published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -124,6 +124,7 @@ class JobArtifactWriteRequest:
     run_token: UUID | None = None
     worktree: Path | None = None
     settings: Settings | None = None
+    campaign_program: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +139,7 @@ class FailureJobArtifactWriteRequest:
     coding: CodingAgentResponse | None = None
     worktree: Path | None = None
     settings: Settings | None = None
+    campaign_program: Mapping[str, Any] | None = None
 
 
 _MIME_EXTENSIONS: dict[str, str] = {
@@ -621,6 +623,7 @@ def _write_failure_fixed_job_artifacts(
                 "job_id": str(request.job_id),
                 "base_commit_hash": request.base_commit_hash,
                 "candidate_commit_hash": request.candidate_commit_hash,
+                "campaign_program": dict(request.campaign_program or {}) or None,
                 "worker": worker,
                 "plan": request.plan.plan.as_dict(),
                 "backend": {
@@ -647,6 +650,7 @@ def _write_failure_fixed_job_artifacts(
                 "job_id": str(request.job_id),
                 "base_commit_hash": request.base_commit_hash,
                 "candidate_commit_hash": request.candidate_commit_hash,
+                "campaign_program": dict(request.campaign_program or {}) or None,
                 "worker": worker,
                 "report": request.coding.report.as_dict(),
                 "backend": {
@@ -699,6 +703,7 @@ def _write_failure_outcome_artifacts(
             "job_id": str(request.job_id),
             "base_commit_hash": request.base_commit_hash,
             "candidate_commit_hash": request.candidate_commit_hash,
+            "campaign_program": dict(request.campaign_program or {}) or None,
             "worker": worker,
             "message": request.message,
             "outcome": request.outcome.as_dict(),
@@ -731,6 +736,7 @@ def _write_fixed_job_artifacts(
             "base_commit_hash": request.base_commit_hash,
             "candidate_commit_hash": request.candidate_commit_hash,
             "commit_message": request.commit_message,
+            "campaign_program": dict(request.campaign_program or {}) or None,
             "worker": worker,
             "plan": request.plan.plan.as_dict(),
             "backend": {
@@ -754,6 +760,7 @@ def _write_fixed_job_artifacts(
             "base_commit_hash": request.base_commit_hash,
             "candidate_commit_hash": request.candidate_commit_hash,
             "commit_message": request.commit_message,
+            "campaign_program": dict(request.campaign_program or {}) or None,
             "worker": worker,
             "report": request.coding.report.as_dict(),
             "backend": {
@@ -798,6 +805,7 @@ def _write_evaluation_result_artifacts(
             "base_commit_hash": request.base_commit_hash,
             "candidate_commit_hash": request.candidate_commit_hash,
             "commit_message": request.commit_message,
+            "campaign_program": dict(request.campaign_program or {}) or None,
             "worker": worker,
             "summary": request.evaluation.summary,
             "metrics": [metric.as_dict() for metric in request.evaluation.metrics],

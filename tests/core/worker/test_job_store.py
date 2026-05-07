@@ -175,6 +175,7 @@ def test_start_job_clamps_worker_id_to_column_budget(
             self.candidate_commit_hash = None
             self.candidate_branch_name = None
             self.candidate_published_at = None
+            self.campaign_program_hash = "program123"
             self.heartbeat_at = None
             self.lease_expires_at = None
             self.run_token = None
@@ -227,6 +228,7 @@ def test_record_candidate_commit_updates_job_metadata(
             self.candidate_commit_hash = None
             self.candidate_branch_name = None
             self.candidate_published_at = None
+            self.campaign_program_hash = "program123"
 
     job_row = DummyJob()
     added: list[Any] = []
@@ -262,7 +264,9 @@ def test_record_candidate_commit_updates_job_metadata(
     assert job_row.candidate_commit_hash == "cand123"
     assert job_row.candidate_branch_name == "exp/job-branch"
     assert job_row.candidate_published_at is None
-    assert any(isinstance(obj, job_store.CandidateCommit) for obj in added)
+    candidate_rows = [obj for obj in added if isinstance(obj, job_store.CandidateCommit)]
+    assert candidate_rows
+    assert candidate_rows[0].campaign_program_hash == "program123"
 
     store.record_candidate_commit(
         job_id,

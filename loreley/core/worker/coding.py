@@ -73,12 +73,18 @@ class CodingAgentRequest:
     base_commit: str
     base: CommitPlanningContext
     inspirations: Sequence[CommitPlanningContext] = field(default_factory=tuple)
+    constraints: Sequence[str] = field(default_factory=tuple)
+    acceptance_criteria: Sequence[str] = field(default_factory=tuple)
     iteration_context: IterationContext | None = None
     additional_notes: Sequence[str] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         self.goal = (self.goal or "").strip()
         self.inspirations = tuple(self.inspirations or ())
+        self.constraints = tuple(str(item).strip() for item in (self.constraints or ()) if str(item).strip())
+        self.acceptance_criteria = tuple(
+            str(item).strip() for item in (self.acceptance_criteria or ()) if str(item).strip()
+        )
         self.additional_notes = tuple(self.additional_notes or ())
 
 
@@ -252,6 +258,8 @@ class CodingAgent(TruncationMixin):
                 iteration_context=request.iteration_context,
                 base=request.base,
                 inspirations=request.inspirations,
+                constraints=request.constraints,
+                acceptance_criteria=request.acceptance_criteria,
                 truncate_limit=self._truncate_limit,
                 max_metrics=4,
                 settings=self.settings,
@@ -350,6 +358,8 @@ Output requirements:
                 "attempt": attempt,
                 "working_dir": str(worktree),
                 "goal": request.goal,
+                "constraints": list(request.constraints),
+                "acceptance_criteria": list(request.acceptance_criteria),
                 "base_commit": request.base_commit,
                 "iteration_context": {
                     "seed_job": bool(request.iteration_context.seed_job)

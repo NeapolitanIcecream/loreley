@@ -14,8 +14,11 @@ These notes cover changes merged after `v0.7.9-alpha`.
   `FAILED_CANDIDATE_REPAIR_NORMAL_JOBS_PER_TOKEN`,
   `FAILED_CANDIDATE_REPAIR_MAX_TOKENS`,
   `FAILED_CANDIDATE_REPAIR_MAX_ACTIVE_JOBS`, and related repair limits.
+- Added optional `loreley.program.md` campaign programs with parsed goal,
+  metric, scope, policy projection, provenance hashes, evaluator payload
+  propagation, and a worker scope gate.
 
 ## Changed
 
-- Bumped `INSTANCE_SCHEMA_VERSION` to `7`. Existing development databases must
+- Bumped `INSTANCE_SCHEMA_VERSION` to `8`. Existing development databases must
   be reset with `uv run loreley reset-db --yes` before running this version.

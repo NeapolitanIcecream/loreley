@@ -893,6 +893,7 @@ class Evaluator:
         duration = monotonic() - start
         if outcome.result is not None:
             outcome.result.extra.setdefault("evaluator_duration_seconds", float(duration))
+            _record_campaign_primary_metric_warnings(outcome=outcome, context=context)
         metrics_count = len(outcome.result.metrics) if outcome.result is not None else 0
         console.log(
             f"[bold green]Evaluator[/] finished in {duration:.1f}s "
@@ -1378,6 +1379,65 @@ class Evaluator:
             raise EvaluationError(
                 f"Worktree path {context.worktree} is not a directory.",
             )
+
+
+def _record_campaign_primary_metric_warnings(
+    *,
+    outcome: EvaluationOutcome,
+    context: EvaluationContext,
+) -> None:
+    if outcome.result is None:
+        return
+    campaign_program = context.payload.get("campaign_program")
+    if not isinstance(campaign_program, Mapping):
+        return
+    snapshot = campaign_program.get("snapshot")
+    if not isinstance(snapshot, Mapping):
+        return
+    primary_metric = snapshot.get("primary_metric")
+    if not isinstance(primary_metric, Mapping):
+        return
+    metric_name = normalize_single_line(str(primary_metric.get("name") or ""))
+    if not metric_name:
+        return
+    expected_direction = normalize_single_line(str(primary_metric.get("direction") or "")).lower()
+    expected_higher: bool | None
+    if expected_direction == "higher_is_better":
+        expected_higher = True
+    elif expected_direction == "lower_is_better":
+        expected_higher = False
+    else:
+        expected_higher = None
+
+    matching = [metric for metric in outcome.result.metrics if metric.name == metric_name]
+    warnings = list(outcome.result.extra.get("campaign_program_warnings") or [])
+    if not matching:
+        warnings.append(
+            {
+                "code": "primary_metric_missing",
+                "campaign_program_hash": campaign_program.get("hash"),
+                "metric_name": clamp_text(metric_name, 128),
+            }
+        )
+    elif expected_higher is not None and matching[0].higher_is_better != expected_higher:
+        warnings.append(
+            {
+                "code": "primary_metric_direction_conflict",
+                "campaign_program_hash": campaign_program.get("hash"),
+                "metric_name": clamp_text(metric_name, 128),
+                "campaign_higher_is_better": expected_higher,
+                "evaluator_higher_is_better": matching[0].higher_is_better,
+            }
+        )
+    if not warnings:
+        return
+    outcome.result.extra["campaign_program_warnings"] = warnings
+    log.warning(
+        "Campaign primary metric warning job={} commit={} warning_count={}",
+        context.job_id,
+        context.candidate_commit_hash,
+        len(warnings),
+    )
 
 
 def _plugin_subprocess_entry(

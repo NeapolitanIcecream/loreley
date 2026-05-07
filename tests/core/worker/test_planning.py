@@ -174,9 +174,29 @@ def test_planning_prompt_requests_markdown_deliverable(settings: Settings) -> No
     assert "Markdown document" in prompt
     assert "Operate non-interactively" in prompt
     assert "Do not run Loreley's evaluator" in prompt
-    assert "Constraints:" not in prompt
-    assert "Acceptance criteria:" not in prompt
+    assert "Constraints:" in prompt
+    assert "Acceptance Criteria:" in prompt
     assert "Use these sections" in prompt
+
+
+def test_planning_prompt_projects_bounded_constraints_and_acceptance_criteria(
+    settings: Settings,
+) -> None:
+    agent = PlanningAgent(settings=settings, backend=_DummyBackend())
+    request = PlanningAgentRequest(
+        base=_make_base(),
+        inspirations=(),
+        goal="Improve docs",
+        constraints=("Correctness gate: pytest", "Protected scope: loreley.program.md"),
+        acceptance_criteria=("Primary metric: throughput (higher is better)",),
+        iteration_context=IterationContext(seed_job=False),
+    )
+
+    prompt = agent._render_prompt(request)  # type: ignore[attr-defined]
+
+    assert "Constraints:\n- Correctness gate: pytest" in prompt
+    assert "- Protected scope: loreley.program.md" in prompt
+    assert "Acceptance Criteria:\n- Primary metric: throughput (higher is better)" in prompt
 
 
 def test_planning_prompt_formats_inspirations_as_transfer_cards(settings: Settings) -> None:

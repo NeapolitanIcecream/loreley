@@ -9,6 +9,7 @@ high-level control flow.
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 import random
 from typing import Any, Sequence
 from uuid import UUID
@@ -18,6 +19,13 @@ from rich.console import Console
 from sqlalchemy import and_, func, or_, select
 
 from loreley.config import Settings, resolve_default_island_id
+from loreley.core.campaign_program import (
+    CampaignProgramSnapshot,
+    apply_campaign_program_projection,
+    load_campaign_program_from_repo,
+    load_campaign_program_snapshot_by_hash,
+    persist_campaign_program,
+)
 from loreley.core.map_elites.sampler import MapElitesSampler, SamplingSnapshot, ScheduledSamplerJob
 from loreley.core.worker.repair import (
     REPAIR_MODE_REBASE_FROM_NEAREST_VIABLE,
@@ -92,16 +100,29 @@ class FailedCandidateRepairSampler:
             if self._has_active_repair_job(session=session, source_id=candidate.id):
                 return None
             goal = self._repair_goal(candidate)
+            campaign_program = load_campaign_program_snapshot_by_hash(
+                session=session,
+                program_hash=getattr(candidate, "campaign_program_hash", None),
+            )
+            projection = apply_campaign_program_projection(
+                snapshot=campaign_program,
+                goal=goal,
+                constraints=(),
+                acceptance_criteria=(),
+                notes=(),
+                default_goal=self.settings.worker_evolution_global_goal,
+                preserve_existing_goal=True,
+            )
             now = _db_utc_now(session)
             job = EvolutionJob(
                 status=JobStatus.PENDING,
                 base_commit_hash=candidate.nearest_viable_ancestor_hash,
                 island_id=candidate.island_id,
                 inspiration_commit_hashes=[],
-                goal=goal,
-                constraints=[],
-                acceptance_criteria=[],
-                notes=[],
+                goal=projection.goal or goal,
+                constraints=projection.constraints,
+                acceptance_criteria=projection.acceptance_criteria,
+                notes=projection.notes,
                 tags=["repair"],
                 iteration_hint="Repair failed candidate from nearest viable ancestor.",
                 sampling_strategy="failed_candidate_repair",
@@ -112,6 +133,7 @@ class FailedCandidateRepairSampler:
                 job_kind="repair",
                 repair_source_candidate_id=candidate.id,
                 repair_mode=REPAIR_MODE_REBASE_FROM_NEAREST_VIABLE,
+                campaign_program_hash=getattr(candidate, "campaign_program_hash", None),
                 priority=self.settings.mapelites_sampler_default_priority,
                 scheduled_at=now,
             )
@@ -236,10 +258,17 @@ class JobScheduler:
     settings: Settings
     console: Console
     sampler: MapElitesSampler
+    repo_root: Path | None = None
     _sender_actor: object = field(init=False, repr=False)
     repair_sampler: FailedCandidateRepairSampler = field(init=False, repr=False)
     _repair_tokens: int = field(default=0, init=False, repr=False)
     _repair_completed_normal_jobs_seen: int = field(default=0, init=False, repr=False)
+    _campaign_program_snapshot: CampaignProgramSnapshot | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+    _reported_campaign_program_hashes: set[str] = field(default_factory=set, init=False, repr=False)
 
     def __post_init__(self) -> None:
         # Build a sender-only actor that targets the experiment-scoped queue.
@@ -247,6 +276,7 @@ class JobScheduler:
             settings=self.settings,
         )
         self.repair_sampler = FailedCandidateRepairSampler(settings=self.settings)
+        self._campaign_program_snapshot = self._load_startup_campaign_program()
         if bool(self.settings.failed_candidate_repair_enabled):
             self._repair_completed_normal_jobs_seen = self._count_completed_normal_jobs_best_effort()
 
@@ -393,6 +423,7 @@ class JobScheduler:
             Total number of jobs recorded in the database (used to enforce the global job limit).
         """
 
+        self._refresh_campaign_program_for_policy()
         max_jobs = max(0, int(self.settings.scheduler_max_unfinished_jobs))
         if max_jobs == 0:
             return 0
@@ -566,10 +597,20 @@ class JobScheduler:
         if count <= 0:
             return 0
 
+        self._refresh_campaign_program_for_policy()
         effective_island = island_id or resolve_default_island_id(self.settings)
         now = datetime.now(timezone.utc)
         jobs: list[EvolutionJob] = []
-        goal = (self.settings.worker_evolution_global_goal or "").strip()
+        default_goal = (self.settings.worker_evolution_global_goal or "").strip()
+        projection = apply_campaign_program_projection(
+            snapshot=self._campaign_program_snapshot,
+            goal=default_goal,
+            constraints=(),
+            acceptance_criteria=(),
+            notes=(),
+            default_goal=default_goal,
+        )
+        goal = (projection.goal or "").strip()
         if not goal:
             self.console.log(
                 "[bold red]Cannot create seed jobs[/] WORKER_EVOLUTION_GLOBAL_GOAL is empty",
@@ -584,15 +625,20 @@ class JobScheduler:
                     island_id=effective_island,
                     inspiration_commit_hashes=[],
                     goal=goal,
-                    constraints=[],
-                    acceptance_criteria=[],
-                    notes=[],
+                    constraints=projection.constraints,
+                    acceptance_criteria=projection.acceptance_criteria,
+                    notes=projection.notes,
                     tags=[],
                     iteration_hint=(
                         "Cold-start seed job: design diverse initial directions "
                         "from the root baseline."
                     ),
                     job_kind="seed",
+                    campaign_program_hash=(
+                        self._campaign_program_snapshot.raw_sha256
+                        if self._campaign_program_snapshot
+                        else None
+                    ),
                     sampling_strategy="seed",
                     sampling_initial_radius=None,
                     sampling_radius_used=None,
@@ -638,6 +684,7 @@ class JobScheduler:
                 island_id=island_id,
                 sampling_snapshot=sampling_snapshot,
                 excluded_base_commits=excluded_base_commits,
+                campaign_program=self._campaign_program_snapshot,
             )
         except Exception as exc:  # pragma: no cover - defensive
             self.console.log(f"[bold red]Sampler failed[/] reason={exc}")
@@ -651,6 +698,102 @@ class JobScheduler:
             f"base={scheduled.base_commit_hash}",
         )
         return scheduled
+
+    # Campaign program -----------------------------------------------------
+
+    def _effective_repo_root(self) -> Path | None:
+        if self.repo_root is not None:
+            return Path(self.repo_root).expanduser().resolve()
+        configured = str(getattr(self.settings, "scheduler_repo_root", "") or "").strip()
+        if configured:
+            return Path(configured).expanduser().resolve()
+        return None
+
+    def _load_startup_campaign_program(self) -> CampaignProgramSnapshot | None:
+        repo_root = self._effective_repo_root()
+        if repo_root is None:
+            return None
+        loaded = load_campaign_program_from_repo(repo_root)
+        if loaded.snapshot is None:
+            return None
+        with session_scope() as session:
+            persist_campaign_program(
+                session=session,
+                snapshot=loaded.snapshot,
+                raw_markdown=loaded.raw_markdown or "",
+            )
+        self.console.log(
+            "[green]Campaign program loaded[/] hash={} source={} recognized_sections={}".format(
+                loaded.snapshot.raw_sha256[:12],
+                loaded.snapshot.source_path,
+                ",".join(loaded.snapshot.recognized_sections) or "none",
+            ),
+        )
+        return loaded.snapshot
+
+    def _refresh_campaign_program_for_policy(self) -> None:
+        repo_root = self._effective_repo_root()
+        if repo_root is None:
+            return
+        loaded = load_campaign_program_from_repo(repo_root)
+        current_hash = loaded.snapshot.raw_sha256 if loaded.snapshot else None
+        active_hash = (
+            self._campaign_program_snapshot.raw_sha256
+            if self._campaign_program_snapshot is not None
+            else None
+        )
+        if current_hash == active_hash:
+            return
+        policy = str(getattr(self.settings, "campaign_program_change_policy", "locked") or "locked")
+        report_key = current_hash or "<missing>"
+        if policy == "auto":
+            if loaded.snapshot is None:
+                if report_key in self._reported_campaign_program_hashes:
+                    return
+                self._reported_campaign_program_hashes.add(report_key)
+                log.warning(
+                    "Campaign program missing under auto policy; retaining active hash old_hash={}",
+                    active_hash,
+                )
+                return
+            with session_scope() as session:
+                persist_campaign_program(
+                    session=session,
+                    snapshot=loaded.snapshot,
+                    raw_markdown=loaded.raw_markdown or "",
+                )
+            self._campaign_program_snapshot = loaded.snapshot
+            self.console.log(
+                "[yellow]Campaign program auto-updated[/] old_hash={} new_hash={}".format(
+                    (active_hash or "none")[:12],
+                    loaded.snapshot.raw_sha256[:12],
+                ),
+            )
+            log.warning(
+                "Campaign program auto-updated old_hash={} new_hash={}",
+                active_hash,
+                loaded.snapshot.raw_sha256,
+            )
+            return
+        if report_key in self._reported_campaign_program_hashes:
+            return
+        self._reported_campaign_program_hashes.add(report_key)
+        if policy == "approve":
+            log.warning(
+                "Campaign program changed but approve workflow is not implemented; retaining startup hash old_hash={} new_hash={}",
+                active_hash,
+                current_hash,
+            )
+            self.console.log(
+                "[yellow]Campaign program changed[/] approve policy currently retains startup hash "
+                f"old_hash={(active_hash or 'none')[:12]} new_hash={(current_hash or 'none')[:12]}",
+            )
+            return
+        log.warning(
+            "Campaign program changed under locked policy; retaining startup hash old_hash={} new_hash={}",
+            active_hash,
+            current_hash,
+        )
 
     # Dispatching -----------------------------------------------------------
 

@@ -24,6 +24,7 @@ from loreley.core.worker.artifacts import (
 from loreley.core.worker.commit_card import build_commit_card_from_git
 from loreley.config import Settings, get_settings
 from loreley.core.worker.coding import CodingAgentResponse
+from loreley.core.campaign_program import campaign_program_artifact_payload
 from loreley.core.worker.evaluator import EvaluationOutcome, EvaluationResult
 from loreley.core.worker.planning import PlanningAgentResponse
 from loreley.core.worker.repair import build_diagnostic_capsule, repair_failure_kind_allowlist
@@ -95,6 +96,7 @@ class LockedJob:
     job_kind: str
     repair_source_candidate_id: UUID | None
     repair_mode: str | None
+    campaign_program_hash: str | None
     sampling_strategy: str | None
     sampling_initial_radius: int | None
     sampling_radius_used: int | None
@@ -386,6 +388,7 @@ class EvolutionJobStore:
             job_kind=request.job_kind,
             repair_source_candidate_id=getattr(job, "repair_source_candidate_id", None),
             repair_mode=getattr(job, "repair_mode", None),
+            campaign_program_hash=getattr(job, "campaign_program_hash", None),
             candidate_branch_name=request.branch_name,
             candidate_published_at=published_at,
             publication_status=request.publication_status,
@@ -420,6 +423,7 @@ class EvolutionJobStore:
         row.job_kind = row.job_kind or request.job_kind
         row.repair_source_candidate_id = row.repair_source_candidate_id or getattr(job, "repair_source_candidate_id", None)
         row.repair_mode = row.repair_mode or getattr(job, "repair_mode", None)
+        row.campaign_program_hash = row.campaign_program_hash or getattr(job, "campaign_program_hash", None)
         row.candidate_branch_name = request.branch_name
         row.publication_status = request.publication_status
         if request.published:
@@ -537,6 +541,9 @@ class EvolutionJobStore:
                         commit_message=subject,
                         worktree=Path(request.worktree),
                         settings=self.settings,
+                        campaign_program=campaign_program_artifact_payload(
+                            request.job_ctx.campaign_program
+                        ),
                     )
                 )
             )
@@ -707,6 +714,7 @@ class EvolutionJobStore:
             job_id=request.job_ctx.job_id,
             evaluator_name=effective_outcome.evaluator_name,
             evaluator_version=effective_outcome.evaluator_version,
+            campaign_program_hash=request.job_ctx.campaign_program_hash,
             outcome_kind="passed",
             repairability=None,
             started_at=effective_outcome.started_at,
@@ -932,6 +940,9 @@ class EvolutionJobStore:
                         coding=request.coding,
                         worktree=request.worktree,
                         settings=self.settings,
+                        campaign_program=campaign_program_artifact_payload(
+                            request.job_ctx.campaign_program
+                        ),
                     )
                 )
             )
@@ -958,6 +969,7 @@ class EvolutionJobStore:
             job_id=job_ctx.job_id,
             evaluator_name=outcome.evaluator_name,
             evaluator_version=outcome.evaluator_version,
+            campaign_program_hash=job_ctx.campaign_program_hash,
             outcome_kind=outcome.outcome_kind,
             failure_kind=failure.failure_kind if failure else None,
             failure_stage=failure.failure_stage if failure else None,
@@ -1320,6 +1332,7 @@ def _locked_job_from_row(
         job_kind=job_kind,
         repair_source_candidate_id=getattr(job, "repair_source_candidate_id", None),
         repair_mode=getattr(job, "repair_mode", None),
+        campaign_program_hash=getattr(job, "campaign_program_hash", None),
         sampling_strategy=getattr(job, "sampling_strategy", None),
         sampling_initial_radius=getattr(job, "sampling_initial_radius", None),
         sampling_radius_used=getattr(job, "sampling_radius_used", None),

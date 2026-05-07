@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
@@ -9,6 +10,7 @@ import pytest
 
 import loreley.core.worker.evolution as evolution_module
 from loreley.config import Settings
+from loreley.core.campaign_program import parse_campaign_program
 from loreley.core.worker.coding import CodingAgentResponse, ExecutionReport
 from loreley.core.worker.evaluator import (
     EvaluationFailureResult,
@@ -79,9 +81,58 @@ class _FakeCodingAgent:
         )
 
 
+class _ScopeViolatingCodingAgent:
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+
+    def implement(self, request: Any, *, working_dir: Path) -> CodingAgentResponse:
+        self._events.append("coding.implement")
+        (working_dir / "README.md").write_text("changed outside editable scope\n", encoding="utf-8")
+        return CodingAgentResponse(
+            report=ExecutionReport(
+                summary="implemented",
+                markdown="## Summary\n- changed README\n",
+            ),
+            raw_output="raw",
+            prompt="prompt",
+            command=("cmd",),
+            stderr="",
+            attempts=1,
+            duration_seconds=0.1,
+        )
+
+
 class _FakeEvaluator:
     def evaluate(self, _context: Any) -> EvaluationResult:
         return EvaluationResult(summary="evaluation ok")
+
+
+class _EventCapturingEvaluator:
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+
+    def evaluate_outcome(self, context: Any) -> EvaluationOutcome:
+        self._events.append("evaluator.evaluate")
+        return EvaluationOutcome(
+            evaluator_name="fake",
+            candidate_commit_hash=context.candidate_commit_hash,
+            outcome_kind="passed",
+            result=EvaluationResult(summary="ok"),
+        )
+
+
+class _CapturingOutcomeEvaluator:
+    def __init__(self) -> None:
+        self.contexts: list[Any] = []
+
+    def evaluate_outcome(self, context: Any) -> EvaluationOutcome:
+        self.contexts.append(context)
+        return EvaluationOutcome(
+            evaluator_name="fake",
+            candidate_commit_hash=context.candidate_commit_hash,
+            outcome_kind="passed",
+            result=EvaluationResult(summary="ok"),
+        )
 
 
 class _FakeCandidateFailureEvaluator:
@@ -226,10 +277,18 @@ class _FakeRepositoryForRun:
 
 
 class _FakeJobStoreForPublishFailure:
-    def __init__(self, *, job_id: uuid.UUID, events: list[str], persist_error: Exception) -> None:
+    def __init__(
+        self,
+        *,
+        job_id: uuid.UUID,
+        events: list[str],
+        persist_error: Exception,
+        campaign_program_hash: str | None = None,
+    ) -> None:
         self._job_id = job_id
         self._events = events
         self._persist_error = persist_error
+        self._campaign_program_hash = campaign_program_hash
         self.recorded_candidates: list[dict[str, Any]] = []
         self.failures: list[dict[str, Any]] = []
 
@@ -256,8 +315,12 @@ class _FakeJobStoreForPublishFailure:
                 "sampling_initial_radius": None,
                 "sampling_radius_used": None,
                 "sampling_fallback_inspirations": None,
+                "campaign_program_hash": self._campaign_program_hash,
             },
         )()
+
+    def renew_job_lease(self, _job_id: uuid.UUID, _run_token: uuid.UUID) -> None:
+        return None
 
     def record_candidate_commit(
         self,
@@ -315,6 +378,25 @@ class _FakeJobStoreForEvaluationFailureRetry(_FakeJobStoreForPublishFailure):
         return len(self.persist_failure_outcomes) > 1
 
 
+class _FakeJobStoreForScopeGateFailure(_FakeJobStoreForPublishFailure):
+    def __init__(self, *, job_id: uuid.UUID, events: list[str], campaign_program_hash: str) -> None:
+        super().__init__(
+            job_id=job_id,
+            events=events,
+            persist_error=evolution_module.EvolutionWorkerError("unused"),
+            campaign_program_hash=campaign_program_hash,
+        )
+        self.persist_failure_calls: list[dict[str, Any]] = []
+
+    def persist_failure(self, **kwargs: Any) -> bool:
+        self._events.append("store.persist_failure")
+        self.persist_failure_calls.append(kwargs)
+        return True
+
+    def persist_success(self, **_kwargs: Any) -> None:
+        raise AssertionError("scope-gate failures must not persist success")
+
+
 def _patch_empty_planning_context_session(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_session = _FakeSession(cards={}, metrics={}, cells={})
 
@@ -344,6 +426,21 @@ def _make_job_context() -> JobContext:
         sampling_radius_used=None,
         sampling_fallback_inspirations=None,
     )
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+
+
+def _init_scope_repo(repo: Path) -> None:
+    subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
+    _git(repo, "config", "user.email", "test@example.invalid")
+    _git(repo, "config", "user.name", "Test User")
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    (repo / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "initial")
 
 
 def test_run_planning_batches_context_queries_for_base_and_inspirations_gh_n_plus_1(
@@ -710,3 +807,118 @@ def test_run_preserves_evaluator_failure_outcome_when_structured_retry_succeeds(
         "typecheck_failed",
     ]
     assert store.failures == []
+
+
+def test_run_persists_campaign_scope_violation_before_commit_push_or_evaluation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    """Campaign scope violations stop before candidate publication or evaluation."""
+
+    _init_scope_repo(tmp_path)
+    job_id = uuid.uuid4()
+    events: list[str] = []
+    program = parse_campaign_program(b"## Editable scope\n- src/**\n")
+    _patch_empty_planning_context_session(monkeypatch)
+    store = _FakeJobStoreForScopeGateFailure(
+        job_id=job_id,
+        events=events,
+        campaign_program_hash=program.raw_sha256,
+    )
+    worker = EvolutionWorker(
+        settings=settings,
+        repository=_FakeRepositoryForRun(worktree=tmp_path, events=events),  # type: ignore[arg-type]
+        planning_agent=_FakePlanningAgent(),  # type: ignore[arg-type]
+        coding_agent=_ScopeViolatingCodingAgent(events),  # type: ignore[arg-type]
+        evaluator=_EventCapturingEvaluator(events),  # type: ignore[arg-type]
+        summarizer=_FakeSummarizer(),  # type: ignore[arg-type]
+        job_store=store,  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(worker, "_load_campaign_program", lambda _program_hash: program)
+
+    with pytest.raises(evolution_module.EvolutionWorkerError, match="Campaign scope gate rejected"):
+        worker.run(job_id)
+
+    assert "coding.implement" in events
+    assert "store.persist_failure" in events
+    assert "repo.commit" not in events
+    assert "repo.push_branch" not in events
+    assert "store.record_candidate[published=False]" not in events
+    assert "evaluator.evaluate" not in events
+    assert "store.mark_job_failed" not in events
+
+    failure_call = store.persist_failure_calls[0]
+    outcome = failure_call["outcome"]
+    assert failure_call["candidate_commit_hash"] is None
+    assert outcome.outcome_kind == "candidate_failed"
+    assert outcome.failure is not None
+    assert outcome.failure.failure_stage == "policy"
+    assert outcome.failure.failure_kind == "campaign_scope_violation"
+    artifact = outcome.artifacts[0]
+    assert artifact.key == "campaign_scope_violation"
+    assert artifact.kind == "policy_failure"
+    assert artifact.inline_payload["violations"][0]["code"] == "outside_editable_scope"
+    assert artifact.inline_payload["violations"][0]["path"] == "README.md"
+
+
+def test_run_evaluation_payload_includes_campaign_program_and_runtime_provenance(
+    tmp_path: Path,
+    settings: Settings,
+) -> None:
+    evaluator = _CapturingOutcomeEvaluator()
+    worker = EvolutionWorker(
+        settings=settings,
+        repository=object(),  # type: ignore[arg-type]
+        planning_agent=object(),  # type: ignore[arg-type]
+        coding_agent=object(),  # type: ignore[arg-type]
+        evaluator=evaluator,  # type: ignore[arg-type]
+        summarizer=object(),  # type: ignore[arg-type]
+        job_store=object(),  # type: ignore[arg-type]
+    )
+    program = parse_campaign_program(
+        b"""## Goal
+Program goal.
+
+## Primary metric
+name: throughput
+direction: higher_is_better
+unit: req/s
+"""
+    )
+    job_ctx = _make_job_context()
+    job_ctx.campaign_program_hash = program.raw_sha256
+    job_ctx.campaign_program = program
+    job_ctx.constraints = ("Correctness gate: pytest",)
+    job_ctx.acceptance_criteria = ("Primary metric: throughput",)
+    plan = PlanningAgentResponse(
+        plan=PlanDocument(summary="plan", markdown="## Summary\n- plan\n"),
+        raw_output="raw",
+        prompt="prompt",
+        command=("cmd",),
+        stderr="",
+        attempts=1,
+        duration_seconds=0.1,
+    )
+    checkout = CheckoutContext(
+        job_id=str(job_ctx.job_id),
+        branch_name="branch",
+        base_commit=job_ctx.base_commit_hash,
+        worktree=tmp_path,
+    )
+
+    outcome = worker._run_evaluation(  # noqa: SLF001
+        job_ctx=job_ctx,
+        checkout=checkout,
+        plan=plan,
+        candidate_commit="candidate",
+    )
+
+    assert outcome.outcome_kind == "passed"
+    context = evaluator.contexts[0]
+    assert context.payload["campaign_program"]["hash"] == program.raw_sha256
+    assert context.payload["campaign_program"]["snapshot"]["primary_metric"]["name"] == "throughput"
+    assert context.payload["job"]["constraints"] == ["Correctness gate: pytest"]
+    assert context.metadata["campaign_program_hash"] == program.raw_sha256
+    assert context.metadata["runtime_profile"] == settings.profile
+    assert len(context.metadata["effective_settings_fingerprint"]) == 64
