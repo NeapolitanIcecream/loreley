@@ -441,6 +441,10 @@ class Settings(BaseSettings):
         default=None,
         alias="WORKER_EVALUATOR_PLUGIN",
     )
+    worker_evaluator_version: str | None = Field(
+        default=None,
+        alias="WORKER_EVALUATOR_VERSION",
+    )
     worker_evaluator_python_paths: list[str] = Field(
         default_factory=list,
         alias="WORKER_EVALUATOR_PYTHON_PATHS",
@@ -1003,6 +1007,7 @@ def _build_safe_export_payload(settings: Settings, *, mask_secrets: bool) -> dic
         ),
         "worker_kilocode_openai_model": settings.worker_kilocode_openai_model,
         "worker_evaluator_plugin": settings.worker_evaluator_plugin,
+        "worker_evaluator_version": settings.worker_evaluator_version,
         "worker_evaluator_timeout_seconds": settings.worker_evaluator_timeout_seconds,
         "worker_evaluator_max_metrics": settings.worker_evaluator_max_metrics,
         "worker_evolution_global_goal": settings.worker_evolution_global_goal,

@@ -33,6 +33,7 @@ from loreley.scheduler.baselines import (
     BASELINE_STATUS_VALID,
     BaselineBootstrapService,
     BaselineMetricSpec,
+    baseline_evaluator_version,
     baseline_effective_settings_fingerprint,
     build_baseline_key,
     load_latest_matching_baseline,
@@ -294,6 +295,108 @@ def test_valid_matching_baseline_is_loaded_without_rerunning_evaluator(
 
     assert result.can_dispatch_or_schedule is True
     assert result.status == BASELINE_STATUS_VALID
+
+
+def test_failed_matching_baseline_is_retried_before_blocking_scheduler(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    settings = _settings(policy="required")
+    key = build_baseline_key(settings=settings, root_commit_hash="root123", campaign_program=None)
+    row = CampaignBaseline(
+        baseline_key_hash=key.hash,
+        root_commit_hash="root123",
+        campaign_program_hash=None,
+        evaluator_name="tests.support:plugin",
+        evaluator_version=key.evaluator_version,
+        primary_metric_name="score",
+        primary_metric_higher_is_better=True,
+        runtime_profile=settings.profile,
+        effective_settings_fingerprint=key.effective_settings_fingerprint,
+        status=BASELINE_STATUS_FAILED,
+        failure_kind="primary_metric_missing",
+        failure_summary="transient setup problem",
+    )
+    row.id = uuid.uuid4()
+    store = _BaselineStore()
+    store.baselines.append(row)
+    _install_session(monkeypatch, store)
+    _install_baseline_eval(
+        monkeypatch,
+        tmp_path,
+        _passed_outcome(metrics=(EvaluationMetric(name="score", value=4.0),)),
+    )
+
+    service = BaselineBootstrapService(
+        settings=settings,
+        repo_root=tmp_path,
+        console=baselines.Console(record=True),
+    )
+    result = service.ensure_or_load_baseline(root_commit_hash="root123", campaign_program=None)
+
+    assert result.can_dispatch_or_schedule is True
+    assert result.status == BASELINE_STATUS_VALID
+    assert store.baselines == [row]
+    assert row.failure_kind is None
+    assert row.metric_value == pytest.approx(4.0)
+
+
+def test_baseline_key_changes_with_evaluator_version() -> None:
+    settings_v1 = _settings()
+    settings_v1.worker_evaluator_version = "1.0.0"
+    settings_v2 = _settings()
+    settings_v2.worker_evaluator_version = "2.0.0"
+
+    key_v1 = build_baseline_key(
+        settings=settings_v1,
+        root_commit_hash="root123",
+        campaign_program=None,
+    )
+    key_v2 = build_baseline_key(
+        settings=settings_v2,
+        root_commit_hash="root123",
+        campaign_program=None,
+    )
+
+    assert baseline_evaluator_version(settings_v1) == "1.0.0"
+    assert key_v1.evaluator_version == "1.0.0"
+    assert key_v2.evaluator_version == "2.0.0"
+    assert key_v1.effective_settings_fingerprint != key_v2.effective_settings_fingerprint
+    assert key_v1.hash != key_v2.hash
+
+
+def test_baseline_key_uses_evaluator_source_fingerprint_when_version_unset(tmp_path) -> None:
+    plugin_path = tmp_path / "baseline_plugin.py"
+    plugin_path.write_text(
+        "def plugin(context):\n"
+        "    return {'summary': 'ok', 'metrics': []}\n",
+        encoding="utf-8",
+    )
+    settings = _settings()
+    settings.worker_evaluator_plugin = "baseline_plugin:plugin"
+    settings.worker_evaluator_python_paths = [str(tmp_path)]
+
+    key = build_baseline_key(
+        settings=settings,
+        root_commit_hash="root123",
+        campaign_program=None,
+    )
+    plugin_path.write_text(
+        "def plugin(context):\n"
+        "    return {'summary': 'changed', 'metrics': []}\n",
+        encoding="utf-8",
+    )
+    changed_key = build_baseline_key(
+        settings=settings,
+        root_commit_hash="root123",
+        campaign_program=None,
+    )
+
+    assert key.evaluator_version is not None
+    assert key.evaluator_version.startswith("source-sha256:")
+    assert changed_key.evaluator_version is not None
+    assert changed_key.evaluator_version.startswith("source-sha256:")
+    assert key.hash != changed_key.hash
 
 
 def test_program_hash_changes_require_distinct_baseline_keys() -> None:

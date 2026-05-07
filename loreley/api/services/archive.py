@@ -39,6 +39,16 @@ class ArchiveRecordPage:
     next_cursor: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class ArchiveRecordBuildContext:
+    island_id: str
+    metric_values_by_commit: dict[str, float]
+    metric_name: str | None
+    higher_is_better: bool
+    baseline_by_commit: dict[str, Any | None] | None = None
+    baseline: Any | None = None
+
+
 def _fitness_metric_name(settings: Settings) -> str | None:
     metric_name = str(getattr(settings, "mapelites_fitness_metric", "") or "").strip()
     return metric_name or None
@@ -170,11 +180,13 @@ def list_records(
 
     return _build_records_from_rows(
         rows=rows,
-        island_id=island_id,
-        metric_values_by_commit=metric_values_by_commit,
-        metric_name=metric_name,
-        higher_is_better=higher_is_better,
-        baseline_by_commit=baseline_by_commit,
+        context=ArchiveRecordBuildContext(
+            island_id=island_id,
+            metric_values_by_commit=metric_values_by_commit,
+            metric_name=metric_name,
+            higher_is_better=higher_is_better,
+            baseline_by_commit=baseline_by_commit,
+        ),
     )
 
 
@@ -234,11 +246,13 @@ def list_records_page(
 
     records = _build_records_from_rows(
         rows=items_rows,
-        island_id=island_id,
-        metric_values_by_commit=metric_values_by_commit,
-        metric_name=metric_name,
-        higher_is_better=higher_is_better,
-        baseline_by_commit=baseline_by_commit,
+        context=ArchiveRecordBuildContext(
+            island_id=island_id,
+            metric_values_by_commit=metric_values_by_commit,
+            metric_name=metric_name,
+            higher_is_better=higher_is_better,
+            baseline_by_commit=baseline_by_commit,
+        ),
     )
     next_cursor = encode_cursor({"cell_index": records[-1].cell_index}) if len(rows) > limit and records else None
     return ArchiveRecordPage(items=records, next_cursor=next_cursor)
@@ -247,54 +261,75 @@ def list_records_page(
 def _build_records_from_rows(
     *,
     rows: list[MapElitesArchiveCell],
+    context: ArchiveRecordBuildContext,
+) -> list[MapElitesRecord]:
+    return [
+        _record_from_archive_row(
+            row=row,
+            island_id=context.island_id,
+            metric_value=context.metric_values_by_commit.get(str(row.commit_hash or "")),
+            metric_name=context.metric_name,
+            higher_is_better=context.higher_is_better,
+            baseline=_baseline_for_archive_row(
+                row=row,
+                baseline_by_commit=context.baseline_by_commit,
+                fallback=context.baseline,
+            ),
+        )
+        for row in rows
+    ]
+
+
+def _record_from_archive_row(
+    *,
+    row: MapElitesArchiveCell,
     island_id: str,
-    metric_values_by_commit: dict[str, float],
+    metric_value: float | None,
     metric_name: str | None,
     higher_is_better: bool,
-    baseline_by_commit: dict[str, Any | None] | None = None,
-    baseline: Any | None = None,
-) -> list[MapElitesRecord]:
-    records: list[MapElitesRecord] = []
-    for row in rows:
-        commit_hash = str(row.commit_hash or "")
-        objective = float(row.objective or 0.0)
-        metric_value = metric_values_by_commit.get(commit_hash)
-        row_baseline = (
-            baseline_by_commit.get(commit_hash)
-            if baseline_by_commit is not None
-            else baseline
-        )
-        delta_from_baseline = improvement_from_baseline(
+    baseline: Any | None,
+) -> MapElitesRecord:
+    commit_hash = str(row.commit_hash or "")
+    objective = float(row.objective or 0.0)
+    return MapElitesRecord(
+        commit_hash=commit_hash,
+        island_id=str(row.island_id or island_id),
+        cell_index=int(row.cell_index),
+        fitness=float(metric_value) if metric_value is not None else objective,
+        objective=objective,
+        metric_value=float(metric_value) if metric_value is not None else None,
+        metric_name=metric_name,
+        higher_is_better=higher_is_better,
+        campaign_baseline_id=_baseline_id(baseline),
+        baseline_key_hash=getattr(baseline, "baseline_key_hash", None),
+        baseline_status=getattr(baseline, "status", None),
+        delta_from_root_baseline=improvement_from_baseline(
             candidate_value=metric_value,
-            baseline=row_baseline,
-        )
-        records.append(
-            MapElitesRecord(
-                commit_hash=commit_hash,
-                island_id=str(row.island_id or island_id),
-                cell_index=int(row.cell_index),
-                fitness=float(metric_value) if metric_value is not None else objective,
-                objective=objective,
-                metric_value=float(metric_value) if metric_value is not None else None,
-                metric_name=metric_name,
-                higher_is_better=higher_is_better,
-                campaign_baseline_id=(
-                    str(getattr(row_baseline, "id", ""))
-                    if getattr(row_baseline, "id", None)
-                    else None
-                ),
-                baseline_key_hash=getattr(row_baseline, "baseline_key_hash", None),
-                baseline_status=getattr(row_baseline, "status", None),
-                delta_from_root_baseline=delta_from_baseline,
-                measures=tuple(float(v) for v in (row.measures or ())),
-                solution=materialize_solution(
-                    measures=row.measures or (),
-                    solution=row.solution or (),
-                ),
-                timestamp=float(row.timestamp or 0.0),
-            )
-        )
-    return records
+            baseline=baseline,
+        ),
+        measures=tuple(float(v) for v in (row.measures or ())),
+        solution=materialize_solution(
+            measures=row.measures or (),
+            solution=row.solution or (),
+        ),
+        timestamp=float(row.timestamp or 0.0),
+    )
+
+
+def _baseline_for_archive_row(
+    *,
+    row: MapElitesArchiveCell,
+    baseline_by_commit: dict[str, Any | None] | None,
+    fallback: Any | None,
+) -> Any | None:
+    if baseline_by_commit is None:
+        return fallback
+    return baseline_by_commit.get(str(row.commit_hash or ""))
+
+
+def _baseline_id(baseline: Any | None) -> str | None:
+    baseline_id = getattr(baseline, "id", None)
+    return str(baseline_id) if baseline_id else None
 
 
 def _commit_hashes_from_rows(rows: list[Any]) -> list[str]:
@@ -346,41 +381,75 @@ def _load_campaign_program_hashes_by_commit(
 ) -> dict[str, str | None]:
     if not commit_hashes:
         return {}
-    campaign_hash_by_commit: dict[str, str | None] = {}
-    candidate_rows = session.execute(
+    campaign_hash_by_commit = _load_candidate_campaign_program_hashes(
+        session=session,
+        commit_hashes=commit_hashes,
+    )
+    missing_commits = _campaign_hash_missing_commits(
+        commit_hashes=commit_hashes,
+        campaign_hash_by_commit=campaign_hash_by_commit,
+    )
+    if missing_commits:
+        campaign_hash_by_commit.update(
+            _load_job_campaign_program_hashes(
+                session=session,
+                commit_hashes=missing_commits,
+                existing_commits=set(campaign_hash_by_commit),
+            )
+        )
+    return campaign_hash_by_commit
+
+
+def _load_candidate_campaign_program_hashes(
+    *,
+    session: Any,
+    commit_hashes: list[str],
+) -> dict[str, str | None]:
+    rows = session.execute(
         select(CandidateCommit.commit_hash, CandidateCommit.campaign_program_hash).where(
             CandidateCommit.commit_hash.in_(commit_hashes),
         )
     ).all()
-    for commit_hash, campaign_program_hash in candidate_rows:
-        normalized_commit = str(commit_hash or "").strip()
-        if not normalized_commit or normalized_commit in campaign_hash_by_commit:
-            continue
-        campaign_hash_by_commit[normalized_commit] = (
-            str(campaign_program_hash or "").strip() or None
-        )
+    return _campaign_hash_rows_to_mapping(rows=rows)
 
-    missing_commits = [
-        commit_hash
-        for commit_hash in commit_hashes
-        if commit_hash not in campaign_hash_by_commit
-    ]
-    if not missing_commits:
-        return campaign_hash_by_commit
 
+def _campaign_hash_missing_commits(
+    *,
+    commit_hashes: list[str],
+    campaign_hash_by_commit: dict[str, str | None],
+) -> list[str]:
+    return [commit_hash for commit_hash in commit_hashes if commit_hash not in campaign_hash_by_commit]
+
+
+def _load_job_campaign_program_hashes(
+    *,
+    session: Any,
+    commit_hashes: list[str],
+    existing_commits: set[str],
+) -> dict[str, str | None]:
     job_rows = session.execute(
         select(CommitCard.commit_hash, EvolutionJob.campaign_program_hash)
         .join(EvolutionJob, EvolutionJob.id == CommitCard.job_id)
-        .where(CommitCard.commit_hash.in_(missing_commits))
+        .where(CommitCard.commit_hash.in_(commit_hashes))
     ).all()
-    for commit_hash, campaign_program_hash in job_rows:
+    return _campaign_hash_rows_to_mapping(rows=job_rows, existing_commits=existing_commits)
+
+
+def _campaign_hash_rows_to_mapping(
+    *,
+    rows: list[tuple[Any, Any]],
+    existing_commits: set[str] | None = None,
+) -> dict[str, str | None]:
+    existing_commits = existing_commits or set()
+    values: dict[str, str | None] = {}
+    for commit_hash, campaign_program_hash in rows:
         normalized_commit = str(commit_hash or "").strip()
-        if not normalized_commit or normalized_commit in campaign_hash_by_commit:
+        if not normalized_commit or normalized_commit in existing_commits or normalized_commit in values:
             continue
-        campaign_hash_by_commit[normalized_commit] = (
+        values[normalized_commit] = (
             str(campaign_program_hash or "").strip() or None
         )
-    return campaign_hash_by_commit
+    return values
 
 
 def snapshot_meta(

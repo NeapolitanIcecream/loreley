@@ -29,6 +29,7 @@ from loreley.core.worker.evaluator import (
     EvaluationResult,
     Evaluator,
 )
+from loreley.core.worker.evaluator_identity import evaluator_identity_version
 from loreley.core.worker.repository import RepositoryError, WorkerRepository
 from loreley.db.base import session_scope
 from loreley.db.models import CampaignBaseline, CommitCard, Metric
@@ -97,6 +98,16 @@ class BaselineBootstrapResult:
 
 
 @dataclass(frozen=True, slots=True)
+class BaselineAttempt:
+    validation: BaselineValidationResult
+    valid: bool
+    status: str
+    failure_kind: str | None
+    failure_summary: str | None
+    metric: EvaluationMetric | None
+
+
+@dataclass(frozen=True, slots=True)
 class CampaignProgramHashResolution:
     known: bool
     campaign_program_hash: str | None = None
@@ -110,6 +121,7 @@ def baseline_effective_settings_fingerprint(settings: Settings) -> str:
     payload = {
         "profile": str(getattr(settings, "profile", "") or ""),
         "worker_evaluator_plugin": str(getattr(settings, "worker_evaluator_plugin", "") or ""),
+        "worker_evaluator_version": baseline_evaluator_version(settings) or "",
         "worker_evaluator_python_paths": [
             str(item) for item in tuple(getattr(settings, "worker_evaluator_python_paths", ()) or ())
         ],
@@ -133,6 +145,16 @@ def baseline_key_hash(payload: Mapping[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def baseline_evaluator_version(settings: Settings) -> str | None:
+    """Return the pre-run evaluator version/fingerprint used for baseline identity."""
+
+    return evaluator_identity_version(
+        plugin_ref=getattr(settings, "worker_evaluator_plugin", None),
+        explicit_version=getattr(settings, "worker_evaluator_version", None),
+        python_paths=tuple(str(item) for item in getattr(settings, "worker_evaluator_python_paths", ()) or ()),
+    )
+
+
 def build_baseline_key(
     *,
     settings: Settings,
@@ -146,7 +168,7 @@ def build_baseline_key(
         root_commit_hash=normalize_single_line(root_commit_hash),
         campaign_program_hash=campaign_program.raw_sha256 if campaign_program else None,
         evaluator_name=evaluator_name,
-        evaluator_version=None,
+        evaluator_version=baseline_evaluator_version(settings),
         primary_metric_name=spec.name,
         primary_metric_higher_is_better=spec.higher_is_better,
         runtime_profile=runtime_profile,
@@ -329,11 +351,7 @@ class BaselineBootstrapService:
         )
         existing = self._load_baseline_by_key(key.hash)
         policy = self._policy()
-        if existing is not None and existing.status in {
-            BASELINE_STATUS_VALID,
-            BASELINE_STATUS_FAILED,
-            BASELINE_STATUS_DEGRADED,
-        }:
+        if existing is not None and existing.status == BASELINE_STATUS_VALID:
             return self._result_from_row(existing, key_hash=key.hash, policy=policy)
 
         outcome: EvaluationOutcome | None = None
@@ -461,81 +479,45 @@ class BaselineBootstrapService:
         failure_kind: str | None,
         failure_summary: str | None,
     ) -> CampaignBaseline:
-        spec = BaselineMetricSpec(
-            name=key.primary_metric_name,
-            higher_is_better=key.primary_metric_higher_is_better,
+        attempt = _baseline_attempt(
+            key=key,
+            outcome=outcome,
+            policy=policy,
+            failure_kind=failure_kind,
+            failure_summary=failure_summary,
         )
-        validation = validate_baseline_primary_metric(
-            result=outcome.result if outcome is not None else None,
-            spec=spec,
-        )
-        if outcome is not None and outcome.outcome_kind != "passed":
-            validation = BaselineValidationResult(
-                ok=False,
-                failure_kind=outcome.failure.failure_kind if outcome.failure else outcome.outcome_kind,
-                failure_summary=(
-                    outcome.failure.safe_failure_summary
-                    if outcome.failure
-                    else f"Evaluator returned outcome_kind={outcome.outcome_kind}."
-                ),
-            )
-
-        valid = outcome is not None and outcome.outcome_kind == "passed" and validation.ok
-        if valid:
-            status = BASELINE_STATUS_VALID
-        else:
-            status = BASELINE_STATUS_DEGRADED if policy == "warn" else BASELINE_STATUS_FAILED
-
-        failure_kind = failure_kind or validation.failure_kind
-        failure_summary = failure_summary or validation.failure_summary
 
         with session_scope() as session:
-            row = session.execute(
-                select(CampaignBaseline).where(
-                    CampaignBaseline.baseline_key_hash == key.hash,
-                )
-            ).scalar_one_or_none()
-            if row is None:
-                row = CampaignBaseline(baseline_key_hash=key.hash)
-                session.add(row)
-
-            projection = None
-            if outcome is not None and outcome.result is not None:
-                projection = self._persist_compat_projection(
-                    session=session,
-                    commit_hash=key.root_commit_hash,
-                    result=outcome.result,
-                )
-
-            metric = validation.metric if validation.metric is not None else None
-            row.root_commit_hash = key.root_commit_hash
-            row.campaign_program_hash = key.campaign_program_hash
-            row.evaluator_name = (
-                _bounded_line(outcome.evaluator_name, 128) if outcome is not None else key.evaluator_name
+            row = _load_or_create_baseline_row(session=session, key_hash=key.hash)
+            projection = self._persist_projection_for_outcome(
+                session=session,
+                key=key,
+                outcome=outcome,
             )
-            row.evaluator_version = (
-                _bounded_line(outcome.evaluator_version, 128) if outcome is not None else key.evaluator_version
+            _apply_baseline_row(
+                row=row,
+                key=key,
+                attempt=attempt,
+                outcome=outcome,
+                projection=projection,
             )
-            row.primary_metric_name = key.primary_metric_name
-            row.primary_metric_higher_is_better = key.primary_metric_higher_is_better
-            row.runtime_profile = key.runtime_profile
-            row.effective_settings_fingerprint = key.effective_settings_fingerprint
-            row.status = status
-            row.metric_value = _finite_metric_value(metric)
-            row.metric_unit = metric.unit if metric is not None else None
-            row.evaluation_summary = (
-                _bounded_failure_text(outcome.result.summary)
-                if outcome is not None and outcome.result is not None
-                else None
-            )
-            row.failure_kind = None if valid else _bounded_line(failure_kind, 64)
-            row.failure_summary = None if valid else _bounded_failure_text(failure_summary)
-            row.commit_card_id = projection[0] if projection is not None else None
-            row.metric_id = projection[1] if projection is not None and metric is not None else None
-            row.started_at = outcome.started_at if outcome is not None else datetime.now(timezone.utc)
-            row.finished_at = outcome.finished_at if outcome is not None else datetime.now(timezone.utc)
             _flush_if_available(session)
             return row
+
+    def _persist_projection_for_outcome(
+        self,
+        *,
+        session: Session,
+        key: BaselineKey,
+        outcome: EvaluationOutcome | None,
+    ) -> tuple[Any, Any | None] | None:
+        if outcome is None or outcome.result is None:
+            return None
+        return self._persist_compat_projection(
+            session=session,
+            commit_hash=key.root_commit_hash,
+            result=outcome.result,
+        )
 
     def _persist_compat_projection(
         self,
@@ -675,6 +657,119 @@ class BaselineBootstrapService:
             result.failure_kind,
             message,
         )
+
+
+def _baseline_attempt(
+    *,
+    key: BaselineKey,
+    outcome: EvaluationOutcome | None,
+    policy: str,
+    failure_kind: str | None,
+    failure_summary: str | None,
+) -> BaselineAttempt:
+    spec = BaselineMetricSpec(
+        name=key.primary_metric_name,
+        higher_is_better=key.primary_metric_higher_is_better,
+    )
+    validation = _baseline_validation_for_outcome(outcome=outcome, spec=spec)
+    valid = outcome is not None and outcome.outcome_kind == "passed" and validation.ok
+    return BaselineAttempt(
+        validation=validation,
+        valid=valid,
+        status=_baseline_attempt_status(valid=valid, policy=policy),
+        failure_kind=failure_kind or validation.failure_kind,
+        failure_summary=failure_summary or validation.failure_summary,
+        metric=validation.metric,
+    )
+
+
+def _baseline_validation_for_outcome(
+    *,
+    outcome: EvaluationOutcome | None,
+    spec: BaselineMetricSpec,
+) -> BaselineValidationResult:
+    validation = validate_baseline_primary_metric(
+        result=outcome.result if outcome is not None else None,
+        spec=spec,
+    )
+    if outcome is None or outcome.outcome_kind == "passed":
+        return validation
+    return BaselineValidationResult(
+        ok=False,
+        failure_kind=outcome.failure.failure_kind if outcome.failure else outcome.outcome_kind,
+        failure_summary=(
+            outcome.failure.safe_failure_summary
+            if outcome.failure
+            else f"Evaluator returned outcome_kind={outcome.outcome_kind}."
+        ),
+    )
+
+
+def _baseline_attempt_status(*, valid: bool, policy: str) -> str:
+    if valid:
+        return BASELINE_STATUS_VALID
+    return BASELINE_STATUS_DEGRADED if policy == "warn" else BASELINE_STATUS_FAILED
+
+
+def _load_or_create_baseline_row(*, session: Session, key_hash: str) -> CampaignBaseline:
+    row = session.execute(
+        select(CampaignBaseline).where(
+            CampaignBaseline.baseline_key_hash == key_hash,
+        )
+    ).scalar_one_or_none()
+    if row is not None:
+        return row
+    row = CampaignBaseline(baseline_key_hash=key_hash)
+    session.add(row)
+    return row
+
+
+def _apply_baseline_row(
+    *,
+    row: CampaignBaseline,
+    key: BaselineKey,
+    attempt: BaselineAttempt,
+    outcome: EvaluationOutcome | None,
+    projection: tuple[Any, Any | None] | None,
+) -> None:
+    row.root_commit_hash = key.root_commit_hash
+    row.campaign_program_hash = key.campaign_program_hash
+    row.evaluator_name = _baseline_evaluator_name(key=key, outcome=outcome)
+    row.evaluator_version = _baseline_evaluator_version(key=key, outcome=outcome)
+    row.primary_metric_name = key.primary_metric_name
+    row.primary_metric_higher_is_better = key.primary_metric_higher_is_better
+    row.runtime_profile = key.runtime_profile
+    row.effective_settings_fingerprint = key.effective_settings_fingerprint
+    row.status = attempt.status
+    row.metric_value = _finite_metric_value(attempt.metric)
+    row.metric_unit = attempt.metric.unit if attempt.metric is not None else None
+    row.evaluation_summary = _baseline_evaluation_summary(outcome)
+    row.failure_kind = None if attempt.valid else _bounded_line(attempt.failure_kind, 64)
+    row.failure_summary = None if attempt.valid else _bounded_failure_text(attempt.failure_summary)
+    row.commit_card_id = projection[0] if projection is not None else None
+    row.metric_id = projection[1] if projection is not None and attempt.metric is not None else None
+    row.started_at = outcome.started_at if outcome is not None else datetime.now(timezone.utc)
+    row.finished_at = outcome.finished_at if outcome is not None else datetime.now(timezone.utc)
+
+
+def _baseline_evaluator_name(*, key: BaselineKey, outcome: EvaluationOutcome | None) -> str | None:
+    if outcome is None:
+        return key.evaluator_name
+    return _bounded_line(outcome.evaluator_name, 128)
+
+
+def _baseline_evaluator_version(*, key: BaselineKey, outcome: EvaluationOutcome | None) -> str | None:
+    if key.evaluator_version:
+        return key.evaluator_version
+    if outcome is None:
+        return None
+    return _bounded_line(outcome.evaluator_version, 128)
+
+
+def _baseline_evaluation_summary(outcome: EvaluationOutcome | None) -> str | None:
+    if outcome is None or outcome.result is None:
+        return None
+    return _bounded_failure_text(outcome.result.summary)
 
 
 def _safe_failure_summary(exc: Exception) -> str:

@@ -126,6 +126,13 @@ runtime_profile
 effective_settings_fingerprint
 ```
 
+The MVP uses `WORKER_EVALUATOR_VERSION` as the operator-declared evaluator
+version when it is set. When it is not set, the baseline key uses a best-effort
+package version or source-file fingerprint derived from
+`WORKER_EVALUATOR_PLUGIN`. Operators should still bump
+`WORKER_EVALUATOR_VERSION` when benchmark data or scoring semantics change
+without a corresponding plugin source change.
+
 A changed campaign program hash requires a valid baseline for the new program
 hash by default, even if the root commit and evaluator are unchanged. Candidate
 results created under program B must not silently reuse a baseline created
@@ -164,6 +171,9 @@ metadata.baseline_key_hash = ...
 The evaluator should provide `evaluator_name`, `evaluator_version`, timing, and
 summary where possible. The bootstrap service persists both valid and failed
 attempts so operators can inspect why a campaign is blocked or degraded.
+Existing failed or degraded rows do not make the failure sticky: each scheduler
+check retries the active baseline key so a transient setup or evaluator problem
+can recover without manually deleting the row.
 
 ### Bootstrap Policy
 
@@ -300,7 +310,7 @@ campaign_program_hash or future evaluation_contract_fingerprint
 primary_metric_name
 primary_metric_higher_is_better
 worker_evaluator_plugin identity
-evaluator version/config fingerprint
+WORKER_EVALUATOR_VERSION / evaluator config fingerprint
 evaluation timeout or budget
 LORELEY_PROFILE
 MAPELITES_FITNESS_* values that affect interpretation
