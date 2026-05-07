@@ -39,6 +39,7 @@ def build_scatter_points(
                 "value": value,
                 "commit_hash": record.get("commit_hash"),
                 "cell_index": record.get("cell_index"),
+                "candidate_fate_label": record.get("candidate_fate_label"),
             }
         )
     return points

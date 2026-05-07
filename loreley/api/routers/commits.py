@@ -10,6 +10,7 @@ from loreley.api.artifacts import build_artifact_urls
 from loreley.api.pagination import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, PaginationCursorError
 from loreley.api.schemas.evidence import EvaluationArtifactOut
 from loreley.api.schemas.commits import CommitArtifactsOut, CommitDetailOut, CommitOut, CommitPageOut, MetricOut
+from loreley.api.services.candidate_fates import load_candidate_fates_for_commits
 from loreley.api.services.evidence import (
     build_agent_feedback_payload,
     build_evaluation_artifact_payload,
@@ -18,6 +19,7 @@ from loreley.api.services.evidence import (
 )
 from loreley.api.services.commits import get_commit, list_commits, list_commits_page, list_metrics
 from loreley.api.services.jobs import get_job_artifacts
+from loreley.core.candidate_fate import CandidateFate
 
 router = APIRouter()
 
@@ -31,7 +33,8 @@ def get_commits(
 ) -> list[CommitOut]:
     rows = list_commits(island_id=island_id, query=query, limit=limit, offset=offset)
     indicators = load_evidence_indicators_by_commit_hash([row.commit_hash for row in rows])
-    return [_commit_out(row, indicators) for row in rows]
+    fates = load_candidate_fates_for_commits(rows)
+    return [_commit_out(row, indicators, fates) for row in rows]
 
 
 @router.get("/commits/page", response_model=CommitPageOut)
@@ -46,8 +49,9 @@ def get_commits_page(
     except PaginationCursorError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     indicators = load_evidence_indicators_by_commit_hash([row.commit_hash for row in page.items])
+    fates = load_candidate_fates_for_commits(page.items)
     return CommitPageOut(
-        items=[_commit_out(row, indicators) for row in page.items],
+        items=[_commit_out(row, indicators, fates) for row in page.items],
         next_cursor=page.next_cursor,
     )
 
@@ -71,6 +75,9 @@ def get_commit_detail(
     indicators = load_evidence_indicators_by_commit_hash([commit_hash])
     indicator = indicators.get(commit_hash)
     update = indicator.as_dict() if indicator is not None else {}
+    fate = load_candidate_fates_for_commits([commit]).get(commit_hash)
+    if fate is not None:
+        update.update(fate.as_dict())
     base = base.model_copy(update=update)
     return CommitDetailOut(
         **base.model_dump(),
@@ -93,8 +100,11 @@ def get_commit_evaluation_artifacts(commit_hash: str) -> list[EvaluationArtifact
     ]
 
 
-def _commit_out(row: object, indicators: dict[str, object]) -> CommitOut:
+def _commit_out(row: object, indicators: dict[str, object], fates: dict[str, CandidateFate]) -> CommitOut:
     out = CommitOut.model_validate(row)
+    fate = fates.get(str(getattr(row, "commit_hash", "") or ""))
+    if fate is not None:
+        out = out.model_copy(update=fate.as_dict())
     indicator = indicators.get(str(getattr(row, "commit_hash", "") or ""))
     if indicator is None:
         return out

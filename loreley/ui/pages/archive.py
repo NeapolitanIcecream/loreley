@@ -179,7 +179,7 @@ def render() -> None:
                     x="x",
                     y="y",
                     color="value",
-                    hover_data=["commit_hash", "cell_index"],
+                    hover_data=["commit_hash", "cell_index", "candidate_fate_label"],
                     title=f"Archive records scatter ({value_label.lower()})",
                 )
                 st.plotly_chart(fig, width="stretch")

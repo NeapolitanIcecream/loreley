@@ -18,6 +18,10 @@ from loreley.api.artifacts import (
 from loreley.api.pagination import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, PaginationCursorError
 from loreley.api.schemas.evidence import EvaluationArtifactOut
 from loreley.api.schemas.jobs import JobArtifactsOut, JobDetailOut, JobOut, JobPageOut
+from loreley.api.services.candidate_fates import (
+    job_candidate_commit_hash,
+    load_candidate_fates_for_jobs,
+)
 from loreley.api.services.evidence import (
     artifact_file_path,
     build_agent_feedback_payload,
@@ -28,6 +32,7 @@ from loreley.api.services.evidence import (
     load_evidence_indicators_by_commit_hash,
 )
 from loreley.api.services.jobs import get_job, get_job_artifacts, list_jobs, list_jobs_page
+from loreley.core.candidate_fate import CandidateFate
 from loreley.db.models import JobStatus
 
 router = APIRouter()
@@ -41,7 +46,8 @@ def get_jobs(
 ) -> list[JobOut]:
     rows = list_jobs(status=status, limit=limit, offset=offset)
     indicators = _job_evidence_indicators(rows)
-    return [_job_out(row, indicators) for row in rows]
+    fates = load_candidate_fates_for_jobs(rows)
+    return [_job_out(row, indicators, fates) for row in rows]
 
 
 @router.get("/jobs/page", response_model=JobPageOut)
@@ -55,8 +61,9 @@ def get_jobs_page(
     except PaginationCursorError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     indicators = _job_evidence_indicators(page.items)
+    fates = load_candidate_fates_for_jobs(page.items)
     return JobPageOut(
-        items=[_job_out(row, indicators) for row in page.items],
+        items=[_job_out(row, indicators, fates) for row in page.items],
         next_cursor=page.next_cursor,
     )
 
@@ -75,6 +82,8 @@ def get_job_detail(job_id: UUID) -> JobDetailOut:
     commit_hash = _job_commit_hash(job)
     indicators = load_evidence_indicators_by_commit_hash([commit_hash]) if commit_hash else {}
     indicator = indicators.get(commit_hash)
+    fates = load_candidate_fates_for_jobs([job])
+    fate = fates.get(str(job.id))
     update = {
         "artifacts": artifacts_out,
         "evaluation_artifacts": [
@@ -83,6 +92,8 @@ def get_job_detail(job_id: UUID) -> JobDetailOut:
         ],
         "evaluation_agent_feedback": build_agent_feedback_payload(evidence_rows),
     }
+    if fate is not None:
+        update.update(fate.as_dict())
     if indicator is not None:
         update.update(indicator.as_dict())
     return base.model_copy(update=update)
@@ -147,16 +158,15 @@ def _job_evidence_indicators(rows: list[object]) -> dict[str, object]:
 
 
 def _job_commit_hash(row: object) -> str:
-    return str(
-        getattr(row, "result_commit_hash", None)
-        or getattr(row, "candidate_commit_hash", None)
-        or ""
-    ).strip()
+    return job_candidate_commit_hash(row)
 
 
-def _job_out(row: object, indicators: dict[str, object]) -> JobOut:
+def _job_out(row: object, indicators: dict[str, object], fates: dict[str, CandidateFate]) -> JobOut:
     commit_hash = _job_commit_hash(row)
     out = JobOut.model_validate(row)
+    fate = fates.get(str(getattr(row, "id", "") or ""))
+    if fate is not None:
+        out = out.model_copy(update=fate.as_dict())
     indicator = indicators.get(commit_hash)
     if indicator is None:
         return out

@@ -9,7 +9,9 @@ from typing import Any
 
 import pytest
 
+import loreley.api.services.candidate_fates as candidate_fate_service
 from loreley.cli import _job_detail_payload, main
+from loreley.core.candidate_fate import CandidateFate
 from loreley.db.models import JobStatus
 from tests.support import TestSettings
 
@@ -25,6 +27,65 @@ def _patch_cli_db_now(
     db_now = value or datetime(2026, 3, 25, 8, 0, tzinfo=timezone.utc)
     monkeypatch.setattr("loreley.cli._db_utc_now", lambda _session: db_now)
     return db_now
+
+
+class _GetByIdSession:
+    def __init__(self, row_id: object, row: object) -> None:
+        self._row_id = row_id
+        self._row = row
+
+    def get(self, _model: Any, key: Any) -> Any:
+        if key == self._row_id:
+            return self._row
+        return None
+
+
+class _QueryExecuteResult:
+    def __init__(self, rows: list[object]) -> None:
+        self._rows = rows
+
+    def scalars(self) -> list[object]:
+        return list(self._rows)
+
+    def all(self) -> list[object]:
+        return list(self._rows)
+
+
+class _QueuedQuerySession:
+    def __init__(self, query_rows: list[list[object]]) -> None:
+        self._query_rows = query_rows
+        self._calls = 0
+
+    def execute(self, _stmt: Any) -> _QueryExecuteResult:
+        if self._calls >= len(self._query_rows):
+            raise AssertionError("unexpected query")
+        rows = self._query_rows[self._calls]
+        self._calls += 1
+        return _QueryExecuteResult(rows)
+
+
+def _patch_session_get(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    row_id: object,
+    row: object,
+) -> None:
+    @contextmanager
+    def fake_scope() -> Any:
+        yield _GetByIdSession(row_id, row)
+
+    monkeypatch.setattr("loreley.db.base.session_scope", fake_scope)
+
+
+def _patch_candidate_fate_queries(
+    monkeypatch: pytest.MonkeyPatch,
+    *query_rows: list[object],
+) -> None:
+    @contextmanager
+    def fake_scope() -> Any:
+        yield _QueuedQuerySession(list(query_rows))
+
+    monkeypatch.setattr(candidate_fate_service, "session_scope", fake_scope)
 
 
 def test_jobs_retry_requeues_failed_job_and_resets_lease_state(
@@ -326,6 +387,61 @@ def test_jobs_inspect_json_reports_stale_lease_state(
     assert payload["recovery_count"] == 2
 
 
+def test_jobs_inspect_json_uses_contextual_fate_for_repair_eligible_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Regression: CLI inspect ignored CandidateCommit repair state and reported unknown."""
+
+    settings = _make_settings()
+    monkeypatch.setattr("loreley.cli.get_settings", lambda: settings)
+    monkeypatch.setattr("loreley.cli._configure_logging_or_exit", lambda **_kwargs: None)
+    now = _patch_cli_db_now(monkeypatch)
+
+    job_id = uuid.uuid4()
+    job = SimpleNamespace(
+        id=job_id,
+        status=JobStatus.FAILED,
+        base_commit_hash="base-a",
+        island_id="main",
+        created_at=now - timedelta(hours=2),
+        scheduled_at=now - timedelta(hours=1, minutes=55),
+        started_at=now - timedelta(hours=1, minutes=50),
+        completed_at=now,
+        heartbeat_at=None,
+        lease_expires_at=None,
+        run_token=None,
+        worker_id=None,
+        recovery_count=1,
+        candidate_commit_hash="candidate-a",
+        result_commit_hash=None,
+        last_error="candidate failed evaluation",
+    )
+    candidate = SimpleNamespace(
+        commit_hash="candidate-a",
+        island_id="main",
+        produced_by_job_id=job_id,
+        evaluation_status="candidate_failed",
+        repair_state="eligible",
+        failure_stage="evaluation",
+        failure_kind="regression",
+    )
+
+    _patch_session_get(monkeypatch, row_id=job_id, row=job)
+    _patch_candidate_fate_queries(monkeypatch, [candidate], [job], [])
+
+    code = main(["jobs", "inspect", str(job_id), "--json"])
+    captured = capsys.readouterr()
+
+    assert code == 0
+    payload = json.loads(captured.out)
+    assert payload["candidate_fate_label"] == "repair_pending"
+    assert (
+        payload["candidate_fate_reason"]
+        == "Candidate repair_state=eligible. Failure stage=evaluation kind=regression."
+    )
+
+
 def test_job_detail_payload_includes_summary_and_nested_lease_state() -> None:
     now = datetime(2026, 3, 25, 8, 0, tzinfo=timezone.utc)
     run_token = uuid.uuid4()
@@ -354,6 +470,39 @@ def test_job_detail_payload_includes_summary_and_nested_lease_state() -> None:
     assert payload["lease"]["state"] == "stale"
     assert payload["lease"]["run_token"] == str(run_token)
     assert payload["scheduled_at"] == (now - timedelta(hours=1, minutes=55)).isoformat()
+
+
+def test_job_detail_payload_includes_candidate_fate() -> None:
+    now = datetime(2026, 3, 25, 8, 0, tzinfo=timezone.utc)
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        status=JobStatus.SUCCEEDED,
+        base_commit_hash="abc123",
+        island_id="main",
+        created_at=now - timedelta(hours=2),
+        scheduled_at=now - timedelta(hours=1, minutes=55),
+        started_at=now - timedelta(hours=1, minutes=50),
+        completed_at=now,
+        heartbeat_at=None,
+        lease_expires_at=None,
+        run_token=None,
+        worker_id=None,
+        recovery_count=0,
+        result_commit_hash="def456",
+        last_error=None,
+    )
+
+    payload = _job_detail_payload(
+        job=job,
+        now=now,
+        candidate_fate=CandidateFate(
+            label="elite_replaced",
+            reason="Candidate improved an occupied archive niche.",
+        ),
+    )
+
+    assert payload["candidate_fate_label"] == "elite_replaced"
+    assert payload["candidate_fate_reason"] == "Candidate improved an occupied archive niche."
 
 
 def test_jobs_inspect_table_preserves_zero_recovery_count(

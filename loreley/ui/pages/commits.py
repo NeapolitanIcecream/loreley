@@ -162,6 +162,8 @@ def render() -> None:
                 "island_id": detail.get("island_id"),
                 "parent_commit_hash": detail.get("parent_commit_hash"),
                 "job_id": detail.get("job_id"),
+                "candidate_fate_label": detail.get("candidate_fate_label"),
+                "candidate_fate_reason": detail.get("candidate_fate_reason"),
                 "created_at": detail.get("created_at"),
             }
         )

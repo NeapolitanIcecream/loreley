@@ -20,6 +20,7 @@ import typer
 from rich.console import Console
 
 from loreley.config import Settings, get_settings, resolve_default_island_id
+from loreley.core.candidate_fate import CandidateFate, derive_candidate_fate
 from loreley.entrypoints import configure_process_logging, reset_database, run_api, run_scheduler, run_ui, run_worker
 from loreley.preflight import (
     CheckResult,
@@ -150,7 +151,17 @@ def _job_lease_payload(*, job: Any, now: datetime) -> dict[str, object]:
     }
 
 
-def _job_summary_payload(*, job: Any, now: datetime) -> dict[str, object]:
+def _candidate_fate_fields(*, job: Any, candidate_fate: CandidateFate | None) -> dict[str, object]:
+    fate = candidate_fate or derive_candidate_fate(job=job)
+    return fate.as_dict()
+
+
+def _job_summary_payload(
+    *,
+    job: Any,
+    now: datetime,
+    candidate_fate: CandidateFate | None = None,
+) -> dict[str, object]:
     return {
         "job_id": str(getattr(job, "id", "")),
         "status": _job_status_value(getattr(job, "status", None)),
@@ -162,12 +173,18 @@ def _job_summary_payload(*, job: Any, now: datetime) -> dict[str, object]:
         "created_at": _iso_or_none(getattr(job, "created_at", None)),
         "completed_at": _iso_or_none(getattr(job, "completed_at", None)),
         "lease_state": str(_job_lease_payload(job=job, now=now)["state"]),
+        **_candidate_fate_fields(job=job, candidate_fate=candidate_fate),
     }
 
 
-def _job_detail_payload(*, job: Any, now: datetime) -> dict[str, object]:
+def _job_detail_payload(
+    *,
+    job: Any,
+    now: datetime,
+    candidate_fate: CandidateFate | None = None,
+) -> dict[str, object]:
     return {
-        **_job_summary_payload(job=job, now=now),
+        **_job_summary_payload(job=job, now=now, candidate_fate=candidate_fate),
         "scheduled_at": _iso_or_none(getattr(job, "scheduled_at", None)),
         "started_at": _iso_or_none(getattr(job, "started_at", None)),
         "heartbeat_at": _iso_or_none(getattr(job, "heartbeat_at", None)),
@@ -1221,6 +1238,7 @@ def inspect_job(
         raise typer.Exit(code=1) from exc
 
     try:
+        from loreley.api.services.candidate_fates import load_candidate_fates_for_jobs
         from loreley.db.base import session_scope
         from loreley.db.models import EvolutionJob
 
@@ -1231,7 +1249,12 @@ def inspect_job(
                 raise typer.Exit(code=1)
 
             now = _db_utc_now(session)
-            payload = _job_detail_payload(job=job, now=now)
+            fates = load_candidate_fates_for_jobs([job])
+            payload = _job_detail_payload(
+                job=job,
+                now=now,
+                candidate_fate=fates.get(str(job.id)),
+            )
     except typer.Exit:
         raise
     except Exception as exc:  # pragma: no cover - defensive
@@ -1253,6 +1276,8 @@ def inspect_job(
         "island_id",
         "recovery_count",
         "result_commit_hash",
+        "candidate_fate_label",
+        "candidate_fate_reason",
         "created_at",
         "scheduled_at",
         "started_at",
@@ -1297,6 +1322,7 @@ def list_jobs(
     try:
         from sqlalchemy import func, select
 
+        from loreley.api.services.candidate_fates import load_candidate_fates_for_jobs
         from loreley.db.base import session_scope
         from loreley.db.models import EvolutionJob, JobStatus
 
@@ -1322,7 +1348,15 @@ def list_jobs(
             )
             rows = list(session.execute(stmt).scalars())
             now = _db_utc_now(session)
-            jobs = [_job_summary_payload(job=row, now=now) for row in rows]
+            fates = load_candidate_fates_for_jobs(rows)
+            jobs = [
+                _job_summary_payload(
+                    job=row,
+                    now=now,
+                    candidate_fate=fates.get(str(getattr(row, "id", "") or "")),
+                )
+                for row in rows
+            ]
     except Exception as exc:  # pragma: no cover - defensive
         console.print(f"[bold red]Failed to list jobs[/] reason={exc}")
         raise typer.Exit(code=1) from exc
@@ -1342,6 +1376,7 @@ def list_jobs(
     table.add_column("status")
     table.add_column("lease")
     table.add_column("recovery")
+    table.add_column("fate")
     table.add_column("base_commit")
     table.add_column("completed_at")
     for job in jobs:
@@ -1350,6 +1385,7 @@ def list_jobs(
             str(job["status"]),
             str(job["lease_state"]),
             str(job["recovery_count"]),
+            str(job["candidate_fate_label"] or "n/a"),
             str(job["base_commit_hash"] or "n/a"),
             str(job["completed_at"] or "n/a"),
         )
