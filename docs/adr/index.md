@@ -70,3 +70,7 @@ ADR numbers are unique and chronological. `ADR 0029` resolves an earlier duplica
 - [ADR 0047: Defer failed-candidate lineage semantics](0047-defer-failed-candidate-lineage.md)
 - [ADR 0048: Failed-candidate repair pool](0048-failed-candidate-repair-pool.md)
 - [ADR 0049: Campaign program contract](0049-campaign-program-contract.md)
+
+## 0050-0059
+
+- [ADR 0050: Baseline-first campaign bootstrap](0050-baseline-first-campaign-bootstrap.md)
