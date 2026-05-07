@@ -2,12 +2,13 @@ from __future__ import annotations
 
 """Evaluator identity helpers used before an evaluation run exists."""
 
+from contextlib import contextmanager
 import hashlib
 from importlib import util
 from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
 import sys
-from typing import Any, Sequence
+from typing import Any, Iterator, Sequence
 
 from loreley.core.contracts import clamp_text, normalize_single_line
 
@@ -28,11 +29,11 @@ def evaluator_identity_version(
     if not normalized_ref:
         return None
     module_name, _ = _split_reference(normalized_ref)
-    _prepare_pythonpath(python_paths)
-    distribution_version = _distribution_version(module_name)
-    if distribution_version:
-        return distribution_version
-    return _source_fingerprint(module_name)
+    with _temporary_pythonpath(python_paths):
+        distribution_version = _distribution_version(module_name)
+        if distribution_version:
+            return distribution_version
+        return _source_fingerprint(module_name)
 
 
 def _bounded_identity(value: Any) -> str | None:
@@ -51,11 +52,20 @@ def _split_reference(ref: str) -> tuple[str, str]:
     return module_name, attr_name
 
 
-def _prepare_pythonpath(python_paths: Sequence[str]) -> None:
+@contextmanager
+def _temporary_pythonpath(python_paths: Sequence[str]) -> Iterator[None]:
+    added: list[str] = []
     for entry in python_paths:
         entry_str = str(Path(entry).expanduser().resolve())
         if entry_str not in sys.path:
             sys.path.insert(0, entry_str)
+            added.append(entry_str)
+    try:
+        yield
+    finally:
+        for entry_str in added:
+            while entry_str in sys.path:
+                sys.path.remove(entry_str)
 
 
 def _distribution_version(module_name: str) -> str | None:
