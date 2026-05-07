@@ -22,11 +22,8 @@ log = logger.bind(module="worker.scope_gate")
 
 _IGNORED_PREFIXES: tuple[str, ...] = (
     ".git/",
-    "logs/",
-    ".loreley/",
-    ".loreley-artifacts/",
 )
-_IGNORED_EXACT: set[str] = {".git", "logs", ".loreley", ".loreley-artifacts"}
+_IGNORED_EXACT: set[str] = {".git"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,11 +313,10 @@ def _pattern_violations(patterns: Sequence[str], *, code: str) -> list[ScopeViol
 
 
 def _normalize_repo_path(raw_path: str) -> str | None:
-    path = raw_path.strip()
+    path = raw_path.replace("\\", "/")
     if not path:
         return None
-    path = path.replace("\\", "/")
-    return path.strip("/")
+    return path
 
 
 def _unsafe_repo_path_reason(path: str) -> str | None:

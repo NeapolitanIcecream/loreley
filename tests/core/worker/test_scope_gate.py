@@ -72,6 +72,36 @@ def test_scope_gate_rejects_paths_outside_non_empty_editable_scope(tmp_path: Pat
     assert result.violations[0].path == "README.md"
 
 
+def test_scope_gate_checks_git_visible_artifact_store_paths(tmp_path: Path) -> None:
+    """Regression: Git-visible artifact dirs must not bypass campaign scope."""
+
+    _init_repo(tmp_path)
+    program = parse_campaign_program(b"## Editable scope\n- src/**\n")
+    (tmp_path / ".loreley").mkdir()
+    (tmp_path / ".loreley" / "state.json").write_text("{}\n", encoding="utf-8")
+
+    result = validate_campaign_scope(worktree=tmp_path, program=program)
+
+    assert result.passed is False
+    assert result.violations[0].code == "outside_editable_scope"
+    assert result.violations[0].path == ".loreley/state.json"
+
+
+def test_scope_gate_preserves_significant_filename_whitespace(tmp_path: Path) -> None:
+    """Regression: path normalization must not strip valid filename spaces."""
+
+    _init_repo(tmp_path)
+    program = parse_campaign_program(b"## Editable scope\n- src/app.py\n")
+    (tmp_path / "src" / "app.py ").write_text("print('space')\n", encoding="utf-8")
+
+    result = validate_campaign_scope(worktree=tmp_path, program=program)
+
+    assert result.passed is False
+    assert result.checked_paths == ("src/app.py ",)
+    assert result.violations[0].code == "outside_editable_scope"
+    assert result.violations[0].path == "src/app.py "
+
+
 def test_scope_gate_single_star_matches_only_one_path_segment(tmp_path: Path) -> None:
     """Regression: src/* must not allow recursively nested paths."""
 
