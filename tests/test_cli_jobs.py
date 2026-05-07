@@ -29,6 +29,65 @@ def _patch_cli_db_now(
     return db_now
 
 
+class _GetByIdSession:
+    def __init__(self, row_id: object, row: object) -> None:
+        self._row_id = row_id
+        self._row = row
+
+    def get(self, _model: Any, key: Any) -> Any:
+        if key == self._row_id:
+            return self._row
+        return None
+
+
+class _QueryExecuteResult:
+    def __init__(self, rows: list[object]) -> None:
+        self._rows = rows
+
+    def scalars(self) -> list[object]:
+        return list(self._rows)
+
+    def all(self) -> list[object]:
+        return list(self._rows)
+
+
+class _QueuedQuerySession:
+    def __init__(self, query_rows: list[list[object]]) -> None:
+        self._query_rows = query_rows
+        self._calls = 0
+
+    def execute(self, _stmt: Any) -> _QueryExecuteResult:
+        if self._calls >= len(self._query_rows):
+            raise AssertionError("unexpected query")
+        rows = self._query_rows[self._calls]
+        self._calls += 1
+        return _QueryExecuteResult(rows)
+
+
+def _patch_session_get(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    row_id: object,
+    row: object,
+) -> None:
+    @contextmanager
+    def fake_scope() -> Any:
+        yield _GetByIdSession(row_id, row)
+
+    monkeypatch.setattr("loreley.db.base.session_scope", fake_scope)
+
+
+def _patch_candidate_fate_queries(
+    monkeypatch: pytest.MonkeyPatch,
+    *query_rows: list[object],
+) -> None:
+    @contextmanager
+    def fake_scope() -> Any:
+        yield _QueuedQuerySession(list(query_rows))
+
+    monkeypatch.setattr(candidate_fate_service, "session_scope", fake_scope)
+
+
 def test_jobs_retry_requeues_failed_job_and_resets_lease_state(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -360,6 +419,7 @@ def test_jobs_inspect_json_uses_contextual_fate_for_repair_eligible_candidate(
     )
     candidate = SimpleNamespace(
         commit_hash="candidate-a",
+        island_id="main",
         produced_by_job_id=job_id,
         evaluation_status="candidate_failed",
         repair_state="eligible",
@@ -367,46 +427,8 @@ def test_jobs_inspect_json_uses_contextual_fate_for_repair_eligible_candidate(
         failure_kind="regression",
     )
 
-    class DummySession:
-        def get(self, _model: Any, key: Any) -> Any:
-            if key == job_id:
-                return job
-            return None
-
-    class CandidateFateExecuteResult:
-        def __init__(self, rows: list[object]) -> None:
-            self._rows = rows
-
-        def scalars(self) -> list[object]:
-            return list(self._rows)
-
-        def all(self) -> list[object]:
-            return list(self._rows)
-
-    class CandidateFateSession:
-        def __init__(self) -> None:
-            self.calls = 0
-
-        def execute(self, _stmt: Any) -> CandidateFateExecuteResult:
-            self.calls += 1
-            if self.calls == 1:
-                return CandidateFateExecuteResult([candidate])
-            if self.calls == 2:
-                return CandidateFateExecuteResult([job])
-            if self.calls == 3:
-                return CandidateFateExecuteResult([])
-            raise AssertionError("unexpected candidate fate query")
-
-    @contextmanager
-    def fake_scope() -> Any:
-        yield DummySession()
-
-    @contextmanager
-    def fake_candidate_fate_scope() -> Any:
-        yield CandidateFateSession()
-
-    monkeypatch.setattr("loreley.db.base.session_scope", fake_scope)
-    monkeypatch.setattr(candidate_fate_service, "session_scope", fake_candidate_fate_scope)
+    _patch_session_get(monkeypatch, row_id=job_id, row=job)
+    _patch_candidate_fate_queries(monkeypatch, [candidate], [job], [])
 
     code = main(["jobs", "inspect", str(job_id), "--json"])
     captured = capsys.readouterr()
