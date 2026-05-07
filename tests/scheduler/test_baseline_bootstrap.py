@@ -37,6 +37,7 @@ from loreley.scheduler.baselines import (
     baseline_effective_settings_fingerprint,
     build_baseline_key,
     load_latest_matching_baseline,
+    resolve_status_campaign_program_hash,
     validate_baseline_primary_metric,
 )
 from tests.support import TestSettings
@@ -476,6 +477,63 @@ def test_load_latest_matching_baseline_scopes_explicit_null_campaign_program() -
     assert selected is not None
     assert selected.campaign_program_hash is None
     assert selected.metric_value == pytest.approx(1.0)
+
+
+def test_status_campaign_program_hash_uses_newest_persisted_scheduler_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Status should follow persisted scheduler state, not only the visible program file."""
+
+    settings = _settings()
+    job_program_hash = "a" * 64
+    baseline_program_hash = "b" * 64
+    persisted_rows = iter(
+        [
+            (
+                job_program_hash,
+                datetime(2026, 3, 25, 7, 59, tzinfo=timezone.utc),
+                datetime(2026, 3, 25, 7, 58, tzinfo=timezone.utc),
+                datetime(2026, 3, 25, 7, 58, tzinfo=timezone.utc),
+            ),
+            (
+                baseline_program_hash,
+                datetime(2026, 3, 25, 8, 0, tzinfo=timezone.utc),
+                datetime(2026, 3, 25, 8, 0, tzinfo=timezone.utc),
+            ),
+        ]
+    )
+    fallback_calls: list[TestSettings] = []
+
+    class DummyResult:
+        def __init__(self, row: object) -> None:
+            self._row = row
+
+        def first(self) -> object:
+            return self._row
+
+    class DummySession:
+        def execute(self, _stmt: object) -> DummyResult:
+            return DummyResult(next(persisted_rows))
+
+    def fake_resolve_current_campaign_program_hash(active_settings: TestSettings) -> object:
+        fallback_calls.append(active_settings)
+        return object()
+
+    monkeypatch.setattr(
+        baselines,
+        "resolve_current_campaign_program_hash",
+        fake_resolve_current_campaign_program_hash,
+    )
+
+    resolution = resolve_status_campaign_program_hash(
+        session=DummySession(),  # type: ignore[arg-type]
+        settings=settings,
+    )
+
+    assert resolution.known is True
+    assert resolution.campaign_program_hash == baseline_program_hash
+    assert resolution.source_path == "database:campaign_baselines"
+    assert fallback_calls == []
 
 
 @pytest.mark.parametrize(

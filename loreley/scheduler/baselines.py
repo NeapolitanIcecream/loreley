@@ -32,7 +32,7 @@ from loreley.core.worker.evaluator import (
 from loreley.core.worker.evaluator_identity import evaluator_identity_version
 from loreley.core.worker.repository import RepositoryError, WorkerRepository
 from loreley.db.base import session_scope
-from loreley.db.models import CampaignBaseline, CommitCard, Metric
+from loreley.db.models import CampaignBaseline, CommitCard, EvolutionJob, Metric
 
 log = logger.bind(module="scheduler.baselines")
 
@@ -113,6 +113,13 @@ class CampaignProgramHashResolution:
     campaign_program_hash: str | None = None
     source_path: str | None = None
     failure_summary: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _PersistedCampaignProgramHash:
+    campaign_program_hash: str | None
+    source: str
+    observed_at: datetime | None = None
 
 
 def baseline_effective_settings_fingerprint(settings: Settings) -> str:
@@ -264,21 +271,13 @@ def load_latest_matching_baseline(
     campaign_program_hash: Any = _CAMPAIGN_PROGRAM_HASH_UNSET,
     valid_only: bool = False,
 ) -> CampaignBaseline | None:
-    root_commit = normalize_single_line(str(getattr(settings, "mapelites_experiment_root_commit", "") or ""))
-    spec = baseline_metric_spec(settings)
-    if not root_commit or not spec.name:
+    conditions = _matching_baseline_conditions(settings)
+    if conditions is None:
         return None
-    root_conditions: list[Any] = [CampaignBaseline.root_commit_hash == root_commit]
-    if len(root_commit) < 64:
-        root_conditions.append(CampaignBaseline.root_commit_hash.like(f"{root_commit}%"))
     stmt = (
         select(CampaignBaseline)
         .where(
-            or_(*root_conditions),
-            CampaignBaseline.primary_metric_name == spec.name,
-            CampaignBaseline.primary_metric_higher_is_better == spec.higher_is_better,
-            CampaignBaseline.effective_settings_fingerprint
-            == baseline_effective_settings_fingerprint(settings),
+            *conditions,
         )
         .order_by(CampaignBaseline.updated_at.desc(), CampaignBaseline.created_at.desc())
         .limit(1)
@@ -292,6 +291,33 @@ def load_latest_matching_baseline(
     if valid_only:
         stmt = stmt.where(CampaignBaseline.status == BASELINE_STATUS_VALID)
     return session.execute(stmt).scalar_one_or_none()
+
+
+def resolve_status_campaign_program_hash(
+    *,
+    session: Session,
+    settings: Settings,
+) -> CampaignProgramHashResolution:
+    """Resolve the campaign program hash status should use for baseline lookup.
+
+    Status is an operational view over the scheduler's active campaign contract.
+    For long-running schedulers with locked or approve program-change policy, the
+    active hash can intentionally differ from the file currently visible on disk.
+    Prefer persisted scheduler provenance before falling back to a local file
+    inspection for pre-bootstrap databases.
+    """
+
+    persisted = _newest_persisted_campaign_program_hash(
+        _latest_job_campaign_program_hash(session),
+        _latest_baseline_campaign_program_hash(session=session, settings=settings),
+    )
+    if persisted is not None:
+        return CampaignProgramHashResolution(
+            known=True,
+            campaign_program_hash=persisted.campaign_program_hash,
+            source_path=persisted.source,
+        )
+    return resolve_current_campaign_program_hash(settings)
 
 
 def resolve_current_campaign_program_hash(settings: Settings) -> CampaignProgramHashResolution:
@@ -322,6 +348,124 @@ def resolve_current_campaign_program_hash(settings: Settings) -> CampaignProgram
         campaign_program_hash=loaded.snapshot.raw_sha256,
         source_path=str(loaded.snapshot.source_path),
     )
+
+
+def _matching_baseline_conditions(settings: Settings) -> tuple[Any, ...] | None:
+    root_commit = normalize_single_line(str(getattr(settings, "mapelites_experiment_root_commit", "") or ""))
+    spec = baseline_metric_spec(settings)
+    if not root_commit or not spec.name:
+        return None
+    root_conditions: list[Any] = [CampaignBaseline.root_commit_hash == root_commit]
+    if len(root_commit) < 64:
+        root_conditions.append(CampaignBaseline.root_commit_hash.like(f"{root_commit}%"))
+    return (
+        or_(*root_conditions),
+        CampaignBaseline.primary_metric_name == spec.name,
+        CampaignBaseline.primary_metric_higher_is_better == spec.higher_is_better,
+        CampaignBaseline.effective_settings_fingerprint == baseline_effective_settings_fingerprint(settings),
+    )
+
+
+def _latest_baseline_campaign_program_hash(
+    *,
+    session: Session,
+    settings: Settings,
+) -> _PersistedCampaignProgramHash | None:
+    conditions = _matching_baseline_conditions(settings)
+    if conditions is None:
+        return None
+    stmt = (
+        select(
+            CampaignBaseline.campaign_program_hash,
+            CampaignBaseline.updated_at,
+            CampaignBaseline.created_at,
+        )
+        .where(*conditions)
+        .order_by(CampaignBaseline.updated_at.desc(), CampaignBaseline.created_at.desc())
+        .limit(1)
+    )
+    row = session.execute(stmt).first()
+    if row is None:
+        return None
+    return _PersistedCampaignProgramHash(
+        campaign_program_hash=_normalize_campaign_program_hash(_row_item(row, 0, "campaign_program_hash")),
+        source="database:campaign_baselines",
+        observed_at=_first_datetime(
+            _row_item(row, 1, "updated_at"),
+            _row_item(row, 2, "created_at"),
+        ),
+    )
+
+
+def _latest_job_campaign_program_hash(session: Session) -> _PersistedCampaignProgramHash | None:
+    stmt = (
+        select(
+            EvolutionJob.campaign_program_hash,
+            EvolutionJob.scheduled_at,
+            EvolutionJob.created_at,
+            EvolutionJob.updated_at,
+        )
+        .order_by(
+            EvolutionJob.scheduled_at.desc().nullslast(),
+            EvolutionJob.created_at.desc().nullslast(),
+            EvolutionJob.updated_at.desc().nullslast(),
+        )
+        .limit(1)
+    )
+    row = session.execute(stmt).first()
+    if row is None:
+        return None
+    return _PersistedCampaignProgramHash(
+        campaign_program_hash=_normalize_campaign_program_hash(_row_item(row, 0, "campaign_program_hash")),
+        source="database:evolution_jobs",
+        observed_at=_first_datetime(
+            _row_item(row, 1, "scheduled_at"),
+            _row_item(row, 2, "created_at"),
+            _row_item(row, 3, "updated_at"),
+        ),
+    )
+
+
+def _newest_persisted_campaign_program_hash(
+    *candidates: _PersistedCampaignProgramHash | None,
+) -> _PersistedCampaignProgramHash | None:
+    available = [candidate for candidate in candidates if candidate is not None]
+    if not available:
+        return None
+
+    def _sort_key(candidate: _PersistedCampaignProgramHash) -> tuple[bool, datetime, int]:
+        observed_at = candidate.observed_at
+        if observed_at is None:
+            comparable_time = datetime.min.replace(tzinfo=timezone.utc)
+            has_time = False
+        elif observed_at.tzinfo is None:
+            comparable_time = observed_at.replace(tzinfo=timezone.utc)
+            has_time = True
+        else:
+            comparable_time = observed_at.astimezone(timezone.utc)
+            has_time = True
+        source_priority = 1 if candidate.source == "database:campaign_baselines" else 0
+        return has_time, comparable_time, source_priority
+
+    return max(available, key=_sort_key)
+
+
+def _normalize_campaign_program_hash(value: object) -> str | None:
+    return normalize_single_line(str(value or "")) or None
+
+
+def _first_datetime(*values: object) -> datetime | None:
+    for value in values:
+        if isinstance(value, datetime):
+            return value
+    return None
+
+
+def _row_item(row: Any, index: int, name: str) -> object:
+    try:
+        return row[index]
+    except (IndexError, KeyError, TypeError):
+        return getattr(row, name, None)
 
 
 class BaselineBootstrapService:

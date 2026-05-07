@@ -245,6 +245,26 @@ def _baseline_status_payload(*, row: Any | None) -> dict[str, object] | None:
     }
 
 
+def _load_status_baseline_payload(*, session: Any, settings: Settings) -> dict[str, object] | None:
+    from loreley.scheduler.baselines import (
+        load_latest_matching_baseline,
+        resolve_status_campaign_program_hash,
+    )
+
+    campaign_resolution = resolve_status_campaign_program_hash(
+        session=session,
+        settings=settings,
+    )
+    if not campaign_resolution.known:
+        return None
+    baseline_row = load_latest_matching_baseline(
+        session=session,
+        settings=settings,
+        campaign_program_hash=campaign_resolution.campaign_program_hash,
+    )
+    return _baseline_status_payload(row=baseline_row)
+
+
 def _status_response_payload(
     *,
     instance_payload: dict[str, object],
@@ -948,20 +968,10 @@ def status(
                 CommitCard=CommitCard,
                 Metric=Metric,
             )
-            from loreley.scheduler.baselines import (
-                load_latest_matching_baseline,
-                resolve_current_campaign_program_hash,
+            baseline = _load_status_baseline_payload(
+                session=session,
+                settings=settings,
             )
-
-            campaign_resolution = resolve_current_campaign_program_hash(settings)
-            baseline_row = None
-            if campaign_resolution.known:
-                baseline_row = load_latest_matching_baseline(
-                    session=session,
-                    settings=settings,
-                    campaign_program_hash=campaign_resolution.campaign_program_hash,
-                )
-            baseline = _baseline_status_payload(row=baseline_row)
             instance_payload = _instance_status_payload(instance)
     except typer.Exit:
         raise

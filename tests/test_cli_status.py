@@ -29,6 +29,13 @@ def _patch_cli_db_now(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+def _patch_no_baseline_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "loreley.scheduler.baselines.resolve_status_campaign_program_hash",
+        lambda **_kwargs: SimpleNamespace(known=False),
+    )
+
+
 def test_status_json_includes_job_lease_health(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -37,6 +44,7 @@ def test_status_json_includes_job_lease_health(
     monkeypatch.setattr("loreley.cli.get_settings", lambda: settings)
     monkeypatch.setattr("loreley.cli._configure_logging_or_exit", lambda **_kwargs: None)
     _patch_cli_db_now(monkeypatch)
+    _patch_no_baseline_resolution(monkeypatch)
     monkeypatch.setattr(
         "loreley.cli._load_archive_stats_or_exit",
         lambda **_kwargs: {"island_id": "main", "occupied": 1, "cells": 4, "coverage": 0.25},
@@ -115,6 +123,7 @@ def test_status_table_prints_job_lease_health_section(
     monkeypatch.setattr("loreley.cli.get_settings", lambda: settings)
     monkeypatch.setattr("loreley.cli._configure_logging_or_exit", lambda **_kwargs: None)
     _patch_cli_db_now(monkeypatch)
+    _patch_no_baseline_resolution(monkeypatch)
     monkeypatch.setattr(
         "loreley.cli._load_archive_stats_or_exit",
         lambda **_kwargs: {"island_id": "main", "occupied": 1, "cells": 4, "coverage": 0.25},
@@ -248,3 +257,117 @@ def test_status_json_scopes_baseline_to_current_campaign_program(
     payload = json.loads(captured.out)
     assert baseline_calls == [expected_program_hash]
     assert payload["baseline"]["baseline_campaign_program_hash"] == expected_program_hash
+
+
+def test_status_json_uses_persisted_scheduler_campaign_program(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Regression: locked/approve schedulers can run against a hash that differs from disk."""
+
+    active_program_hash = "a" * 64
+    disk_program_hash = "b" * 64
+    settings = _make_settings()
+    settings.mapelites_experiment_root_commit = "root123"
+    settings.mapelites_fitness_metric = "score"
+    monkeypatch.setattr("loreley.cli.get_settings", lambda: settings)
+    monkeypatch.setattr("loreley.cli._configure_logging_or_exit", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        "loreley.cli._load_archive_stats_or_exit",
+        lambda **_kwargs: {"island_id": "main", "occupied": 1, "cells": 4, "coverage": 0.25},
+    )
+    monkeypatch.setattr(
+        "loreley.cli._load_status_job_payloads",
+        lambda **_kwargs: (
+            {"unfinished": 1, "pending_ingestion": 0},
+            {
+                "heartbeat_interval_seconds": 60,
+                "lease_ttl_seconds": 1800,
+                "max_recovery_attempts": 3,
+                "recovery_exhausted_failed": 0,
+                "running": 0,
+                "running_without_lease": 0,
+                "stale_running": 0,
+            },
+        ),
+    )
+    monkeypatch.setattr("loreley.cli._load_best_commit_status_payload", lambda **_kwargs: None)
+    _patch_cli_db_now(monkeypatch)
+
+    instance = SimpleNamespace(
+        experiment_id_raw="exp-demo",
+        experiment_uuid="11111111-1111-1111-1111-111111111111",
+        root_commit_hash="root123",
+        repository_slug="demo/repo",
+        repository_canonical_origin="https://example.com/demo/repo.git",
+    )
+    persisted_rows = iter(
+        [
+            (
+                active_program_hash,
+                datetime(2026, 3, 25, 7, 59, tzinfo=timezone.utc),
+                datetime(2026, 3, 25, 7, 58, tzinfo=timezone.utc),
+                datetime(2026, 3, 25, 7, 58, tzinfo=timezone.utc),
+            ),
+            None,
+        ]
+    )
+    baseline_calls: list[str | None] = []
+    fallback_calls: list[object] = []
+
+    class DummyResult:
+        def __init__(self, *, row: Any = None) -> None:
+            self._row = row
+
+        def first(self) -> Any:
+            return self._row
+
+    class DummySession:
+        def get(self, _model: Any, _key: Any) -> Any:
+            return instance
+
+        def execute(self, _stmt: Any) -> DummyResult:
+            return DummyResult(row=next(persisted_rows))
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    def fake_resolve_current_campaign_program_hash(_settings: Any) -> Any:
+        fallback_calls.append(_settings)
+        return SimpleNamespace(known=True, campaign_program_hash=disk_program_hash)
+
+    def fake_load_latest_matching_baseline(**kwargs: Any) -> Any:
+        campaign_program_hash = kwargs.get("campaign_program_hash")
+        baseline_calls.append(campaign_program_hash)
+        return SimpleNamespace(
+            id="aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa",
+            baseline_key_hash="a" * 64,
+            root_commit_hash="root123",
+            primary_metric_name="score",
+            metric_value=1.0,
+            primary_metric_higher_is_better=True,
+            status="valid",
+            campaign_program_hash=campaign_program_hash,
+            failure_kind=None,
+            failure_summary=None,
+        )
+
+    monkeypatch.setattr("loreley.db.base.session_scope", fake_scope)
+    monkeypatch.setattr(
+        "loreley.scheduler.baselines.resolve_current_campaign_program_hash",
+        fake_resolve_current_campaign_program_hash,
+    )
+    monkeypatch.setattr(
+        "loreley.scheduler.baselines.load_latest_matching_baseline",
+        fake_load_latest_matching_baseline,
+    )
+
+    code = main(["status", "--json"])
+    captured = capsys.readouterr()
+
+    assert code == 0
+    payload = json.loads(captured.out)
+    assert fallback_calls == []
+    assert baseline_calls == [active_program_hash]
+    assert payload["baseline"]["baseline_campaign_program_hash"] == active_program_hash
