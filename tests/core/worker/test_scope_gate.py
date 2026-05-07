@@ -72,6 +72,33 @@ def test_scope_gate_rejects_paths_outside_non_empty_editable_scope(tmp_path: Pat
     assert result.violations[0].path == "README.md"
 
 
+def test_scope_gate_single_star_matches_only_one_path_segment(tmp_path: Path) -> None:
+    """Regression: src/* must not allow recursively nested paths."""
+
+    _init_repo(tmp_path)
+    program = parse_campaign_program(b"## Editable scope\n- src/*\n")
+    (tmp_path / "src" / "nested").mkdir()
+    (tmp_path / "src" / "nested" / "file.py").write_text("print('nested')\n", encoding="utf-8")
+
+    result = validate_campaign_scope(worktree=tmp_path, program=program)
+
+    assert result.passed is False
+    assert result.violations[0].code == "outside_editable_scope"
+    assert result.violations[0].path == "src/nested/file.py"
+
+
+def test_scope_gate_double_star_matches_recursive_paths(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    program = parse_campaign_program(b"## Editable scope\n- src/**\n")
+    (tmp_path / "src" / "nested").mkdir()
+    (tmp_path / "src" / "nested" / "file.py").write_text("print('nested')\n", encoding="utf-8")
+
+    result = validate_campaign_scope(worktree=tmp_path, program=program)
+
+    assert result.passed is True
+    assert result.checked_paths == ("src/nested/file.py",)
+
+
 def test_scope_gate_protects_program_file_by_default(tmp_path: Path) -> None:
     _init_repo(tmp_path)
     program = parse_campaign_program(b"## Goal\nImprove things.\n")

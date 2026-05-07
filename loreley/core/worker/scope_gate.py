@@ -392,11 +392,48 @@ def _pattern_matches(path: str, pattern: str) -> bool:
         return True
     if pattern.endswith("/") and normalized_path.startswith(f"{normalized_pattern}/"):
         return True
-    if fnmatch.fnmatchcase(normalized_path, normalized_pattern):
-        return True
     if "/" not in normalized_pattern and fnmatch.fnmatchcase(PurePosixPath(normalized_path).name, normalized_pattern):
         return True
+    if _path_segments_match(
+        path_segments=tuple(PurePosixPath(normalized_path).parts),
+        pattern_segments=tuple(PurePosixPath(normalized_pattern).parts),
+    ):
+        return True
     return False
+
+
+def _path_segments_match(
+    *,
+    path_segments: tuple[str, ...],
+    pattern_segments: tuple[str, ...],
+) -> bool:
+    if not pattern_segments:
+        return not path_segments
+    if pattern_segments[0] == "**":
+        return _double_star_segments_match(path_segments, pattern_segments[1:])
+    if not path_segments:
+        return False
+    if not fnmatch.fnmatchcase(path_segments[0], pattern_segments[0]):
+        return False
+    return _path_segments_match(
+        path_segments=path_segments[1:],
+        pattern_segments=pattern_segments[1:],
+    )
+
+
+def _double_star_segments_match(
+    path_segments: tuple[str, ...],
+    remaining_patterns: tuple[str, ...],
+) -> bool:
+    if not remaining_patterns:
+        return True
+    return any(
+        _path_segments_match(
+            path_segments=path_segments[index:],
+            pattern_segments=remaining_patterns,
+        )
+        for index in range(len(path_segments) + 1)
+    )
 
 
 def _has_glob(pattern: str) -> bool:
