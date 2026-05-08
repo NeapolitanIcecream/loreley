@@ -356,6 +356,11 @@ def test_repair_scheduler_consumes_token_for_scheduled_repair_job(
         "_count_completed_normal_jobs_best_effort",
         lambda _self: 0,
     )
+    monkeypatch.setattr(
+        job_scheduler,
+        "with_repair_scheduling_lock",
+        lambda **kwargs: kwargs["callback"](),
+    )
     settings.failed_candidate_repair_enabled = True
     settings.failed_candidate_repair_normal_jobs_per_token = 9
     settings.failed_candidate_repair_max_tokens = 3
@@ -397,6 +402,63 @@ def test_repair_scheduler_consumes_token_for_scheduled_repair_job(
     assert scheduled == [repair_job_id]
     assert scheduler._repair_tokens == 0
     assert scheduler.repair_sampler.scheduled == 1
+
+
+def test_repair_scheduler_serializes_cap_check_and_schedule(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    """Regression: scheduler repair dispatch must share the manual repair lock."""
+
+    sender = DummySenderActor()
+    monkeypatch.setattr(
+        job_scheduler,
+        "build_evolution_job_sender_actor",
+        lambda **_kwargs: sender,
+    )
+    settings.failed_candidate_repair_enabled = True
+    settings.failed_candidate_repair_max_active_jobs = 1
+    settings.failed_candidate_repair_max_jobs_per_tick = 1
+    repair_job_id = uuid.uuid4()
+    repair_source_id = uuid.uuid4()
+    events: list[str] = []
+
+    def _lock(**kwargs):
+        events.append("lock.enter")
+        try:
+            return kwargs["callback"]()
+        finally:
+            events.append("lock.exit")
+
+    class DummyRepairSampler:
+        def count_active_repair_jobs(self) -> int:
+            assert events == ["lock.enter"]
+            events.append("active.count")
+            return 0
+
+        def schedule_one(self) -> ScheduledRepairJob:
+            assert events == ["lock.enter", "active.count"]
+            events.append("schedule.one")
+            return ScheduledRepairJob(
+                job_id=repair_job_id,
+                repair_source_candidate_id=repair_source_id,
+                base_commit_hash="base",
+            )
+
+    monkeypatch.setattr(job_scheduler, "with_repair_scheduling_lock", _lock)
+    scheduler = cast(Any, JobScheduler)(
+        settings=settings,
+        console=Console(record=True),
+        sampler=cast(MapElitesSampler, object()),
+    )
+    scheduler.repair_sampler = DummyRepairSampler()
+    scheduler._repair_tokens = 1
+
+    scheduled = scheduler._schedule_repair_jobs(capacity=1, accrue_tokens=False)
+
+    assert scheduled == [repair_job_id]
+    assert scheduler._repair_tokens == 0
+    assert events == ["lock.enter", "active.count", "schedule.one", "lock.exit"]
 
 
 def test_repair_sampler_schedules_job_with_configured_supported_mode(
@@ -573,6 +635,11 @@ def test_schedule_jobs_reserves_repair_slot_when_normal_sampling_can_fill_batch(
         JobScheduler,
         "_count_completed_normal_jobs_best_effort",
         lambda _self: 1,
+    )
+    monkeypatch.setattr(
+        job_scheduler,
+        "with_repair_scheduling_lock",
+        lambda **kwargs: kwargs["callback"](),
     )
     sampler = DummySampler()
     scheduler = cast(Any, JobScheduler)(

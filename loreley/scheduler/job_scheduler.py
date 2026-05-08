@@ -28,6 +28,7 @@ from loreley.core.campaign_program import (
     persist_campaign_program,
 )
 from loreley.core.map_elites.sampler import MapElitesSampler, SamplingSnapshot, ScheduledSamplerJob
+from loreley.core.repair_coordination import with_repair_scheduling_lock
 from loreley.core.worker.repair import (
     REPAIR_MODE_REBASE_FROM_NEAREST_VIABLE,
     repair_failure_kind_allowlist,
@@ -615,23 +616,27 @@ class JobScheduler:
         max_active = max(0, int(self.settings.failed_candidate_repair_max_active_jobs))
         if max_per_tick <= 0 or max_active <= 0 or self._repair_tokens <= 0:
             return []
-        active = self.repair_sampler.count_active_repair_jobs()
-        available_active = max(0, max_active - active)
-        count = min(capacity, max_per_tick, available_active, self._repair_tokens)
-        if count <= 0:
-            return []
-        scheduled_ids: list[UUID] = []
-        for _ in range(count):
-            repair = self.repair_sampler.schedule_one()
-            if repair is None:
-                break
-            self._repair_tokens = max(0, self._repair_tokens - 1)
-            scheduled_ids.append(repair.job_id)
-            log.info(
-                "Repair token consumed tokens_remaining={}",
-                self._repair_tokens,
-            )
-        return scheduled_ids
+
+        def _schedule_locked() -> list[UUID]:
+            active = self.repair_sampler.count_active_repair_jobs()
+            available_active = max(0, max_active - active)
+            count = min(capacity, max_per_tick, available_active, self._repair_tokens)
+            if count <= 0:
+                return []
+            scheduled_ids: list[UUID] = []
+            for _ in range(count):
+                repair = self.repair_sampler.schedule_one()
+                if repair is None:
+                    break
+                self._repair_tokens = max(0, self._repair_tokens - 1)
+                scheduled_ids.append(repair.job_id)
+                log.info(
+                    "Repair token consumed tokens_remaining={}",
+                    self._repair_tokens,
+                )
+            return scheduled_ids
+
+        return with_repair_scheduling_lock(callback=_schedule_locked)
 
     def _accrue_repair_tokens(self) -> None:
         normal_jobs_per_token = max(1, int(self.settings.failed_candidate_repair_normal_jobs_per_token))

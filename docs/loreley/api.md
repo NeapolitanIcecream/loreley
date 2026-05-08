@@ -100,8 +100,8 @@ These routes mutate database state:
 - `POST /repair/schedule-one` calls the existing
   `FailedCandidateRepairSampler.schedule_one()` path, so the same eligibility,
   settings, repair-token budget, and campaign-baseline gates apply. Manual API
-  requests serialize the active-job cap check, token-budget check, and
-  scheduling mutation on the instance metadata row.
+  requests and scheduler repair dispatch serialize the active-job cap check,
+  token-budget check, and scheduling mutation on the instance metadata row.
 - `POST /repair/candidates/{candidate_id}/quarantine|discard|restore` updates
   repair-pool operator state. These actions fail with `409` while an active
   repair job exists for the candidate. Restore sets

@@ -8,6 +8,7 @@ from uuid import uuid4
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
+from sqlalchemy.dialects import postgresql
 
 import loreley.api.routers.repair as repair_router
 import loreley.api.services.repair as repair_service
@@ -58,6 +59,58 @@ def _candidate_payload(candidate_id=None) -> dict[str, object]:
         "created_at": now,
         "updated_at": now,
     }
+
+
+class _EmptyScalarRows:
+    def __iter__(self):
+        return iter([])
+
+    def first(self):
+        return None
+
+
+class _EmptyExecResult:
+    def scalars(self):
+        return _EmptyScalarRows()
+
+    def all(self):
+        return []
+
+
+class _CandidateLockResult:
+    def __init__(self, candidate) -> None:
+        self._candidate = candidate
+
+    def scalar_one_or_none(self):
+        return self._candidate
+
+
+class _RepairActionSession:
+    def __init__(
+        self,
+        candidate,
+        *,
+        assert_candidate_locked: bool = False,
+        reject_after_candidate_lookup: bool = False,
+    ) -> None:
+        self.candidate = candidate
+        self.assert_candidate_locked = assert_candidate_locked
+        self.reject_after_candidate_lookup = reject_after_candidate_lookup
+        self.statements = []
+
+    def execute(self, stmt):
+        self.statements.append(stmt)
+        if len(self.statements) == 1:
+            if self.assert_candidate_locked:
+                compiled = str(stmt.compile(dialect=postgresql.dialect())).upper()
+                assert "FOR UPDATE" in compiled
+            return _CandidateLockResult(self.candidate)
+        if self.reject_after_candidate_lookup:
+            raise AssertionError("non-failed rows should be rejected before active-job lookup")
+        return _EmptyExecResult()
+
+    def flush(self):
+        return None
 
 
 def test_repair_pool_route_returns_candidates(monkeypatch) -> None:
@@ -317,35 +370,11 @@ def test_restore_sets_candidate_active_audit_only(monkeypatch) -> None:
         updated_at=datetime(2026, 5, 8, tzinfo=timezone.utc),
     )
 
-    class _ScalarRows:
-        def __iter__(self):
-            return iter([])
-
-        def first(self):
-            return None
-
-    class _ExecResult:
-        def scalars(self):
-            return _ScalarRows()
-
-        def all(self):
-            return []
-
-    class _Session:
-        def get(self, model, key):
-            if model is CandidateCommit and key == candidate_id:
-                return candidate
-            return None
-
-        def execute(self, _stmt):
-            return _ExecResult()
-
-        def flush(self):
-            return None
+    session = _RepairActionSession(candidate, assert_candidate_locked=True)
 
     @contextmanager
     def _scope():
-        yield _Session()
+        yield session
 
     monkeypatch.setattr(repair_service, "session_scope", _scope)
 
@@ -357,6 +386,7 @@ def test_restore_sets_candidate_active_audit_only(monkeypatch) -> None:
     assert candidate.lifecycle_status == "active"
     assert candidate.repair_state == "audit_only"
     assert payload["repair_state"] == "audit_only"
+    assert session.statements
 
 
 @pytest.mark.parametrize("action", ["quarantine", "discard", "restore"])
@@ -393,21 +423,11 @@ def test_repair_candidate_actions_reject_non_failed_candidates_without_mutating(
         updated_at=datetime(2026, 5, 8, tzinfo=timezone.utc),
     )
 
-    class _Session:
-        def get(self, model, key):
-            if model is CandidateCommit and key == candidate_id:
-                return candidate
-            return None
-
-        def execute(self, _stmt):
-            raise AssertionError("non-failed rows should be rejected before active-job lookup")
-
-        def flush(self):
-            raise AssertionError("non-failed rows must not be flushed")
+    session = _RepairActionSession(candidate, reject_after_candidate_lookup=True)
 
     @contextmanager
     def _scope():
-        yield _Session()
+        yield session
 
     monkeypatch.setattr(repair_service, "session_scope", _scope)
 
@@ -416,3 +436,4 @@ def test_repair_candidate_actions_reject_non_failed_candidates_without_mutating(
 
     assert candidate.lifecycle_status == "discarded"
     assert candidate.repair_state == "discarded"
+    assert len(session.statements) == 1

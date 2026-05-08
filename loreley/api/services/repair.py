@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Callable, TypeVar
 from uuid import UUID
 
 from loguru import logger
@@ -13,18 +12,19 @@ from sqlalchemy import and_, func, or_, select
 from loreley.api.pagination import PaginationCursorError, decode_cursor, encode_cursor, normalize_pagination
 from loreley.config import Settings, get_settings
 from loreley.core.contracts import clamp_text, normalize_single_line
+from loreley.core.repair_coordination import (
+    with_repair_scheduling_lock as _with_manual_repair_schedule_lock,
+)
 from loreley.db.base import session_scope
 from loreley.db.models import (
     CandidateCommit,
     DiagnosticCapsule,
     EvolutionJob,
-    InstanceMetadata,
     JobStatus,
 )
 from loreley.scheduler.job_scheduler import FailedCandidateRepairSampler
 
 log = logger.bind(module="api.repair")
-_T = TypeVar("_T")
 
 _ACTIVE_JOB_STATUSES = (JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING)
 
@@ -170,7 +170,10 @@ def update_candidate_operator_state(*, candidate_id: UUID, action: str) -> dict[
         raise RepairValidationError(f"Unsupported repair candidate action: {action!r}.")
 
     with session_scope() as session:
-        candidate = session.get(CandidateCommit, candidate_id)
+        candidate = _locked_repair_candidate(
+            session=session,
+            candidate_id=candidate_id,
+        )
         if candidate is None:
             raise RepairNotFoundError("Repair candidate not found.")
         if normalize_single_line(str(candidate.evaluation_status or "")).lower() != "candidate_failed":
@@ -211,16 +214,6 @@ def _repair_schedule_noop(message: str) -> dict[str, object]:
     }
 
 
-def _with_manual_repair_schedule_lock(*, callback: Callable[[], _T]) -> _T:
-    with session_scope() as session:
-        session.execute(
-            select(InstanceMetadata)
-            .where(InstanceMetadata.id == 1)
-            .with_for_update()
-        ).scalar_one()
-        return callback()
-
-
 def _manual_repair_tokens_available(*, settings: Settings) -> int:
     max_tokens = max(0, int(settings.failed_candidate_repair_max_tokens))
     if max_tokens <= 0:
@@ -244,6 +237,20 @@ def _manual_repair_tokens_available(*, settings: Settings) -> int:
         )
     earned = completed_normal_jobs // normal_jobs_per_token
     return min(max_tokens, max(0, earned - scheduled_repair_jobs))
+
+
+def _locked_repair_candidate(
+    *,
+    session: object,
+    candidate_id: UUID,
+) -> CandidateCommit | None:
+    return (
+        session.execute(
+            select(CandidateCommit)
+            .where(CandidateCommit.id == candidate_id)
+            .with_for_update()
+        ).scalar_one_or_none()
+    )
 
 
 def _repair_pool_stmt(
