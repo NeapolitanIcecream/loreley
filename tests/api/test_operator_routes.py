@@ -9,6 +9,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import pytest
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.exc import IntegrityError
 
 import loreley.api.routers.operator as operator_router
 import loreley.api.services.operator as operator_service
@@ -17,7 +19,7 @@ from loreley.api.services.operator import (
     OperatorTaskAlreadyActiveError,
     OperatorTaskNotFoundError,
 )
-from loreley.db.models import OperatorTaskStatus
+from loreley.db.models import OperatorTask, OperatorTaskStatus
 
 
 def _client() -> TestClient:
@@ -144,6 +146,56 @@ def test_create_baseline_ensure_task_rejects_existing_active_task(monkeypatch, s
 
     with pytest.raises(OperatorTaskAlreadyActiveError, match=str(task_id)):
         operator_service.create_baseline_ensure_task(settings=settings)
+
+
+def test_create_baseline_ensure_task_rejects_atomic_active_conflict(monkeypatch, settings) -> None:
+    """Regression: concurrent creates must rely on the DB unique constraint."""
+
+    class _Scalar:
+        def first(self):
+            return None
+
+    class _Result:
+        def scalars(self):
+            return _Scalar()
+
+    class _Session:
+        def execute(self, _stmt):
+            return _Result()
+
+        def add(self, _row):
+            pass
+
+        def flush(self):
+            raise IntegrityError("INSERT", {}, RuntimeError("duplicate active task"))
+
+    @contextmanager
+    def _scope():
+        yield _Session()
+
+    monkeypatch.setattr(operator_service, "session_scope", _scope)
+
+    with pytest.raises(OperatorTaskAlreadyActiveError, match="Baseline ensure task already active"):
+        operator_service.create_baseline_ensure_task(settings=settings)
+
+
+def test_operator_task_model_has_active_baseline_unique_index() -> None:
+    indexes = {index.name: index for index in OperatorTask.__table__.indexes}
+    index = indexes["uq_operator_tasks_active_baseline_ensure"]
+
+    where = index.dialect_options["postgresql"]["where"]
+    compiled_where = str(
+        where.compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    )
+
+    assert index.unique is True
+    assert [column.name for column in index.columns] == ["kind"]
+    assert "baseline_ensure" in compiled_where
+    assert "pending" in compiled_where
+    assert "running" in compiled_where
 
 
 def test_operator_task_detail_returns_404(monkeypatch) -> None:

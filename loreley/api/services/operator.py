@@ -10,6 +10,7 @@ from uuid import UUID
 from loguru import logger
 from rich.console import Console
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
 from loreley.api.services.repair import repair_pool_summary
 from loreley.config import Settings, get_settings
@@ -127,7 +128,10 @@ def create_baseline_ensure_task(*, settings: Settings | None = None) -> Operator
             result_payload={},
         )
         session.add(row)
-        session.flush()
+        try:
+            session.flush()
+        except IntegrityError as exc:
+            raise OperatorTaskAlreadyActiveError("Baseline ensure task already active.") from exc
         task_id = row.id
         log.bind(task_id=str(task_id)).info("Operator baseline ensure task created")
         return row

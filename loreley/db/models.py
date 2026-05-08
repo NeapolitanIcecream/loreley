@@ -131,6 +131,24 @@ class OperatorTask(TimestampMixin, Base):
         return f"<OperatorTask id={self.id!r} kind={self.kind!r} status={self.status!r}>"
 
 
+Index(
+    "uq_operator_tasks_active_baseline_ensure",
+    OperatorTask.kind,
+    unique=True,
+    postgresql_where=(
+        (OperatorTask.kind == OperatorTaskKind.BASELINE_ENSURE.value)
+        & (
+            OperatorTask.status.in_(
+                (
+                    OperatorTaskStatus.PENDING.value,
+                    OperatorTaskStatus.RUNNING.value,
+                )
+            )
+        )
+    ),
+)
+
+
 class CommitCard(TimestampMixin, Base):
     """Lightweight commit representation used for inspiration and UI."""
 

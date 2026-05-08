@@ -24,11 +24,12 @@ These notes cover changes merged after `v0.7.9-alpha`.
   listing/actions, repair schedule-one, single job retry, and failed-stale bulk
   retry.
 - Added an `operator_tasks` table for UI API background task state. Baseline
-  ensure tasks run in the FastAPI UI API process, not Dramatiq.
+  ensure tasks run in the FastAPI UI API process, not Dramatiq. A partial
+  unique index prevents overlapping active baseline ensure tasks.
 
 ## Changed
 
-- Bumped `INSTANCE_SCHEMA_VERSION` to `10`. Existing development databases must
+- Bumped `INSTANCE_SCHEMA_VERSION` to `11`. Existing development databases must
   be reset with `uv run loreley reset-db --yes` before running this version.
 - The Streamlit UI now includes Campaign and Repair Pool pages. Jobs, Commits,
   Archive, and Graphs show clearer fate and evidence indicators where the API

@@ -93,7 +93,8 @@ These routes mutate database state:
   recovery. The request body must be either `{"all": true}` or `{"limit": N}`.
 - `POST /operator/tasks/baseline-ensure` creates an `operator_tasks` row and
   runs baseline ensure work in a FastAPI background task in the UI API process.
-  It does not use Dramatiq.
+  It does not use Dramatiq. The API returns `409` when another baseline ensure
+  task is already `pending` or `running`.
 - `POST /repair/schedule-one` calls the existing
   `FailedCandidateRepairSampler.schedule_one()` path, so the same eligibility,
   settings, and campaign-baseline gates apply.

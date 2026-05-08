@@ -35,6 +35,7 @@ ORM models and enums for single-tenant experiment databases.
   - Primary key: `id` (UUID).
   - Stores `kind`, `status`, JSONB request/result payloads, an optional error summary, and start/completion timestamps.
   - The first task kind is `baseline_ensure`, created by the UI API and executed with FastAPI background tasks.
+  - A partial unique index allows only one active `baseline_ensure` task in `pending` or `running` state.
 - **`EvolutionJob`** (`evolution_jobs` table): represents a single evolution iteration scheduled by the system.
   - Tracks current `status`, base commit, island ID, inspiration commit hashes, size-bounded job spec fields (`goal`, `constraints`, `acceptance_criteria`, `notes`, `tags`, sampling hints), human-readable `plan_summary`, priority, scheduling/processing timestamps, and last error if any.
   - Stores optional `campaign_program_hash` for the campaign contract used to create the job.
