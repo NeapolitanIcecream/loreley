@@ -94,10 +94,11 @@ These routes mutate database state:
 - `POST /operator/tasks/baseline-ensure` creates an `operator_tasks` row and
   runs baseline ensure work in a FastAPI background task in the UI API process.
   It does not use Dramatiq. The API returns `409` when another baseline ensure
-  task is already `pending` or `running`.
+  task is already `pending` or `running`. A `pending` task older than 10 minutes
+  is treated as stale, marked `failed`, and replaced by the new request.
 - `POST /repair/schedule-one` calls the existing
   `FailedCandidateRepairSampler.schedule_one()` path, so the same eligibility,
-  settings, and campaign-baseline gates apply.
+  settings, repair-token budget, and campaign-baseline gates apply.
 - `POST /repair/candidates/{candidate_id}/quarantine|discard|restore` updates
   repair-pool operator state. These actions fail with `409` while an active
   repair job exists for the candidate. Restore sets

@@ -109,6 +109,7 @@ def test_repair_schedule_one_route_returns_scheduled_job(monkeypatch) -> None:
         ("failed_candidate_repair_enabled", False),
         ("failed_candidate_repair_max_jobs_per_tick", 0),
         ("failed_candidate_repair_max_active_jobs", 0),
+        ("failed_candidate_repair_max_tokens", 0),
     ],
 )
 def test_repair_schedule_one_api_guard_blocks_disabled_repair_caps(
@@ -138,6 +139,38 @@ def test_repair_schedule_one_api_guard_blocks_disabled_repair_caps(
 
     assert payload["scheduled"] is False
     assert payload["job_id"] is None
+
+
+def test_repair_schedule_one_api_guard_blocks_exhausted_token_budget(
+    monkeypatch,
+    settings,
+) -> None:
+    """Regression: manual repair scheduling must not bypass repair tokens."""
+
+    settings.failed_candidate_repair_enabled = True
+    settings.failed_candidate_repair_max_jobs_per_tick = 1
+    settings.failed_candidate_repair_max_active_jobs = 1
+    settings.failed_candidate_repair_max_tokens = 1
+
+    class _SamplerShouldNotSchedule:
+        def count_active_repair_jobs(self) -> int:
+            return 0
+
+        def schedule_one(self):
+            raise AssertionError("API guard should not schedule without a repair token")
+
+    monkeypatch.setattr(
+        repair_service,
+        "FailedCandidateRepairSampler",
+        lambda **_kwargs: _SamplerShouldNotSchedule(),
+    )
+    monkeypatch.setattr(repair_service, "_manual_repair_tokens_available", lambda **_kwargs: 0)
+
+    payload = repair_service.schedule_one_repair(settings=settings)
+
+    assert payload["scheduled"] is False
+    assert payload["job_id"] is None
+    assert "token" in str(payload["message"]).lower()
 
 
 def test_repair_schedule_one_api_guard_blocks_when_active_jobs_at_cap(

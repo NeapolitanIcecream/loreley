@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -177,6 +177,43 @@ def test_create_baseline_ensure_task_rejects_atomic_active_conflict(monkeypatch,
 
     with pytest.raises(OperatorTaskAlreadyActiveError, match="Baseline ensure task already active"):
         operator_service.create_baseline_ensure_task(settings=settings)
+
+
+def test_create_baseline_ensure_task_replaces_stale_pending_task(monkeypatch, settings) -> None:
+    """Regression: orphaned pending background tasks must not block forever."""
+
+    task_id = uuid4()
+    now = datetime(2026, 5, 8, tzinfo=timezone.utc)
+    stale = SimpleNamespace(
+        id=task_id,
+        status=OperatorTaskStatus.PENDING.value,
+        created_at=now - timedelta(minutes=31),
+        completed_at=None,
+        error_summary=None,
+    )
+    added: list[object] = []
+
+    class _Session:
+        def add(self, row):
+            added.append(row)
+
+        def flush(self):
+            return None
+
+    @contextmanager
+    def _scope():
+        yield _Session()
+
+    monkeypatch.setattr(operator_service, "session_scope", _scope)
+    monkeypatch.setattr(operator_service, "_active_baseline_ensure_task", lambda *_args, **_kwargs: stale)
+    monkeypatch.setattr(operator_service, "_operator_now", lambda: now)
+
+    task = operator_service.create_baseline_ensure_task(settings=settings)
+
+    assert stale.status == OperatorTaskStatus.FAILED.value
+    assert stale.completed_at == now
+    assert "stale pending" in str(stale.error_summary).lower()
+    assert task in added
 
 
 def test_operator_task_model_has_active_baseline_unique_index() -> None:

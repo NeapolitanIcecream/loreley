@@ -34,6 +34,9 @@ These notes cover changes merged after `v0.7.9-alpha`.
 - The Streamlit UI now includes Campaign and Repair Pool pages. Jobs, Commits,
   Archive, and Graphs show clearer fate and evidence indicators where the API
   already has the data.
+- Manual repair scheduling from the UI API now checks the repair-token budget,
+  and stale pending baseline ensure tasks are failed before a replacement task
+  is created.
 
 ## Security
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -38,6 +38,7 @@ from loreley.scheduler.baselines import (
 )
 
 log = logger.bind(module="api.operator")
+_BASELINE_ENSURE_PENDING_STALE_AFTER = timedelta(minutes=10)
 
 
 class OperatorTaskNotFoundError(RuntimeError):
@@ -116,11 +117,16 @@ def create_baseline_ensure_task(*, settings: Settings | None = None) -> Operator
         "campaign_program_change_policy": str(getattr(active_settings, "campaign_program_change_policy", "") or ""),
     }
     with session_scope() as session:
-        active = _active_baseline_ensure_task(session)
+        active = _active_baseline_ensure_task(session, lock=True)
         if active is not None:
-            raise OperatorTaskAlreadyActiveError(
-                f"Baseline ensure task already active: {active.id}."
-            )
+            now = _operator_now()
+            if _stale_pending_baseline_ensure_task(active, now=now):
+                _mark_stale_pending_task_failed(active, now=now)
+                session.flush()
+            else:
+                raise OperatorTaskAlreadyActiveError(
+                    f"Baseline ensure task already active: {active.id}."
+                )
         row = OperatorTask(
             kind=OperatorTaskKind.BASELINE_ENSURE.value,
             status=OperatorTaskStatus.PENDING.value,
@@ -137,24 +143,57 @@ def create_baseline_ensure_task(*, settings: Settings | None = None) -> Operator
         return row
 
 
-def _active_baseline_ensure_task(session: object) -> OperatorTask | None:
-    return (
-        session.execute(
-            select(OperatorTask)
-            .where(OperatorTask.kind == OperatorTaskKind.BASELINE_ENSURE.value)
-            .where(
-                OperatorTask.status.in_(
-                    (
-                        OperatorTaskStatus.PENDING.value,
-                        OperatorTaskStatus.RUNNING.value,
-                    )
+def _active_baseline_ensure_task(session: object, *, lock: bool = False) -> OperatorTask | None:
+    stmt = (
+        select(OperatorTask)
+        .where(OperatorTask.kind == OperatorTaskKind.BASELINE_ENSURE.value)
+        .where(
+            OperatorTask.status.in_(
+                (
+                    OperatorTaskStatus.PENDING.value,
+                    OperatorTaskStatus.RUNNING.value,
                 )
             )
-            .order_by(OperatorTask.created_at.desc(), OperatorTask.id.desc())
-            .limit(1)
         )
+        .order_by(OperatorTask.created_at.desc(), OperatorTask.id.desc())
+        .limit(1)
+    )
+    if lock:
+        stmt = stmt.with_for_update()
+    return (
+        session.execute(stmt)
         .scalars()
         .first()
+    )
+
+
+def _operator_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _stale_pending_baseline_ensure_task(task: object, *, now: datetime) -> bool:
+    raw_status = getattr(task, "status", "")
+    status = str(getattr(raw_status, "value", raw_status) or "")
+    if status != OperatorTaskStatus.PENDING.value:
+        return False
+    created_at = getattr(task, "created_at", None)
+    if not isinstance(created_at, datetime):
+        return False
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    else:
+        created_at = created_at.astimezone(timezone.utc)
+    return created_at <= now - _BASELINE_ENSURE_PENDING_STALE_AFTER
+
+
+def _mark_stale_pending_task_failed(task: object, *, now: datetime) -> None:
+    task.status = OperatorTaskStatus.FAILED.value
+    task.completed_at = now
+    task.error_summary = (
+        "Stale pending baseline ensure task replaced by a new operator request."
+    )
+    log.bind(task_id=str(getattr(task, "id", ""))).warning(
+        "Stale pending operator baseline ensure task marked failed"
     )
 
 

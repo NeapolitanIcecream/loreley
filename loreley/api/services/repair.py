@@ -113,12 +113,21 @@ def schedule_one_repair(*, settings: Settings | None = None) -> dict[str, object
         return _repair_schedule_noop(
             "Repair scheduling is disabled by FAILED_CANDIDATE_REPAIR_MAX_ACTIVE_JOBS.",
         )
+    max_tokens = max(0, int(active_settings.failed_candidate_repair_max_tokens))
+    if max_tokens <= 0:
+        return _repair_schedule_noop(
+            "Repair scheduling is disabled by FAILED_CANDIDATE_REPAIR_MAX_TOKENS.",
+        )
     try:
         sampler = FailedCandidateRepairSampler(settings=active_settings)
         active_repair_jobs = sampler.count_active_repair_jobs()
         if active_repair_jobs >= max_active:
             return _repair_schedule_noop(
                 "Active repair jobs are already at FAILED_CANDIDATE_REPAIR_MAX_ACTIVE_JOBS.",
+            )
+        if _manual_repair_tokens_available(settings=active_settings) <= 0:
+            return _repair_schedule_noop(
+                "Repair scheduling is blocked by the failed-candidate repair token budget.",
             )
         result = sampler.schedule_one()
     except ValueError as exc:
@@ -186,6 +195,31 @@ def _repair_schedule_noop(message: str) -> dict[str, object]:
         "base_commit_hash": None,
         "message": message,
     }
+
+
+def _manual_repair_tokens_available(*, settings: Settings) -> int:
+    max_tokens = max(0, int(settings.failed_candidate_repair_max_tokens))
+    if max_tokens <= 0:
+        return 0
+    normal_jobs_per_token = max(1, int(settings.failed_candidate_repair_normal_jobs_per_token))
+    with session_scope() as session:
+        completed_normal_jobs = int(
+            session.execute(
+                select(func.count(EvolutionJob.id)).where(
+                    EvolutionJob.status == JobStatus.SUCCEEDED,
+                    EvolutionJob.job_kind != "repair",
+                )
+            ).scalar_one()
+        )
+        scheduled_repair_jobs = int(
+            session.execute(
+                select(func.count(EvolutionJob.id)).where(
+                    EvolutionJob.job_kind == "repair",
+                )
+            ).scalar_one()
+        )
+    earned = completed_normal_jobs // normal_jobs_per_token
+    return min(max_tokens, max(0, earned - scheduled_repair_jobs))
 
 
 def _repair_pool_stmt(
