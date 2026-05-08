@@ -38,7 +38,7 @@ from loreley.core.worker.job_store import (
     JobPreconditionError,
 )
 from loreley.core.worker.planning import PlanDocument, PlanningAgentResponse
-from loreley.db.models import JobStatus
+from loreley.db.models import EvaluationArtifactRecord, JobStatus
 
 
 def test_is_lock_conflict_matches_pgcode_and_messages(settings: Settings) -> None:
@@ -593,6 +593,110 @@ def test_persist_success_materializes_passed_outcome_artifact_records(
     assert artifacts[0].key == "adr-envelope-report"
 
 
+def test_failure_artifacts_replace_prior_synthetic_failure_key_on_retry(
+    settings: Settings,
+) -> None:
+    """Regression: retrying a failed job reused job_id and hit the failure artifact key."""
+
+    job_id = uuid.uuid4()
+    session = _UniqueEvaluationArtifactSession()
+    store = EvolutionJobStore(settings=settings)
+
+    store._record_failure_artifacts(
+        session=session,
+        request=_failure_artifact_request(job_id=job_id, summary="first failure"),
+        commit_hash="failedcommit",
+        artifact_result=JobArtifactWriteResult(fixed=FixedJobArtifactPaths()),
+    )
+    store._record_failure_artifacts(
+        session=session,
+        request=_failure_artifact_request(job_id=job_id, summary="retry failure"),
+        commit_hash="failedcommit",
+        artifact_result=JobArtifactWriteResult(fixed=FixedJobArtifactPaths()),
+    )
+
+    row = session.records[(job_id, "evaluation_failure")]
+    assert len(session.records) == 1
+    assert row.summary == "retry failure"
+    assert row.kind == "failure"
+
+
+def test_failure_artifacts_do_not_dedupe_synthetic_key_collision(
+    settings: Settings,
+) -> None:
+    """Regression: evaluator artifact key collision hid the synthetic failure artifact."""
+
+    job_id = uuid.uuid4()
+    session = _UniqueEvaluationArtifactSession()
+    store = EvolutionJobStore(settings=settings)
+
+    with pytest.raises(SQLAlchemyError, match="duplicate evaluation_artifacts"):
+        store._record_failure_artifacts(
+            session=session,
+            request=_failure_artifact_request(job_id=job_id, summary="failed before artifacts"),
+            commit_hash="failedcommit",
+            artifact_result=JobArtifactWriteResult(
+                fixed=FixedJobArtifactPaths(),
+                evaluation_artifacts=(
+                    _materialized_benchmark_artifact(key="evaluation_failure"),
+                ),
+            ),
+        )
+
+    row = session.records[(job_id, "evaluation_failure")]
+    assert row.kind == "failure"
+    assert row.summary == "failed before artifacts"
+    assert [
+        record.kind
+        for record in session.added
+        if isinstance(record, EvaluationArtifactRecord)
+    ] == ["failure"]
+
+
+def test_evaluator_artifacts_replace_prior_key_on_retry(settings: Settings) -> None:
+    """Regression: evaluator-declared artifacts reuse stable keys across retries."""
+
+    job_id = uuid.uuid4()
+    card = SimpleNamespace(id=uuid.uuid4())
+    session = _UniqueEvaluationArtifactSession(
+        existing=(
+            EvaluationArtifactRecord(
+                job_id=job_id,
+                commit_card_id=uuid.uuid4(),
+                commit_hash="oldcommit",
+                key="benchmark_report",
+                kind="benchmark_json",
+                mime_type="application/json",
+                label="Old benchmark",
+                summary="old summary",
+                visibility="agent_visible",
+                agent_projection="summary",
+                storage_path="/old/benchmark.json",
+                size_bytes=1,
+                sha256="b" * 64,
+                diagnostics=[],
+                artifact_metadata={"source": "old"},
+            ),
+        ),
+    )
+    store = EvolutionJobStore(settings=settings)
+
+    store._add_evaluation_artifact_records(
+        session=session,
+        job_id=job_id,
+        commit_hash="newcommit",
+        card=card,  # type: ignore[arg-type]
+        artifacts=(_materialized_benchmark_artifact(),),
+    )
+
+    row = session.records[(job_id, "benchmark_report")]
+    assert len(session.records) == 1
+    assert row.commit_card_id == card.id
+    assert row.commit_hash == "newcommit"
+    assert row.summary == "Parser throughput improved."
+    assert row.artifact_metadata == {"source": "bench"}
+
+
 class _PersistSuccessDummyJob:
     def __init__(self, *, job_id: uuid.UUID, run_token: uuid.UUID) -> None:
         self.id = job_id
@@ -797,6 +901,68 @@ def _materialized_benchmark_artifact(*, key: str = "benchmark_report") -> Materi
         ),
         metadata={"source": "bench"},
     )
+
+
+def _failure_artifact_request(*, job_id: uuid.UUID, summary: str) -> Any:
+    run_token = uuid.uuid4()
+    return SimpleNamespace(
+        job_ctx=_sample_job_context(job_id=job_id, run_token=run_token),
+        outcome=EvaluationOutcome(
+            evaluator_name="pytest",
+            candidate_commit_hash="failedcommit",
+            outcome_kind="candidate_failed",
+            failure=EvaluationFailureResult(
+                failure_stage="evaluation",
+                failure_kind="test_failed",
+                safe_failure_summary=summary,
+            ),
+        ),
+    )
+
+
+class _NoRowsResult:
+    def scalar_one_or_none(self) -> Any:
+        return None
+
+    def first(self) -> Any:
+        return None
+
+
+class _UniqueEvaluationArtifactSession:
+    def __init__(self, *, existing: tuple[EvaluationArtifactRecord, ...] = ()) -> None:
+        self.records: dict[tuple[uuid.UUID, str], EvaluationArtifactRecord] = {
+            (record.job_id, record.key): record for record in existing
+        }
+        self.added: list[Any] = []
+        self.deleted_keys: list[tuple[uuid.UUID, str]] = []
+
+    def execute(self, stmt: Any) -> _NoRowsResult:
+        if getattr(stmt, "is_delete", False):
+            key = _evaluation_artifact_delete_key(stmt)
+            self.deleted_keys.append(key)
+            self.records.pop(key, None)
+        return _NoRowsResult()
+
+    def add(self, obj: Any) -> None:
+        if isinstance(obj, EvaluationArtifactRecord):
+            key = (obj.job_id, obj.key)
+            if key in self.records:
+                raise SQLAlchemyError("duplicate evaluation_artifacts job/key")
+            self.records[key] = obj
+        self.added.append(obj)
+
+
+def _evaluation_artifact_delete_key(stmt: Any) -> tuple[uuid.UUID, str]:
+    values: dict[str, Any] = {}
+    for criterion in getattr(stmt, "_where_criteria", ()):
+        name = getattr(getattr(criterion, "left", None), "key", None)
+        if name in {"job_id", "key"}:
+            values[name] = getattr(getattr(criterion, "right", None), "value", None)
+    job_id = values.get("job_id")
+    artifact_key = values.get("key")
+    if not isinstance(job_id, uuid.UUID) or not isinstance(artifact_key, str):
+        raise AssertionError(f"Unexpected evaluation artifact delete statement: {stmt!r}")
+    return job_id, artifact_key
 
 
 def _sample_plan_response() -> PlanningAgentResponse:

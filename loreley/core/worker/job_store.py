@@ -8,7 +8,7 @@ from typing import Any, Sequence, TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from loguru import logger
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import SQLAlchemyError
 
 from loreley.core.contracts import clamp_text, normalize_single_line
@@ -662,26 +662,62 @@ class EvolutionJobStore:
         card: CommitCard,
         artifacts: tuple[Any, ...],
     ) -> None:
-        for artifact in artifacts:
-            session.add(
-                EvaluationArtifactRecord(
-                    job_id=job_id,
-                    commit_card_id=card.id,
-                    commit_hash=commit_hash,
-                    key=artifact.key,
-                    kind=artifact.kind,
-                    mime_type=artifact.mime_type,
-                    label=artifact.label,
-                    summary=artifact.summary,
-                    visibility=artifact.visibility,
-                    agent_projection=artifact.agent_projection,
-                    storage_path=artifact.storage_path,
-                    size_bytes=artifact.size_bytes,
-                    sha256=artifact.sha256,
-                    diagnostics=[diagnostic.as_dict() for diagnostic in artifact.diagnostics],
-                    artifact_metadata=dict(artifact.metadata or {}),
-                )
+        records = [
+            EvolutionJobStore._evaluation_artifact_record(
+                job_id=job_id,
+                commit_card_id=card.id,
+                commit_hash=commit_hash,
+                artifact=artifact,
             )
+            for artifact in artifacts
+        ]
+        EvolutionJobStore._replace_evaluation_artifact_records(session=session, records=records)
+
+    @staticmethod
+    def _evaluation_artifact_record(
+        *,
+        job_id: UUID,
+        commit_card_id: UUID | None,
+        commit_hash: str,
+        artifact: Any,
+    ) -> EvaluationArtifactRecord:
+        return EvaluationArtifactRecord(
+            job_id=job_id,
+            commit_card_id=commit_card_id,
+            commit_hash=commit_hash,
+            key=artifact.key,
+            kind=artifact.kind,
+            mime_type=artifact.mime_type,
+            label=artifact.label,
+            summary=artifact.summary,
+            visibility=artifact.visibility,
+            agent_projection=artifact.agent_projection,
+            storage_path=artifact.storage_path,
+            size_bytes=artifact.size_bytes,
+            sha256=artifact.sha256,
+            diagnostics=[diagnostic.as_dict() for diagnostic in artifact.diagnostics],
+            artifact_metadata=dict(artifact.metadata or {}),
+        )
+
+    @staticmethod
+    def _replace_evaluation_artifact_records(
+        *,
+        session: Any,
+        records: Sequence[EvaluationArtifactRecord],
+    ) -> None:
+        keys = tuple(dict.fromkeys((record.job_id, record.key) for record in records))
+        for job_id, key in keys:
+            # Retries reuse EvolutionJob.id, so job/key is the durable artifact identity.
+            session.execute(
+                delete(EvaluationArtifactRecord)
+                .where(
+                    EvaluationArtifactRecord.job_id == job_id,
+                    EvaluationArtifactRecord.key == key,
+                )
+                .execution_options(synchronize_session=False)
+            )
+        for record in records:
+            session.add(record)
 
     def _record_success_evaluation(
         self,
@@ -893,18 +929,19 @@ class EvolutionJobStore:
         )
         if not commit_hash:
             return
-        self._add_failure_artifact_record(
-            session=session,
-            job_id=request.job_ctx.job_id,
-            commit_hash=commit_hash,
-            outcome=request.outcome,
-        )
-        self._add_evaluation_artifact_records_for_failure(
-            session=session,
-            job_id=request.job_ctx.job_id,
-            commit_hash=commit_hash,
-            artifacts=artifact_result.evaluation_artifacts,
-        )
+        records = [
+            self._failure_artifact_record(
+                job_id=request.job_ctx.job_id,
+                commit_hash=commit_hash,
+                outcome=request.outcome,
+            ),
+            *self._evaluation_artifact_records_for_failure(
+                job_id=request.job_ctx.job_id,
+                commit_hash=commit_hash,
+                artifacts=artifact_result.evaluation_artifacts,
+            ),
+        ]
+        self._replace_evaluation_artifact_records(session=session, records=records)
 
     def _update_candidate_after_failure(
         self,
@@ -1000,63 +1037,48 @@ class EvolutionJobStore:
         job.last_error = message
 
     @staticmethod
-    def _add_failure_artifact_record(
+    def _failure_artifact_record(
         *,
-        session: Any,
         job_id: UUID,
         commit_hash: str,
         outcome: EvaluationOutcome,
-    ) -> None:
+    ) -> EvaluationArtifactRecord:
         failure = outcome.failure
         summary = failure.safe_failure_summary if failure else outcome.outcome_kind
-        session.add(
-            EvaluationArtifactRecord(
-                job_id=job_id,
-                commit_card_id=None,
-                commit_hash=commit_hash,
-                key="evaluation_failure",
-                kind="failure",
-                mime_type="text/plain",
-                label="Evaluation failure",
-                summary=clamp_text(normalize_single_line(summary), 1024),
-                visibility="human_only",
-                agent_projection="summary",
-                storage_path=None,
-                size_bytes=None,
-                sha256=None,
-                diagnostics=[],
-                artifact_metadata={"outcome_kind": outcome.outcome_kind},
-            )
+        return EvaluationArtifactRecord(
+            job_id=job_id,
+            commit_card_id=None,
+            commit_hash=commit_hash,
+            key="evaluation_failure",
+            kind="failure",
+            mime_type="text/plain",
+            label="Evaluation failure",
+            summary=clamp_text(normalize_single_line(summary), 1024),
+            visibility="human_only",
+            agent_projection="summary",
+            storage_path=None,
+            size_bytes=None,
+            sha256=None,
+            diagnostics=[],
+            artifact_metadata={"outcome_kind": outcome.outcome_kind},
         )
 
     @staticmethod
-    def _add_evaluation_artifact_records_for_failure(
+    def _evaluation_artifact_records_for_failure(
         *,
-        session: Any,
         job_id: UUID,
         commit_hash: str,
         artifacts: tuple[Any, ...],
-    ) -> None:
-        for artifact in artifacts:
-            session.add(
-                EvaluationArtifactRecord(
-                    job_id=job_id,
-                    commit_card_id=None,
-                    commit_hash=commit_hash,
-                    key=artifact.key,
-                    kind=artifact.kind,
-                    mime_type=artifact.mime_type,
-                    label=artifact.label,
-                    summary=artifact.summary,
-                    visibility=artifact.visibility,
-                    agent_projection=artifact.agent_projection,
-                    storage_path=artifact.storage_path,
-                    size_bytes=artifact.size_bytes,
-                    sha256=artifact.sha256,
-                    diagnostics=[diagnostic.as_dict() for diagnostic in artifact.diagnostics],
-                    artifact_metadata=dict(artifact.metadata or {}),
-                )
+    ) -> list[EvaluationArtifactRecord]:
+        return [
+            EvolutionJobStore._evaluation_artifact_record(
+                job_id=job_id,
+                commit_card_id=None,
+                commit_hash=commit_hash,
+                artifact=artifact,
             )
+            for artifact in artifacts
+        ]
 
     def _update_failed_candidate(
         self,

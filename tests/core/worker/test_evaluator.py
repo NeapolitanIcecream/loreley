@@ -194,6 +194,73 @@ def test_coerce_metrics_and_normalise_sequence(settings: Settings) -> None:
         Evaluator._normalise_sequence(42, "label")  # type: ignore[attr-defined]
 
 
+@pytest.mark.parametrize("raw_value", ["false", "False", "0"])
+def test_metric_mapping_parses_false_string_higher_is_better(
+    settings: Settings,
+    raw_value: str,
+) -> None:
+    """Regression: bool('false') and bool('0') marked metrics higher-is-better."""
+    evaluator = Evaluator(settings=settings)
+
+    metrics = evaluator._coerce_metrics(  # type: ignore[attr-defined]
+        {"name": "latency", "value": 10, "higher_is_better": raw_value}
+    )
+
+    assert metrics[0].higher_is_better is False
+
+
+@pytest.mark.parametrize("raw_value", ["true", "True", "1"])
+def test_metric_mapping_parses_true_string_higher_is_better(
+    settings: Settings,
+    raw_value: str,
+) -> None:
+    evaluator = Evaluator(settings=settings)
+
+    metrics = evaluator._coerce_metrics(  # type: ignore[attr-defined]
+        {"name": "accuracy", "value": "0.9", "higher_is_better": raw_value}
+    )
+
+    assert metrics[0].higher_is_better is True
+    assert metrics[0].value == 0.9
+
+
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [(False, False), (True, True), (0, False), (1, True)],
+)
+def test_metric_mapping_preserves_boolean_and_numeric_higher_is_better(
+    settings: Settings,
+    raw_value: bool | int,
+    expected: bool,
+) -> None:
+    evaluator = Evaluator(settings=settings)
+
+    metrics = evaluator._coerce_metrics(  # type: ignore[attr-defined]
+        {"name": "score", "value": 2.5, "higher_is_better": raw_value}
+    )
+
+    assert metrics[0].higher_is_better is expected
+
+
+def test_metric_mapping_defaults_higher_is_better_to_true(settings: Settings) -> None:
+    evaluator = Evaluator(settings=settings)
+
+    metrics = evaluator._coerce_metrics(  # type: ignore[attr-defined]
+        {"name": "quality", "value": 1}
+    )
+
+    assert metrics[0].higher_is_better is True
+
+
+def test_metric_mapping_rejects_unknown_higher_is_better_string(settings: Settings) -> None:
+    evaluator = Evaluator(settings=settings)
+
+    with pytest.raises(EvaluationError, match="higher_is_better"):
+        evaluator._coerce_metrics(  # type: ignore[attr-defined]
+            {"name": "quality", "value": 1, "higher_is_better": "sometimes"}
+        )
+
+
 def test_coerce_extra_and_validate_context(tmp_path: Path, settings: Settings) -> None:
     mapping = {"a": 1}
     assert Evaluator._coerce_extra(mapping) == mapping  # type: ignore[attr-defined]
