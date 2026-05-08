@@ -59,12 +59,12 @@ def render() -> None:
     df = _decorate_jobs_df(df)
 
     st.subheader("Jobs")
+    st.caption(f"page={state.index + 1} items={len(df)}")
+    _render_jobs_pager(state=state, page=page if isinstance(page, dict) else {})
     if df.empty:
         st.info("No jobs found.")
         return
 
-    st.caption(f"page={state.index + 1} items={len(df)}")
-    _render_jobs_pager(state=state, page=page if isinstance(page, dict) else {})
     grid = render_table(df, key="jobs_grid", selection="single")
     _render_selected_job(
         api_base_url=api_base_url,

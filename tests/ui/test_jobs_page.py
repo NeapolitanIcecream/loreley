@@ -9,6 +9,20 @@ import pytest
 
 class _FakeStreamlitModule:
     session_state: dict[str, object] = {}
+    buttons: list[dict[str, object]] = []
+    captions: list[str] = []
+    infos: list[str] = []
+    selectbox_values: dict[str, object] = {}
+    checkbox_values: dict[str, bool] = {}
+
+    @classmethod
+    def reset(cls) -> None:
+        cls.session_state = {}
+        cls.buttons = []
+        cls.captions = []
+        cls.infos = []
+        cls.selectbox_values = {}
+        cls.checkbox_values = {}
 
     @staticmethod
     def cache_resource(*_args, **_kwargs):
@@ -24,9 +38,53 @@ class _FakeStreamlitModule:
 
         return _decorator
 
+    @classmethod
+    def title(cls, _value: str) -> None:
+        return None
+
+    @classmethod
+    def subheader(cls, _value: str) -> None:
+        return None
+
+    @classmethod
+    def error(cls, _value: str) -> None:
+        return None
+
+    @classmethod
+    def info(cls, value: str) -> None:
+        cls.infos.append(value)
+
+    @classmethod
+    def caption(cls, value: str) -> None:
+        cls.captions.append(value)
+
+    @classmethod
+    def selectbox(cls, label: str, options, index: int = 0, **_kwargs):
+        return cls.selectbox_values.get(label, options[index])
+
+    @classmethod
+    def checkbox(cls, _label: str, *, key: str, **_kwargs) -> bool:
+        return cls.checkbox_values.get(key, False)
+
+    @classmethod
+    def button(cls, label: str, *, key: str, disabled: bool = False, **_kwargs) -> bool:
+        cls.buttons.append({"label": label, "key": key, "disabled": disabled})
+        return False
+
+    @classmethod
+    def columns(cls, count: int):
+        return [cls() for _ in range(count)]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
 
 @pytest.fixture
 def jobs_module(monkeypatch: pytest.MonkeyPatch):
+    _FakeStreamlitModule.reset()
     monkeypatch.setitem(sys.modules, "streamlit", _FakeStreamlitModule())
     sys.modules.pop("loreley.ui.components.api", None)
     sys.modules.pop("loreley.ui.components.aggrid", None)
@@ -67,3 +125,35 @@ def test_jobs_decoration_normalizes_missing_fate_to_unknown(jobs_module) -> None
     decorated = jobs_module._decorate_jobs_df(df)  # noqa: SLF001
 
     assert decorated["fate"].tolist() == ["unknown", "unknown", "elite_inserted"]
+
+
+def test_jobs_render_keeps_pager_available_when_client_filter_empties_page(
+    jobs_module,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeStreamlitModule.session_state[jobs_module.API_BASE_URL_KEY] = "http://api.local"
+    _FakeStreamlitModule.selectbox_values = {
+        "Page size": 50,
+        "Status filter": "all",
+        "Job kind": "all",
+        "Fate": "unknown",
+        "Evidence": "all",
+    }
+    monkeypatch.setattr(
+        jobs_module,
+        "api_get_page_or_stop",
+        lambda *_args, **_kwargs: {
+            "items": [{"id": "job-1", "candidate_fate_label": "elite_inserted"}],
+            "next_cursor": "next-page",
+        },
+    )
+
+    jobs_module.render()
+
+    assert "page=1 items=0" in _FakeStreamlitModule.captions
+    assert "No jobs found." in _FakeStreamlitModule.infos
+    assert {
+        "label": "Next page",
+        "key": "jobs_next_page",
+        "disabled": False,
+    } in _FakeStreamlitModule.buttons
