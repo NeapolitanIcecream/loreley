@@ -39,6 +39,7 @@ from loreley.scheduler.baselines import (
 
 log = logger.bind(module="api.operator")
 _BASELINE_ENSURE_PENDING_STALE_AFTER = timedelta(minutes=10)
+_BASELINE_ENSURE_RUNNING_STALE_AFTER = timedelta(hours=6)
 
 
 class OperatorTaskNotFoundError(RuntimeError):
@@ -120,8 +121,9 @@ def create_baseline_ensure_task(*, settings: Settings | None = None) -> Operator
         active = _active_baseline_ensure_task(session, lock=True)
         if active is not None:
             now = _operator_now()
-            if _stale_pending_baseline_ensure_task(active, now=now):
-                _mark_stale_pending_task_failed(active, now=now)
+            stale_status = _stale_baseline_ensure_status(active, now=now)
+            if stale_status is not None:
+                _mark_stale_baseline_task_failed(active, now=now, stale_status=stale_status)
                 session.flush()
             else:
                 raise OperatorTaskAlreadyActiveError(
@@ -171,29 +173,44 @@ def _operator_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _stale_pending_baseline_ensure_task(task: object, *, now: datetime) -> bool:
+def _stale_baseline_ensure_status(task: object, *, now: datetime) -> str | None:
     raw_status = getattr(task, "status", "")
     status = str(getattr(raw_status, "value", raw_status) or "")
-    if status != OperatorTaskStatus.PENDING.value:
-        return False
-    created_at = getattr(task, "created_at", None)
-    if not isinstance(created_at, datetime):
-        return False
-    if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=timezone.utc)
-    else:
-        created_at = created_at.astimezone(timezone.utc)
-    return created_at <= now - _BASELINE_ENSURE_PENDING_STALE_AFTER
+    if status == OperatorTaskStatus.PENDING.value:
+        created_at = _normalize_operator_task_datetime(getattr(task, "created_at", None))
+        if created_at is not None and created_at <= now - _BASELINE_ENSURE_PENDING_STALE_AFTER:
+            return OperatorTaskStatus.PENDING.value
+    if status == OperatorTaskStatus.RUNNING.value:
+        started_at = _normalize_operator_task_datetime(getattr(task, "started_at", None))
+        if started_at is not None and started_at <= now - _BASELINE_ENSURE_RUNNING_STALE_AFTER:
+            return OperatorTaskStatus.RUNNING.value
+    return None
 
 
-def _mark_stale_pending_task_failed(task: object, *, now: datetime) -> None:
+def _normalize_operator_task_datetime(value: object) -> datetime | None:
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _mark_stale_baseline_task_failed(
+    task: object,
+    *,
+    now: datetime,
+    stale_status: str,
+) -> None:
     task.status = OperatorTaskStatus.FAILED.value
     task.completed_at = now
     task.error_summary = (
-        "Stale pending baseline ensure task replaced by a new operator request."
+        f"Stale {stale_status} baseline ensure task replaced by a new operator request."
     )
-    log.bind(task_id=str(getattr(task, "id", ""))).warning(
-        "Stale pending operator baseline ensure task marked failed"
+    log.bind(
+        task_id=str(getattr(task, "id", "")),
+        stale_status=stale_status,
+    ).warning(
+        "Stale operator baseline ensure task marked failed"
     )
 
 

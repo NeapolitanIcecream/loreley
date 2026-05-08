@@ -205,7 +205,11 @@ def test_create_baseline_ensure_task_replaces_stale_pending_task(monkeypatch, se
         yield _Session()
 
     monkeypatch.setattr(operator_service, "session_scope", _scope)
-    monkeypatch.setattr(operator_service, "_active_baseline_ensure_task", lambda *_args, **_kwargs: stale)
+    monkeypatch.setattr(
+        operator_service,
+        "_active_baseline_ensure_task",
+        lambda *_args, **_kwargs: stale,
+    )
     monkeypatch.setattr(operator_service, "_operator_now", lambda: now)
 
     task = operator_service.create_baseline_ensure_task(settings=settings)
@@ -214,6 +218,78 @@ def test_create_baseline_ensure_task_replaces_stale_pending_task(monkeypatch, se
     assert stale.completed_at == now
     assert "stale pending" in str(stale.error_summary).lower()
     assert task in added
+
+
+def test_create_baseline_ensure_task_replaces_stale_running_task(monkeypatch, settings) -> None:
+    """Regression: orphaned running background tasks must not block forever."""
+
+    task_id = uuid4()
+    now = datetime(2026, 5, 8, tzinfo=timezone.utc)
+    stale = SimpleNamespace(
+        id=task_id,
+        status=OperatorTaskStatus.RUNNING.value,
+        created_at=now - timedelta(hours=7),
+        started_at=now - timedelta(hours=7),
+        completed_at=None,
+        error_summary=None,
+    )
+    added: list[object] = []
+
+    class _Session:
+        def add(self, row):
+            added.append(row)
+
+        def flush(self):
+            return None
+
+    @contextmanager
+    def _scope():
+        yield _Session()
+
+    monkeypatch.setattr(operator_service, "session_scope", _scope)
+    monkeypatch.setattr(
+        operator_service,
+        "_active_baseline_ensure_task",
+        lambda *_args, **_kwargs: stale,
+    )
+    monkeypatch.setattr(operator_service, "_operator_now", lambda: now)
+
+    task = operator_service.create_baseline_ensure_task(settings=settings)
+
+    assert stale.status == OperatorTaskStatus.FAILED.value
+    assert stale.completed_at == now
+    assert "stale running" in str(stale.error_summary).lower()
+    assert task in added
+
+
+def test_create_baseline_ensure_task_rejects_recent_running_task(monkeypatch, settings) -> None:
+    task_id = uuid4()
+    now = datetime(2026, 5, 8, tzinfo=timezone.utc)
+    active = SimpleNamespace(
+        id=task_id,
+        status=OperatorTaskStatus.RUNNING.value,
+        created_at=now - timedelta(minutes=5),
+        started_at=now - timedelta(minutes=5),
+    )
+
+    class _Session:
+        def add(self, _row):
+            raise AssertionError("recent running task should block before insert")
+
+    @contextmanager
+    def _scope():
+        yield _Session()
+
+    monkeypatch.setattr(operator_service, "session_scope", _scope)
+    monkeypatch.setattr(
+        operator_service,
+        "_active_baseline_ensure_task",
+        lambda *_args, **_kwargs: active,
+    )
+    monkeypatch.setattr(operator_service, "_operator_now", lambda: now)
+
+    with pytest.raises(OperatorTaskAlreadyActiveError, match=str(task_id)):
+        operator_service.create_baseline_ensure_task(settings=settings)
 
 
 def test_operator_task_model_has_active_baseline_unique_index() -> None:

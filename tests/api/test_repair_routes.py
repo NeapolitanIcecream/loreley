@@ -12,7 +12,11 @@ import pytest
 import loreley.api.routers.repair as repair_router
 import loreley.api.services.repair as repair_service
 from loreley.api.routers.repair import router as repair_api_router
-from loreley.api.services.repair import RepairConflictError, RepairNotFoundError, RepairPoolPage
+from loreley.api.services.repair import (
+    RepairConflictError,
+    RepairNotFoundError,
+    RepairPoolPage,
+)
 from loreley.db.models import CandidateCommit
 
 
@@ -171,6 +175,68 @@ def test_repair_schedule_one_api_guard_blocks_exhausted_token_budget(
     assert payload["scheduled"] is False
     assert payload["job_id"] is None
     assert "token" in str(payload["message"]).lower()
+
+
+def test_repair_schedule_one_api_guard_serializes_checks_and_schedule(
+    monkeypatch,
+    settings,
+) -> None:
+    """Regression: cap/token checks and schedule-one must share one API lock."""
+
+    settings.failed_candidate_repair_enabled = True
+    settings.failed_candidate_repair_max_jobs_per_tick = 1
+    settings.failed_candidate_repair_max_active_jobs = 1
+    settings.failed_candidate_repair_max_tokens = 1
+    events: list[str] = []
+    job_id = uuid4()
+    source_id = uuid4()
+
+    def _lock(**kwargs):
+        events.append("lock.enter")
+        try:
+            return kwargs["callback"]()
+        finally:
+            events.append("lock.exit")
+
+    class _Sampler:
+        def count_active_repair_jobs(self) -> int:
+            assert events == ["lock.enter"]
+            events.append("active.count")
+            return 0
+
+        def schedule_one(self):
+            assert events == ["lock.enter", "active.count", "tokens.count"]
+            events.append("schedule.one")
+            return SimpleNamespace(
+                job_id=job_id,
+                repair_source_candidate_id=source_id,
+                base_commit_hash="base",
+            )
+
+    def _tokens(**_kwargs):
+        assert events == ["lock.enter", "active.count"]
+        events.append("tokens.count")
+        return 1
+
+    monkeypatch.setattr(repair_service, "_with_manual_repair_schedule_lock", _lock)
+    monkeypatch.setattr(repair_service, "_manual_repair_tokens_available", _tokens)
+    monkeypatch.setattr(
+        repair_service,
+        "FailedCandidateRepairSampler",
+        lambda **_kwargs: _Sampler(),
+    )
+
+    payload = repair_service.schedule_one_repair(settings=settings)
+
+    assert payload["scheduled"] is True
+    assert payload["job_id"] == job_id
+    assert events == [
+        "lock.enter",
+        "active.count",
+        "tokens.count",
+        "schedule.one",
+        "lock.exit",
+    ]
 
 
 def test_repair_schedule_one_api_guard_blocks_when_active_jobs_at_cap(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Callable, TypeVar
 from uuid import UUID
 
 from loguru import logger
@@ -13,10 +14,17 @@ from loreley.api.pagination import PaginationCursorError, decode_cursor, encode_
 from loreley.config import Settings, get_settings
 from loreley.core.contracts import clamp_text, normalize_single_line
 from loreley.db.base import session_scope
-from loreley.db.models import CandidateCommit, DiagnosticCapsule, EvolutionJob, JobStatus
+from loreley.db.models import (
+    CandidateCommit,
+    DiagnosticCapsule,
+    EvolutionJob,
+    InstanceMetadata,
+    JobStatus,
+)
 from loreley.scheduler.job_scheduler import FailedCandidateRepairSampler
 
 log = logger.bind(module="api.repair")
+_T = TypeVar("_T")
 
 _ACTIVE_JOB_STATUSES = (JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING)
 
@@ -120,32 +128,38 @@ def schedule_one_repair(*, settings: Settings | None = None) -> dict[str, object
         )
     try:
         sampler = FailedCandidateRepairSampler(settings=active_settings)
-        active_repair_jobs = sampler.count_active_repair_jobs()
-        if active_repair_jobs >= max_active:
-            return _repair_schedule_noop(
-                "Active repair jobs are already at FAILED_CANDIDATE_REPAIR_MAX_ACTIVE_JOBS.",
-            )
-        if _manual_repair_tokens_available(settings=active_settings) <= 0:
-            return _repair_schedule_noop(
-                "Repair scheduling is blocked by the failed-candidate repair token budget.",
-            )
-        result = sampler.schedule_one()
+
+        def _schedule_locked() -> dict[str, object]:
+            active_repair_jobs = sampler.count_active_repair_jobs()
+            if active_repair_jobs >= max_active:
+                return _repair_schedule_noop(
+                    "Active repair jobs are already at FAILED_CANDIDATE_REPAIR_MAX_ACTIVE_JOBS.",
+                )
+            if _manual_repair_tokens_available(settings=active_settings) <= 0:
+                return _repair_schedule_noop(
+                    "Repair scheduling is blocked by the failed-candidate repair token budget.",
+                )
+            result = sampler.schedule_one()
+            if result is None:
+                log.info("Repair schedule-one requested but no eligible candidate was scheduled")
+                return _repair_schedule_noop("No eligible repair candidate was scheduled.")
+            log.bind(
+                job_id=str(result.job_id),
+                repair_source_candidate_id=str(result.repair_source_candidate_id),
+            ).info("Repair schedule-one created job")
+            return {
+                "scheduled": True,
+                "job_id": result.job_id,
+                "repair_source_candidate_id": result.repair_source_candidate_id,
+                "base_commit_hash": result.base_commit_hash,
+                "message": "Repair job scheduled.",
+            }
+
+        return _with_manual_repair_schedule_lock(
+            callback=_schedule_locked,
+        )
     except ValueError as exc:
         raise RepairValidationError(str(exc)) from exc
-    if result is None:
-        log.info("Repair schedule-one requested but no eligible candidate was scheduled")
-        return _repair_schedule_noop("No eligible repair candidate was scheduled.")
-    log.bind(
-        job_id=str(result.job_id),
-        repair_source_candidate_id=str(result.repair_source_candidate_id),
-    ).info("Repair schedule-one created job")
-    return {
-        "scheduled": True,
-        "job_id": result.job_id,
-        "repair_source_candidate_id": result.repair_source_candidate_id,
-        "base_commit_hash": result.base_commit_hash,
-        "message": "Repair job scheduled.",
-    }
 
 
 def update_candidate_operator_state(*, candidate_id: UUID, action: str) -> dict[str, object]:
@@ -195,6 +209,16 @@ def _repair_schedule_noop(message: str) -> dict[str, object]:
         "base_commit_hash": None,
         "message": message,
     }
+
+
+def _with_manual_repair_schedule_lock(*, callback: Callable[[], _T]) -> _T:
+    with session_scope() as session:
+        session.execute(
+            select(InstanceMetadata)
+            .where(InstanceMetadata.id == 1)
+            .with_for_update()
+        ).scalar_one()
+        return callback()
 
 
 def _manual_repair_tokens_available(*, settings: Settings) -> int:
