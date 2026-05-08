@@ -41,14 +41,13 @@ def render() -> None:
 
     rows = page.get("items") if isinstance(page, dict) else []
     df = pd.DataFrame(rows if isinstance(rows, list) else [])
+    st.caption(f"page={state.index + 1} items={len(df)}")
+    _render_repair_pager(state=state, page=page if isinstance(page, dict) else {})
     if df.empty:
         st.info("No failed candidates match these filters.")
         return
 
     df = _decorate_repair_df(df)
-    st.caption(f"page={state.index + 1} items={len(df)}")
-    _render_repair_pager(state=state, page=page if isinstance(page, dict) else {})
-
     grid = render_table(df, key="repair_pool_grid", selection="single")
     _render_selected_candidate(
         api_base_url=api_base_url,
