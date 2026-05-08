@@ -39,6 +39,13 @@ log = logger.bind(module="scheduler.baselines")
 BASELINE_STATUS_VALID = "valid"
 BASELINE_STATUS_FAILED = "failed"
 BASELINE_STATUS_DEGRADED = "degraded"
+_RECORDED_BASELINE_STATUSES = frozenset(
+    {
+        BASELINE_STATUS_VALID,
+        BASELINE_STATUS_FAILED,
+        BASELINE_STATUS_DEGRADED,
+    }
+)
 
 _BASELINE_FAILURE_TEXT_MAX = 4096
 _CAMPAIGN_PROGRAM_HASH_UNSET = object()
@@ -490,7 +497,7 @@ class BaselineBootstrapService:
         )
         existing = self._load_baseline_by_key(key.hash)
         policy = self._policy()
-        if existing is not None and existing.status == BASELINE_STATUS_VALID:
+        if existing is not None and existing.status in _RECORDED_BASELINE_STATUSES:
             return self._result_from_row(existing, key_hash=key.hash, policy=policy)
 
         outcome: EvaluationOutcome | None = None

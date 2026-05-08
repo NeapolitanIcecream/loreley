@@ -51,6 +51,20 @@ from loreley.tasks.workers import build_evolution_job_sender_actor
 log = logger.bind(module="scheduler.job_scheduler")
 
 
+SUPPORTED_REPAIR_MODES = frozenset({REPAIR_MODE_REBASE_FROM_NEAREST_VIABLE})
+
+
+def _validated_failed_candidate_repair_mode(settings: Settings) -> str:
+    mode = str(getattr(settings, "failed_candidate_repair_mode", "") or "")
+    if mode not in SUPPORTED_REPAIR_MODES:
+        supported = ", ".join(sorted(SUPPORTED_REPAIR_MODES))
+        raise ValueError(
+            "Unsupported FAILED_CANDIDATE_REPAIR_MODE="
+            f"{mode!r}; supported values: {supported}"
+        )
+    return mode
+
+
 def _db_utc_now(session: Any) -> datetime:
     value = session.execute(select(func.now())).scalar_one()
     if not isinstance(value, datetime):
@@ -82,6 +96,7 @@ class FailedCandidateRepairSampler:
 
     def __init__(self, *, settings: Settings, rng: random.Random | None = None) -> None:
         self.settings = settings
+        self._repair_mode = _validated_failed_candidate_repair_mode(settings)
         self._rng = rng or random.Random(int(getattr(settings, "mapelites_sampler_seed", 0) or 0))
 
     def count_active_repair_jobs(self) -> int:
@@ -140,7 +155,7 @@ class FailedCandidateRepairSampler:
                 is_seed_job=False,
                 job_kind="repair",
                 repair_source_candidate_id=candidate.id,
-                repair_mode=REPAIR_MODE_REBASE_FROM_NEAREST_VIABLE,
+                repair_mode=self._repair_mode,
                 campaign_program_hash=getattr(candidate, "campaign_program_hash", None),
                 priority=self.settings.mapelites_sampler_default_priority,
                 scheduled_at=now,

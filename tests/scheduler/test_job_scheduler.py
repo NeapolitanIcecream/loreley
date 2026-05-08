@@ -7,11 +7,13 @@ from typing import Any, cast
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 from rich.console import Console
 
 import loreley.scheduler.job_scheduler as job_scheduler
 from loreley.config import Settings
 from loreley.core.map_elites.sampler import MapElitesSampler, SamplingSnapshot
+from loreley.core.worker.repair import REPAIR_MODE_REBASE_FROM_NEAREST_VIABLE
 from loreley.db.models import JobStatus
 from loreley.scheduler.baselines import BASELINE_STATUS_DEGRADED, BASELINE_STATUS_VALID
 from loreley.scheduler.job_scheduler import (
@@ -20,6 +22,7 @@ from loreley.scheduler.job_scheduler import (
     JobScheduler,
     ScheduledRepairJob,
 )
+from tests.support import TestSettings
 
 
 class DummySenderActor:
@@ -394,6 +397,102 @@ def test_repair_scheduler_consumes_token_for_scheduled_repair_job(
     assert scheduled == [repair_job_id]
     assert scheduler._repair_tokens == 0
     assert scheduler.repair_sampler.scheduled == 1
+
+
+def test_repair_sampler_schedules_job_with_configured_supported_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    """Regression: FAILED_CANDIDATE_REPAIR_MODE must control scheduled repair jobs."""
+
+    settings.failed_candidate_repair_enabled = True
+    settings.failed_candidate_repair_mode = REPAIR_MODE_REBASE_FROM_NEAREST_VIABLE
+    job_id = uuid.uuid4()
+    source_id = uuid.uuid4()
+    candidate = SimpleNamespace(
+        id=source_id,
+        nearest_viable_ancestor_hash="base",
+        island_id="main",
+        failure_summary="tests failed",
+        failure_kind="test_failed",
+        repair_state="eligible",
+        repair_attempts=0,
+        last_repair_job_id=None,
+        campaign_program_hash=None,
+    )
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.added_jobs: list[Any] = []
+
+        def add(self, job: Any) -> None:
+            self.added_jobs.append(job)
+
+        def flush(self) -> None:
+            self.added_jobs[-1].id = job_id
+
+    session = DummySession()
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield session
+
+    monkeypatch.setattr(job_scheduler, "session_scope", fake_scope)
+    monkeypatch.setattr(
+        job_scheduler,
+        "_db_utc_now",
+        lambda _session: datetime(2026, 5, 8, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(
+        job_scheduler,
+        "load_campaign_program_snapshot_by_hash",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        FailedCandidateRepairSampler,
+        "_select_candidate",
+        lambda _self, *, session: candidate,
+    )
+    monkeypatch.setattr(
+        FailedCandidateRepairSampler,
+        "_has_active_repair_job",
+        staticmethod(lambda **_kwargs: False),
+    )
+    sampler = FailedCandidateRepairSampler(settings=settings)
+
+    scheduled = sampler.schedule_one()
+
+    assert scheduled == ScheduledRepairJob(
+        job_id=job_id,
+        repair_source_candidate_id=source_id,
+        base_commit_hash="base",
+    )
+    assert session.added_jobs[-1].repair_mode == settings.failed_candidate_repair_mode
+    assert candidate.repair_state == "scheduled"
+    assert candidate.repair_attempts == 1
+    assert candidate.last_repair_job_id == job_id
+
+
+def test_settings_rejects_unsupported_failed_candidate_repair_mode() -> None:
+    """Unsupported repair modes should fail during settings construction."""
+
+    with pytest.raises(ValidationError) as exc_info:
+        TestSettings(
+            FAILED_CANDIDATE_REPAIR_MODE="apply_from_failed_candidate",
+            MAPELITES_CODE_EMBEDDING_DIMENSIONS=8,
+            EXPERIMENT_ID="test",
+        )
+
+    assert "rebase_from_nearest_viable" in str(exc_info.value)
+
+
+def test_repair_sampler_rejects_mutated_unsupported_repair_mode(settings: Settings) -> None:
+    """Directly mutated settings must not silently schedule an unsupported mode."""
+
+    settings.failed_candidate_repair_mode = "apply_from_failed_candidate"  # type: ignore[assignment]
+
+    with pytest.raises(ValueError, match="FAILED_CANDIDATE_REPAIR_MODE"):
+        FailedCandidateRepairSampler(settings=settings)
 
 
 def test_schedule_jobs_reserves_repair_slot_when_normal_sampling_can_fill_batch(

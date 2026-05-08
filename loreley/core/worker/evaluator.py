@@ -1321,8 +1321,9 @@ class Evaluator:
 
         unit = payload.get("unit")
         unit_str = str(unit) if unit is not None else None
-        hib = payload.get("higher_is_better")
-        hib_bool = bool(hib) if hib is not None else True
+        hib_bool = Evaluator._metric_higher_is_better_from_value(
+            payload.get("higher_is_better"),
+        )
         details = payload.get("details")
         if details is None:
             details_dict: Mapping[str, Any] | None = None
@@ -1337,6 +1338,32 @@ class Evaluator:
             unit=unit_str,
             higher_is_better=hib_bool,
             details=details_dict,
+        )
+
+    @staticmethod
+    def _metric_higher_is_better_from_value(value: Any) -> bool:
+        if value is None:
+            return True
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"true", "1"}:
+                return True
+            if normalized in {"false", "0"}:
+                return False
+            raise EvaluationError(
+                "Metric 'higher_is_better' must be a boolean or one of: "
+                "'true', 'false', '1', '0'."
+            )
+        if isinstance(value, (int, float)):
+            if value == 1:
+                return True
+            if value == 0:
+                return False
+        raise EvaluationError(
+            "Metric 'higher_is_better' must be a boolean or one of: "
+            "'true', 'false', '1', '0'."
         )
 
     @staticmethod

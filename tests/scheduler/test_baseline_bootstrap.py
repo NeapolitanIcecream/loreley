@@ -298,48 +298,47 @@ def test_valid_matching_baseline_is_loaded_without_rerunning_evaluator(
     assert result.status == BASELINE_STATUS_VALID
 
 
-def test_failed_matching_baseline_is_retried_before_blocking_scheduler(
+@pytest.mark.parametrize(
+    ("policy", "expected_status", "expected_can_run"),
+    [
+        ("required", BASELINE_STATUS_FAILED, False),
+        ("warn", BASELINE_STATUS_DEGRADED, True),
+    ],
+)
+def test_non_valid_baseline_attempt_is_reused_on_repeated_ensure_calls(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
+    policy: str,
+    expected_status: str,
+    expected_can_run: bool,
 ) -> None:
-    settings = _settings(policy="required")
-    key = build_baseline_key(settings=settings, root_commit_hash="root123", campaign_program=None)
-    row = CampaignBaseline(
-        baseline_key_hash=key.hash,
-        root_commit_hash="root123",
-        campaign_program_hash=None,
-        evaluator_name="tests.support:plugin",
-        evaluator_version=key.evaluator_version,
-        primary_metric_name="score",
-        primary_metric_higher_is_better=True,
-        runtime_profile=settings.profile,
-        effective_settings_fingerprint=key.effective_settings_fingerprint,
-        status=BASELINE_STATUS_FAILED,
-        failure_kind="primary_metric_missing",
-        failure_summary="transient setup problem",
-    )
-    row.id = uuid.uuid4()
+    """Regression: failed/degraded same-key baselines must not rerun every scheduler tick."""
+
     store = _BaselineStore()
-    store.baselines.append(row)
+    contexts: list[object] = []
     _install_session(monkeypatch, store)
     _install_baseline_eval(
         monkeypatch,
         tmp_path,
-        _passed_outcome(metrics=(EvaluationMetric(name="score", value=4.0),)),
+        _passed_outcome(metrics=(EvaluationMetric(name="other", value=1.0),)),
+        contexts,
     )
 
     service = BaselineBootstrapService(
-        settings=settings,
+        settings=_settings(policy=policy),
         repo_root=tmp_path,
         console=baselines.Console(record=True),
     )
-    result = service.ensure_or_load_baseline(root_commit_hash="root123", campaign_program=None)
+    first = service.ensure_or_load_baseline(root_commit_hash="root123", campaign_program=None)
+    second = service.ensure_or_load_baseline(root_commit_hash="root123", campaign_program=None)
 
-    assert result.can_dispatch_or_schedule is True
-    assert result.status == BASELINE_STATUS_VALID
-    assert store.baselines == [row]
-    assert row.failure_kind is None
-    assert row.metric_value == pytest.approx(4.0)
+    assert first.status == expected_status
+    assert second.status == expected_status
+    assert second.can_dispatch_or_schedule is expected_can_run
+    assert len(contexts) == 1
+    assert len(store.baselines) == 1
+    assert store.baselines[0].status == expected_status
+    assert store.baselines[0].failure_kind == "primary_metric_missing"
 
 
 def test_baseline_key_changes_with_evaluator_version() -> None:

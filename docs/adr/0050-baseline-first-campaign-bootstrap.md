@@ -171,9 +171,10 @@ metadata.baseline_key_hash = ...
 The evaluator should provide `evaluator_name`, `evaluator_version`, timing, and
 summary where possible. The bootstrap service persists both valid and failed
 attempts so operators can inspect why a campaign is blocked or degraded.
-Existing failed or degraded rows do not make the failure sticky: each scheduler
-check retries the active baseline key so a transient setup or evaluator problem
-can recover without manually deleting the row.
+Existing failed or degraded rows are authoritative for their baseline key until
+a relevant input changes and produces a new key, or until a future explicit
+retry/cooldown policy is added. This avoids spending evaluator budget on the
+same failed or degraded baseline every scheduler tick.
 
 ### Bootstrap Policy
 
@@ -426,5 +427,8 @@ Add tests for:
   edits can explicitly reuse an existing baseline.
 - Add baseline artifact storage and API endpoints if root benchmark artifacts
   become useful enough to justify a separate authority model.
+- Add an explicit baseline retry/cooldown policy if operators need automatic
+  recovery from transient evaluator or environment failures without changing
+  the baseline key.
 - Decide whether long-term archive views should expose both raw objective and
   baseline improvement in DB materialized views.

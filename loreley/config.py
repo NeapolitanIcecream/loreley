@@ -239,7 +239,7 @@ class Settings(BaseSettings):
         default=False,
         alias="FAILED_CANDIDATE_REPAIR_ENABLED",
     )
-    failed_candidate_repair_mode: str = Field(
+    failed_candidate_repair_mode: Literal["rebase_from_nearest_viable"] = Field(
         default="rebase_from_nearest_viable",
         alias="FAILED_CANDIDATE_REPAIR_MODE",
     )
