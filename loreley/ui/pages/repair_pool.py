@@ -28,6 +28,35 @@ def render() -> None:
         st.error(f"Missing pandas dependency: {exc}")
         return
 
+    _render_schedule_controls(api_base_url)
+    filters = _render_filter_controls()
+    params = _repair_pool_params(filters)
+    state = _sync_repair_pager(api_base_url=api_base_url, filters=filters)
+
+    cursor = current_cursor(state)
+    if cursor:
+        params["cursor"] = cursor
+    page = api_get_page_or_stop(api_base_url, "/api/v1/repair/pool", params=params)
+    _render_repair_summary(page.get("summary") if isinstance(page, dict) else {})
+
+    rows = page.get("items") if isinstance(page, dict) else []
+    df = pd.DataFrame(rows if isinstance(rows, list) else [])
+    if df.empty:
+        st.info("No failed candidates match these filters.")
+        return
+
+    df = _decorate_repair_df(df)
+    st.caption(f"page={state.index + 1} items={len(df)}")
+    _render_repair_pager(state=state, page=page if isinstance(page, dict) else {})
+
+    grid = render_table(df, key="repair_pool_grid", selection="single")
+    _render_selected_candidate(
+        api_base_url=api_base_url,
+        selected=selected_rows(grid),
+    )
+
+
+def _render_schedule_controls(api_base_url: str) -> None:
     schedule_col, refresh_col = st.columns(2)
     with schedule_col:
         if st.button("Schedule one repair", key="repair_schedule_one"):
@@ -43,6 +72,8 @@ def render() -> None:
             st.cache_data.clear()
             _rerun()
 
+
+def _render_filter_controls() -> dict[str, object]:
     page_size = st.selectbox("Page size", [50, 100, 200, 500], index=1)
     f1, f2, f3, f4 = st.columns(4)
     with f1:
@@ -62,17 +93,45 @@ def render() -> None:
     with f4:
         campaign_program_hash = st.text_input("Program hash", value="").strip()
 
-    params: dict[str, object] = {"limit": page_size}
-    if repair_state != "all":
-        params["repair_state"] = repair_state
-    if lifecycle_status != "all":
-        params["lifecycle_status"] = lifecycle_status
-    if failure_kind:
-        params["failure_kind"] = failure_kind
-    if campaign_program_hash:
-        params["campaign_program_hash"] = campaign_program_hash
+    return {
+        "page_size": page_size,
+        "repair_state": repair_state,
+        "lifecycle_status": lifecycle_status,
+        "failure_kind": failure_kind,
+        "campaign_program_hash": campaign_program_hash,
+    }
 
-    signature = pager_signature((api_base_url, page_size, repair_state, lifecycle_status, failure_kind, campaign_program_hash))
+
+def _repair_pool_params(filters: dict[str, object]) -> dict[str, object]:
+    params: dict[str, object] = {"limit": filters["page_size"]}
+    _add_param_if_selected(params, "repair_state", filters["repair_state"])
+    _add_param_if_selected(params, "lifecycle_status", filters["lifecycle_status"])
+    _add_param_if_present(params, "failure_kind", filters["failure_kind"])
+    _add_param_if_present(params, "campaign_program_hash", filters["campaign_program_hash"])
+    return params
+
+
+def _add_param_if_selected(params: dict[str, object], key: str, value: object) -> None:
+    if value != "all":
+        params[key] = value
+
+
+def _add_param_if_present(params: dict[str, object], key: str, value: object) -> None:
+    if value:
+        params[key] = value
+
+
+def _sync_repair_pager(*, api_base_url: str, filters: dict[str, object]):
+    signature = pager_signature(
+        (
+            api_base_url,
+            filters["page_size"],
+            filters["repair_state"],
+            filters["lifecycle_status"],
+            filters["failure_kind"],
+            filters["campaign_program_hash"],
+        )
+    )
     state = normalize_cursor_pager(
         signature=signature,
         stored_signature=st.session_state.get(_REPAIR_CURSOR_SIGNATURE_KEY),
@@ -82,14 +141,10 @@ def render() -> None:
     st.session_state[_REPAIR_CURSOR_SIGNATURE_KEY] = state.signature
     st.session_state[_REPAIR_CURSOR_KEY] = list(state.cursors)
     st.session_state[_REPAIR_CURSOR_INDEX_KEY] = state.index
+    return state
 
-    cursor = current_cursor(state)
-    if cursor:
-        params["cursor"] = cursor
-    page = api_get_page_or_stop(api_base_url, "/api/v1/repair/pool", params=params)
-    summary = page.get("summary") if isinstance(page, dict) else {}
-    rows = page.get("items") if isinstance(page, dict) else []
 
+def _render_repair_summary(summary: object) -> None:
     if isinstance(summary, dict):
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Failed candidates", int(summary.get("total_failed_candidates") or 0))
@@ -97,13 +152,8 @@ def render() -> None:
         c3.metric("Eligible", int(_counts(summary, "by_repair_state").get("eligible", 0)))
         c4.metric("Quarantined", int(_counts(summary, "by_lifecycle_status").get("quarantined", 0)))
 
-    df = pd.DataFrame(rows if isinstance(rows, list) else [])
-    if df.empty:
-        st.info("No failed candidates match these filters.")
-        return
-    df = _decorate_repair_df(df)
 
-    st.caption(f"page={state.index + 1} items={len(df)}")
+def _render_repair_pager(*, state, page: dict[str, object]) -> None:
     prev_col, next_col = st.columns(2)
     with prev_col:
         if st.button("Previous page", disabled=state.index <= 0, key="repair_prev_page"):
@@ -119,13 +169,17 @@ def render() -> None:
             st.session_state[_REPAIR_CURSOR_INDEX_KEY] = next_state.index
             _rerun()
 
-    grid = render_table(df, key="repair_pool_grid", selection="single")
-    sel = selected_rows(grid)
-    if not sel:
+
+def _render_selected_candidate(
+    *,
+    api_base_url: str,
+    selected: list[dict[str, object]],
+) -> None:
+    if not selected:
         st.info("Select a failed candidate to inspect or change its operator state.")
         return
 
-    candidate = sel[0]
+    candidate = selected[0]
     candidate_id = str(candidate.get("id") or "")
     st.subheader(f"Candidate: {candidate_id}")
     st.write(

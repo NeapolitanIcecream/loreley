@@ -24,9 +24,17 @@ def render() -> None:
         return
 
     campaign = _dict(status.get("campaign_program"))
+    baseline = _dict(status.get("baseline"))
+
+    _render_program_state(campaign)
+    _render_baseline(baseline)
+    _render_sections(_dict(campaign.get("current_file")))
+    _render_baseline_tasks(api_base_url)
+
+
+def _render_program_state(campaign: dict[str, Any]) -> None:
     current = _dict(campaign.get("current_file"))
     scheduler = _dict(campaign.get("scheduler"))
-    baseline = _dict(status.get("baseline"))
 
     st.subheader("Program State")
     c1, c2, c3, c4 = st.columns(4)
@@ -49,6 +57,8 @@ def render() -> None:
         }
     )
 
+
+def _render_baseline(baseline: dict[str, Any]) -> None:
     st.subheader("Baseline")
     b1, b2, b3, b4 = st.columns(4)
     b1.metric("Status", str(baseline.get("root_baseline_status") or "missing"))
@@ -59,27 +69,39 @@ def render() -> None:
     if baseline.get("failure_kind") or baseline.get("failure_summary"):
         st.warning(str(baseline.get("failure_kind") or baseline.get("failure_summary")))
 
+
+def _render_sections(current: dict[str, Any]) -> None:
     st.subheader("Sections")
     sections = _dict(current.get("sections"))
     if not sections:
         st.info("No campaign program sections found.")
     else:
         for label, value in sections.items():
-            with st.expander(str(label), expanded=label == "goal"):
-                if isinstance(value, list):
-                    if value:
-                        for item in value:
-                            st.write(f"- {item}")
-                    else:
-                        st.write("None")
-                else:
-                    st.write(value if value not in (None, "") else "None")
+            _render_section(str(label), value)
 
     warnings = current.get("parse_warnings")
     if isinstance(warnings, list) and warnings:
         st.subheader("Warnings")
         st.dataframe(warnings, width="stretch")
 
+
+def _render_section(label: str, value: object) -> None:
+    with st.expander(label, expanded=label == "goal"):
+        if isinstance(value, list):
+            _render_list_section(value)
+            return
+        st.write(value if value not in (None, "") else "None")
+
+
+def _render_list_section(value: list[object]) -> None:
+    if not value:
+        st.write("None")
+        return
+    for item in value:
+        st.write(f"- {item}")
+
+
+def _render_baseline_tasks(api_base_url: str) -> None:
     st.subheader("Baseline Ensure Task")
     col_start, col_refresh = st.columns(2)
     with col_start:

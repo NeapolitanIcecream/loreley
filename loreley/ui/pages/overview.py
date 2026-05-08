@@ -257,15 +257,30 @@ def render() -> None:
 def _render_operator_status_band(operator: object) -> None:
     if not isinstance(operator, dict):
         return
-    campaign = operator.get("campaign_program") if isinstance(operator.get("campaign_program"), dict) else {}
-    scheduler = campaign.get("scheduler") if isinstance(campaign, dict) and isinstance(campaign.get("scheduler"), dict) else {}
-    current = campaign.get("current_file") if isinstance(campaign, dict) and isinstance(campaign.get("current_file"), dict) else {}
-    baseline = operator.get("baseline") if isinstance(operator.get("baseline"), dict) else {}
-    repair = operator.get("repair_pool") if isinstance(operator.get("repair_pool"), dict) else {}
-    health = operator.get("job_health") if isinstance(operator.get("job_health"), dict) else {}
-    leases = health.get("job_leases") if isinstance(health, dict) and isinstance(health.get("job_leases"), dict) else {}
+    campaign = _dict_value(operator.get("campaign_program"))
+    scheduler = _dict_value(campaign.get("scheduler"))
+    current = _dict_value(campaign.get("current_file"))
+    baseline = _dict_value(operator.get("baseline"))
+    repair = _dict_value(operator.get("repair_pool"))
+    health = _dict_value(operator.get("job_health"))
+    leases = _dict_value(health.get("job_leases"))
 
     st.subheader("Operator Status")
+    _render_operator_baseline_row(baseline=baseline, repair=repair, leases=leases)
+    _render_operator_program_row(current=current, scheduler=scheduler, repair=repair, leases=leases)
+    _render_operator_warnings(scheduler=scheduler, baseline=baseline)
+
+
+def _dict_value(value: object) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _render_operator_baseline_row(
+    *,
+    baseline: dict[str, Any],
+    repair: dict[str, Any],
+    leases: dict[str, Any],
+) -> None:
     o1, o2, o3, o4 = st.columns(4)
     o1.metric("Baseline", str(baseline.get("root_baseline_status") or "missing"))
     baseline_value = baseline.get("root_baseline_value")
@@ -276,12 +291,26 @@ def _render_operator_status_band(operator: object) -> None:
     o3.metric("Repair eligible", str(_count_value(repair, "by_repair_state", "eligible")))
     o4.metric("Stale running", str(leases.get("stale_running", 0)))
 
+
+def _render_operator_program_row(
+    *,
+    current: dict[str, Any],
+    scheduler: dict[str, Any],
+    repair: dict[str, Any],
+    leases: dict[str, Any],
+) -> None:
     o5, o6, o7, o8 = st.columns(4)
     o5.metric("Current program", _short_hash(current.get("hash")) or "missing")
     o6.metric("Active program", _short_hash(scheduler.get("active_hash")) or "n/a")
     o7.metric("Active repair jobs", str(repair.get("active_repair_jobs", 0)))
     o8.metric("Running missing lease", str(leases.get("running_without_lease", 0)))
 
+
+def _render_operator_warnings(
+    *,
+    scheduler: dict[str, Any],
+    baseline: dict[str, Any],
+) -> None:
     if scheduler.get("current_matches_active") is False:
         st.warning("Campaign program file hash differs from scheduler active hash.")
     if baseline.get("failure_kind"):

@@ -36,50 +36,10 @@ def render() -> None:
         st.error(f"Missing pandas dependency: {exc}")
         return
 
-    page_size = st.selectbox("Page size", [50, 100, 200, 500], index=1)
-    status_options = ["all", *(status.value for status in JobStatus)]
-    selected_status = st.selectbox("Status filter", options=status_options, index=0)
-    job_kind = st.selectbox("Job kind", ["all", "evolution", "repair"], index=0)
-    fate_filter = st.selectbox(
-        "Fate",
-        ["all", "repair_pending", "candidate_failed", "discarded_for_sampling", "elite_inserted", "elite_replaced", "elite_retained", "valid_not_elite", "unknown"],
-        index=0,
-    )
-    evidence_filter = st.selectbox("Evidence", ["all", "has evidence", "agent-visible", "none"], index=0)
-
-    retry_col, refresh_col = st.columns(2)
-    with retry_col:
-        if st.button("Retry failed-stale page", key="jobs_retry_failed_stale"):
-            result = api_post_or_stop(
-                api_base_url,
-                "/api/v1/jobs/retry-failed-stale",
-                json_body={"limit": page_size},
-            )
-            st.cache_data.clear()
-            count = result.get("count") if isinstance(result, dict) else 0
-            st.success(f"Retried jobs: {count}")
-            _rerun()
-    with refresh_col:
-        if st.button("Refresh jobs", key="jobs_refresh"):
-            st.cache_data.clear()
-            _rerun()
-
-    params: dict[str, object] = {"limit": page_size}
-    if selected_status != "all":
-        params["status"] = selected_status
-    if job_kind != "all":
-        params["job_kind"] = job_kind
-
-    signature = pager_signature((api_base_url, selected_status, job_kind, page_size))
-    state = normalize_cursor_pager(
-        signature=signature,
-        stored_signature=st.session_state.get(_JOBS_CURSOR_SIGNATURE_KEY),
-        cursors=st.session_state.get(_JOBS_CURSOR_KEY),
-        index=st.session_state.get(_JOBS_CURSOR_INDEX_KEY),
-    )
-    st.session_state[_JOBS_CURSOR_SIGNATURE_KEY] = state.signature
-    st.session_state[_JOBS_CURSOR_KEY] = list(state.cursors)
-    st.session_state[_JOBS_CURSOR_INDEX_KEY] = state.index
+    filters = _render_jobs_filters()
+    _render_jobs_actions(api_base_url=api_base_url, page_size=int(filters["page_size"]))
+    params = _job_page_params(filters)
+    state = _sync_jobs_pager(api_base_url=api_base_url, filters=filters)
 
     cursor = current_cursor(state)
     if cursor:
@@ -91,7 +51,11 @@ def render() -> None:
     )
     rows = page.get("items") if isinstance(page, dict) else []
     df = pd.DataFrame(rows if isinstance(rows, list) else [])
-    df = _filter_jobs_df(df, fate_filter=fate_filter, evidence_filter=evidence_filter)
+    df = _filter_jobs_df(
+        df,
+        fate_filter=str(filters["fate_filter"]),
+        evidence_filter=str(filters["evidence_filter"]),
+    )
     df = _decorate_jobs_df(df)
 
     st.subheader("Jobs")
@@ -100,6 +64,90 @@ def render() -> None:
         return
 
     st.caption(f"page={state.index + 1} items={len(df)}")
+    _render_jobs_pager(state=state, page=page if isinstance(page, dict) else {})
+    grid = render_table(df, key="jobs_grid", selection="single")
+    _render_selected_job(
+        api_base_url=api_base_url,
+        selected=selected_rows(grid),
+    )
+
+
+def _render_jobs_filters() -> dict[str, object]:
+    page_size = st.selectbox("Page size", [50, 100, 200, 500], index=1)
+    status_options = ["all", *(status.value for status in JobStatus)]
+    selected_status = st.selectbox("Status filter", options=status_options, index=0)
+    job_kind = st.selectbox("Job kind", ["all", "evolution", "repair"], index=0)
+    fate_filter = st.selectbox(
+        "Fate",
+        ["all", "repair_pending", "candidate_failed", "discarded_for_sampling", "elite_inserted", "elite_replaced", "elite_retained", "valid_not_elite", "unknown"],
+        index=0,
+    )
+    evidence_filter = st.selectbox("Evidence", ["all", "has evidence", "agent-visible", "none"], index=0)
+    return {
+        "page_size": page_size,
+        "selected_status": selected_status,
+        "job_kind": job_kind,
+        "fate_filter": fate_filter,
+        "evidence_filter": evidence_filter,
+    }
+
+
+def _render_jobs_actions(*, api_base_url: str, page_size: int) -> None:
+    retry_col, refresh_col = st.columns(2)
+    with retry_col:
+        retry_confirmed = st.checkbox(
+            "Confirm global failed-stale retry",
+            help="This retries failed or stale jobs across the whole queue, ignoring the filters and cursor on this page.",
+            key="jobs_retry_failed_stale_confirm",
+        )
+        if st.button(
+            "Retry global failed-stale jobs",
+            disabled=not retry_confirmed,
+            key="jobs_retry_failed_stale",
+        ):
+            result = api_post_or_stop(
+                api_base_url,
+                "/api/v1/jobs/retry-failed-stale",
+                json_body={"limit": page_size},
+            )
+            st.cache_data.clear()
+            count = result.get("count") if isinstance(result, dict) else 0
+            st.success(f"Retried global failed-stale jobs: {count}")
+            _rerun()
+    with refresh_col:
+        if st.button("Refresh jobs", key="jobs_refresh"):
+            st.cache_data.clear()
+            _rerun()
+
+
+def _job_page_params(filters: dict[str, object]) -> dict[str, object]:
+    params: dict[str, object] = {"limit": filters["page_size"]}
+    if filters["selected_status"] != "all":
+        params["status"] = filters["selected_status"]
+    if filters["job_kind"] != "all":
+        params["job_kind"] = filters["job_kind"]
+    return params
+
+
+def _sync_jobs_pager(*, api_base_url: str, filters: dict[str, object]):
+    page_size = filters["page_size"]
+    selected_status = filters["selected_status"]
+    job_kind = filters["job_kind"]
+
+    signature = pager_signature((api_base_url, selected_status, job_kind, page_size))
+    state = normalize_cursor_pager(
+        signature=signature,
+        stored_signature=st.session_state.get(_JOBS_CURSOR_SIGNATURE_KEY),
+        cursors=st.session_state.get(_JOBS_CURSOR_KEY),
+        index=st.session_state.get(_JOBS_CURSOR_INDEX_KEY),
+    )
+    st.session_state[_JOBS_CURSOR_SIGNATURE_KEY] = state.signature
+    st.session_state[_JOBS_CURSOR_KEY] = list(state.cursors)
+    st.session_state[_JOBS_CURSOR_INDEX_KEY] = state.index
+    return state
+
+
+def _render_jobs_pager(*, state, page: dict[str, object]) -> None:
     prev_col, next_col = st.columns(2)
     with prev_col:
         if st.button("Previous page", disabled=state.index <= 0, key="jobs_prev_page"):
@@ -115,15 +163,18 @@ def render() -> None:
             st.session_state[_JOBS_CURSOR_INDEX_KEY] = next_state.index
             _rerun()
 
-    grid = render_table(df, key="jobs_grid", selection="single")
-    sel = selected_rows(grid)
 
+def _render_selected_job(
+    *,
+    api_base_url: str,
+    selected: list[dict[str, object]],
+) -> None:
     st.divider()
-    if not sel:
+    if not selected:
         st.info("Select a job to see details.")
         return
 
-    job_id = sel[0].get("id")
+    job_id = selected[0].get("id")
     if not job_id:
         st.warning("Selected row has no job id.")
         return
@@ -250,7 +301,7 @@ def _filter_jobs_df(df, *, fate_filter: str, evidence_filter: str):
         return df
     out = df
     if fate_filter != "all" and "candidate_fate_label" in out.columns:
-        out = out[out["candidate_fate_label"].fillna("") == fate_filter]
+        out = out[_normalized_fate_labels(out["candidate_fate_label"]) == fate_filter]
     if evidence_filter != "all":
         if evidence_filter == "has evidence" and "has_evaluation_evidence" in out.columns:
             out = out[out["has_evaluation_evidence"].fillna(False).astype(bool)]
@@ -266,7 +317,7 @@ def _decorate_jobs_df(df):
         return df
     out = df.copy()
     if "candidate_fate_label" in out.columns:
-        out["fate"] = out["candidate_fate_label"].fillna("unknown")
+        out["fate"] = _normalized_fate_labels(out["candidate_fate_label"])
     if "agent_visible_evidence_count" in out.columns:
         out["evidence"] = out["agent_visible_evidence_count"].fillna(0).astype(int).map(
             lambda count: f"agent-visible:{count}" if count else "none"
@@ -274,3 +325,7 @@ def _decorate_jobs_df(df):
     if "campaign_program_hash" in out.columns:
         out["program"] = out["campaign_program_hash"].fillna("").astype(str).str.slice(0, 12)
     return out
+
+
+def _normalized_fate_labels(series):
+    return series.fillna("").astype(str).str.strip().replace("", "unknown")
