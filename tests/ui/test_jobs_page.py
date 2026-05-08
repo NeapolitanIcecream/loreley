@@ -127,6 +127,10 @@ def test_jobs_decoration_normalizes_missing_fate_to_unknown(jobs_module) -> None
     assert decorated["fate"].tolist() == ["unknown", "unknown", "elite_inserted"]
 
 
+def test_jobs_global_retry_payload_is_not_tied_to_page_size(jobs_module) -> None:
+    assert jobs_module._retry_failed_stale_payload() == {"all": True}  # noqa: SLF001
+
+
 def test_jobs_render_keeps_pager_available_when_client_filter_empties_page(
     jobs_module,
     monkeypatch: pytest.MonkeyPatch,

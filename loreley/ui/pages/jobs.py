@@ -37,7 +37,7 @@ def render() -> None:
         return
 
     filters = _render_jobs_filters()
-    _render_jobs_actions(api_base_url=api_base_url, page_size=int(filters["page_size"]))
+    _render_jobs_actions(api_base_url=api_base_url)
     params = _job_page_params(filters)
     state = _sync_jobs_pager(api_base_url=api_base_url, filters=filters)
 
@@ -92,7 +92,7 @@ def _render_jobs_filters() -> dict[str, object]:
     }
 
 
-def _render_jobs_actions(*, api_base_url: str, page_size: int) -> None:
+def _render_jobs_actions(*, api_base_url: str) -> None:
     retry_col, refresh_col = st.columns(2)
     with retry_col:
         retry_confirmed = st.checkbox(
@@ -108,7 +108,7 @@ def _render_jobs_actions(*, api_base_url: str, page_size: int) -> None:
             result = api_post_or_stop(
                 api_base_url,
                 "/api/v1/jobs/retry-failed-stale",
-                json_body={"limit": page_size},
+                json_body=_retry_failed_stale_payload(),
             )
             st.cache_data.clear()
             count = result.get("count") if isinstance(result, dict) else 0
@@ -118,6 +118,10 @@ def _render_jobs_actions(*, api_base_url: str, page_size: int) -> None:
         if st.button("Refresh jobs", key="jobs_refresh"):
             st.cache_data.clear()
             _rerun()
+
+
+def _retry_failed_stale_payload() -> dict[str, bool]:
+    return {"all": True}
 
 
 def _job_page_params(filters: dict[str, object]) -> dict[str, object]:
