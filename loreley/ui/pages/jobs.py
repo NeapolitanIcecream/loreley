@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from loreley.core.candidate_fate import CANDIDATE_FATE_LABELS
 from loreley.db.models import JobStatus
 from loreley.ui.components.aggrid import render_table, selected_rows
 from loreley.ui.components.api import (
@@ -79,7 +80,7 @@ def _render_jobs_filters() -> dict[str, object]:
     job_kind = st.selectbox("Job kind", ["all", "evolution", "repair"], index=0)
     fate_filter = st.selectbox(
         "Fate",
-        ["all", "repair_pending", "candidate_failed", "discarded_for_sampling", "elite_inserted", "elite_replaced", "elite_retained", "valid_not_elite", "unknown"],
+        _fate_filter_options(),
         index=0,
     )
     evidence_filter = st.selectbox("Evidence", ["all", "has evidence", "agent-visible", "none"], index=0)
@@ -122,6 +123,10 @@ def _render_jobs_actions(*, api_base_url: str) -> None:
 
 def _retry_failed_stale_payload() -> dict[str, bool]:
     return {"all": True}
+
+
+def _fate_filter_options() -> list[str]:
+    return ["all", *sorted(CANDIDATE_FATE_LABELS)]
 
 
 def _job_page_params(filters: dict[str, object]) -> dict[str, object]:

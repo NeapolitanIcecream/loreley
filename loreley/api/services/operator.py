@@ -43,6 +43,10 @@ class OperatorTaskNotFoundError(RuntimeError):
     """Raised when an operator task cannot be found."""
 
 
+class OperatorTaskAlreadyActiveError(RuntimeError):
+    """Raised when an equivalent operator task is already pending or running."""
+
+
 def operator_status(*, settings: Settings | None = None) -> dict[str, object]:
     """Return the consolidated operator console status payload."""
 
@@ -111,6 +115,11 @@ def create_baseline_ensure_task(*, settings: Settings | None = None) -> Operator
         "campaign_program_change_policy": str(getattr(active_settings, "campaign_program_change_policy", "") or ""),
     }
     with session_scope() as session:
+        active = _active_baseline_ensure_task(session)
+        if active is not None:
+            raise OperatorTaskAlreadyActiveError(
+                f"Baseline ensure task already active: {active.id}."
+            )
         row = OperatorTask(
             kind=OperatorTaskKind.BASELINE_ENSURE.value,
             status=OperatorTaskStatus.PENDING.value,
@@ -122,6 +131,27 @@ def create_baseline_ensure_task(*, settings: Settings | None = None) -> Operator
         task_id = row.id
         log.bind(task_id=str(task_id)).info("Operator baseline ensure task created")
         return row
+
+
+def _active_baseline_ensure_task(session: object) -> OperatorTask | None:
+    return (
+        session.execute(
+            select(OperatorTask)
+            .where(OperatorTask.kind == OperatorTaskKind.BASELINE_ENSURE.value)
+            .where(
+                OperatorTask.status.in_(
+                    (
+                        OperatorTaskStatus.PENDING.value,
+                        OperatorTaskStatus.RUNNING.value,
+                    )
+                )
+            )
+            .order_by(OperatorTask.created_at.desc(), OperatorTask.id.desc())
+            .limit(1)
+        )
+        .scalars()
+        .first()
+    )
 
 
 def run_baseline_ensure_task(task_id: UUID) -> None:

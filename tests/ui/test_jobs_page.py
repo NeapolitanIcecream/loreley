@@ -131,6 +131,16 @@ def test_jobs_global_retry_payload_is_not_tied_to_page_size(jobs_module) -> None
     assert jobs_module._retry_failed_stale_payload() == {"all": True}  # noqa: SLF001
 
 
+def test_jobs_fate_filter_options_cover_canonical_labels(jobs_module) -> None:
+    from loreley.core.candidate_fate import CANDIDATE_FATE_LABELS
+
+    options = jobs_module._fate_filter_options()  # noqa: SLF001
+
+    assert options == ["all", *sorted(CANDIDATE_FATE_LABELS)]
+    assert "policy_failed" in options
+    assert "valid_not_considered" in options
+
+
 def test_jobs_render_keeps_pager_available_when_client_filter_empties_page(
     jobs_module,
     monkeypatch: pytest.MonkeyPatch,

@@ -12,6 +12,7 @@ from loreley.api.schemas.operator import (
     OperatorTaskPageOut,
 )
 from loreley.api.services.operator import (
+    OperatorTaskAlreadyActiveError,
     OperatorTaskNotFoundError,
     create_baseline_ensure_task,
     get_operator_task,
@@ -32,7 +33,10 @@ def get_operator_status() -> OperatorStatusOut:
 def create_operator_baseline_ensure_task(
     background_tasks: BackgroundTasks,
 ) -> OperatorTaskOut:
-    task = create_baseline_ensure_task()
+    try:
+        task = create_baseline_ensure_task()
+    except OperatorTaskAlreadyActiveError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     background_tasks.add_task(run_baseline_ensure_task, task.id)
     return OperatorTaskOut.model_validate(task)
 

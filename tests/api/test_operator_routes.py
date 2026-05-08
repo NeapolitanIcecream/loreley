@@ -8,10 +8,15 @@ from uuid import uuid4
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import pytest
+
 import loreley.api.routers.operator as operator_router
 import loreley.api.services.operator as operator_service
 from loreley.api.routers.operator import router as operator_api_router
-from loreley.api.services.operator import OperatorTaskNotFoundError
+from loreley.api.services.operator import (
+    OperatorTaskAlreadyActiveError,
+    OperatorTaskNotFoundError,
+)
 from loreley.db.models import OperatorTaskStatus
 
 
@@ -96,6 +101,49 @@ def test_operator_task_create_uses_background_task(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json()["id"] == str(task_id)
     assert calls == [task_id]
+
+
+def test_operator_task_create_rejects_active_baseline_task(monkeypatch) -> None:
+    task_id = uuid4()
+    calls: list[object] = []
+
+    def _active():
+        raise OperatorTaskAlreadyActiveError(f"Baseline ensure task already active: {task_id}.")
+
+    monkeypatch.setattr(operator_router, "create_baseline_ensure_task", _active)
+    monkeypatch.setattr(operator_router, "run_baseline_ensure_task", lambda task_id: calls.append(task_id))
+
+    response = _client().post("/api/v1/operator/tasks/baseline-ensure", json={})
+
+    assert response.status_code == 409
+    assert str(task_id) in response.json()["detail"]
+    assert calls == []
+
+
+def test_create_baseline_ensure_task_rejects_existing_active_task(monkeypatch, settings) -> None:
+    task_id = uuid4()
+    active = SimpleNamespace(id=task_id)
+
+    class _Scalar:
+        def first(self):
+            return active
+
+    class _Result:
+        def scalars(self):
+            return _Scalar()
+
+    class _Session:
+        def execute(self, _stmt):
+            return _Result()
+
+    @contextmanager
+    def _scope():
+        yield _Session()
+
+    monkeypatch.setattr(operator_service, "session_scope", _scope)
+
+    with pytest.raises(OperatorTaskAlreadyActiveError, match=str(task_id)):
+        operator_service.create_baseline_ensure_task(settings=settings)
 
 
 def test_operator_task_detail_returns_404(monkeypatch) -> None:
