@@ -168,6 +168,11 @@ def test_repair_schedule_one_api_guard_blocks_exhausted_token_budget(
         "FailedCandidateRepairSampler",
         lambda **_kwargs: _SamplerShouldNotSchedule(),
     )
+    monkeypatch.setattr(
+        repair_service,
+        "_with_manual_repair_schedule_lock",
+        lambda **kwargs: kwargs["callback"](),
+    )
     monkeypatch.setattr(repair_service, "_manual_repair_tokens_available", lambda **_kwargs: 0)
 
     payload = repair_service.schedule_one_repair(settings=settings)
@@ -260,6 +265,11 @@ def test_repair_schedule_one_api_guard_blocks_when_active_jobs_at_cap(
         repair_service,
         "FailedCandidateRepairSampler",
         lambda **_kwargs: _CappedSampler(),
+    )
+    monkeypatch.setattr(
+        repair_service,
+        "_with_manual_repair_schedule_lock",
+        lambda **kwargs: kwargs["callback"](),
     )
 
     payload = repair_service.schedule_one_repair(settings=settings)
