@@ -28,7 +28,7 @@ from loreley.core.campaign_program import (
     persist_campaign_program,
 )
 from loreley.core.map_elites.sampler import MapElitesSampler, SamplingSnapshot, ScheduledSamplerJob
-from loreley.core.repair_coordination import with_repair_scheduling_lock
+from loreley.core.repair_coordination import repair_tokens_available, with_repair_scheduling_lock
 from loreley.core.worker.repair import (
     REPAIR_MODE_REBASE_FROM_NEAREST_VIABLE,
     repair_failure_kind_allowlist,
@@ -618,6 +618,10 @@ class JobScheduler:
             return []
 
         def _schedule_locked() -> list[UUID]:
+            persistent_tokens = repair_tokens_available(settings=self.settings)
+            self._repair_tokens = min(self._repair_tokens, persistent_tokens)
+            if self._repair_tokens <= 0:
+                return []
             active = self.repair_sampler.count_active_repair_jobs()
             available_active = max(0, max_active - active)
             count = min(capacity, max_per_tick, available_active, self._repair_tokens)

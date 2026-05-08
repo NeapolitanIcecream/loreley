@@ -361,6 +361,11 @@ def test_repair_scheduler_consumes_token_for_scheduled_repair_job(
         "with_repair_scheduling_lock",
         lambda **kwargs: kwargs["callback"](),
     )
+    monkeypatch.setattr(
+        job_scheduler,
+        "repair_tokens_available",
+        lambda **_kwargs: 1,
+    )
     settings.failed_candidate_repair_enabled = True
     settings.failed_candidate_repair_normal_jobs_per_token = 9
     settings.failed_candidate_repair_max_tokens = 3
@@ -430,14 +435,19 @@ def test_repair_scheduler_serializes_cap_check_and_schedule(
         finally:
             events.append("lock.exit")
 
+    def _persistent_tokens(**_kwargs) -> int:
+        assert events == ["lock.enter"]
+        events.append("tokens.available")
+        return 1
+
     class DummyRepairSampler:
         def count_active_repair_jobs(self) -> int:
-            assert events == ["lock.enter"]
+            assert events == ["lock.enter", "tokens.available"]
             events.append("active.count")
             return 0
 
         def schedule_one(self) -> ScheduledRepairJob:
-            assert events == ["lock.enter", "active.count"]
+            assert events == ["lock.enter", "tokens.available", "active.count"]
             events.append("schedule.one")
             return ScheduledRepairJob(
                 job_id=repair_job_id,
@@ -446,6 +456,7 @@ def test_repair_scheduler_serializes_cap_check_and_schedule(
             )
 
     monkeypatch.setattr(job_scheduler, "with_repair_scheduling_lock", _lock)
+    monkeypatch.setattr(job_scheduler, "repair_tokens_available", _persistent_tokens)
     scheduler = cast(Any, JobScheduler)(
         settings=settings,
         console=Console(record=True),
@@ -458,7 +469,60 @@ def test_repair_scheduler_serializes_cap_check_and_schedule(
 
     assert scheduled == [repair_job_id]
     assert scheduler._repair_tokens == 0
-    assert events == ["lock.enter", "active.count", "schedule.one", "lock.exit"]
+    assert events == [
+        "lock.enter",
+        "tokens.available",
+        "active.count",
+        "schedule.one",
+        "lock.exit",
+    ]
+
+
+def test_repair_scheduler_recomputes_persistent_token_budget_before_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    """Regression: manual API repair scheduling must consume scheduler-visible budget."""
+
+    sender = DummySenderActor()
+    monkeypatch.setattr(
+        job_scheduler,
+        "build_evolution_job_sender_actor",
+        lambda **_kwargs: sender,
+    )
+    monkeypatch.setattr(
+        job_scheduler,
+        "with_repair_scheduling_lock",
+        lambda **kwargs: kwargs["callback"](),
+    )
+    monkeypatch.setattr(
+        job_scheduler,
+        "repair_tokens_available",
+        lambda **_kwargs: 0,
+    )
+    settings.failed_candidate_repair_enabled = True
+    settings.failed_candidate_repair_max_active_jobs = 1
+    settings.failed_candidate_repair_max_jobs_per_tick = 1
+
+    class DummyRepairSampler:
+        def count_active_repair_jobs(self) -> int:
+            raise AssertionError("persistent token budget should block before active-job count")
+
+        def schedule_one(self) -> ScheduledRepairJob:
+            raise AssertionError("persistent token budget should block repair scheduling")
+
+    scheduler = cast(Any, JobScheduler)(
+        settings=settings,
+        console=Console(record=True),
+        sampler=cast(MapElitesSampler, object()),
+    )
+    scheduler.repair_sampler = DummyRepairSampler()
+    scheduler._repair_tokens = 1
+
+    scheduled = scheduler._schedule_repair_jobs(capacity=1, accrue_tokens=False)
+
+    assert scheduled == []
+    assert scheduler._repair_tokens == 0
 
 
 def test_repair_sampler_schedules_job_with_configured_supported_mode(
@@ -640,6 +704,11 @@ def test_schedule_jobs_reserves_repair_slot_when_normal_sampling_can_fill_batch(
         job_scheduler,
         "with_repair_scheduling_lock",
         lambda **kwargs: kwargs["callback"](),
+    )
+    monkeypatch.setattr(
+        job_scheduler,
+        "repair_tokens_available",
+        lambda **_kwargs: 1,
     )
     sampler = DummySampler()
     scheduler = cast(Any, JobScheduler)(

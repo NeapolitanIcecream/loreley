@@ -13,6 +13,7 @@ from loreley.api.pagination import PaginationCursorError, decode_cursor, encode_
 from loreley.config import Settings, get_settings
 from loreley.core.contracts import clamp_text, normalize_single_line
 from loreley.core.repair_coordination import (
+    repair_tokens_available,
     with_repair_scheduling_lock as _with_manual_repair_schedule_lock,
 )
 from loreley.db.base import session_scope
@@ -215,28 +216,7 @@ def _repair_schedule_noop(message: str) -> dict[str, object]:
 
 
 def _manual_repair_tokens_available(*, settings: Settings) -> int:
-    max_tokens = max(0, int(settings.failed_candidate_repair_max_tokens))
-    if max_tokens <= 0:
-        return 0
-    normal_jobs_per_token = max(1, int(settings.failed_candidate_repair_normal_jobs_per_token))
-    with session_scope() as session:
-        completed_normal_jobs = int(
-            session.execute(
-                select(func.count(EvolutionJob.id)).where(
-                    EvolutionJob.status == JobStatus.SUCCEEDED,
-                    EvolutionJob.job_kind != "repair",
-                )
-            ).scalar_one()
-        )
-        scheduled_repair_jobs = int(
-            session.execute(
-                select(func.count(EvolutionJob.id)).where(
-                    EvolutionJob.job_kind == "repair",
-                )
-            ).scalar_one()
-        )
-    earned = completed_normal_jobs // normal_jobs_per_token
-    return min(max_tokens, max(0, earned - scheduled_repair_jobs))
+    return repair_tokens_available(settings=settings)
 
 
 def _locked_repair_candidate(
