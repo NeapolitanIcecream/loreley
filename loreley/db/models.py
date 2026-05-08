@@ -54,6 +54,21 @@ class JobStatus(str, enum.Enum):
     CANCELLED = "cancelled"
 
 
+class OperatorTaskStatus(str, enum.Enum):
+    """Background operator task lifecycle states."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class OperatorTaskKind(str, enum.Enum):
+    """Background operator task kinds."""
+
+    BASELINE_ENSURE = "baseline_ensure"
+
+
 class InstanceMetadata(TimestampMixin, Base):
     """Single-row instance metadata marker for single-tenant databases."""
 
@@ -76,6 +91,44 @@ class InstanceMetadata(TimestampMixin, Base):
             f"experiment_id_raw={self.experiment_id_raw!r} "
             f"root_commit_hash={self.root_commit_hash!r}>"
         )
+
+
+class OperatorTask(TimestampMixin, Base):
+    """UI API background operator task state."""
+
+    __tablename__ = "operator_tasks"
+    __table_args__ = (
+        Index("ix_operator_tasks_kind_status_created", "kind", "status", "created_at"),
+        Index("ix_operator_tasks_status_started", "status", "started_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32),
+        default=OperatorTaskStatus.PENDING.value,
+        nullable=False,
+    )
+    request_payload: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JSONB),
+        default=dict,
+        nullable=False,
+    )
+    result_payload: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JSONB),
+        default=dict,
+        nullable=False,
+    )
+    error_summary: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<OperatorTask id={self.id!r} kind={self.kind!r} status={self.status!r}>"
 
 
 class CommitCard(TimestampMixin, Base):

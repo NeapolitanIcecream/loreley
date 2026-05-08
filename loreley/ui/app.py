@@ -10,11 +10,13 @@ import streamlit as st
 from loreley.ui.client import APIError, LoreleyAPIClient
 from loreley.ui.components.api import api_get_or_stop, get_api_client
 from loreley.ui.pages.archive import render as render_archive
+from loreley.ui.pages.campaign import render as render_campaign
 from loreley.ui.pages.commits import render as render_commits
 from loreley.ui.pages.graphs import render as render_graphs
 from loreley.ui.pages.jobs import render as render_jobs
 from loreley.ui.pages.logs import render as render_logs
 from loreley.ui.pages.overview import render as render_overview
+from loreley.ui.pages.repair_pool import render as render_repair_pool
 from loreley.ui.pages.settings import render as render_settings
 from loreley.ui.state import API_BASE_URL_KEY, ISLAND_ID_KEY
 
@@ -29,6 +31,14 @@ def overview() -> None:
 
 def jobs() -> None:
     render_jobs()
+
+
+def campaign() -> None:
+    render_campaign()
+
+
+def repair_pool() -> None:
+    render_repair_pool()
 
 
 def commits() -> None:
@@ -138,6 +148,8 @@ def main() -> None:
     if hasattr(st, "Page") and hasattr(st, "navigation"):
         pages = [
             st.Page(overview, title="Overview"),
+            st.Page(campaign, title="Campaign"),
+            st.Page(repair_pool, title="Repair Pool"),
             st.Page(jobs, title="Jobs"),
             st.Page(commits, title="Commits"),
             st.Page(archive, title="Archive"),
@@ -153,5 +165,4 @@ def main() -> None:
 
 if __name__ == "__main__":  # pragma: no cover
     main()
-
 

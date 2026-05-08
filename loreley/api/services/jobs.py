@@ -9,6 +9,13 @@ from uuid import UUID
 from sqlalchemy import and_, func, or_, select
 
 from loreley.api.pagination import PaginationCursorError, decode_cursor, encode_cursor, normalize_pagination
+from loreley.config import Settings, get_settings
+from loreley.core.job_retry import (
+    db_utc_now,
+    job_retry_state,
+    retry_failed_stale_jobs_payload,
+    retry_job_row,
+)
 from loreley.db.base import session_scope
 from loreley.db.models import EvolutionJob, JobArtifacts, JobStatus
 
@@ -17,6 +24,18 @@ from loreley.db.models import EvolutionJob, JobArtifacts, JobStatus
 class JobPage:
     items: list[EvolutionJob]
     next_cursor: str | None
+
+
+class JobNotFoundError(RuntimeError):
+    """Raised when a job cannot be found."""
+
+
+class JobRetryConflictError(RuntimeError):
+    """Raised when a job is not retryable."""
+
+
+class JobRetryValidationError(RuntimeError):
+    """Raised when a bulk retry request is invalid."""
 
 
 def _normalize_cursor_datetime(value: object) -> datetime:
@@ -46,6 +65,7 @@ def _encode_job_cursor(job: EvolutionJob) -> str:
 def list_jobs_page(
     *,
     status: JobStatus | None = None,
+    job_kind: str | None = None,
     limit: int = 200,
     cursor: str | None = None,
 ) -> JobPage:
@@ -58,6 +78,9 @@ def list_jobs_page(
         stmt = select(EvolutionJob)
         if status is not None:
             stmt = stmt.where(EvolutionJob.status == status)
+        job_kind_filter = str(job_kind or "").strip()
+        if job_kind_filter:
+            stmt = stmt.where(EvolutionJob.job_kind == job_kind_filter)
         if cursor:
             try:
                 payload = decode_cursor(cursor)
@@ -86,6 +109,7 @@ def list_jobs_page(
 def list_jobs(
     *,
     status: JobStatus | None = None,
+    job_kind: str | None = None,
     limit: int = 200,
     offset: int = 0,
 ) -> list[EvolutionJob]:
@@ -97,6 +121,9 @@ def list_jobs(
         stmt = select(EvolutionJob)
         if status is not None:
             stmt = stmt.where(EvolutionJob.status == status)
+        job_kind_filter = str(job_kind or "").strip()
+        if job_kind_filter:
+            stmt = stmt.where(EvolutionJob.job_kind == job_kind_filter)
         stmt = stmt.order_by(
             EvolutionJob.completed_at.desc().nullslast(),
             EvolutionJob.created_at.desc(),
@@ -118,3 +145,55 @@ def get_job_artifacts(*, job_id: UUID) -> JobArtifacts | None:
 
     with session_scope() as session:
         return session.get(JobArtifacts, job_id)
+
+
+def retry_job_by_id(
+    *,
+    job_id: UUID,
+    reason: str | None = None,
+) -> dict[str, object]:
+    """Retry one FAILED or stale/missing-lease RUNNING job."""
+
+    with session_scope() as session:
+        job = session.get(EvolutionJob, job_id)
+        if job is None:
+            raise JobNotFoundError("Job not found.")
+        now = db_utc_now(session)
+        retryable, lease_state = job_retry_state(job=job, now=now)
+        if not retryable:
+            status = getattr(getattr(job, "status", None), "value", getattr(job, "status", None))
+            raise JobRetryConflictError(
+                f"Only failed or stuck RUNNING jobs can be retried "
+                f"(status={status}, lease_state={lease_state or 'n/a'})."
+            )
+        return retry_job_row(
+            job=job,
+            reason=str(reason or "").strip() or "manual retry requested via UI API",
+            now=now,
+        )
+
+
+def retry_failed_stale_jobs(
+    *,
+    retry_all: bool,
+    limit: int | None,
+    reason: str | None = None,
+    settings: Settings | None = None,
+) -> dict[str, object]:
+    """Retry FAILED jobs that exhausted stale-lease recovery."""
+
+    if bool(retry_all) and limit is not None:
+        raise JobRetryValidationError("Use either all=true or limit, not both.")
+    if not bool(retry_all) and limit is None:
+        raise JobRetryValidationError("Use either all=true or limit.")
+    active_settings = settings or get_settings()
+    with session_scope() as session:
+        now = db_utc_now(session)
+        return retry_failed_stale_jobs_payload(
+            session=session,
+            max_recovery_attempts=int(active_settings.scheduler_stale_running_max_recovery_attempts),
+            retry_all=bool(retry_all),
+            limit=limit,
+            reason=str(reason or "").strip() or "manual retry requested via UI API",
+            now=now,
+        )

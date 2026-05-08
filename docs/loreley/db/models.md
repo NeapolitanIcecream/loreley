@@ -6,6 +6,8 @@ ORM models and enums for single-tenant experiment databases.
 
 - **`TimestampMixin`**: adds `created_at` and `updated_at` columns that default to `now()` and automatically update on modification.
 - **`JobStatus`**: string-based `Enum` capturing the lifecycle of an evolution job (`PENDING`, `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED`).
+- **`OperatorTaskStatus`**: string-based `Enum` for UI API background tasks (`PENDING`, `RUNNING`, `SUCCEEDED`, `FAILED`).
+- **`OperatorTaskKind`**: string-based `Enum` for UI API task kinds. The first kind is `BASELINE_ENSURE`.
 
 ## Core models
 
@@ -29,6 +31,10 @@ ORM models and enums for single-tenant experiment databases.
   - Unique constraint on `baseline_key_hash`, which covers the root commit, campaign program hash, evaluator identity, primary metric contract, runtime profile, and effective settings fingerprint.
   - Stores the root commit hash, optional `campaign_program_hash`, evaluator name/version, primary metric name and direction, runtime profile, settings fingerprint, baseline status (`valid`, `failed`, or `degraded`), metric value/unit when valid, and failure details when invalid.
   - Optionally links to the root `CommitCard` and `Metric` rows used for compatibility projections, but archive/status baseline reads should key off `campaign_baselines`.
+- **`OperatorTask`** (`operator_tasks` table): background task state for the local operator console.
+  - Primary key: `id` (UUID).
+  - Stores `kind`, `status`, JSONB request/result payloads, an optional error summary, and start/completion timestamps.
+  - The first task kind is `baseline_ensure`, created by the UI API and executed with FastAPI background tasks.
 - **`EvolutionJob`** (`evolution_jobs` table): represents a single evolution iteration scheduled by the system.
   - Tracks current `status`, base commit, island ID, inspiration commit hashes, size-bounded job spec fields (`goal`, `constraints`, `acceptance_criteria`, `notes`, `tags`, sampling hints), human-readable `plan_summary`, priority, scheduling/processing timestamps, and last error if any.
   - Stores optional `campaign_program_hash` for the campaign contract used to create the job.

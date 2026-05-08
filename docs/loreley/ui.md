@@ -1,9 +1,13 @@
 # Streamlit UI (loreley.ui)
 
-Loreley ships an optional **read-only** Streamlit dashboard for observability.
-It calls the [UI API](api.md) and renders tables, charts, and commit lineage graphs.
+Loreley ships an optional Streamlit dashboard for observability and local
+operator repair. It calls the [UI API](api.md) and renders tables, charts, and
+commit lineage graphs.
 
-The UI stack is intentionally read-only: it does not enqueue jobs, stop workers, or mutate the database.
+Most pages are read-only. The operator pages can create baseline ensure tasks,
+schedule one repair job, update repair-pool candidate state, and retry failed
+or stale jobs. These writes are unauthenticated by design and should be exposed
+only on trusted local or internal networks.
 
 ```mermaid
 flowchart LR
@@ -63,14 +67,23 @@ The API relies on standard Loreley settings (database/logs). See:
 The Streamlit UI is multi-page (implemented under `loreley/ui/pages`):
 
 - **Overview**: quick KPIs, fitness trend, island table.
-- **Jobs**: job table with filters and a details panel.
-- **Commits**: commit table with search; commit details with charts.
-- **Archive**: island stats, snapshot metadata, record plots and table.
-- **Graphs**: fitness scatter and commit lineage graph.
+- **Campaign**: campaign program sections, warnings, active/current hash
+  comparison, baseline status, and baseline ensure background tasks.
+- **Repair Pool**: failed-candidate table, diagnostic summary, repair attempts,
+  baseline/program context, schedule-one, quarantine, discard, and restore.
+- **Jobs**: job table with status, kind, fate, and evidence filters; single-job
+  retry and bulk failed-stale retry.
+- **Commits**: commit table with search, fate/evidence indicators, and commit
+  details with charts.
+- **Archive**: island stats, snapshot metadata, record plots, fate/evidence
+  indicators, and baseline delta when available.
+- **Graphs**: fitness scatter and commit lineage graph with fate and
+  agent-visible evidence counts.
 - **Logs**: browse role logs and tail a file.
 - **Settings**: API health and safe settings (`Settings.export_safe()`).
 
 ## Notes
 
-- **Caching**: the Streamlit UI caches API GET calls (default: ~60s); use the sidebar **Refresh data** button to clear cache.
-- **Security**: there is no authentication layer. Deploy behind your internal network controls if exposing remotely.
+- **Caching**: the Streamlit UI caches API GET calls (default: ~60s); use the sidebar **Refresh data** button to clear cache. Write actions clear the cache before rerunning the page.
+- **Security**: there is no authentication layer. Deploy the UI and API only
+  behind trusted local or internal network controls.

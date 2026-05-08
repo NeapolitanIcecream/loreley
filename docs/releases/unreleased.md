@@ -19,8 +19,22 @@ These notes cover changes merged after `v0.7.9-alpha`.
   propagation, and a worker scope gate.
 - Added ADR 0050 campaign baseline bootstrap with a `campaign_baselines`
   source-of-truth table and `BASELINE_BOOTSTRAP_POLICY=required|warn`.
+- Added the Loreley operator console API and Streamlit pages:
+  `GET /api/v1/operator/status`, background baseline ensure tasks, repair-pool
+  listing/actions, repair schedule-one, single job retry, and failed-stale bulk
+  retry.
+- Added an `operator_tasks` table for UI API background task state. Baseline
+  ensure tasks run in the FastAPI UI API process, not Dramatiq.
 
 ## Changed
 
-- Bumped `INSTANCE_SCHEMA_VERSION` to `9`. Existing development databases must
+- Bumped `INSTANCE_SCHEMA_VERSION` to `10`. Existing development databases must
   be reset with `uv run loreley reset-db --yes` before running this version.
+- The Streamlit UI now includes Campaign and Repair Pool pages. Jobs, Commits,
+  Archive, and Graphs show clearer fate and evidence indicators where the API
+  already has the data.
+
+## Security
+
+- The operator write API remains unauthenticated by design. Deploy the UI API
+  only on trusted local or internal networks.

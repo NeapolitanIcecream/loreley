@@ -6,6 +6,7 @@ from datetime import datetime
 from uuid import UUID
 
 from pydantic import Field, field_validator
+from pydantic import BaseModel
 
 from loreley.api.schemas import OrmOutModel
 from loreley.api.schemas.evidence import (
@@ -94,3 +95,27 @@ class JobArtifactsOut(OrmOutModel):
 class JobPageOut(OrmOutModel):
     items: list[JobOut] = Field(default_factory=list)
     next_cursor: str | None = None
+
+
+class JobRetryRequest(BaseModel):
+    reason: str | None = None
+
+
+class JobRetryOut(OrmOutModel):
+    job_id: str
+    previous_status: str
+    new_status: str
+    recovery_count_reset_from: int
+    reason: str
+
+
+class JobsRetryFailedStaleRequest(BaseModel):
+    all: bool = False
+    limit: int | None = Field(default=None, ge=1)
+    reason: str | None = None
+
+
+class JobsRetryFailedStaleOut(OrmOutModel):
+    filters: dict[str, object] = Field(default_factory=dict)
+    count: int
+    retried_jobs: list[JobRetryOut] = Field(default_factory=list)

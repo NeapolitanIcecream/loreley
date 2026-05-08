@@ -70,6 +70,7 @@ def render() -> None:
     )
     rows = page.get("items") if isinstance(page, dict) else []
     df = pd.DataFrame(rows if isinstance(rows, list) else [])
+    df = _decorate_commits_df(df)
 
     st.subheader("Commits")
     if df.empty:
@@ -164,6 +165,9 @@ def render() -> None:
                 "job_id": detail.get("job_id"),
                 "candidate_fate_label": detail.get("candidate_fate_label"),
                 "candidate_fate_reason": detail.get("candidate_fate_reason"),
+                "has_evaluation_evidence": detail.get("has_evaluation_evidence"),
+                "agent_visible_evidence_count": detail.get("agent_visible_evidence_count"),
+                "top_evaluation_diagnosis": detail.get("top_evaluation_diagnosis"),
                 "created_at": detail.get("created_at"),
             }
         )
@@ -232,3 +236,16 @@ def _rerun() -> None:
     rerun = getattr(st, "rerun", None) or getattr(st, "experimental_rerun", None)
     if callable(rerun):
         rerun()
+
+
+def _decorate_commits_df(df):
+    if df.empty:
+        return df
+    out = df.copy()
+    if "candidate_fate_label" in out.columns:
+        out["fate"] = out["candidate_fate_label"].fillna("unknown")
+    if "agent_visible_evidence_count" in out.columns:
+        out["evidence"] = out["agent_visible_evidence_count"].fillna(0).astype(int).map(
+            lambda count: f"agent-visible:{count}" if count else "none"
+        )
+    return out

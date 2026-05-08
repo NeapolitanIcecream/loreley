@@ -17,7 +17,16 @@ from loreley.api.artifacts import (
 )
 from loreley.api.pagination import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, PaginationCursorError
 from loreley.api.schemas.evidence import EvaluationArtifactOut
-from loreley.api.schemas.jobs import JobArtifactsOut, JobDetailOut, JobOut, JobPageOut
+from loreley.api.schemas.jobs import (
+    JobArtifactsOut,
+    JobDetailOut,
+    JobOut,
+    JobPageOut,
+    JobRetryOut,
+    JobRetryRequest,
+    JobsRetryFailedStaleOut,
+    JobsRetryFailedStaleRequest,
+)
 from loreley.api.services.candidate_fates import (
     job_candidate_commit_hash,
     load_candidate_fates_for_jobs,
@@ -31,7 +40,17 @@ from loreley.api.services.evidence import (
     list_evaluation_artifacts_for_job,
     load_evidence_indicators_by_commit_hash,
 )
-from loreley.api.services.jobs import get_job, get_job_artifacts, list_jobs, list_jobs_page
+from loreley.api.services.jobs import (
+    JobNotFoundError,
+    JobRetryConflictError,
+    JobRetryValidationError,
+    get_job,
+    get_job_artifacts,
+    list_jobs,
+    list_jobs_page,
+    retry_failed_stale_jobs,
+    retry_job_by_id,
+)
 from loreley.core.candidate_fate import CandidateFate
 from loreley.db.models import JobStatus
 
@@ -41,10 +60,11 @@ router = APIRouter()
 @router.get("/jobs", response_model=list[JobOut])
 def get_jobs(
     status: JobStatus | None = None,
+    job_kind: str | None = Query(default=None, description="Optional job kind filter."),
     limit: int = Query(default=DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
     offset: int = Query(default=0, ge=0),
 ) -> list[JobOut]:
-    rows = list_jobs(status=status, limit=limit, offset=offset)
+    rows = list_jobs(status=status, job_kind=job_kind, limit=limit, offset=offset)
     indicators = _job_evidence_indicators(rows)
     fates = load_candidate_fates_for_jobs(rows)
     return [_job_out(row, indicators, fates) for row in rows]
@@ -53,11 +73,12 @@ def get_jobs(
 @router.get("/jobs/page", response_model=JobPageOut)
 def get_jobs_page(
     status: JobStatus | None = None,
+    job_kind: str | None = Query(default=None, description="Optional job kind filter."),
     limit: int = Query(default=DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
     cursor: str | None = Query(default=None, description="Opaque pagination cursor."),
 ) -> JobPageOut:
     try:
-        page = list_jobs_page(status=status, limit=limit, cursor=cursor)
+        page = list_jobs_page(status=status, job_kind=job_kind, limit=limit, cursor=cursor)
     except PaginationCursorError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     indicators = _job_evidence_indicators(page.items)
@@ -66,6 +87,19 @@ def get_jobs_page(
         items=[_job_out(row, indicators, fates) for row in page.items],
         next_cursor=page.next_cursor,
     )
+
+
+@router.post("/jobs/retry-failed-stale", response_model=JobsRetryFailedStaleOut)
+def post_retry_failed_stale_jobs(body: JobsRetryFailedStaleRequest) -> JobsRetryFailedStaleOut:
+    try:
+        payload = retry_failed_stale_jobs(
+            retry_all=bool(body.all),
+            limit=body.limit,
+            reason=body.reason,
+        )
+    except JobRetryValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return JobsRetryFailedStaleOut.model_validate(payload)
 
 
 @router.get("/jobs/{job_id}", response_model=JobDetailOut)
@@ -97,6 +131,20 @@ def get_job_detail(job_id: UUID) -> JobDetailOut:
     if indicator is not None:
         update.update(indicator.as_dict())
     return base.model_copy(update=update)
+
+
+@router.post("/jobs/{job_id}/retry", response_model=JobRetryOut)
+def post_retry_job(job_id: UUID, body: JobRetryRequest | None = None) -> JobRetryOut:
+    try:
+        payload = retry_job_by_id(
+            job_id=job_id,
+            reason=body.reason if body is not None else None,
+        )
+    except JobNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except JobRetryConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return JobRetryOut.model_validate(payload)
 
 
 @router.get("/jobs/{job_id}/artifacts", response_model=JobArtifactsOut)

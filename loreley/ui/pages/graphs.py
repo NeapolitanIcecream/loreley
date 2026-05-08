@@ -53,6 +53,17 @@ def render() -> None:
                 x="created_at",
                 y=value_column,
                 color="island_id",
+                symbol="candidate_fate_label" if "candidate_fate_label" in df.columns else None,
+                hover_data=[
+                    column
+                    for column in [
+                        "commit_hash",
+                        "candidate_fate_label",
+                        "agent_visible_evidence_count",
+                        "top_evaluation_diagnosis",
+                    ]
+                    if column in df.columns
+                ],
                 title=f"{metric_name or 'Metric'} vs time (loaded nodes)",
             )
             st.plotly_chart(fig, width="stretch")
@@ -92,6 +103,8 @@ def render() -> None:
                     f"island: {island}<br/>"
                     f"{metric_name or 'metric'}: {raw_metric if raw_metric is not None else fitness}<br/>"
                     f"objective: {objective}<br/>"
+                    f"fate: {n.get('candidate_fate_label') or 'n/a'}<br/>"
+                    f"agent-visible evidence: {n.get('agent_visible_evidence_count') or 0}<br/>"
                     f"author: {author}<br/>"
                     f"message: {message}"
                 )
@@ -138,4 +151,3 @@ def render() -> None:
 
     with st.expander("Raw graph JSON", expanded=False):
         st.json(graph)
-

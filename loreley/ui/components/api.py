@@ -54,6 +54,17 @@ def api_get_or_stop(base_url: str, path: str, *, params: dict[str, Any] | None =
         st.stop()
 
 
+def api_post_or_stop(base_url: str, path: str, *, json_body: Any | None = None) -> Any:
+    """POST JSON, showing an error and stopping the page on failures."""
+
+    try:
+        client = get_api_client(base_url)
+        return client.post_json(path, json_body=json_body if json_body is not None else {})
+    except APIError as exc:
+        st.error(f"API error: {exc}")
+        st.stop()
+
+
 @st.cache_data(ttl=60, show_spinner=False)
 def api_get_page(base_url: str, path: str, params: tuple[tuple[str, str], ...] = ()) -> dict[str, Any]:
     """Cached GET request returning a paginated JSON payload."""

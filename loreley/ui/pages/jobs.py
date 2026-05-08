@@ -9,6 +9,7 @@ from loreley.ui.components.aggrid import render_table, selected_rows
 from loreley.ui.components.api import (
     api_get_or_stop,
     api_get_page_or_stop,
+    api_post_or_stop,
     render_agent_feedback_preview,
     render_artifact_downloads,
     render_evaluation_evidence,
@@ -38,12 +39,38 @@ def render() -> None:
     page_size = st.selectbox("Page size", [50, 100, 200, 500], index=1)
     status_options = ["all", *(status.value for status in JobStatus)]
     selected_status = st.selectbox("Status filter", options=status_options, index=0)
+    job_kind = st.selectbox("Job kind", ["all", "evolution", "repair"], index=0)
+    fate_filter = st.selectbox(
+        "Fate",
+        ["all", "repair_pending", "candidate_failed", "discarded_for_sampling", "elite_inserted", "elite_replaced", "elite_retained", "valid_not_elite", "unknown"],
+        index=0,
+    )
+    evidence_filter = st.selectbox("Evidence", ["all", "has evidence", "agent-visible", "none"], index=0)
+
+    retry_col, refresh_col = st.columns(2)
+    with retry_col:
+        if st.button("Retry failed-stale page", key="jobs_retry_failed_stale"):
+            result = api_post_or_stop(
+                api_base_url,
+                "/api/v1/jobs/retry-failed-stale",
+                json_body={"limit": page_size},
+            )
+            st.cache_data.clear()
+            count = result.get("count") if isinstance(result, dict) else 0
+            st.success(f"Retried jobs: {count}")
+            _rerun()
+    with refresh_col:
+        if st.button("Refresh jobs", key="jobs_refresh"):
+            st.cache_data.clear()
+            _rerun()
 
     params: dict[str, object] = {"limit": page_size}
     if selected_status != "all":
         params["status"] = selected_status
+    if job_kind != "all":
+        params["job_kind"] = job_kind
 
-    signature = pager_signature((api_base_url, selected_status, page_size))
+    signature = pager_signature((api_base_url, selected_status, job_kind, page_size))
     state = normalize_cursor_pager(
         signature=signature,
         stored_signature=st.session_state.get(_JOBS_CURSOR_SIGNATURE_KEY),
@@ -64,6 +91,8 @@ def render() -> None:
     )
     rows = page.get("items") if isinstance(page, dict) else []
     df = pd.DataFrame(rows if isinstance(rows, list) else [])
+    df = _filter_jobs_df(df, fate_filter=fate_filter, evidence_filter=evidence_filter)
+    df = _decorate_jobs_df(df)
 
     st.subheader("Jobs")
     if df.empty:
@@ -120,6 +149,17 @@ def _render_job_detail(
         st.json(detail)
         return
     st.write(_job_top_fields(detail))
+    if st.button("Retry this job", key=f"retry_job_{job_id}"):
+        result = api_post_or_stop(
+            api_base_url,
+            f"/api/v1/jobs/{job_id}/retry",
+            json_body={},
+        )
+        st.cache_data.clear()
+        st.success(
+            f"Retried {result.get('job_id') if isinstance(result, dict) else job_id}"
+        )
+        _rerun()
     st.text_area("Goal", value=str(detail.get("goal") or ""), height=100, disabled=True)
     if detail.get("iteration_hint"):
         st.caption(f"Iteration hint: {detail.get('iteration_hint')}")
@@ -148,6 +188,9 @@ def _job_top_fields(detail: dict[str, object]) -> dict[str, object]:
             "candidate_published_at",
             "candidate_fate_label",
             "candidate_fate_reason",
+            "has_evaluation_evidence",
+            "agent_visible_evidence_count",
+            "top_evaluation_diagnosis",
             "result_commit_hash",
             "ingestion_status",
             "ingestion_attempts",
@@ -200,3 +243,34 @@ def _list_value(data: dict[str, object], key: str) -> list[dict[str, object]]:
 def _dict_value(data: dict[str, object], key: str) -> dict[str, object] | None:
     value = data.get(key)
     return value if isinstance(value, dict) else None
+
+
+def _filter_jobs_df(df, *, fate_filter: str, evidence_filter: str):
+    if df.empty:
+        return df
+    out = df
+    if fate_filter != "all" and "candidate_fate_label" in out.columns:
+        out = out[out["candidate_fate_label"].fillna("") == fate_filter]
+    if evidence_filter != "all":
+        if evidence_filter == "has evidence" and "has_evaluation_evidence" in out.columns:
+            out = out[out["has_evaluation_evidence"].fillna(False).astype(bool)]
+        elif evidence_filter == "agent-visible" and "agent_visible_evidence_count" in out.columns:
+            out = out[out["agent_visible_evidence_count"].fillna(0).astype(int) > 0]
+        elif evidence_filter == "none" and "has_evaluation_evidence" in out.columns:
+            out = out[~out["has_evaluation_evidence"].fillna(False).astype(bool)]
+    return out
+
+
+def _decorate_jobs_df(df):
+    if df.empty:
+        return df
+    out = df.copy()
+    if "candidate_fate_label" in out.columns:
+        out["fate"] = out["candidate_fate_label"].fillna("unknown")
+    if "agent_visible_evidence_count" in out.columns:
+        out["evidence"] = out["agent_visible_evidence_count"].fillna(0).astype(int).map(
+            lambda count: f"agent-visible:{count}" if count else "none"
+        )
+    if "campaign_program_hash" in out.columns:
+        out["program"] = out["campaign_program_hash"].fillna("").astype(str).str.slice(0, 12)
+    return out

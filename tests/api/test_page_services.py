@@ -65,6 +65,33 @@ def test_list_jobs_page_returns_next_cursor_without_offset(monkeypatch: pytest.M
     assert getattr(statements[0], "_offset_clause", None) is None
 
 
+def test_list_jobs_page_applies_job_kind_filter(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = datetime(2026, 3, 11, tzinfo=timezone.utc)
+    rows = [
+        SimpleNamespace(id=uuid4(), completed_at=now, created_at=now, status=JobStatus.SUCCEEDED),
+    ]
+    statements: list[object] = []
+
+    class _Session:
+        def execute(self, stmt):
+            statements.append(stmt)
+            return _ExecResult(rows)
+
+    @contextmanager
+    def _fake_scope():
+        yield _Session()
+
+    monkeypatch.setattr(jobs_service, "session_scope", _fake_scope)
+
+    page = jobs_service.list_jobs_page(job_kind="repair", limit=2)
+
+    assert len(page.items) == 1
+    sql = str(statements[0].compile())
+    params = {str(key): value for key, value in statements[0].compile().params.items()}
+    assert "evolution_jobs.job_kind" in sql
+    assert "repair" in params.values()
+
+
 def test_list_commits_page_applies_cursor_without_offset(monkeypatch: pytest.MonkeyPatch) -> None:
     now = datetime(2026, 3, 11, tzinfo=timezone.utc)
     rows = [

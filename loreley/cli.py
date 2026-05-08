@@ -7,7 +7,7 @@ This CLI is designed to:
 - run preflight checks before starting long-running processes
 """
 
-from datetime import datetime, timezone
+from datetime import datetime
 import os
 import sys
 import json
@@ -21,6 +21,15 @@ from rich.console import Console
 
 from loreley.config import Settings, get_settings, resolve_default_island_id
 from loreley.core.candidate_fate import CandidateFate, derive_candidate_fate
+from loreley.core.job_retry import (
+    db_utc_now,
+    failed_stale_job_conditions,
+    job_lease_payload,
+    job_retry_state,
+    load_failed_stale_retry_rows,
+    retry_failed_stale_jobs_payload,
+    retry_job_row,
+)
 from loreley.entrypoints import configure_process_logging, reset_database, run_api, run_scheduler, run_ui, run_worker
 from loreley.preflight import (
     CheckResult,
@@ -116,39 +125,11 @@ def _job_status_value(value: object) -> str:
 
 
 def _db_utc_now(session: Any) -> datetime:
-    from sqlalchemy import func, select
-
-    value = session.execute(select(func.now())).scalar_one()
-    if not isinstance(value, datetime):
-        raise RuntimeError(f"Database current timestamp returned unsupported value: {value!r}")
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+    return db_utc_now(session)
 
 
 def _job_lease_payload(*, job: Any, now: datetime) -> dict[str, object]:
-    lease_expires_at = getattr(job, "lease_expires_at", None)
-    run_token = getattr(job, "run_token", None)
-    worker_id = getattr(job, "worker_id", None)
-    status = _job_status_value(getattr(job, "status", None))
-
-    if status == "running":
-        if run_token is None or worker_id is None or lease_expires_at is None:
-            state = "missing"
-        elif isinstance(lease_expires_at, datetime) and lease_expires_at < now:
-            state = "stale"
-        else:
-            state = "active"
-    else:
-        state = "none"
-
-    return {
-        "state": state,
-        "heartbeat_at": _iso_or_none(getattr(job, "heartbeat_at", None)),
-        "lease_expires_at": _iso_or_none(lease_expires_at),
-        "run_token": str(run_token) if run_token is not None else None,
-        "worker_id": str(worker_id) if worker_id is not None else None,
-    }
+    return job_lease_payload(job=job, now=now)
 
 
 def _candidate_fate_fields(*, job: Any, candidate_fate: CandidateFate | None) -> dict[str, object]:
@@ -308,16 +289,11 @@ def _failed_stale_job_conditions(
     func: Any,
     max_recovery_attempts: int,
 ) -> tuple[Any, ...]:
-    from sqlalchemy import or_
-
-    lease_error_norm = func.lower(func.trim(func.coalesce(EvolutionJob.last_error, "")))
-    return (
-        EvolutionJob.status == JobStatus.FAILED,
-        EvolutionJob.recovery_count > int(max_recovery_attempts),
-        or_(
-            lease_error_norm.like("lease expired after missing heartbeat;%"),
-            lease_error_norm.like("lease metadata missing for running job;%"),
-        ),
+    return failed_stale_job_conditions(
+        EvolutionJob=EvolutionJob,
+        JobStatus=JobStatus,
+        func=func,
+        max_recovery_attempts=max_recovery_attempts,
     )
 
 
@@ -553,44 +529,15 @@ def _load_best_commit_status_payload(
 
 
 def _job_retry_state(*, job: Any, now: datetime) -> tuple[bool, str | None]:
-    from loreley.db.models import JobStatus
-
-    status = getattr(job, "status", None)
-    if status == JobStatus.FAILED:
-        return True, None
-
-    lease_state = str(_job_lease_payload(job=job, now=now)["state"])
-    if status == JobStatus.RUNNING and lease_state in {"missing", "stale"}:
-        return True, lease_state
-    return False, lease_state
+    return job_retry_state(job=job, now=now)
 
 
 def _retry_job_row(*, job: Any, reason: str, now: datetime) -> dict[str, object]:
-    previous_status = _job_status_value(getattr(job, "status", None))
-    previous_recovery_count = int(getattr(job, "recovery_count", 0) or 0)
-    from loreley.db.models import JobStatus
-
-    job.status = JobStatus.PENDING
-    job.scheduled_at = now
-    job.started_at = None
-    job.completed_at = None
-    job.heartbeat_at = None
-    job.lease_expires_at = None
-    job.run_token = None
-    job.worker_id = None
-    job.recovery_count = 0
-    job.candidate_commit_hash = None
-    job.candidate_branch_name = None
-    job.candidate_published_at = None
-    job.result_commit_hash = None
-    job.last_error = str(reason or "").strip() or "manual retry requested via CLI"
-    return {
-        "job_id": str(getattr(job, "id", "")),
-        "previous_status": previous_status,
-        "new_status": _job_status_value(getattr(job, "status", None)),
-        "recovery_count_reset_from": previous_recovery_count,
-        "reason": job.last_error,
-    }
+    return retry_job_row(
+        job=job,
+        reason=str(reason or "").strip() or "manual retry requested via CLI",
+        now=now,
+    )
 
 
 def _retry_failed_stale_jobs_payload(
@@ -602,22 +549,14 @@ def _retry_failed_stale_jobs_payload(
     reason: str,
     now: datetime,
 ) -> dict[str, object]:
-    rows = _load_failed_stale_retry_rows(
+    return retry_failed_stale_jobs_payload(
         session=session,
         max_recovery_attempts=int(settings.scheduler_stale_running_max_recovery_attempts),
         retry_all=retry_all,
         limit=limit,
+        reason=str(reason or "").strip() or "manual retry requested via CLI",
+        now=now,
     )
-    retried_jobs = [_retry_job_row(job=row, reason=reason, now=now) for row in rows]
-    return {
-        "filters": {
-            "failed_stale": True,
-            "all": bool(retry_all),
-            "limit": None if retry_all else int(limit or 0),
-        },
-        "count": len(retried_jobs),
-        "retried_jobs": retried_jobs,
-    }
 
 
 def _load_failed_stale_retry_rows(
@@ -627,28 +566,12 @@ def _load_failed_stale_retry_rows(
     retry_all: bool,
     limit: int | None,
 ) -> list[Any]:
-    from sqlalchemy import func, select
-
-    from loreley.db.models import EvolutionJob, JobStatus
-
-    stmt = (
-        select(EvolutionJob)
-        .where(
-            *_failed_stale_job_conditions(
-                EvolutionJob=EvolutionJob,
-                JobStatus=JobStatus,
-                func=func,
-                max_recovery_attempts=max_recovery_attempts,
-            )
-        )
-        .order_by(
-            EvolutionJob.completed_at.desc().nullslast(),
-            EvolutionJob.created_at.desc(),
-        )
+    return load_failed_stale_retry_rows(
+        session=session,
+        max_recovery_attempts=max_recovery_attempts,
+        retry_all=retry_all,
+        limit=limit,
     )
-    if not retry_all and limit is not None:
-        stmt = stmt.limit(int(limit))
-    return list(session.execute(stmt).scalars())
 
 
 def _run_doctor(

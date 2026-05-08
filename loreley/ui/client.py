@@ -60,6 +60,29 @@ class LoreleyAPIClient:
         except HttpCallError as exc:  # pragma: no cover - network dependent
             raise APIError(exc.message, status_code=exc.status_code) from exc
 
+    def post_json(self, path: str, *, json_body: Any | None = None) -> Any:
+        """POST JSON to the API and return a JSON response."""
+        try:
+            response = self._http.request(
+                "POST",
+                path,
+                headers={"Accept": "application/json"},
+                json_body=json_body if json_body is not None else {},
+            )
+        except HttpCallError as exc:  # pragma: no cover - network dependent
+            raise APIError(exc.message, status_code=exc.status_code) from exc
+        if not response.content:
+            return None
+        try:
+            import json
+
+            return json.loads(response.content.decode("utf-8", errors="replace"))
+        except json.JSONDecodeError as exc:
+            raise APIError(
+                f"Invalid JSON response: {exc}",
+                status_code=int(response.status_code),
+            ) from exc
+
     def get_json_page(
         self,
         path: str,
@@ -87,4 +110,3 @@ class LoreleyAPIClient:
             return self._http.get_bytes(path, params=params)
         except HttpCallError as exc:  # pragma: no cover - network dependent
             raise APIError(exc.message, status_code=exc.status_code) from exc
-

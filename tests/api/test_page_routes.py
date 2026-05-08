@@ -88,6 +88,39 @@ def test_jobs_page_route_returns_items_and_next_cursor(monkeypatch) -> None:
     assert response.json()["items"][0]["id"] == str(row.id)
 
 
+def test_jobs_page_route_passes_job_kind_filter(monkeypatch) -> None:
+    _patch_no_evidence(monkeypatch)
+    captured: dict[str, object] = {}
+    row = SimpleNamespace(
+        id=uuid4(),
+        status=JobStatus.SUCCEEDED,
+        priority=0,
+        island_id="main",
+        base_commit_hash="abc",
+        scheduled_at=None,
+        started_at=None,
+        completed_at=datetime(2026, 3, 11, tzinfo=timezone.utc),
+        last_error=None,
+        is_seed_job=False,
+        job_kind="repair",
+        result_commit_hash="def",
+        ingestion_status=None,
+    )
+
+    def _fake_list_jobs_page(**kwargs):
+        captured.update(kwargs)
+        return JobPage(items=[row], next_cursor=None)
+
+    monkeypatch.setattr(jobs_router, "list_jobs_page", _fake_list_jobs_page)
+
+    client = _build_test_client()
+    response = client.get("/api/v1/jobs/page?job_kind=repair")
+
+    assert response.status_code == 200
+    assert captured["job_kind"] == "repair"
+    assert response.json()["items"][0]["job_kind"] == "repair"
+
+
 def test_jobs_page_route_serializes_candidate_fate(monkeypatch) -> None:
     _patch_no_evidence(monkeypatch)
     row = SimpleNamespace(

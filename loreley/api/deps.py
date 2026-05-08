@@ -1,8 +1,4 @@
-"""Common helpers for the UI API.
-
-The UI API is read-only by design. Keep helpers in this module side-effect free
-to avoid impacting the scheduler/worker runtime.
-"""
+"""Common helpers for the UI API."""
 
 from __future__ import annotations
 
@@ -61,5 +57,4 @@ def safe_settings(settings: Settings | None = None) -> dict[str, Any]:
 
     effective = settings or get_settings()
     return dict(effective.export_safe())
-
 

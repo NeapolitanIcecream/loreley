@@ -1,4 +1,4 @@
-"""FastAPI application factory for Loreley read-only UI API."""
+"""FastAPI application factory for the Loreley UI API."""
 
 from __future__ import annotations
 
@@ -13,6 +13,8 @@ from loreley.api.routers.jobs import router as jobs_router
 from loreley.api.routers.commits import router as commits_router
 from loreley.api.routers.logs import router as logs_router
 from loreley.api.routers.graphs import router as graphs_router
+from loreley.api.routers.operator import router as operator_router
+from loreley.api.routers.repair import router as repair_router
 from loreley.db.base import INSTANCE_SCHEMA_VERSION, ensure_database_schema, session_scope
 from loreley.db.instance import validate_instance_marker_schema
 
@@ -47,10 +49,10 @@ def create_app() -> FastAPI:
     app.include_router(commits_router, prefix=API_V1_PREFIX, tags=["commits"])
     app.include_router(logs_router, prefix=API_V1_PREFIX, tags=["logs"])
     app.include_router(graphs_router, prefix=API_V1_PREFIX, tags=["graphs"])
+    app.include_router(operator_router, prefix=API_V1_PREFIX, tags=["operator"])
+    app.include_router(repair_router, prefix=API_V1_PREFIX, tags=["repair"])
     return app
 
 
 # Uvicorn default import target: `uvicorn loreley.api.app:app`
 app = create_app()
-
-
