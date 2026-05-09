@@ -159,6 +159,10 @@ def test_agent_auth_configured_token_rejects_missing_and_wrong_credentials(monke
         "/api/v1/agent/capabilities",
         headers={"Authorization": "Bearer wrong"},
     )
+    lowercase = client.get(
+        "/api/v1/agent/capabilities",
+        headers={"Authorization": "bearer secret"},
+    )
     correct = client.get(
         "/api/v1/agent/capabilities",
         headers={"Authorization": "Bearer secret"},
@@ -168,6 +172,7 @@ def test_agent_auth_configured_token_rejects_missing_and_wrong_credentials(monke
     assert missing.json()["error_code"] == "unauthorized"
     assert wrong.status_code == 403
     assert wrong.json()["error_code"] == "forbidden"
+    assert lowercase.status_code == 200
     assert correct.status_code == 200
 
 
@@ -378,6 +383,32 @@ def test_agent_action_invalid_action_type_is_rejected_before_audit_insert(monkey
     assert exc_info.value.status_code == 400
     assert exc_info.value.error_code == "invalid_action_type"
     assert session.records == []
+
+
+def test_agent_action_retry_failed_stale_requires_boolean_all_param(monkeypatch) -> None:
+    session = _ActionSession()
+    _install_action_session(monkeypatch, session)
+    monkeypatch.setattr(
+        agent_service,
+        "load_failed_stale_retry_rows",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("invalid params")),
+    )
+
+    with pytest.raises(AgentAPIError) as exc_info:
+        agent_service.run_agent_action(
+            AgentActionRequest(
+                action_type="retry_failed_stale_jobs",
+                dry_run=True,
+                params={"all": "false"},
+            ),
+            actor="test-agent",
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.error_code == "invalid_request"
+    assert len(session.records) == 1
+    assert session.records[0].status == "failed"
+    assert session.records[0].error_code == "invalid_request"
 
 
 def test_agent_action_expected_state_mismatch_returns_structured_error_and_audit(

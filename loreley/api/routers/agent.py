@@ -51,8 +51,8 @@ def require_agent_auth(
             retryable=False,
             resource={"type": "agent_api", "id": "auth"},
         )
-    prefix = "Bearer "
-    if not raw.startswith(prefix):
+    scheme, separator, supplied = raw.partition(" ")
+    if not separator or scheme.lower() != "bearer":
         raise AgentAPIError(
             status_code=401,
             error_code="unauthorized",
@@ -60,7 +60,15 @@ def require_agent_auth(
             retryable=False,
             resource={"type": "agent_api", "id": "auth"},
         )
-    supplied = raw[len(prefix):].strip()
+    supplied = supplied.strip()
+    if not supplied:
+        raise AgentAPIError(
+            status_code=401,
+            error_code="unauthorized",
+            message="Missing Authorization bearer token.",
+            retryable=False,
+            resource={"type": "agent_api", "id": "auth"},
+        )
     if not hmac.compare_digest(supplied, token):
         raise AgentAPIError(
             status_code=403,

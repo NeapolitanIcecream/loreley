@@ -840,7 +840,7 @@ def _dry_run_result(*, action_type: str, context: dict[str, Any]) -> dict[str, A
 
 
 def _retry_failed_stale_params(params: dict[str, Any]) -> tuple[bool, int | None]:
-    retry_all = bool(params.get("all", params.get("retry_all", False)))
+    retry_all = _retry_all_param(params)
     limit_value = params.get("limit")
     limit = None
     if limit_value is not None:
@@ -879,6 +879,25 @@ def _retry_failed_stale_params(params: dict[str, Any]) -> tuple[bool, int | None
             resource={"type": "jobs", "id": "failed_stale"},
         )
     return retry_all, limit
+
+
+def _retry_all_param(params: dict[str, Any]) -> bool:
+    for key in ("all", "retry_all"):
+        if key in params:
+            return _strict_bool_param(params[key], key=key)
+    return False
+
+
+def _strict_bool_param(value: object, *, key: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    raise AgentAPIError(
+        status_code=400,
+        error_code="invalid_request",
+        message=f"retry_failed_stale_jobs {key} must be a boolean.",
+        retryable=False,
+        resource={"type": "jobs", "id": "failed_stale"},
+    )
 
 
 def _uuid_param(params: dict[str, Any], key: str, *, resource_type: str) -> UUID:
