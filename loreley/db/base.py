@@ -16,7 +16,7 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from loreley.config import Settings, get_settings
 from loreley.db.instance import ensure_instance_marker, seed_instance_marker
 
-INSTANCE_SCHEMA_VERSION = 11
+INSTANCE_SCHEMA_VERSION = 12
 _REDUNDANT_INDEX_NAMES = (
     "ix_commit_cards_commit_hash",
     "ix_map_elites_archive_cells_island",
@@ -75,6 +75,11 @@ _MANAGED_INDEX_DDL = (
     CREATE UNIQUE INDEX IF NOT EXISTS "uq_operator_tasks_active_baseline_ensure"
     ON operator_tasks (kind)
     WHERE kind = 'baseline_ensure' AND status IN ('pending', 'running')
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS "uq_agent_actions_action_idempotency"
+    ON agent_actions (action_type, idempotency_key)
+    WHERE idempotency_key <> ''
     """,
 )
 

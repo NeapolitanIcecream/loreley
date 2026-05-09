@@ -107,6 +107,10 @@ class Settings(BaseSettings):
         default=None,
         alias="LOGS_BASE_DIR",
     )
+    loreley_agent_api_token: str | None = Field(
+        default=None,
+        alias="LORELEY_AGENT_API_TOKEN",
+    )
 
     # OpenAI-compatible API configuration
     openai_api_key: str | None = Field(
@@ -938,6 +942,10 @@ def _build_safe_export_payload(settings: Settings, *, mask_secrets: bool) -> dic
         "log_level": settings.log_level,
         "profile": settings.profile,
         "logs_base_dir": settings.logs_base_dir,
+        "loreley_agent_api_token": _safe_export_secret(
+            settings.loreley_agent_api_token,
+            mask_secrets=mask_secrets,
+        ),
         "openai_api_spec": settings.openai_api_spec,
         "openai_base_url": _safe_export_url(settings.openai_base_url, mask_secrets=mask_secrets),
         "openai_api_key": _safe_export_secret(settings.openai_api_key, mask_secrets=mask_secrets),

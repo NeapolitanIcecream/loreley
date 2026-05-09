@@ -5,7 +5,14 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 
+from loreley.api.agent_errors import (
+    AgentAPIError,
+    agent_api_error_handler,
+    agent_validation_exception_handler,
+)
+from loreley.api.routers.agent import router as agent_router
 from loreley.api.routers.health import router as health_router
 from loreley.api.routers.archive import router as archive_router
 from loreley.api.routers.instance import router as instance_router
@@ -43,6 +50,8 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=_lifespan,
     )
+    app.add_exception_handler(AgentAPIError, agent_api_error_handler)
+    app.add_exception_handler(RequestValidationError, agent_validation_exception_handler)
 
     app.include_router(health_router, prefix=API_V1_PREFIX, tags=["health"])
     app.include_router(instance_router, prefix=API_V1_PREFIX, tags=["instance"])
@@ -53,6 +62,7 @@ def create_app() -> FastAPI:
     app.include_router(graphs_router, prefix=API_V1_PREFIX, tags=["graphs"])
     app.include_router(operator_router, prefix=API_V1_PREFIX, tags=["operator"])
     app.include_router(repair_router, prefix=API_V1_PREFIX, tags=["repair"])
+    app.include_router(agent_router, prefix=API_V1_PREFIX, tags=["agent"])
     return app
 
 

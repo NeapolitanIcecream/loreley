@@ -8,6 +8,10 @@ actions, and job retries.
 The operator write API is unauthenticated by design. Run it only on trusted
 local or internal networks.
 
+The agent REST facade under `/api/v1/agent` can be protected separately with
+`LORELEY_AGENT_API_TOKEN`. If that variable is unset, the agent facade remains
+open for local development.
+
 The Streamlit UI disables its operator write buttons until the matching
 per-action confirmation checkbox is checked. That UI guard does not add
 authentication or change these API routes.
@@ -44,6 +48,8 @@ Common variables:
 - `LOGS_BASE_DIR` (optional; logs are read from `<LOGS_BASE_DIR>/logs` or `<cwd>/logs`)
 - `LOG_LEVEL`
 - `EXPERIMENT_ID` (optional; used to resolve the experiment namespace for log browsing; if unset, the API falls back to the database marker)
+- `LORELEY_AGENT_API_TOKEN` (optional; bearer token required only for
+  `/api/v1/agent/*` when set)
 
 ## Versioning and prefix
 
@@ -86,6 +92,13 @@ FastAPI also exposes OpenAPI docs by default:
 - `POST /repair/candidates/{candidate_id}/quarantine`
 - `POST /repair/candidates/{candidate_id}/discard`
 - `POST /repair/candidates/{candidate_id}/restore`
+- `GET /agent/capabilities`
+- `GET /agent/status`
+- `GET /agent/next-actions`
+- `POST /agent/actions`
+- `GET /agent/actions/{action_id}`
+- `GET /agent/jobs/{job_id}/feedback`
+- `GET /agent/commits/{commit_hash}/feedback`
 
 ## Operator Writes
 
@@ -124,16 +137,55 @@ These routes mutate database state:
 - job health, including unfinished jobs, pending ingestion, lease health, and
   counts by status and job kind.
 
+## Agent REST Facade
+
+The agent facade is a REST-first automation surface for control clients. It
+wraps only the existing operator writes:
+
+- `retry_job`
+- `retry_failed_stale_jobs`
+- `baseline_ensure`
+- `repair_schedule_one`
+- `repair_candidate_quarantine`
+- `repair_candidate_discard`
+- `repair_candidate_restore`
+
+`POST /api/v1/agent/actions` accepts an action envelope with `action_type`,
+`dry_run`, `idempotency_key`, `reason`, `expected_state`, and `params`. Dry-runs
+validate parameters and focused current-state checks without calling write
+services. Execute requests persist an `agent_actions` audit row and call the
+matching existing service.
+
+Structured errors are used only for agent routes:
+
+```json
+{
+  "error_code": "precondition_failed",
+  "message": "Expected state mismatch for status.",
+  "retryable": false,
+  "resource": {"type": "job", "id": "..."},
+  "suggested_next_actions": []
+}
+```
+
+See [Agent REST API](agent-api.md) for examples, auth behavior, idempotency, and
+feedback endpoints.
+
 ## Notes
 
 - **Authentication**: there is no authentication layer. Deploy the API only
-  behind trusted local or internal network controls.
+  behind trusted local or internal network controls. The agent facade is the
+  exception: set `LORELEY_AGENT_API_TOKEN` to require bearer-token auth for
+  `/api/v1/agent/*`.
 - **Streamlit confirmation**: the Streamlit operator pages require a checkbox
   confirmation before enabling each write button. Direct API clients still call
   the same unauthenticated POST routes.
 - **Write scope**: operator writes are intentionally narrow. They do not add
   authentication, restart processes, change environment variables, or bypass the
   scheduler and worker settings already in the database/runtime.
+- **Schema reset**: the agent facade adds the `agent_actions` table and bumps
+  `INSTANCE_SCHEMA_VERSION` to `12`. Existing development databases must be
+  reset with `uv run loreley reset-db --yes`.
 - **Job artifacts**: large, audit/debug oriented payloads (planning/coding prompts, raw outputs, evaluation logs) are stored on disk and referenced via `JobArtifacts`. The API exposes:
   - `GET /jobs/{job_id}/artifacts` as an index of available URLs
   - `GET /jobs/{job_id}/artifacts/{artifact_key}` for direct downloads
