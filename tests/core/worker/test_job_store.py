@@ -1317,6 +1317,64 @@ def test_repair_eligibility_rejects_non_whitelisted_failure_kind(
     assert state == "ineligible"
 
 
+@pytest.mark.parametrize(
+    ("repair_source_candidate_id", "failed_depth"),
+    [
+        (uuid.uuid4(), 0),
+        (None, 1),
+    ],
+)
+def test_repair_eligibility_rejects_repair_lineage_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+    repair_source_candidate_id: uuid.UUID | None,
+    failed_depth: int,
+) -> None:
+    """MVP repair eligibility is limited to original failed candidates."""
+
+    store = EvolutionJobStore(settings=settings)
+    monkeypatch.setattr(
+        EvolutionJobStore,
+        "_ancestor_aggregate_ready",
+        lambda _self, **_kwargs: True,
+    )
+    candidate = job_store.CandidateCommit(
+        commit_hash="failed",
+        git_parent_commit_hash="base",
+        nearest_viable_ancestor_hash="base",
+        publication_status="published",
+        evaluation_status="candidate_failed",
+        failure_stage="evaluation",
+        failure_kind="test_failed",
+        repair_state="audit_only",
+        lifecycle_status="active",
+        repair_source_candidate_id=repair_source_candidate_id,
+        failed_depth=failed_depth,
+        repair_attempts=0,
+    )
+    outcome = EvaluationOutcome(
+        outcome_kind="candidate_failed",
+        failure=EvaluationFailureResult(
+            failure_stage="evaluation",
+            failure_kind="test_failed",
+            repairability="repairable",
+            safe_failure_summary="Tests failed.",
+        ),
+    )
+    capsule = job_store.DiagnosticCapsule(policy_version="v", policy_passed=True, payload={})
+
+    state = store._decide_repair_state(  # type: ignore[attr-defined]
+        session=SimpleNamespace(),
+        job=SimpleNamespace(job_kind="evolution", is_seed_job=False),
+        job_ctx=_sample_job_context(job_id=uuid.uuid4(), run_token=uuid.uuid4()),
+        candidate=candidate,
+        outcome=outcome,
+        capsule=capsule,
+    )
+
+    assert state == "ineligible"
+
+
 def test_mark_job_failed_updates_running_job_when_run_token_matches(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,

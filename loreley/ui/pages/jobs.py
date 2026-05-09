@@ -56,11 +56,6 @@ def render() -> None:
     )
     rows = page.get("items") if isinstance(page, dict) else []
     df = pd.DataFrame(rows if isinstance(rows, list) else [])
-    df = _filter_jobs_df(
-        df,
-        fate_filter=str(filters["fate_filter"]),
-        evidence_filter=str(filters["evidence_filter"]),
-    )
     df = _decorate_jobs_df(df)
 
     st.subheader("Jobs")
@@ -141,6 +136,11 @@ def _job_page_params(filters: dict[str, object]) -> dict[str, object]:
         params["status"] = filters["selected_status"]
     if filters["job_kind"] != "all":
         params["job_kind"] = filters["job_kind"]
+    if filters["fate_filter"] != "all":
+        params["candidate_fate"] = filters["fate_filter"]
+    evidence = _evidence_query_value(str(filters["evidence_filter"]))
+    if evidence is not None:
+        params["evidence"] = evidence
     return params
 
 
@@ -148,8 +148,19 @@ def _sync_jobs_pager(*, api_base_url: str, filters: dict[str, object]):
     page_size = filters["page_size"]
     selected_status = filters["selected_status"]
     job_kind = filters["job_kind"]
+    fate_filter = filters["fate_filter"]
+    evidence_filter = filters["evidence_filter"]
 
-    signature = pager_signature((api_base_url, selected_status, job_kind, page_size))
+    signature = pager_signature(
+        (
+            api_base_url,
+            selected_status,
+            job_kind,
+            fate_filter,
+            evidence_filter,
+            page_size,
+        )
+    )
     state = normalize_cursor_pager(
         signature=signature,
         stored_signature=st.session_state.get(_JOBS_CURSOR_SIGNATURE_KEY),
@@ -322,22 +333,6 @@ def _dict_value(data: dict[str, object], key: str) -> dict[str, object] | None:
     return value if isinstance(value, dict) else None
 
 
-def _filter_jobs_df(df, *, fate_filter: str, evidence_filter: str):
-    if df.empty:
-        return df
-    out = df
-    if fate_filter != "all" and "candidate_fate_label" in out.columns:
-        out = out[_normalized_fate_labels(out["candidate_fate_label"]) == fate_filter]
-    if evidence_filter != "all":
-        if evidence_filter == "has evidence" and "has_evaluation_evidence" in out.columns:
-            out = out[out["has_evaluation_evidence"].fillna(False).astype(bool)]
-        elif evidence_filter == "agent-visible" and "agent_visible_evidence_count" in out.columns:
-            out = out[out["agent_visible_evidence_count"].fillna(0).astype(int) > 0]
-        elif evidence_filter == "none" and "has_evaluation_evidence" in out.columns:
-            out = out[~out["has_evaluation_evidence"].fillna(False).astype(bool)]
-    return out
-
-
 def _decorate_jobs_df(df):
     if df.empty:
         return df
@@ -355,3 +350,12 @@ def _decorate_jobs_df(df):
 
 def _normalized_fate_labels(series):
     return series.fillna("").astype(str).str.strip().replace("", "unknown")
+
+
+def _evidence_query_value(label: str) -> str | None:
+    return {
+        "all": None,
+        "has evidence": "has_evidence",
+        "agent-visible": "agent_visible",
+        "none": "none",
+    }.get(str(label or "").strip(), None)

@@ -489,6 +489,7 @@ class BaselineBootstrapService:
         *,
         root_commit_hash: str,
         campaign_program: CampaignProgramSnapshot | None,
+        force_rerun: bool = False,
     ) -> BaselineBootstrapResult:
         key = build_baseline_key(
             settings=self.settings,
@@ -497,7 +498,11 @@ class BaselineBootstrapService:
         )
         existing = self._load_baseline_by_key(key.hash)
         policy = self._policy()
-        if existing is not None and existing.status in _RECORDED_BASELINE_STATUSES:
+        if (
+            existing is not None
+            and existing.status in _RECORDED_BASELINE_STATUSES
+            and (existing.status == BASELINE_STATUS_VALID or not force_rerun)
+        ):
             return self._result_from_row(existing, key_hash=key.hash, policy=policy)
 
         outcome: EvaluationOutcome | None = None

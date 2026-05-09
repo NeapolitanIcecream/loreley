@@ -81,6 +81,10 @@ class _FakeStreamlitModule:
         cls.captions.append(value)
 
     @classmethod
+    def divider(cls) -> None:
+        return None
+
+    @classmethod
     def text_area(cls, label: str, **kwargs) -> None:
         cls.text_areas.append({"label": label, "kwargs": kwargs})
 
@@ -124,23 +128,24 @@ def jobs_module(monkeypatch: pytest.MonkeyPatch):
     sys.modules.pop("loreley.ui.pages.jobs", None)
 
 
-def test_jobs_fate_unknown_filter_includes_missing_and_empty_labels(jobs_module) -> None:
-    df = pd.DataFrame(
-        [
-            {"id": "missing", "candidate_fate_label": None},
-            {"id": "empty", "candidate_fate_label": ""},
-            {"id": "blank", "candidate_fate_label": "   "},
-            {"id": "known", "candidate_fate_label": "elite_inserted"},
-        ]
+def test_jobs_page_params_send_server_side_fate_and_evidence_filters(jobs_module) -> None:
+    params = jobs_module._job_page_params(  # noqa: SLF001
+        {
+            "page_size": 50,
+            "selected_status": "failed",
+            "job_kind": "repair",
+            "fate_filter": "unknown",
+            "evidence_filter": "agent-visible",
+        }
     )
 
-    filtered = jobs_module._filter_jobs_df(  # noqa: SLF001
-        df,
-        fate_filter="unknown",
-        evidence_filter="all",
-    )
-
-    assert filtered["id"].tolist() == ["missing", "empty", "blank"]
+    assert params == {
+        "limit": 50,
+        "status": "failed",
+        "job_kind": "repair",
+        "candidate_fate": "unknown",
+        "evidence": "agent_visible",
+    }
 
 
 def test_jobs_decoration_normalizes_missing_fate_to_unknown(jobs_module) -> None:
@@ -264,7 +269,7 @@ def test_jobs_fate_filter_options_cover_canonical_labels(jobs_module) -> None:
     assert "valid_not_considered" in options
 
 
-def test_jobs_render_keeps_pager_available_when_client_filter_empties_page(
+def test_jobs_render_uses_server_filters_without_current_page_post_filter(
     jobs_module,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -276,21 +281,60 @@ def test_jobs_render_keeps_pager_available_when_client_filter_empties_page(
         "Fate": "unknown",
         "Evidence": "all",
     }
+    captured_params: list[dict[str, object]] = []
+
+    def _get_page(_api_base_url: str, _path: str, *, params: dict[str, object]):
+        captured_params.append(dict(params))
+        return {
+            "items": [{"id": "job-1", "candidate_fate_label": "elite_inserted"}],
+            "next_cursor": "next-page",
+        }
+
     monkeypatch.setattr(
         jobs_module,
         "api_get_page_or_stop",
-        lambda *_args, **_kwargs: {
-            "items": [{"id": "job-1", "candidate_fate_label": "elite_inserted"}],
-            "next_cursor": "next-page",
-        },
+        _get_page,
     )
+    monkeypatch.setattr(jobs_module, "render_table", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(jobs_module, "selected_rows", lambda _grid: [])
 
     jobs_module.render()
 
-    assert "page=1 items=0" in _FakeStreamlitModule.captions
-    assert "No jobs found." in _FakeStreamlitModule.infos
+    assert captured_params == [{"limit": 50, "candidate_fate": "unknown"}]
+    assert "page=1 items=1" in _FakeStreamlitModule.captions
+    assert "No jobs found." not in _FakeStreamlitModule.infos
     assert {
         "label": "Next page",
         "key": "jobs_next_page",
         "disabled": False,
     } in _FakeStreamlitModule.buttons
+
+
+def test_jobs_pager_signature_includes_fate_and_evidence_filters(jobs_module) -> None:
+    state = jobs_module._sync_jobs_pager(  # noqa: SLF001
+        api_base_url="http://api.local",
+        filters={
+            "page_size": 50,
+            "selected_status": "all",
+            "job_kind": "all",
+            "fate_filter": "all",
+            "evidence_filter": "all",
+        },
+    )
+    _FakeStreamlitModule.session_state[jobs_module._JOBS_CURSOR_KEY] = [None, "next"]  # noqa: SLF001
+    _FakeStreamlitModule.session_state[jobs_module._JOBS_CURSOR_INDEX_KEY] = 1  # noqa: SLF001
+
+    changed = jobs_module._sync_jobs_pager(  # noqa: SLF001
+        api_base_url="http://api.local",
+        filters={
+            "page_size": 50,
+            "selected_status": "all",
+            "job_kind": "all",
+            "fate_filter": "unknown",
+            "evidence_filter": "none",
+        },
+    )
+
+    assert changed.signature != state.signature
+    assert changed.cursors == (None,)
+    assert changed.index == 0

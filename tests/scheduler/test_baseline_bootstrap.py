@@ -298,6 +298,51 @@ def test_valid_matching_baseline_is_loaded_without_rerunning_evaluator(
     assert result.status == BASELINE_STATUS_VALID
 
 
+def test_valid_matching_baseline_is_loaded_even_when_force_rerun_requested(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    settings = _settings(policy="required")
+    key = build_baseline_key(settings=settings, root_commit_hash="root123", campaign_program=None)
+    row = CampaignBaseline(
+        baseline_key_hash=key.hash,
+        root_commit_hash="root123",
+        campaign_program_hash=None,
+        evaluator_name="tests.support:plugin",
+        evaluator_version=None,
+        primary_metric_name="score",
+        primary_metric_higher_is_better=True,
+        runtime_profile=settings.profile,
+        effective_settings_fingerprint=key.effective_settings_fingerprint,
+        status=BASELINE_STATUS_VALID,
+        metric_value=1.0,
+    )
+    row.id = uuid.uuid4()
+    store = _BaselineStore()
+    store.baselines.append(row)
+    _install_session(monkeypatch, store)
+
+    class _ForbiddenEvaluator:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            raise AssertionError("valid baseline rows should be loaded without evaluation")
+
+    monkeypatch.setattr(baselines, "Evaluator", _ForbiddenEvaluator)
+
+    service = BaselineBootstrapService(
+        settings=settings,
+        repo_root=tmp_path,
+        console=baselines.Console(record=True),
+    )
+    result = service.ensure_or_load_baseline(
+        root_commit_hash="root123",
+        campaign_program=None,
+        force_rerun=True,
+    )
+
+    assert result.can_dispatch_or_schedule is True
+    assert result.status == BASELINE_STATUS_VALID
+
+
 @pytest.mark.parametrize(
     ("policy", "expected_status", "expected_can_run"),
     [
@@ -339,6 +384,71 @@ def test_non_valid_baseline_attempt_is_reused_on_repeated_ensure_calls(
     assert len(store.baselines) == 1
     assert store.baselines[0].status == expected_status
     assert store.baselines[0].failure_kind == "primary_metric_missing"
+
+
+@pytest.mark.parametrize(
+    ("policy", "expected_first_status"),
+    [
+        ("required", BASELINE_STATUS_FAILED),
+        ("warn", BASELINE_STATUS_DEGRADED),
+    ],
+)
+def test_force_rerun_re_evaluates_non_valid_matching_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    policy: str,
+    expected_first_status: str,
+) -> None:
+    """Operator baseline ensure reruns failed/degraded rows while scheduler default reuses them."""
+
+    store = _BaselineStore()
+    contexts: list[object] = []
+    outcomes = [
+        _passed_outcome(metrics=(EvaluationMetric(name="other", value=1.0),)),
+        _passed_outcome(metrics=(EvaluationMetric(name="score", value=2.5),)),
+    ]
+    _install_session(monkeypatch, store)
+
+    class _WorkerRepository:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        @contextmanager
+        def checkout_lease_for_job(self, **kwargs: object):
+            assert kwargs["job_id"] is None
+            assert kwargs["create_branch"] is False
+            yield SimpleNamespace(worktree=tmp_path)
+
+    class _Evaluator:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def evaluate_outcome(self, context: object) -> EvaluationOutcome:
+            contexts.append(context)
+            return outcomes.pop(0)
+
+    monkeypatch.setattr(baselines, "WorkerRepository", _WorkerRepository)
+    monkeypatch.setattr(baselines, "Evaluator", _Evaluator)
+
+    service = BaselineBootstrapService(
+        settings=_settings(policy=policy),
+        repo_root=tmp_path,
+        console=baselines.Console(record=True),
+    )
+    first = service.ensure_or_load_baseline(root_commit_hash="root123", campaign_program=None)
+    reused = service.ensure_or_load_baseline(root_commit_hash="root123", campaign_program=None)
+    rerun = service.ensure_or_load_baseline(
+        root_commit_hash="root123",
+        campaign_program=None,
+        force_rerun=True,
+    )
+
+    assert first.status == expected_first_status
+    assert reused.status == expected_first_status
+    assert rerun.status == BASELINE_STATUS_VALID
+    assert len(contexts) == 2
+    assert len(store.baselines) == 1
+    assert store.baselines[0].status == BASELINE_STATUS_VALID
 
 
 def test_baseline_key_changes_with_evaluator_version() -> None:

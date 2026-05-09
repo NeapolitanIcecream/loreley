@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from enum import Enum
 from pathlib import Path
 from uuid import UUID
 
@@ -41,6 +42,7 @@ from loreley.api.services.evidence import (
     load_evidence_indicators_by_commit_hash,
 )
 from loreley.api.services.jobs import (
+    JOB_EVIDENCE_FILTERS,
     JobNotFoundError,
     JobRetryConflictError,
     JobRetryValidationError,
@@ -51,20 +53,47 @@ from loreley.api.services.jobs import (
     retry_failed_stale_jobs,
     retry_job_by_id,
 )
-from loreley.core.candidate_fate import CandidateFate
+from loreley.core.candidate_fate import CANDIDATE_FATE_LABELS, CandidateFate
 from loreley.db.models import JobStatus
 
 router = APIRouter()
+
+
+JobCandidateFateFilter = Enum(
+    "JobCandidateFateFilter",
+    {label.upper(): label for label in sorted(CANDIDATE_FATE_LABELS)},
+    type=str,
+)
+JobEvidenceFilter = Enum(
+    "JobEvidenceFilter",
+    {label.upper(): label for label in sorted(JOB_EVIDENCE_FILTERS)},
+    type=str,
+)
 
 
 @router.get("/jobs", response_model=list[JobOut])
 def get_jobs(
     status: JobStatus | None = None,
     job_kind: str | None = Query(default=None, description="Optional job kind filter."),
+    candidate_fate: JobCandidateFateFilter | None = Query(
+        default=None,
+        description="Optional canonical candidate fate label filter.",
+    ),
+    evidence: JobEvidenceFilter | None = Query(
+        default=None,
+        description="Optional evidence filter: has_evidence, agent_visible, or none.",
+    ),
     limit: int = Query(default=DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
     offset: int = Query(default=0, ge=0),
 ) -> list[JobOut]:
-    rows = list_jobs(status=status, job_kind=job_kind, limit=limit, offset=offset)
+    rows = list_jobs(
+        status=status,
+        job_kind=job_kind,
+        candidate_fate=_enum_value(candidate_fate),
+        evidence=_enum_value(evidence),
+        limit=limit,
+        offset=offset,
+    )
     indicators = _job_evidence_indicators(rows)
     fates = load_candidate_fates_for_jobs(rows)
     return [_job_out(row, indicators, fates) for row in rows]
@@ -74,11 +103,26 @@ def get_jobs(
 def get_jobs_page(
     status: JobStatus | None = None,
     job_kind: str | None = Query(default=None, description="Optional job kind filter."),
+    candidate_fate: JobCandidateFateFilter | None = Query(
+        default=None,
+        description="Optional canonical candidate fate label filter.",
+    ),
+    evidence: JobEvidenceFilter | None = Query(
+        default=None,
+        description="Optional evidence filter: has_evidence, agent_visible, or none.",
+    ),
     limit: int = Query(default=DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
     cursor: str | None = Query(default=None, description="Opaque pagination cursor."),
 ) -> JobPageOut:
     try:
-        page = list_jobs_page(status=status, job_kind=job_kind, limit=limit, cursor=cursor)
+        page = list_jobs_page(
+            status=status,
+            job_kind=job_kind,
+            candidate_fate=_enum_value(candidate_fate),
+            evidence=_enum_value(evidence),
+            limit=limit,
+            cursor=cursor,
+        )
     except PaginationCursorError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     indicators = _job_evidence_indicators(page.items)
@@ -219,3 +263,9 @@ def _job_out(row: object, indicators: dict[str, object], fates: dict[str, Candid
     if indicator is None:
         return out
     return out.model_copy(update=indicator.as_dict())
+
+
+def _enum_value(value: object) -> str | None:
+    if value is None:
+        return None
+    return str(getattr(value, "value", value))

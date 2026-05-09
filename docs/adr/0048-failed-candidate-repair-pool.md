@@ -619,7 +619,8 @@ MVP eligibility:
 - `repairability='repairable'`;
 - DiagnosticCapsule policy passed;
 - `nearest_viable_ancestor_hash` is present and has repo-state aggregate ready;
-- `failed_depth <= FAILED_CANDIDATE_REPAIR_MAX_DEPTH`;
+- original failed candidate only: `repair_source_candidate_id IS NULL` and
+  `failed_depth = 0`;
 - `repair_attempts < FAILED_CANDIDATE_REPAIR_MAX_ATTEMPTS`;
 - `lifecycle_status='active'`;
 - no pending, queued, or running repair job references the same source;
@@ -649,7 +650,7 @@ max_repair_jobs_per_scheduler_tick=1
 
 Rules:
 
-- completing `normal_jobs_per_repair_token` normal jobs adds one repair token;
+- completed normal jobs earn repair tokens in the persisted job-history budget;
 - scheduling one repair job consumes one token;
 - repair tokens are capped by `max_repair_tokens`;
 - repair jobs still count against global unfinished and total job limits;
@@ -668,7 +669,8 @@ Initial selection should be simple and inspectable:
 
 1. exclude quarantined, exhausted, already scheduled, and already repairing
    candidates;
-2. prefer low `failed_depth`;
+2. require MVP one-generation candidates (`repair_source_candidate_id IS NULL`
+   and `failed_depth = 0`);
 3. prefer structured diagnostics;
 4. prefer small or medium diffs;
 5. penalize repeated repairs from the same ancestor/cell;
@@ -826,7 +828,6 @@ Suggested settings:
 ```text
 FAILED_CANDIDATE_REPAIR_ENABLED=false
 FAILED_CANDIDATE_REPAIR_MODE=rebase_from_nearest_viable
-FAILED_CANDIDATE_REPAIR_MAX_DEPTH=1
 FAILED_CANDIDATE_REPAIR_MAX_ATTEMPTS=1
 FAILED_CANDIDATE_REPAIR_NORMAL_JOBS_PER_TOKEN=9
 FAILED_CANDIDATE_REPAIR_MAX_TOKENS=3
@@ -837,6 +838,10 @@ FAILED_CANDIDATE_REPAIR_AGENT_FEEDBACK_MODE=diagnostic_capsule
 FAILED_CANDIDATE_REPAIR_MAX_DIFF_BYTES=65536
 FAILED_CANDIDATE_REPAIR_MAX_DIAGNOSTIC_BYTES=16384
 ```
+
+`FAILED_CANDIDATE_REPAIR_MAX_DEPTH` is retained as a deprecated compatibility
+setting. It does not control active MVP scheduling; `failed_depth` remains a
+diagnostic DB/API field for lineage inspection.
 
 Defaults keep the feature disabled. Enabling repair should require operators to
 accept that failed candidates can consume scheduler slots. In the MVP they do
