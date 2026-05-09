@@ -385,6 +385,27 @@ def test_agent_action_invalid_action_type_is_rejected_before_audit_insert(monkey
     assert session.records == []
 
 
+def test_agent_action_oversized_idempotency_key_is_rejected_before_audit_insert(
+    monkeypatch,
+) -> None:
+    session = _ActionSession()
+    _install_action_session(monkeypatch, session)
+
+    with pytest.raises(AgentAPIError) as exc_info:
+        agent_service.run_agent_action(
+            AgentActionRequest(
+                action_type="repair_schedule_one",
+                dry_run=True,
+                idempotency_key="k" * 257,
+            ),
+            actor="test-agent",
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.error_code == "invalid_request"
+    assert session.records == []
+
+
 def test_agent_action_retry_failed_stale_requires_boolean_all_param(monkeypatch) -> None:
     session = _ActionSession()
     _install_action_session(monkeypatch, session)

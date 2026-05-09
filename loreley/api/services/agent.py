@@ -53,6 +53,7 @@ log = logger.bind(module="api.agent")
 
 AGENT_SCHEMA_VERSION = "agent-rest-control-facade.v1"
 _MAX_ACTION_TYPE_CHARS = 64
+_MAX_IDEMPOTENCY_KEY_CHARS = 256
 _ACTION_STATUS_SUCCEEDED = "succeeded"
 _ACTION_STATUS_FAILED = "failed"
 _ACTIVE_JOB_STATUSES = (JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING)
@@ -1085,7 +1086,19 @@ def _normalize_action_type(value: object) -> str:
 
 
 def _normalize_idempotency_key(value: object) -> str:
-    return clamp_text(normalize_single_line(str(value or "")), 256)
+    key = normalize_single_line(str(value or ""))
+    if len(key) > _MAX_IDEMPOTENCY_KEY_CHARS:
+        raise AgentAPIError(
+            status_code=400,
+            error_code="invalid_request",
+            message=(
+                "agent idempotency_key must be at most "
+                f"{_MAX_IDEMPOTENCY_KEY_CHARS} characters."
+            ),
+            retryable=False,
+            resource={"type": "agent_action", "id": "idempotency_key"},
+        )
+    return key
 
 
 def _clean_actor(value: object) -> str:
