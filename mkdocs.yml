@@ -47,6 +47,7 @@ nav:
           - Broker: loreley/tasks/broker.md
           - Workers: loreley/tasks/workers.md
       - UI API: loreley/api.md
+      - Agent REST API: loreley/agent-api.md
       - Streamlit UI: loreley/ui.md
   - Operations:
       - Doctor (environment checks): script/doctor.md

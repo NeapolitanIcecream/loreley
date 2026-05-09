@@ -48,14 +48,18 @@ def list_evaluation_artifacts_for_job(
     *,
     job_id: UUID,
     include_hidden: bool = False,
+    visibility: str | None = None,
 ) -> list[EvaluationArtifactRecord]:
+    normalized_visibility = normalize_single_line(str(visibility or ""))
     with session_scope() as session:
         stmt = (
             select(EvaluationArtifactRecord)
             .where(EvaluationArtifactRecord.job_id == job_id)
             .order_by(EvaluationArtifactRecord.created_at.asc(), EvaluationArtifactRecord.id.asc())
         )
-        if not include_hidden:
+        if normalized_visibility:
+            stmt = stmt.where(EvaluationArtifactRecord.visibility == normalized_visibility)
+        elif not include_hidden:
             stmt = stmt.where(EvaluationArtifactRecord.visibility != "hidden")
         return list(session.execute(stmt).scalars().all())
 
@@ -64,17 +68,21 @@ def list_evaluation_artifacts_for_commit(
     *,
     commit_hash: str,
     include_hidden: bool = False,
+    visibility: str | None = None,
 ) -> list[EvaluationArtifactRecord]:
     normalized_hash = str(commit_hash or "").strip()
     if not normalized_hash:
         return []
+    normalized_visibility = normalize_single_line(str(visibility or ""))
     with session_scope() as session:
         stmt = (
             select(EvaluationArtifactRecord)
             .where(EvaluationArtifactRecord.commit_hash == normalized_hash)
             .order_by(EvaluationArtifactRecord.created_at.asc(), EvaluationArtifactRecord.id.asc())
         )
-        if not include_hidden:
+        if normalized_visibility:
+            stmt = stmt.where(EvaluationArtifactRecord.visibility == normalized_visibility)
+        elif not include_hidden:
             stmt = stmt.where(EvaluationArtifactRecord.visibility != "hidden")
         return list(session.execute(stmt).scalars().all())
 

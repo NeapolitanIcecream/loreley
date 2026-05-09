@@ -26,10 +26,15 @@ These notes cover changes merged after `v0.7.9-alpha`.
 - Added an `operator_tasks` table for UI API background task state. Baseline
   ensure tasks run in the FastAPI UI API process, not Dramatiq. A partial
   unique index prevents overlapping active baseline ensure tasks.
+- Added the Agent REST control facade under `/api/v1/agent`, including
+  capabilities, agent-oriented status and next actions, audited dry-run/execute
+  actions with idempotency, optional `LORELEY_AGENT_API_TOKEN` bearer auth, and
+  job/commit feedback endpoints.
+- Added an `agent_actions` table for Agent REST action audit records.
 
 ## Changed
 
-- Bumped `INSTANCE_SCHEMA_VERSION` to `11`. Existing development databases must
+- Bumped `INSTANCE_SCHEMA_VERSION` to `12`. Existing development databases must
   be reset with `uv run loreley reset-db --yes` before running this version.
 - The Streamlit UI now includes Campaign and Repair Pool pages. Jobs, Commits,
   Archive, and Graphs show clearer fate and evidence indicators where the API
@@ -57,3 +62,6 @@ These notes cover changes merged after `v0.7.9-alpha`.
 
 - The operator write API remains unauthenticated by design. Deploy the UI API
   only on trusted local or internal networks.
+- The Agent REST facade can require bearer-token auth with
+  `LORELEY_AGENT_API_TOKEN`. If unset, the agent routes remain open for local
+  development.

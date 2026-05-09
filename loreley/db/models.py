@@ -149,6 +149,60 @@ Index(
 )
 
 
+class AgentAction(TimestampMixin, Base):
+    """Agent REST facade action audit record."""
+
+    __tablename__ = "agent_actions"
+    __table_args__ = (
+        Index("ix_agent_actions_action_created", "action_type", "created_at"),
+        Index("ix_agent_actions_status_created", "status", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(256), default="", nullable=False)
+    actor: Mapped[str] = mapped_column(String(128), default="agent", nullable=False)
+    action_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    dry_run: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    request_payload: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JSONB),
+        default=dict,
+        nullable=False,
+    )
+    expected_state: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JSONB),
+        default=dict,
+        nullable=False,
+    )
+    result_payload: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JSONB),
+        default=dict,
+        nullable=False,
+    )
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    error_summary: Mapped[str | None] = mapped_column(Text)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return (
+            "<AgentAction "
+            f"id={self.id!r} action_type={self.action_type!r} status={self.status!r}>"
+        )
+
+
+Index(
+    "uq_agent_actions_action_idempotency",
+    AgentAction.action_type,
+    AgentAction.idempotency_key,
+    unique=True,
+    postgresql_where=(AgentAction.idempotency_key != ""),
+)
+
+
 class CommitCard(TimestampMixin, Base):
     """Lightweight commit representation used for inspiration and UI."""
 
