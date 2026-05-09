@@ -210,10 +210,10 @@ def test_repair_schedule_one_api_guard_blocks_exhausted_token_budget(
     settings.failed_candidate_repair_max_tokens = 1
 
     class _SamplerShouldNotSchedule:
-        def count_active_repair_jobs(self) -> int:
+        def count_active_repair_jobs(self, *, session=None) -> int:
             return 0
 
-        def schedule_one(self):
+        def schedule_one(self, *, session=None):
             raise AssertionError("API guard should not schedule without a repair token")
 
     monkeypatch.setattr(
@@ -224,7 +224,7 @@ def test_repair_schedule_one_api_guard_blocks_exhausted_token_budget(
     monkeypatch.setattr(
         repair_service,
         "_with_manual_repair_schedule_lock",
-        lambda **kwargs: kwargs["callback"](),
+        lambda **kwargs: kwargs["callback"](object()),
     )
     monkeypatch.setattr(repair_service, "_manual_repair_tokens_available", lambda **_kwargs: 0)
 
@@ -248,21 +248,24 @@ def test_repair_schedule_one_api_guard_serializes_checks_and_schedule(
     events: list[str] = []
     job_id = uuid4()
     source_id = uuid4()
+    locked_session = object()
 
     def _lock(**kwargs):
         events.append("lock.enter")
         try:
-            return kwargs["callback"]()
+            return kwargs["callback"](locked_session)
         finally:
             events.append("lock.exit")
 
     class _Sampler:
-        def count_active_repair_jobs(self) -> int:
+        def count_active_repair_jobs(self, *, session=None) -> int:
+            assert session is locked_session
             assert events == ["lock.enter"]
             events.append("active.count")
             return 0
 
-        def schedule_one(self):
+        def schedule_one(self, *, session=None):
+            assert session is locked_session
             assert events == ["lock.enter", "active.count", "tokens.count"]
             events.append("schedule.one")
             return SimpleNamespace(
@@ -271,7 +274,8 @@ def test_repair_schedule_one_api_guard_serializes_checks_and_schedule(
                 base_commit_hash="base",
             )
 
-    def _tokens(**_kwargs):
+    def _tokens(*, session=None, **_kwargs):
+        assert session is locked_session
         assert events == ["lock.enter", "active.count"]
         events.append("tokens.count")
         return 1
@@ -308,10 +312,10 @@ def test_repair_schedule_one_api_guard_blocks_when_active_jobs_at_cap(
     settings.failed_candidate_repair_max_active_jobs = 1
 
     class _CappedSampler:
-        def count_active_repair_jobs(self) -> int:
+        def count_active_repair_jobs(self, *, session=None) -> int:
             return 1
 
-        def schedule_one(self):
+        def schedule_one(self, *, session=None):
             raise AssertionError("API guard should not schedule when active jobs are capped")
 
     monkeypatch.setattr(
@@ -322,7 +326,7 @@ def test_repair_schedule_one_api_guard_blocks_when_active_jobs_at_cap(
     monkeypatch.setattr(
         repair_service,
         "_with_manual_repair_schedule_lock",
-        lambda **kwargs: kwargs["callback"](),
+        lambda **kwargs: kwargs["callback"](object()),
     )
 
     payload = repair_service.schedule_one_repair(settings=settings)

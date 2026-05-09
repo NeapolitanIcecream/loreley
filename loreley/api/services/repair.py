@@ -130,17 +130,17 @@ def schedule_one_repair(*, settings: Settings | None = None) -> dict[str, object
     try:
         sampler = FailedCandidateRepairSampler(settings=active_settings)
 
-        def _schedule_locked() -> dict[str, object]:
-            active_repair_jobs = sampler.count_active_repair_jobs()
+        def _schedule_locked(session: object) -> dict[str, object]:
+            active_repair_jobs = sampler.count_active_repair_jobs(session=session)
             if active_repair_jobs >= max_active:
                 return _repair_schedule_noop(
                     "Active repair jobs are already at FAILED_CANDIDATE_REPAIR_MAX_ACTIVE_JOBS.",
                 )
-            if _manual_repair_tokens_available(settings=active_settings) <= 0:
+            if _manual_repair_tokens_available(settings=active_settings, session=session) <= 0:
                 return _repair_schedule_noop(
                     "Repair scheduling is blocked by the failed-candidate repair token budget.",
                 )
-            result = sampler.schedule_one()
+            result = sampler.schedule_one(session=session)
             if result is None:
                 log.info("Repair schedule-one requested but no eligible candidate was scheduled")
                 return _repair_schedule_noop("No eligible repair candidate was scheduled.")
@@ -215,8 +215,8 @@ def _repair_schedule_noop(message: str) -> dict[str, object]:
     }
 
 
-def _manual_repair_tokens_available(*, settings: Settings) -> int:
-    return repair_tokens_available(settings=settings)
+def _manual_repair_tokens_available(*, settings: Settings, session: object | None = None) -> int:
+    return repair_tokens_available(settings=settings, session=session)
 
 
 def _locked_repair_candidate(

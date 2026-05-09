@@ -359,7 +359,7 @@ def test_repair_scheduler_consumes_token_for_scheduled_repair_job(
     monkeypatch.setattr(
         job_scheduler,
         "with_repair_scheduling_lock",
-        lambda **kwargs: kwargs["callback"](),
+        lambda **kwargs: kwargs["callback"](object()),
     )
     monkeypatch.setattr(
         job_scheduler,
@@ -378,10 +378,10 @@ def test_repair_scheduler_consumes_token_for_scheduled_repair_job(
         def __init__(self) -> None:
             self.scheduled = 0
 
-        def count_active_repair_jobs(self) -> int:
+        def count_active_repair_jobs(self, *, session=None) -> int:
             return 0
 
-        def schedule_one(self) -> ScheduledRepairJob:
+        def schedule_one(self, *, session=None) -> ScheduledRepairJob:
             self.scheduled += 1
             return ScheduledRepairJob(
                 job_id=repair_job_id,
@@ -427,26 +427,30 @@ def test_repair_scheduler_serializes_cap_check_and_schedule(
     repair_job_id = uuid.uuid4()
     repair_source_id = uuid.uuid4()
     events: list[str] = []
+    locked_session = object()
 
     def _lock(**kwargs):
         events.append("lock.enter")
         try:
-            return kwargs["callback"]()
+            return kwargs["callback"](locked_session)
         finally:
             events.append("lock.exit")
 
-    def _persistent_tokens(**_kwargs) -> int:
+    def _persistent_tokens(*, session=None, **_kwargs) -> int:
+        assert session is locked_session
         assert events == ["lock.enter"]
         events.append("tokens.available")
         return 1
 
     class DummyRepairSampler:
-        def count_active_repair_jobs(self) -> int:
+        def count_active_repair_jobs(self, *, session=None) -> int:
+            assert session is locked_session
             assert events == ["lock.enter", "tokens.available"]
             events.append("active.count")
             return 0
 
-        def schedule_one(self) -> ScheduledRepairJob:
+        def schedule_one(self, *, session=None) -> ScheduledRepairJob:
+            assert session is locked_session
             assert events == ["lock.enter", "tokens.available", "active.count"]
             events.append("schedule.one")
             return ScheduledRepairJob(
@@ -493,7 +497,7 @@ def test_repair_scheduler_recomputes_persistent_token_budget_before_dispatch(
     monkeypatch.setattr(
         job_scheduler,
         "with_repair_scheduling_lock",
-        lambda **kwargs: kwargs["callback"](),
+        lambda **kwargs: kwargs["callback"](object()),
     )
     monkeypatch.setattr(
         job_scheduler,
@@ -505,10 +509,10 @@ def test_repair_scheduler_recomputes_persistent_token_budget_before_dispatch(
     settings.failed_candidate_repair_max_jobs_per_tick = 1
 
     class DummyRepairSampler:
-        def count_active_repair_jobs(self) -> int:
+        def count_active_repair_jobs(self, *, session=None) -> int:
             raise AssertionError("persistent token budget should block before active-job count")
 
-        def schedule_one(self) -> ScheduledRepairJob:
+        def schedule_one(self, *, session=None) -> ScheduledRepairJob:
             raise AssertionError("persistent token budget should block repair scheduling")
 
     scheduler = cast(Any, JobScheduler)(
@@ -684,10 +688,10 @@ def test_schedule_jobs_reserves_repair_slot_when_normal_sampling_can_fill_batch(
         def __init__(self) -> None:
             self.scheduled = 0
 
-        def count_active_repair_jobs(self) -> int:
+        def count_active_repair_jobs(self, *, session=None) -> int:
             return 0
 
-        def schedule_one(self) -> ScheduledRepairJob:
+        def schedule_one(self, *, session=None) -> ScheduledRepairJob:
             self.scheduled += 1
             return ScheduledRepairJob(
                 job_id=repair_job_id,
@@ -703,7 +707,7 @@ def test_schedule_jobs_reserves_repair_slot_when_normal_sampling_can_fill_batch(
     monkeypatch.setattr(
         job_scheduler,
         "with_repair_scheduling_lock",
-        lambda **kwargs: kwargs["callback"](),
+        lambda **kwargs: kwargs["callback"](object()),
     )
     monkeypatch.setattr(
         job_scheduler,
