@@ -405,32 +405,73 @@ def _list_jobs_with_projection_filters(
     limit: int,
     offset: int,
 ) -> list[EvolutionJob]:
-    matched: list[EvolutionJob] = []
+    selected: list[EvolutionJob] = []
+    skipped = 0
     raw_offset = 0
-    scan_limit = max(limit + offset, _FILTER_SCAN_BATCH_MIN)
+    scan_limit = max(limit, _FILTER_SCAN_BATCH_MIN)
     with session_scope() as session:
-        while len(matched) < offset + limit:
-            stmt = _base_jobs_stmt(status=status, job_kind=job_kind)
-            stmt = stmt.order_by(
-                EvolutionJob.completed_at.desc().nullslast(),
-                EvolutionJob.created_at.desc(),
-                EvolutionJob.id.desc(),
+        while len(selected) < limit:
+            rows = _query_projected_offset_batch(
+                session=session,
+                status=status,
+                job_kind=job_kind,
+                scan_limit=scan_limit,
+                raw_offset=raw_offset,
             )
-            stmt = stmt.limit(scan_limit).offset(raw_offset)
-            rows = list(session.execute(stmt).scalars())
             if not rows:
                 break
-            matched.extend(
-                _filtered_jobs(
-                    rows,
-                    candidate_fate=candidate_fate,
-                    evidence=evidence,
-                )
+            filtered = _filtered_jobs(
+                rows,
+                candidate_fate=candidate_fate,
+                evidence=evidence,
+            )
+            skipped = _append_projected_offset_matches(
+                selected=selected,
+                filtered=filtered,
+                skipped=skipped,
+                offset=offset,
+                limit=limit,
             )
             raw_offset += len(rows)
             if len(rows) < scan_limit:
                 break
-    return matched[offset: offset + limit]
+    return selected
+
+
+def _query_projected_offset_batch(
+    *,
+    session: object,
+    status: JobStatus | None,
+    job_kind: str | None,
+    scan_limit: int,
+    raw_offset: int,
+) -> list[EvolutionJob]:
+    stmt = _base_jobs_stmt(status=status, job_kind=job_kind)
+    stmt = stmt.order_by(
+        EvolutionJob.completed_at.desc().nullslast(),
+        EvolutionJob.created_at.desc(),
+        EvolutionJob.id.desc(),
+    )
+    stmt = stmt.limit(scan_limit).offset(raw_offset)
+    return list(session.execute(stmt).scalars())
+
+
+def _append_projected_offset_matches(
+    *,
+    selected: list[EvolutionJob],
+    filtered: list[EvolutionJob],
+    skipped: int,
+    offset: int,
+    limit: int,
+) -> int:
+    for row in filtered:
+        if skipped < offset:
+            skipped += 1
+            continue
+        selected.append(row)
+        if len(selected) >= limit:
+            break
+    return skipped
 
 
 def get_job(*, job_id: UUID) -> EvolutionJob | None:

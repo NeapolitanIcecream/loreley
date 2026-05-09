@@ -178,6 +178,48 @@ def test_list_jobs_filters_evidence_before_offset(monkeypatch: pytest.MonkeyPatc
     assert result == [rows[2]]
 
 
+def test_list_jobs_projection_filter_uses_bounded_scan_batches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime(2026, 3, 11, tzinfo=timezone.utc)
+    rows = [
+        SimpleNamespace(
+            id=uuid4(),
+            completed_at=now,
+            created_at=now,
+            status=JobStatus.SUCCEEDED,
+            result_commit_hash="c1",
+        )
+    ]
+    statements: list[object] = []
+
+    class _Session:
+        def execute(self, stmt):
+            statements.append(stmt)
+            return _ExecResult(rows if len(statements) == 1 else [])
+
+    @contextmanager
+    def _fake_scope():
+        yield _Session()
+
+    monkeypatch.setattr(jobs_service, "session_scope", _fake_scope)
+    monkeypatch.setattr(
+        jobs_service,
+        "load_evidence_indicators_by_commit_hash",
+        lambda _hashes: {
+            "c1": SimpleNamespace(has_evaluation_evidence=True, agent_visible_evidence_count=1),
+        },
+    )
+
+    result = jobs_service.list_jobs(evidence="has_evidence", limit=1, offset=200_000)
+
+    assert result == []
+    assert len(statements) == 1
+    params = {str(key): value for key, value in statements[0].compile().params.items()}
+    assert 200_001 not in params.values()
+    assert jobs_service._FILTER_SCAN_BATCH_MIN in params.values()  # noqa: SLF001
+
+
 def test_list_commits_page_applies_cursor_without_offset(monkeypatch: pytest.MonkeyPatch) -> None:
     now = datetime(2026, 3, 11, tzinfo=timezone.utc)
     rows = [
