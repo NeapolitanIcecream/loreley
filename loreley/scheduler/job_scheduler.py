@@ -28,6 +28,7 @@ from loreley.core.campaign_program import (
     persist_campaign_program,
 )
 from loreley.core.map_elites.sampler import MapElitesSampler, SamplingSnapshot, ScheduledSamplerJob
+from loreley.core.repair_coordination import repair_tokens_available, with_repair_scheduling_lock
 from loreley.core.worker.repair import (
     REPAIR_MODE_REBASE_FROM_NEAREST_VIABLE,
     repair_failure_kind_allowlist,
@@ -99,82 +100,97 @@ class FailedCandidateRepairSampler:
         self._repair_mode = _validated_failed_candidate_repair_mode(settings)
         self._rng = rng or random.Random(int(getattr(settings, "mapelites_sampler_seed", 0) or 0))
 
-    def count_active_repair_jobs(self) -> int:
+    def count_active_repair_jobs(self, *, session: Any | None = None) -> int:
         active = (JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING)
+        if session is not None:
+            return self._count_active_repair_jobs_from_session(session=session, active=active)
         with session_scope() as session:
-            return int(
-                session.execute(
-                    select(func.count(EvolutionJob.id)).where(
-                        EvolutionJob.job_kind == "repair",
-                        EvolutionJob.status.in_(active),
-                    )
-                ).scalar_one()
-            )
+            return self._count_active_repair_jobs_from_session(session=session, active=active)
 
-    def schedule_one(self) -> ScheduledRepairJob | None:
+    @staticmethod
+    def _count_active_repair_jobs_from_session(
+        *,
+        session: Any,
+        active: tuple[JobStatus, ...],
+    ) -> int:
+        return int(
+            session.execute(
+                select(func.count(EvolutionJob.id)).where(
+                    EvolutionJob.job_kind == "repair",
+                    EvolutionJob.status.in_(active),
+                )
+            ).scalar_one()
+        )
+
+    def schedule_one(self, *, session: Any | None = None) -> ScheduledRepairJob | None:
         if not bool(self.settings.failed_candidate_repair_enabled):
             return None
+        if session is not None:
+            return self._schedule_one_in_session(session=session)
         with session_scope() as session:
-            candidate = self._select_candidate(session=session)
-            if candidate is None:
-                return None
-            if self._has_active_repair_job(session=session, source_id=candidate.id):
-                return None
-            goal = self._repair_goal(candidate)
-            campaign_program = load_campaign_program_snapshot_by_hash(
-                session=session,
-                program_hash=getattr(candidate, "campaign_program_hash", None),
+            return self._schedule_one_in_session(session=session)
+
+    def _schedule_one_in_session(self, *, session: Any) -> ScheduledRepairJob | None:
+        candidate = self._select_candidate(session=session)
+        if candidate is None:
+            return None
+        if self._has_active_repair_job(session=session, source_id=candidate.id):
+            return None
+        goal = self._repair_goal(candidate)
+        campaign_program = load_campaign_program_snapshot_by_hash(
+            session=session,
+            program_hash=getattr(candidate, "campaign_program_hash", None),
+        )
+        projection = apply_campaign_program_projection(
+            CampaignProjectionInput(
+                snapshot=campaign_program,
+                goal=goal,
+                constraints=(),
+                acceptance_criteria=(),
+                notes=(),
+                default_goal=self.settings.worker_evolution_global_goal,
+                preserve_existing_goal=True,
             )
-            projection = apply_campaign_program_projection(
-                CampaignProjectionInput(
-                    snapshot=campaign_program,
-                    goal=goal,
-                    constraints=(),
-                    acceptance_criteria=(),
-                    notes=(),
-                    default_goal=self.settings.worker_evolution_global_goal,
-                    preserve_existing_goal=True,
-                )
-            )
-            now = _db_utc_now(session)
-            job = EvolutionJob(
-                status=JobStatus.PENDING,
-                base_commit_hash=candidate.nearest_viable_ancestor_hash,
-                island_id=candidate.island_id,
-                inspiration_commit_hashes=[],
-                goal=projection.goal or goal,
-                constraints=projection.constraints,
-                acceptance_criteria=projection.acceptance_criteria,
-                notes=projection.notes,
-                tags=["repair"],
-                iteration_hint="Repair failed candidate from nearest viable ancestor.",
-                sampling_strategy="failed_candidate_repair",
-                sampling_initial_radius=None,
-                sampling_radius_used=None,
-                sampling_fallback_inspirations=None,
-                is_seed_job=False,
-                job_kind="repair",
-                repair_source_candidate_id=candidate.id,
-                repair_mode=self._repair_mode,
-                campaign_program_hash=getattr(candidate, "campaign_program_hash", None),
-                priority=self.settings.mapelites_sampler_default_priority,
-                scheduled_at=now,
-            )
-            session.add(job)
-            session.flush()
-            candidate.repair_state = "scheduled"
-            candidate.repair_attempts = int(candidate.repair_attempts or 0) + 1
-            candidate.last_repair_job_id = job.id
-            log.info(
-                "Repair job scheduled repair_mode={} failure_kind={}",
-                job.repair_mode,
-                candidate.failure_kind or "unknown",
-            )
-            return ScheduledRepairJob(
-                job_id=job.id,
-                repair_source_candidate_id=candidate.id,
-                base_commit_hash=str(candidate.nearest_viable_ancestor_hash),
-            )
+        )
+        now = _db_utc_now(session)
+        job = EvolutionJob(
+            status=JobStatus.PENDING,
+            base_commit_hash=candidate.nearest_viable_ancestor_hash,
+            island_id=candidate.island_id,
+            inspiration_commit_hashes=[],
+            goal=projection.goal or goal,
+            constraints=projection.constraints,
+            acceptance_criteria=projection.acceptance_criteria,
+            notes=projection.notes,
+            tags=["repair"],
+            iteration_hint="Repair failed candidate from nearest viable ancestor.",
+            sampling_strategy="failed_candidate_repair",
+            sampling_initial_radius=None,
+            sampling_radius_used=None,
+            sampling_fallback_inspirations=None,
+            is_seed_job=False,
+            job_kind="repair",
+            repair_source_candidate_id=candidate.id,
+            repair_mode=self._repair_mode,
+            campaign_program_hash=getattr(candidate, "campaign_program_hash", None),
+            priority=self.settings.mapelites_sampler_default_priority,
+            scheduled_at=now,
+        )
+        session.add(job)
+        session.flush()
+        candidate.repair_state = "scheduled"
+        candidate.repair_attempts = int(candidate.repair_attempts or 0) + 1
+        candidate.last_repair_job_id = job.id
+        log.info(
+            "Repair job scheduled repair_mode={} failure_kind={}",
+            job.repair_mode,
+            candidate.failure_kind or "unknown",
+        )
+        return ScheduledRepairJob(
+            job_id=job.id,
+            repair_source_candidate_id=candidate.id,
+            base_commit_hash=str(candidate.nearest_viable_ancestor_hash),
+        )
 
     def _select_candidate(self, *, session: Any) -> CandidateCommit | None:
         allowlist = repair_failure_kind_allowlist(self.settings.failed_candidate_repair_failure_kinds)
@@ -615,23 +631,31 @@ class JobScheduler:
         max_active = max(0, int(self.settings.failed_candidate_repair_max_active_jobs))
         if max_per_tick <= 0 or max_active <= 0 or self._repair_tokens <= 0:
             return []
-        active = self.repair_sampler.count_active_repair_jobs()
-        available_active = max(0, max_active - active)
-        count = min(capacity, max_per_tick, available_active, self._repair_tokens)
-        if count <= 0:
-            return []
-        scheduled_ids: list[UUID] = []
-        for _ in range(count):
-            repair = self.repair_sampler.schedule_one()
-            if repair is None:
-                break
-            self._repair_tokens = max(0, self._repair_tokens - 1)
-            scheduled_ids.append(repair.job_id)
-            log.info(
-                "Repair token consumed tokens_remaining={}",
-                self._repair_tokens,
-            )
-        return scheduled_ids
+
+        def _schedule_locked(session: Any) -> list[UUID]:
+            persistent_tokens = repair_tokens_available(settings=self.settings, session=session)
+            self._repair_tokens = min(self._repair_tokens, persistent_tokens)
+            if self._repair_tokens <= 0:
+                return []
+            active = self.repair_sampler.count_active_repair_jobs(session=session)
+            available_active = max(0, max_active - active)
+            count = min(capacity, max_per_tick, available_active, self._repair_tokens)
+            if count <= 0:
+                return []
+            scheduled_ids: list[UUID] = []
+            for _ in range(count):
+                repair = self.repair_sampler.schedule_one(session=session)
+                if repair is None:
+                    break
+                self._repair_tokens = max(0, self._repair_tokens - 1)
+                scheduled_ids.append(repair.job_id)
+                log.info(
+                    "Repair token consumed tokens_remaining={}",
+                    self._repair_tokens,
+                )
+            return scheduled_ids
+
+        return with_repair_scheduling_lock(callback=_schedule_locked)
 
     def _accrue_repair_tokens(self) -> None:
         normal_jobs_per_token = max(1, int(self.settings.failed_candidate_repair_normal_jobs_per_token))

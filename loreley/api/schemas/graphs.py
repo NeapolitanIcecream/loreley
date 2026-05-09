@@ -22,6 +22,11 @@ class CommitGraphNodeOut(OrmOutModel):
     fitness: float | None = None
     objective: float | None = None
     is_elite: bool = False
+    has_evaluation_evidence: bool = False
+    agent_visible_evidence_count: int = 0
+    top_evaluation_diagnosis: str | None = None
+    candidate_fate_label: str | None = None
+    candidate_fate_reason: str | None = None
     extra: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("extra", mode="before")
@@ -46,4 +51,3 @@ class CommitGraphOut(OrmOutModel):
     truncated: bool
     nodes: list[CommitGraphNodeOut]
     edges: list[CommitGraphEdgeOut]
-

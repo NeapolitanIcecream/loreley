@@ -33,10 +33,7 @@ def load_candidate_fates_for_jobs(jobs: Sequence[object]) -> dict[str, Candidate
     """Return candidate fates keyed by job id for already-loaded job rows."""
 
     rows = list(jobs)
-    commit_hashes = _unique(
-        job_candidate_commit_hash(row)
-        for row in rows
-    )
+    commit_hashes = _unique(job_candidate_commit_hash(row) for row in rows)
     candidates_by_commit, jobs_by_id, archive_cells_by_commit_island = _load_fate_context(
         commit_hashes=commit_hashes,
         fallback_job_ids=[],
@@ -45,41 +42,94 @@ def load_candidate_fates_for_jobs(jobs: Sequence[object]) -> dict[str, Candidate
 
     fates: dict[str, CandidateFate] = {}
     for job in rows:
-        job_id = str(getattr(job, "id", "") or "")
-        if not job_id:
-            continue
-        commit_hash = job_candidate_commit_hash(job)
-        candidate = candidates_by_commit.get(commit_hash)
-        island_id = _first_attr_text(job, candidate, attr="island_id")
-        current_cell = _archive_cell_for(
-            archive_cells_by_commit_island,
-            commit_hash=commit_hash,
-            island_id=island_id,
-        )
-        fates[job_id] = derive_candidate_fate(
+        _add_job_fate(
+            fates,
             job=job,
-            candidate=candidate,
-            current_archive_cell_index=current_cell,
-            current_archive_member=current_cell is not None,
+            candidates_by_commit=candidates_by_commit,
+            jobs_by_id=jobs_by_id,
+            archive_cells_by_commit_island=archive_cells_by_commit_island,
         )
-        if candidate is not None:
-            produced_by_job_id = str(getattr(candidate, "produced_by_job_id", "") or "")
-            if produced_by_job_id and produced_by_job_id != job_id:
-                fallback_job = jobs_by_id.get(produced_by_job_id)
-                if fallback_job is not None:
-                    island_id = _first_attr_text(fallback_job, candidate, job, attr="island_id")
-                    current_cell = _archive_cell_for(
-                        archive_cells_by_commit_island,
-                        commit_hash=commit_hash,
-                        island_id=island_id,
-                    )
-                    fates[job_id] = derive_candidate_fate(
-                        job=fallback_job,
-                        candidate=candidate,
-                        current_archive_cell_index=current_cell,
-                        current_archive_member=current_cell is not None,
-                    )
     return fates
+
+
+def _add_job_fate(
+    fates: dict[str, CandidateFate],
+    *,
+    job: object,
+    candidates_by_commit: dict[str, CandidateCommit],
+    jobs_by_id: dict[str, EvolutionJob],
+    archive_cells_by_commit_island: ArchiveCellsByCommitIsland,
+) -> None:
+    job_id = str(getattr(job, "id", "") or "")
+    if not job_id:
+        return
+
+    commit_hash = job_candidate_commit_hash(job)
+    candidate = candidates_by_commit.get(commit_hash)
+    fates[job_id] = _derive_job_candidate_fate(
+        job=job,
+        candidate=candidate,
+        commit_hash=commit_hash,
+        archive_cells_by_commit_island=archive_cells_by_commit_island,
+    )
+    fallback_fate = _producer_job_fate(
+        job=job,
+        job_id=job_id,
+        candidate=candidate,
+        jobs_by_id=jobs_by_id,
+        commit_hash=commit_hash,
+        archive_cells_by_commit_island=archive_cells_by_commit_island,
+    )
+    if fallback_fate is not None:
+        fates[job_id] = fallback_fate
+
+
+def _producer_job_fate(
+    *,
+    job: object,
+    job_id: str,
+    candidate: CandidateCommit | None,
+    jobs_by_id: dict[str, EvolutionJob],
+    commit_hash: str,
+    archive_cells_by_commit_island: ArchiveCellsByCommitIsland,
+) -> CandidateFate | None:
+    if candidate is None:
+        return None
+    produced_by_job_id = str(getattr(candidate, "produced_by_job_id", "") or "")
+    if not produced_by_job_id or produced_by_job_id == job_id:
+        return None
+    fallback_job = jobs_by_id.get(produced_by_job_id)
+    if fallback_job is None:
+        return None
+    return _derive_job_candidate_fate(
+        job=fallback_job,
+        candidate=candidate,
+        commit_hash=commit_hash,
+        archive_cells_by_commit_island=archive_cells_by_commit_island,
+        fallback_row=job,
+    )
+
+
+def _derive_job_candidate_fate(
+    *,
+    job: object,
+    candidate: CandidateCommit | None,
+    commit_hash: str,
+    archive_cells_by_commit_island: ArchiveCellsByCommitIsland,
+    fallback_row: object | None = None,
+) -> CandidateFate:
+    island_id = _first_attr_text(job, candidate, fallback_row, attr="island_id")
+    current_cell = _archive_cell_for(
+        archive_cells_by_commit_island,
+        commit_hash=commit_hash,
+        island_id=island_id,
+    )
+    return derive_candidate_fate(
+        job=job,
+        candidate=candidate,
+        current_archive_cell_index=current_cell,
+        current_archive_member=current_cell is not None,
+    )
 
 
 def load_candidate_fates_for_commits(commits: Sequence[object]) -> dict[str, CandidateFate]:

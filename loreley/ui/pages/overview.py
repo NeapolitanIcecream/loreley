@@ -139,6 +139,7 @@ def render() -> None:
         "/api/v1/graphs/commit_lineage",
         params={"max_nodes": 1000},
     ) or {}
+    operator = api_get_or_stop(api_base_url, "/api/v1/operator/status") or {}
 
     # KPI cards
     try:
@@ -189,6 +190,8 @@ def render() -> None:
         if isinstance(occupied, (int, float)) and isinstance(cells, (int, float))
         else "n/a",
     )
+
+    _render_operator_status_band(operator)
 
     # Charts
     try:
@@ -249,3 +252,81 @@ def render() -> None:
 
     st.subheader("Islands")
     st.dataframe(islands or [], width="stretch")
+
+
+def _render_operator_status_band(operator: object) -> None:
+    if not isinstance(operator, dict):
+        return
+    campaign = _dict_value(operator.get("campaign_program"))
+    scheduler = _dict_value(campaign.get("scheduler"))
+    current = _dict_value(campaign.get("current_file"))
+    baseline = _dict_value(operator.get("baseline"))
+    repair = _dict_value(operator.get("repair_pool"))
+    health = _dict_value(operator.get("job_health"))
+    leases = _dict_value(health.get("job_leases"))
+
+    st.subheader("Operator Status")
+    _render_operator_baseline_row(baseline=baseline, repair=repair, leases=leases)
+    _render_operator_program_row(current=current, scheduler=scheduler, repair=repair, leases=leases)
+    _render_operator_warnings(scheduler=scheduler, baseline=baseline)
+
+
+def _dict_value(value: object) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _render_operator_baseline_row(
+    *,
+    baseline: dict[str, Any],
+    repair: dict[str, Any],
+    leases: dict[str, Any],
+) -> None:
+    o1, o2, o3, o4 = st.columns(4)
+    o1.metric("Baseline", str(baseline.get("root_baseline_status") or "missing"))
+    baseline_value = baseline.get("root_baseline_value")
+    o2.metric(
+        "Baseline value",
+        f"{float(baseline_value):.6f}" if isinstance(baseline_value, (int, float)) else "n/a",
+    )
+    o3.metric("Repair eligible", str(_count_value(repair, "by_repair_state", "eligible")))
+    o4.metric("Stale running", str(leases.get("stale_running", 0)))
+
+
+def _render_operator_program_row(
+    *,
+    current: dict[str, Any],
+    scheduler: dict[str, Any],
+    repair: dict[str, Any],
+    leases: dict[str, Any],
+) -> None:
+    o5, o6, o7, o8 = st.columns(4)
+    o5.metric("Current program", _short_hash(current.get("hash")) or "missing")
+    o6.metric("Active program", _short_hash(scheduler.get("active_hash")) or "n/a")
+    o7.metric("Active repair jobs", str(repair.get("active_repair_jobs", 0)))
+    o8.metric("Running missing lease", str(leases.get("running_without_lease", 0)))
+
+
+def _render_operator_warnings(
+    *,
+    scheduler: dict[str, Any],
+    baseline: dict[str, Any],
+) -> None:
+    if scheduler.get("current_matches_active") is False:
+        st.warning("Campaign program file hash differs from scheduler active hash.")
+    if baseline.get("failure_kind"):
+        st.warning(f"Baseline failure: {baseline.get('failure_kind')}")
+
+
+def _count_value(data: dict[str, object], group_key: str, item_key: str) -> int:
+    group = data.get(group_key)
+    if not isinstance(group, dict):
+        return 0
+    try:
+        return int(group.get(item_key, 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _short_hash(value: object) -> str | None:
+    text = str(value or "").strip()
+    return text[:12] if text else None

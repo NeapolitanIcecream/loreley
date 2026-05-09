@@ -103,6 +103,7 @@ def render() -> None:
     if records_df.empty:
         st.info("No archive records yet.")
         return
+    records_df = _decorate_archive_df(records_df)
 
     visualization_df = pd.DataFrame(visualization_records)
 
@@ -209,6 +210,21 @@ def _load_visualization_records(api_base_url: str, island_id: str) -> list[dict[
         max_items=None,
     )
     return [item for item in payload if isinstance(item, dict)]
+
+
+def _decorate_archive_df(df):
+    if df.empty:
+        return df
+    out = df.copy()
+    if "candidate_fate_label" in out.columns:
+        out["fate"] = out["candidate_fate_label"].fillna("unknown")
+    if "delta_from_root_baseline" in out.columns:
+        out["baseline_delta"] = out["delta_from_root_baseline"]
+    if "agent_visible_evidence_count" in out.columns:
+        out["evidence"] = out["agent_visible_evidence_count"].fillna(0).astype(int).map(
+            lambda count: f"agent-visible:{count}" if count else "none"
+        )
+    return out
 
 
 def _rerun() -> None:

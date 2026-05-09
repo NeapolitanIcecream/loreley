@@ -49,6 +49,19 @@ def test_ui_client_get_bytes_returns_content_and_content_type() -> None:
     assert content_type == "application/octet-stream"
 
 
+def test_ui_client_post_json_sends_body() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/api/v1/jobs/retry-failed-stale"
+        assert request.read() == b'{"limit":1}'
+        return httpx.Response(200, json={"count": 1}, request=request)
+
+    transport = httpx.MockTransport(handler)
+    client = LoreleyAPIClient("http://example.local", transport=transport)
+    payload = client.post_json("/api/v1/jobs/retry-failed-stale", json_body={"limit": 1})
+    assert payload == {"count": 1}
+
+
 def test_ui_client_get_json_page_validates_paginated_shape() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(

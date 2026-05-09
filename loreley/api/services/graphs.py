@@ -8,6 +8,8 @@ from typing import Any
 
 from sqlalchemy import select
 
+from loreley.api.services.candidate_fates import load_candidate_fates_for_commits
+from loreley.api.services.evidence import load_evidence_indicators_by_commit_hash
 from loreley.config import Settings, get_settings
 from loreley.db.base import session_scope
 from loreley.db.models import CommitCard, Metric
@@ -24,6 +26,11 @@ class CommitNode:
     metric_value: float | None
     fitness: float | None
     objective: float | None
+    has_evaluation_evidence: bool
+    agent_visible_evidence_count: int
+    top_evaluation_diagnosis: str | None
+    candidate_fate_label: str | None
+    candidate_fate_reason: str | None
     extra: dict[str, Any]
 
 
@@ -86,12 +93,16 @@ def build_commit_lineage_graph(
                     metric_map[str(commit_card_id)] = float(value)
 
     commit_set = {c.commit_hash for c in commits}
+    evidence = load_evidence_indicators_by_commit_hash([c.commit_hash for c in commits])
+    fates = load_candidate_fates_for_commits(commits)
     nodes: list[CommitNode] = []
     edges: list[CommitEdge] = []
 
     for c in commits:
         raw = metric_map.get(str(c.id))
         objective = fitness_floor if raw is None else raw * direction
+        indicator = evidence.get(c.commit_hash)
+        fate = fates.get(c.commit_hash)
         nodes.append(
             CommitNode(
                 commit_hash=c.commit_hash,
@@ -103,6 +114,17 @@ def build_commit_lineage_graph(
                 metric_value=raw,
                 fitness=raw,
                 objective=objective,
+                has_evaluation_evidence=(
+                    bool(indicator.has_evaluation_evidence) if indicator is not None else False
+                ),
+                agent_visible_evidence_count=(
+                    int(indicator.agent_visible_evidence_count) if indicator is not None else 0
+                ),
+                top_evaluation_diagnosis=(
+                    indicator.top_evaluation_diagnosis if indicator is not None else None
+                ),
+                candidate_fate_label=fate.label if fate is not None else None,
+                candidate_fate_reason=fate.reason if fate is not None else None,
                 extra={},
             )
         )
@@ -120,4 +142,3 @@ def build_commit_lineage_graph(
         metric_name=metric_name,
         higher_is_better=higher_is_better,
     )
-

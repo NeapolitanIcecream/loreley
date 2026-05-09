@@ -22,6 +22,11 @@ class _ExecResult:
         return list(self._rows)
 
 
+def _patch_no_graph_enrichment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(graph_service, "load_evidence_indicators_by_commit_hash", lambda _hashes: {})
+    monkeypatch.setattr(graph_service, "load_candidate_fates_for_commits", lambda _commits: {})
+
+
 def test_build_commit_lineage_graph_exposes_raw_metric_and_objective(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,
@@ -56,6 +61,7 @@ def test_build_commit_lineage_graph_exposes_raw_metric_and_objective(
         yield _SequencedSession()
 
     monkeypatch.setattr(graph_service, "session_scope", _fake_scope)
+    _patch_no_graph_enrichment(monkeypatch)
 
     graph = graph_service.build_commit_lineage_graph(max_nodes=1, settings=settings)
 
@@ -66,6 +72,7 @@ def test_build_commit_lineage_graph_exposes_raw_metric_and_objective(
     assert graph.nodes[0].metric_value == pytest.approx(12.5)
     assert graph.nodes[0].fitness == pytest.approx(12.5)
     assert graph.nodes[0].objective == pytest.approx(-12.5)
+    assert graph.nodes[0].agent_visible_evidence_count == 0
 
 
 def test_build_commit_lineage_graph_marks_truncated_only_when_more_rows_exist(
@@ -103,6 +110,7 @@ def test_build_commit_lineage_graph_marks_truncated_only_when_more_rows_exist(
         yield _SequencedSession()
 
     monkeypatch.setattr(graph_service, "session_scope", _fake_scope)
+    _patch_no_graph_enrichment(monkeypatch)
 
     graph = graph_service.build_commit_lineage_graph(max_nodes=2, settings=settings)
 
