@@ -317,6 +317,38 @@ def test_agent_action_idempotency_replay_does_not_call_write_service_twice(monke
     assert len(session.records) == 1
 
 
+def test_agent_action_idempotency_reuse_with_different_payload_conflicts(monkeypatch) -> None:
+    session = _ActionSession()
+    _install_action_session(monkeypatch, session)
+    monkeypatch.setattr(agent_service, "get_settings", lambda: _settings())
+    monkeypatch.setattr(
+        agent_service,
+        "schedule_one_repair",
+        lambda: (_ for _ in ()).throw(AssertionError("conflict must not execute")),
+    )
+
+    first = AgentActionRequest(
+        action_type="repair_schedule_one",
+        dry_run=True,
+        idempotency_key="agent-key-1",
+        reason="same operation",
+    )
+    second = AgentActionRequest(
+        action_type="repair_schedule_one",
+        dry_run=False,
+        idempotency_key="agent-key-1",
+        reason="different operation",
+    )
+
+    agent_service.run_agent_action(first, actor="test-agent")
+    with pytest.raises(AgentAPIError) as exc_info:
+        agent_service.run_agent_action(second, actor="test-agent")
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "idempotency_conflict"
+    assert len(session.records) == 1
+
+
 def test_agent_action_idempotency_insert_race_replays_existing_record(monkeypatch) -> None:
     class _RacingInsertSession(_ActionSession):
         rolled_back = False
@@ -334,7 +366,14 @@ def test_agent_action_idempotency_insert_race_replays_existing_record(monkeypatc
         action_type="repair_schedule_one",
         status="succeeded",
         dry_run=False,
-        request_payload={},
+        request_payload={
+            "action_type": "repair_schedule_one",
+            "dry_run": False,
+            "idempotency_key": "agent-race-key",
+            "reason": None,
+            "expected_state": {},
+            "params": {},
+        },
         expected_state={},
         result_payload={"preconditions": [], "result": {"scheduled": False}},
         created_at=datetime(2026, 5, 9, tzinfo=timezone.utc),

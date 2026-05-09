@@ -327,6 +327,7 @@ def run_agent_action(
         replayed = _insert_pending_action(
             session=session,
             row=row,
+            request=request,
             action_type=action_type,
             idempotency_key=idempotency_key,
         )
@@ -351,15 +352,17 @@ def _insert_pending_action(
     *,
     session: object,
     row: AgentAction,
+    request: AgentActionRequest,
     action_type: str,
     idempotency_key: str,
 ) -> dict[str, Any] | None:
     existing = _idempotent_action(session, action_type=action_type, key=idempotency_key)
     if existing is not None:
-        log.bind(action_id=str(existing.id), action_type=existing.action_type).info(
-            "Agent action idempotency replay"
+        return _idempotent_replay_payload(
+            existing,
+            request=request,
+            action_type=action_type,
         )
-        return _action_record_payload(existing)
 
     session.add(row)
     try:
@@ -367,6 +370,7 @@ def _insert_pending_action(
     except IntegrityError as exc:
         return _idempotency_replay_after_insert_race(
             session=session,
+            request=request,
             action_type=action_type,
             idempotency_key=idempotency_key,
             error=exc,
@@ -377,17 +381,19 @@ def _insert_pending_action(
 def _idempotency_replay_after_insert_race(
     *,
     session: object,
+    request: AgentActionRequest,
     action_type: str,
     idempotency_key: str,
     error: IntegrityError,
 ) -> dict[str, Any] | None:
     if idempotency_key:
         session.rollback()
-        replayed = _load_idempotent_action(action_type=action_type, key=idempotency_key)
+        replayed = _load_idempotent_action(
+            action_type=action_type,
+            key=idempotency_key,
+            request=request,
+        )
         if replayed is not None:
-            log.bind(action_id=str(replayed["action_id"]), action_type=action_type).info(
-                "Agent action idempotency replay after insert race"
-            )
             return replayed
     raise AgentAPIError(
         status_code=500,
@@ -547,10 +553,100 @@ def _idempotent_action(
     )
 
 
-def _load_idempotent_action(*, action_type: str, key: str) -> dict[str, Any] | None:
+def _load_idempotent_action(
+    *,
+    action_type: str,
+    key: str,
+    request: AgentActionRequest,
+) -> dict[str, Any] | None:
     with session_scope() as session:
         row = _idempotent_action(session, action_type=action_type, key=key)
-        return _action_record_payload(row) if row is not None else None
+        if row is None:
+            return None
+        return _idempotent_replay_payload(
+            row,
+            request=request,
+            action_type=action_type,
+            after_insert_race=True,
+        )
+
+
+def _idempotent_replay_payload(
+    row: AgentAction,
+    *,
+    request: AgentActionRequest,
+    action_type: str,
+    after_insert_race: bool = False,
+) -> dict[str, Any]:
+    _ensure_idempotent_replay_matches(row, request=request, action_type=action_type)
+    message = (
+        "Agent action idempotency replay after insert race"
+        if after_insert_race
+        else "Agent action idempotency replay"
+    )
+    log.bind(action_id=str(row.id), action_type=row.action_type).info(message)
+    return _action_record_payload(row)
+
+
+def _ensure_idempotent_replay_matches(
+    row: AgentAction,
+    *,
+    request: AgentActionRequest,
+    action_type: str,
+) -> None:
+    stored = row.request_payload if isinstance(row.request_payload, dict) else {}
+    if not stored:
+        return
+    current = _idempotency_request_fingerprint(request=request, action_type=action_type)
+    previous = _stored_idempotency_fingerprint(row=row, payload=stored)
+    if current == previous:
+        return
+    raise AgentAPIError(
+        status_code=409,
+        error_code="idempotency_conflict",
+        message="Idempotency key was reused with different action parameters.",
+        retryable=False,
+        resource={"type": "agent_action", "id": str(row.id)},
+        suggested_next_actions=[
+            {
+                "action_type": action_type,
+                "reason": "Retry the request with a fresh idempotency_key.",
+            }
+        ],
+    )
+
+
+def _idempotency_request_fingerprint(
+    *,
+    request: AgentActionRequest,
+    action_type: str,
+) -> dict[str, Any]:
+    return {
+        "action_type": action_type,
+        "dry_run": bool(request.dry_run),
+        "reason": normalize_single_line(str(request.reason or "")),
+        "expected_state": jsonable_encoder(request.expected_state),
+        "params": jsonable_encoder(request.params),
+    }
+
+
+def _stored_idempotency_fingerprint(
+    *,
+    row: AgentAction,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "action_type": row.action_type,
+        "dry_run": bool(payload.get("dry_run")),
+        "reason": normalize_single_line(str(payload.get("reason") or "")),
+        "expected_state": _dict_payload_field(payload, "expected_state"),
+        "params": _dict_payload_field(payload, "params"),
+    }
+
+
+def _dict_payload_field(payload: dict[str, Any], key: str) -> dict[str, Any]:
+    value = payload.get(key)
+    return dict(value) if isinstance(value, dict) else {}
 
 
 def _new_pending_action(
