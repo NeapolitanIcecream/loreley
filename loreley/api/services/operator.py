@@ -40,6 +40,9 @@ from loreley.scheduler.baselines import (
 log = logger.bind(module="api.operator")
 _BASELINE_ENSURE_PENDING_STALE_AFTER = timedelta(minutes=10)
 _BASELINE_ENSURE_RUNNING_STALE_AFTER = timedelta(hours=6)
+_BASELINE_ENSURE_INTERRUPTED_SUMMARY = (
+    "Baseline ensure task interrupted by UI API restart before completion."
+)
 
 
 class OperatorTaskNotFoundError(RuntimeError):
@@ -217,7 +220,20 @@ def _mark_stale_baseline_task_failed(
 def run_baseline_ensure_task(task_id: UUID) -> None:
     """Run a baseline ensure task in the FastAPI background task pool."""
 
-    _mark_task_running(task_id)
+    try:
+        _mark_task_running(task_id)
+    except Exception as exc:
+        summary = clamp_text(
+            normalize_single_line(f"Failed to start baseline ensure task: {exc}"),
+            2048,
+        )
+        log.bind(task_id=str(task_id)).exception(
+            "Operator baseline ensure task failed before start: {}",
+            summary,
+        )
+        _mark_task_failed_best_effort(task_id, error_summary=summary)
+        return
+
     try:
         settings = get_settings()
         repo_root = _operator_repo_root(settings)
@@ -236,6 +252,7 @@ def run_baseline_ensure_task(task_id: UUID) -> None:
         result = service.ensure_or_load_baseline(
             root_commit_hash=root_commit_hash,
             campaign_program=loaded.snapshot,
+            force_rerun=True,
         )
         _mark_task_succeeded(
             task_id,
@@ -248,7 +265,37 @@ def run_baseline_ensure_task(task_id: UUID) -> None:
     except Exception as exc:  # pragma: no cover - exercised via service tests with monkeypatches
         summary = clamp_text(normalize_single_line(str(exc)), 2048)
         log.bind(task_id=str(task_id)).exception("Operator baseline ensure task failed: {}", summary)
-        _mark_task_failed(task_id, error_summary=summary)
+        _mark_task_failed_best_effort(task_id, error_summary=summary)
+
+
+def mark_interrupted_baseline_ensure_tasks_failed() -> int:
+    """Fail baseline ensure tasks left active by a previous API process."""
+
+    with session_scope() as session:
+        now = db_utc_now(session)
+        rows = list(
+            session.execute(
+                select(OperatorTask)
+                .where(OperatorTask.kind == OperatorTaskKind.BASELINE_ENSURE.value)
+                .where(
+                    OperatorTask.status.in_(
+                        (
+                            OperatorTaskStatus.PENDING.value,
+                            OperatorTaskStatus.RUNNING.value,
+                        )
+                    )
+                )
+                .with_for_update()
+            ).scalars()
+        )
+        for row in rows:
+            row.status = OperatorTaskStatus.FAILED.value
+            row.completed_at = now
+            row.error_summary = _BASELINE_ENSURE_INTERRUPTED_SUMMARY
+        count = len(rows)
+    if count:
+        log.bind(count=count).warning("Interrupted operator baseline ensure tasks marked failed")
+    return count
 
 
 def list_operator_tasks(*, limit: int = 50) -> list[OperatorTask]:
@@ -307,6 +354,16 @@ def _mark_task_failed(task_id: UUID, *, error_summary: str) -> None:
         row.status = OperatorTaskStatus.FAILED.value
         row.error_summary = error_summary
         row.completed_at = db_utc_now(session)
+
+
+def _mark_task_failed_best_effort(task_id: UUID, *, error_summary: str) -> None:
+    try:
+        _mark_task_failed(task_id, error_summary=error_summary)
+    except Exception as exc:  # pragma: no cover - defensive persistence fallback
+        log.bind(task_id=str(task_id)).exception(
+            "Failed to persist operator baseline ensure task failure: {}",
+            clamp_text(normalize_single_line(str(exc)), 512),
+        )
 
 
 def _current_campaign_program_file(settings: Settings) -> dict[str, object]:

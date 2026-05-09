@@ -243,6 +243,8 @@ class Settings(BaseSettings):
         default="rebase_from_nearest_viable",
         alias="FAILED_CANDIDATE_REPAIR_MODE",
     )
+    # Deprecated compatibility setting. MVP scheduling is one-generation only:
+    # original failed candidates with failed_depth=0 and no repair source.
     failed_candidate_repair_max_depth: int = Field(
         default=1,
         alias="FAILED_CANDIDATE_REPAIR_MAX_DEPTH",

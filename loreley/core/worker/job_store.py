@@ -1170,7 +1170,7 @@ class EvolutionJobStore:
 
     def _repair_budget_state(self, request: _RepairStateDecision) -> str:
         candidate = request.candidate
-        if int(candidate.failed_depth or 0) > max(0, int(self.settings.failed_candidate_repair_max_depth)):
+        if candidate.repair_source_candidate_id is not None or int(candidate.failed_depth or 0) != 0:
             return "ineligible"
         if int(candidate.repair_attempts or 0) >= max(0, int(self.settings.failed_candidate_repair_max_attempts)):
             return "exhausted"

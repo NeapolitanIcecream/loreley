@@ -207,8 +207,7 @@ class FailedCandidateRepairSampler:
                     CandidateCommit.nearest_viable_ancestor_hash.is_not(None),
                     CandidateCommit.nearest_viable_ancestor_hash != "",
                     CandidateCommit.repair_source_candidate_id.is_(None),
-                    CandidateCommit.failed_depth
-                    <= max(0, int(self.settings.failed_candidate_repair_max_depth)),
+                    CandidateCommit.failed_depth == 0,
                     CandidateCommit.repair_attempts
                     < max(0, int(self.settings.failed_candidate_repair_max_attempts)),
                 )
@@ -616,11 +615,15 @@ class JobScheduler:
         self._accrue_repair_tokens()
         max_per_tick = max(0, int(self.settings.failed_candidate_repair_max_jobs_per_tick))
         max_active = max(0, int(self.settings.failed_candidate_repair_max_active_jobs))
-        if max_per_tick <= 0 or max_active <= 0 or self._repair_tokens <= 0:
+        if max_per_tick <= 0 or max_active <= 0:
+            return 0
+        persistent_tokens = repair_tokens_available(settings=self.settings)
+        self._repair_tokens = max(0, int(persistent_tokens))
+        if persistent_tokens <= 0:
             return 0
         active = self.repair_sampler.count_active_repair_jobs()
         available_active = max(0, max_active - active)
-        return min(capacity, max_per_tick, available_active, self._repair_tokens)
+        return min(capacity, max_per_tick, available_active, persistent_tokens)
 
     def _schedule_repair_jobs(self, *, capacity: int, accrue_tokens: bool = True) -> list[UUID]:
         if capacity <= 0 or not bool(self.settings.failed_candidate_repair_enabled):
@@ -629,17 +632,17 @@ class JobScheduler:
             self._accrue_repair_tokens()
         max_per_tick = max(0, int(self.settings.failed_candidate_repair_max_jobs_per_tick))
         max_active = max(0, int(self.settings.failed_candidate_repair_max_active_jobs))
-        if max_per_tick <= 0 or max_active <= 0 or self._repair_tokens <= 0:
+        if max_per_tick <= 0 or max_active <= 0:
             return []
 
         def _schedule_locked(session: Any) -> list[UUID]:
             persistent_tokens = repair_tokens_available(settings=self.settings, session=session)
-            self._repair_tokens = min(self._repair_tokens, persistent_tokens)
-            if self._repair_tokens <= 0:
+            self._repair_tokens = max(0, int(persistent_tokens))
+            if persistent_tokens <= 0:
                 return []
             active = self.repair_sampler.count_active_repair_jobs(session=session)
             available_active = max(0, max_active - active)
-            count = min(capacity, max_per_tick, available_active, self._repair_tokens)
+            count = min(capacity, max_per_tick, available_active, persistent_tokens)
             if count <= 0:
                 return []
             scheduled_ids: list[UUID] = []

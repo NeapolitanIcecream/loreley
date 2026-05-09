@@ -409,6 +409,71 @@ def test_repair_scheduler_consumes_token_for_scheduled_repair_job(
     assert scheduler.repair_sampler.scheduled == 1
 
 
+def test_repair_scheduler_uses_persistent_budget_after_restart(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    """Regression: scheduler restarts must not lose already earned repair tokens."""
+
+    sender = DummySenderActor()
+    monkeypatch.setattr(
+        job_scheduler,
+        "build_evolution_job_sender_actor",
+        lambda **_kwargs: sender,
+    )
+    monkeypatch.setattr(
+        JobScheduler,
+        "_count_completed_normal_jobs_best_effort",
+        lambda _self: 9,
+    )
+    monkeypatch.setattr(
+        job_scheduler,
+        "with_repair_scheduling_lock",
+        lambda **kwargs: kwargs["callback"](object()),
+    )
+    monkeypatch.setattr(
+        job_scheduler,
+        "repair_tokens_available",
+        lambda **_kwargs: 1,
+    )
+    settings.failed_candidate_repair_enabled = True
+    settings.failed_candidate_repair_normal_jobs_per_token = 9
+    settings.failed_candidate_repair_max_tokens = 3
+    settings.failed_candidate_repair_max_active_jobs = 1
+    settings.failed_candidate_repair_max_jobs_per_tick = 1
+    repair_job_id = uuid.uuid4()
+    repair_source_id = uuid.uuid4()
+
+    class DummyRepairSampler:
+        def __init__(self) -> None:
+            self.scheduled = 0
+
+        def count_active_repair_jobs(self, *, session=None) -> int:
+            return 0
+
+        def schedule_one(self, *, session=None) -> ScheduledRepairJob:
+            self.scheduled += 1
+            return ScheduledRepairJob(
+                job_id=repair_job_id,
+                repair_source_candidate_id=repair_source_id,
+                base_commit_hash="base",
+            )
+
+    scheduler = cast(Any, JobScheduler)(
+        settings=settings,
+        console=Console(record=True),
+        sampler=cast(MapElitesSampler, object()),
+    )
+    scheduler.repair_sampler = DummyRepairSampler()
+    scheduler._repair_tokens = 0
+
+    scheduled = scheduler._schedule_repair_jobs(capacity=1)
+
+    assert scheduled == [repair_job_id]
+    assert scheduler._repair_tokens == 0
+    assert scheduler.repair_sampler.scheduled == 1
+
+
 def test_repair_scheduler_serializes_cap_check_and_schedule(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,
@@ -947,6 +1012,34 @@ def test_repair_candidate_without_source_baseline_is_not_eligible_under_warn(
         and record["extra"].get("baseline_policy") == "warn"
         for record in captured_logs
     )
+
+
+def test_repair_sampler_queries_only_original_depth_zero_candidates(settings: Settings) -> None:
+    """MVP repair scheduling is one-generation: repair-produced failures stay audit-only."""
+
+    settings.failed_candidate_repair_enabled = True
+    settings.failed_candidate_repair_max_depth = 99
+    captured: list[Any] = []
+
+    class DummyResult:
+        def scalars(self) -> list[object]:
+            return []
+
+    class DummySession:
+        def execute(self, stmt: Any) -> DummyResult:
+            captured.append(stmt)
+            return DummyResult()
+
+    sampler = FailedCandidateRepairSampler(settings=settings)
+
+    assert sampler._select_candidate(session=DummySession()) is None
+    compiled = captured[0].compile()
+    sql = str(compiled)
+    params = list(compiled.params.values())
+    assert "candidate_commits.repair_source_candidate_id IS NULL" in sql
+    assert "candidate_commits.failed_depth = " in sql
+    assert 0 in params
+    assert 99 not in params
 
 
 def test_reclaim_stale_running_jobs_requeues_expired_attempts(

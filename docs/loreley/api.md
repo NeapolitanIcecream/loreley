@@ -58,8 +58,10 @@ FastAPI also exposes OpenAPI docs by default:
 
 - `GET /health`
 - `GET /instance`
-- `GET /jobs`
-- `GET /jobs/page` (`status`, `job_kind`, `limit`, and `cursor` filters)
+- `GET /jobs` (`status`, `job_kind`, `candidate_fate`, `evidence`, `limit`,
+  and `offset` filters)
+- `GET /jobs/page` (`status`, `job_kind`, `candidate_fate`,
+  `evidence=has_evidence|agent_visible|none`, `limit`, and `cursor` filters)
 - `GET /jobs/{job_id}`
 - `POST /jobs/{job_id}/retry`
 - `POST /jobs/retry-failed-stale`

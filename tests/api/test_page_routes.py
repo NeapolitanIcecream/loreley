@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import pytest
 
 import loreley.api.routers.archive as archive_router
 import loreley.api.routers.commits as commits_router
@@ -119,6 +120,68 @@ def test_jobs_page_route_passes_job_kind_filter(monkeypatch) -> None:
     assert response.status_code == 200
     assert captured["job_kind"] == "repair"
     assert response.json()["items"][0]["job_kind"] == "repair"
+
+
+def test_jobs_routes_pass_candidate_fate_and_evidence_filters(monkeypatch) -> None:
+    _patch_no_evidence(monkeypatch)
+    captured_page: dict[str, object] = {}
+    captured_list: dict[str, object] = {}
+    row = SimpleNamespace(
+        id=uuid4(),
+        status=JobStatus.SUCCEEDED,
+        priority=0,
+        island_id="main",
+        base_commit_hash="abc",
+        scheduled_at=None,
+        started_at=None,
+        completed_at=datetime(2026, 3, 11, tzinfo=timezone.utc),
+        last_error=None,
+        is_seed_job=False,
+        job_kind="evolution",
+        result_commit_hash="def",
+        ingestion_status=None,
+    )
+
+    def _fake_list_jobs_page(**kwargs):
+        captured_page.update(kwargs)
+        return JobPage(items=[row], next_cursor=None)
+
+    def _fake_list_jobs(**kwargs):
+        captured_list.update(kwargs)
+        return [row]
+
+    monkeypatch.setattr(jobs_router, "list_jobs_page", _fake_list_jobs_page)
+    monkeypatch.setattr(jobs_router, "list_jobs", _fake_list_jobs)
+
+    client = _build_test_client()
+    page_response = client.get(
+        "/api/v1/jobs/page?candidate_fate=elite_inserted&evidence=agent_visible"
+    )
+    list_response = client.get(
+        "/api/v1/jobs?candidate_fate=candidate_failed&evidence=none"
+    )
+
+    assert page_response.status_code == 200
+    assert captured_page["candidate_fate"] == "elite_inserted"
+    assert captured_page["evidence"] == "agent_visible"
+    assert list_response.status_code == 200
+    assert captured_list["candidate_fate"] == "candidate_failed"
+    assert captured_list["evidence"] == "none"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v1/jobs/page?candidate_fate=not_a_fate",
+        "/api/v1/jobs/page?evidence=hidden",
+        "/api/v1/jobs?candidate_fate=not_a_fate",
+        "/api/v1/jobs?evidence=hidden",
+    ],
+)
+def test_jobs_routes_reject_bad_filter_values(path: str) -> None:
+    response = _build_test_client().get(path)
+
+    assert response.status_code == 422
 
 
 def test_jobs_page_route_serializes_candidate_fate(monkeypatch) -> None:

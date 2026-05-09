@@ -36,8 +36,19 @@ These notes cover changes merged after `v0.7.9-alpha`.
   already has the data.
 - Manual repair scheduling from the UI API and scheduler repair dispatch now
   serialize cap and repair-token budget checks with the scheduling mutation.
-  Stale pending or running baseline ensure tasks are failed before a replacement
-  task is created.
+  Automatic scheduler repair dispatch uses the persisted token budget, so a
+  scheduler restart keeps already earned repair capacity. Repair scheduling is
+  one-generation for the MVP: only original failed candidates with
+  `failed_depth=0` and no `repair_source_candidate_id` are eligible. The
+  `FAILED_CANDIDATE_REPAIR_MAX_DEPTH` setting is retained for compatibility but
+  no longer controls active scheduling.
+- Baseline ensure from the Operator console now reruns failed or degraded
+  same-key baseline rows while still reusing valid rows. Pending or running
+  baseline ensure tasks left by a UI API restart are marked failed on startup,
+  and task-start failures are persisted when possible.
+- `GET /api/v1/jobs` and `GET /api/v1/jobs/page` now support server-side
+  `candidate_fate` and `evidence=has_evidence|agent_visible|none` filters. The
+  Streamlit Jobs page passes those filters to the API before pagination.
 - Streamlit operator write buttons now require explicit per-action checkbox
   confirmation before enabling Campaign baseline ensure, Jobs retry, Repair Pool
   schedule-one, and Repair Pool candidate state actions.

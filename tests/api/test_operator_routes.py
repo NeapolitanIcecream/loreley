@@ -368,3 +368,87 @@ def test_baseline_task_failure_is_persisted_and_logged(monkeypatch, settings, ca
         and "Operator baseline ensure task failed" in record["message"]
         for record in captured_logs
     )
+
+
+def test_baseline_task_start_failure_is_persisted_and_logged(monkeypatch, captured_logs) -> None:
+    """Regression: _mark_task_running failures must not disappear from BackgroundTasks."""
+
+    task_id = uuid4()
+    persisted: list[tuple[object, str]] = []
+
+    def _fail_start(_task_id):
+        raise RuntimeError("database unavailable")
+
+    def _persist_failure(task_id, *, error_summary: str) -> None:
+        persisted.append((task_id, error_summary))
+
+    monkeypatch.setattr(operator_service, "_mark_task_running", _fail_start)
+    monkeypatch.setattr(operator_service, "_mark_task_failed", _persist_failure)
+    monkeypatch.setattr(
+        operator_service,
+        "get_settings",
+        lambda: (_ for _ in ()).throw(AssertionError("task body should not run")),
+    )
+
+    operator_service.run_baseline_ensure_task(task_id)
+
+    assert persisted == [(task_id, "Failed to start baseline ensure task: database unavailable")]
+    assert any(
+        record["module"] == "api.operator"
+        and "Operator baseline ensure task failed before start" in record["message"]
+        for record in captured_logs
+    )
+
+
+def test_startup_marks_interrupted_baseline_tasks_failed(monkeypatch, captured_logs) -> None:
+    """Regression: API restart must clear active baseline_ensure tasks before serving."""
+
+    now = datetime(2026, 5, 9, tzinfo=timezone.utc)
+    pending = SimpleNamespace(
+        status=OperatorTaskStatus.PENDING.value,
+        completed_at=None,
+        error_summary=None,
+    )
+    running = SimpleNamespace(
+        status=OperatorTaskStatus.RUNNING.value,
+        completed_at=None,
+        error_summary=None,
+    )
+
+    class _NowResult:
+        def scalar_one(self):
+            return now
+
+    class _RowsResult:
+        def scalars(self):
+            return [pending, running]
+
+    class _Session:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def execute(self, _stmt):
+            self.calls += 1
+            if self.calls == 1:
+                return _NowResult()
+            return _RowsResult()
+
+    @contextmanager
+    def _scope():
+        yield _Session()
+
+    monkeypatch.setattr(operator_service, "session_scope", _scope)
+
+    count = operator_service.mark_interrupted_baseline_ensure_tasks_failed()
+
+    assert count == 2
+    for task in (pending, running):
+        assert task.status == OperatorTaskStatus.FAILED.value
+        assert task.completed_at == now
+        assert "API restart" in str(task.error_summary)
+    assert any(
+        record["module"] == "api.operator"
+        and record["message"] == "Interrupted operator baseline ensure tasks marked failed"
+        and record["extra"].get("count") == 2
+        for record in captured_logs
+    )
