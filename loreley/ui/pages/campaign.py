@@ -7,6 +7,10 @@ from typing import Any
 import streamlit as st
 
 from loreley.ui.components.api import api_get_or_stop, api_post_or_stop
+from loreley.ui.pages._confirmations import (
+    expire_operator_confirmation,
+    operator_confirmation_key,
+)
 from loreley.ui.state import API_BASE_URL_KEY
 
 
@@ -105,7 +109,17 @@ def _render_baseline_tasks(api_base_url: str) -> None:
     st.subheader("Baseline Ensure Task")
     col_start, col_refresh = st.columns(2)
     with col_start:
-        if st.button("Create baseline ensure task", key="campaign_baseline_ensure"):
+        baseline_confirm_base_key = "campaign_baseline_ensure_confirm"
+        baseline_ensure_confirmed = st.checkbox(
+            "Confirm baseline ensure task creation",
+            help="This creates a background operator task that may write campaign baseline state.",
+            key=operator_confirmation_key(baseline_confirm_base_key),
+        )
+        if st.button(
+            "Create baseline ensure task",
+            disabled=not baseline_ensure_confirmed,
+            key="campaign_baseline_ensure",
+        ):
             task = api_post_or_stop(
                 api_base_url,
                 "/api/v1/operator/tasks/baseline-ensure",
@@ -113,6 +127,7 @@ def _render_baseline_tasks(api_base_url: str) -> None:
             )
             st.cache_data.clear()
             st.success(f"Task created: {task.get('id') if isinstance(task, dict) else 'unknown'}")
+            expire_operator_confirmation(baseline_confirm_base_key)
             _rerun()
     with col_refresh:
         if st.button("Refresh tasks", key="campaign_refresh_tasks"):

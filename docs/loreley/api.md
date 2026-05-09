@@ -8,6 +8,10 @@ actions, and job retries.
 The operator write API is unauthenticated by design. Run it only on trusted
 local or internal networks.
 
+The Streamlit UI disables its operator write buttons until the matching
+per-action confirmation checkbox is checked. That UI guard does not add
+authentication or change these API routes.
+
 ## Install
 
 The UI stack dependencies live under the `ui` extra in `pyproject.toml`.
@@ -122,6 +126,9 @@ These routes mutate database state:
 
 - **Authentication**: there is no authentication layer. Deploy the API only
   behind trusted local or internal network controls.
+- **Streamlit confirmation**: the Streamlit operator pages require a checkbox
+  confirmation before enabling each write button. Direct API clients still call
+  the same unauthenticated POST routes.
 - **Write scope**: operator writes are intentionally narrow. They do not add
   authentication, restart processes, change environment variables, or bypass the
   scheduler and worker settings already in the database/runtime.

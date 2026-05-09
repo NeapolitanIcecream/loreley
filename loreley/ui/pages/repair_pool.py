@@ -6,6 +6,10 @@ import streamlit as st
 
 from loreley.ui.components.aggrid import render_table, selected_rows
 from loreley.ui.components.api import api_get_page_or_stop, api_post_or_stop
+from loreley.ui.pages._confirmations import (
+    expire_operator_confirmation,
+    operator_confirmation_key,
+)
 from loreley.ui.paging import advance_cursor_pager, current_cursor, normalize_cursor_pager, pager_signature
 from loreley.ui.state import API_BASE_URL_KEY
 
@@ -58,13 +62,24 @@ def render() -> None:
 def _render_schedule_controls(api_base_url: str) -> None:
     schedule_col, refresh_col = st.columns(2)
     with schedule_col:
-        if st.button("Schedule one repair", key="repair_schedule_one"):
+        schedule_confirm_base_key = "repair_schedule_one_confirm"
+        schedule_confirmed = st.checkbox(
+            "Confirm scheduling one repair",
+            help="This schedules one repair job through the existing repair sampler path.",
+            key=operator_confirmation_key(schedule_confirm_base_key),
+        )
+        if st.button(
+            "Schedule one repair",
+            disabled=not schedule_confirmed,
+            key="repair_schedule_one",
+        ):
             result = api_post_or_stop(api_base_url, "/api/v1/repair/schedule-one", json_body={})
             st.cache_data.clear()
             if isinstance(result, dict) and result.get("scheduled"):
                 st.success(f"Scheduled repair job: {result.get('job_id')}")
             else:
                 st.info(str(result.get("message") if isinstance(result, dict) else "No repair scheduled."))
+            expire_operator_confirmation(schedule_confirm_base_key)
             _rerun()
     with refresh_col:
         if st.button("Refresh repair pool", key="repair_refresh"):
@@ -201,14 +216,57 @@ def _render_selected_candidate(
 
     a1, a2, a3 = st.columns(3)
     with a1:
-        if st.button("Quarantine", disabled=not candidate_id, key="repair_quarantine"):
-            _post_candidate_action(api_base_url, candidate_id, "quarantine")
+        _render_candidate_action_button(
+            api_base_url=api_base_url,
+            candidate_id=candidate_id,
+            action="quarantine",
+            label="Quarantine",
+        )
     with a2:
-        if st.button("Discard", disabled=not candidate_id, key="repair_discard"):
-            _post_candidate_action(api_base_url, candidate_id, "discard")
+        _render_candidate_action_button(
+            api_base_url=api_base_url,
+            candidate_id=candidate_id,
+            action="discard",
+            label="Discard",
+        )
     with a3:
-        if st.button("Restore", disabled=not candidate_id, key="repair_restore"):
-            _post_candidate_action(api_base_url, candidate_id, "restore")
+        _render_candidate_action_button(
+            api_base_url=api_base_url,
+            candidate_id=candidate_id,
+            action="restore",
+            label="Restore",
+        )
+
+
+def _render_candidate_action_button(
+    *,
+    api_base_url: str,
+    candidate_id: str,
+    action: str,
+    label: str,
+) -> None:
+    confirm_base_key = _candidate_action_confirm_base_key(candidate_id, action)
+    confirmed = st.checkbox(
+        f"Confirm {action} for candidate {candidate_id}",
+        disabled=not candidate_id,
+        help="This updates repair-pool operator state for the selected candidate.",
+        key=operator_confirmation_key(confirm_base_key),
+    )
+    if st.button(
+        label,
+        disabled=not candidate_id or not confirmed,
+        key=f"repair_{action}",
+    ):
+        _post_candidate_action(
+            api_base_url,
+            candidate_id,
+            action,
+            confirm_base_key=confirm_base_key,
+        )
+
+
+def _candidate_action_confirm_base_key(candidate_id: str, action: str) -> str:
+    return f"repair_candidate_action_confirm_{candidate_id}_{action}"
 
 
 def _decorate_repair_df(df):
@@ -229,7 +287,13 @@ def _counts(summary: dict[str, object], key: str) -> dict[str, int]:
     return value if isinstance(value, dict) else {}
 
 
-def _post_candidate_action(api_base_url: str, candidate_id: str, action: str) -> None:
+def _post_candidate_action(
+    api_base_url: str,
+    candidate_id: str,
+    action: str,
+    *,
+    confirm_base_key: str,
+) -> None:
     api_post_or_stop(
         api_base_url,
         f"/api/v1/repair/candidates/{candidate_id}/{action}",
@@ -237,6 +301,7 @@ def _post_candidate_action(api_base_url: str, candidate_id: str, action: str) ->
     )
     st.cache_data.clear()
     st.success(f"Candidate {action} applied.")
+    expire_operator_confirmation(confirm_base_key)
     _rerun()
 
 

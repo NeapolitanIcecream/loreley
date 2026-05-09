@@ -38,6 +38,9 @@ These notes cover changes merged after `v0.7.9-alpha`.
   serialize cap and repair-token budget checks with the scheduling mutation.
   Stale pending or running baseline ensure tasks are failed before a replacement
   task is created.
+- Streamlit operator write buttons now require explicit per-action checkbox
+  confirmation before enabling Campaign baseline ensure, Jobs retry, Repair Pool
+  schedule-one, and Repair Pool candidate state actions.
 
 ## Security
 

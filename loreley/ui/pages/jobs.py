@@ -15,6 +15,10 @@ from loreley.ui.components.api import (
     render_artifact_downloads,
     render_evaluation_evidence,
 )
+from loreley.ui.pages._confirmations import (
+    expire_operator_confirmation,
+    operator_confirmation_key,
+)
 from loreley.ui.paging import advance_cursor_pager, current_cursor, normalize_cursor_pager, pager_signature
 from loreley.ui.state import API_BASE_URL_KEY
 
@@ -96,10 +100,11 @@ def _render_jobs_filters() -> dict[str, object]:
 def _render_jobs_actions(*, api_base_url: str) -> None:
     retry_col, refresh_col = st.columns(2)
     with retry_col:
+        retry_confirm_base_key = "jobs_retry_failed_stale_confirm"
         retry_confirmed = st.checkbox(
             "Confirm global failed-stale retry",
             help="This retries failed or stale jobs across the whole queue, ignoring the filters and cursor on this page.",
-            key="jobs_retry_failed_stale_confirm",
+            key=operator_confirmation_key(retry_confirm_base_key),
         )
         if st.button(
             "Retry global failed-stale jobs",
@@ -114,6 +119,7 @@ def _render_jobs_actions(*, api_base_url: str) -> None:
             st.cache_data.clear()
             count = result.get("count") if isinstance(result, dict) else 0
             st.success(f"Retried global failed-stale jobs: {count}")
+            expire_operator_confirmation(retry_confirm_base_key)
             _rerun()
     with refresh_col:
         if st.button("Refresh jobs", key="jobs_refresh"):
@@ -209,7 +215,17 @@ def _render_job_detail(
         st.json(detail)
         return
     st.write(_job_top_fields(detail))
-    if st.button("Retry this job", key=f"retry_job_{job_id}"):
+    retry_confirm_base_key = f"retry_job_{job_id}_confirm"
+    retry_confirmed = st.checkbox(
+        f"Confirm retry for job {job_id}",
+        help="This requeues the selected job and clears stale candidate/result metadata through the existing retry API.",
+        key=operator_confirmation_key(retry_confirm_base_key),
+    )
+    if st.button(
+        "Retry this job",
+        disabled=not retry_confirmed,
+        key=f"retry_job_{job_id}",
+    ):
         result = api_post_or_stop(
             api_base_url,
             f"/api/v1/jobs/{job_id}/retry",
@@ -219,6 +235,7 @@ def _render_job_detail(
         st.success(
             f"Retried {result.get('job_id') if isinstance(result, dict) else job_id}"
         )
+        expire_operator_confirmation(retry_confirm_base_key)
         _rerun()
     st.text_area("Goal", value=str(detail.get("goal") or ""), height=100, disabled=True)
     if detail.get("iteration_hint"):
