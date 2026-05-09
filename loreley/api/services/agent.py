@@ -10,6 +10,7 @@ from uuid import UUID
 from fastapi.encoders import jsonable_encoder
 from loguru import logger
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from loreley.api.agent_errors import AgentAPIError
 from loreley.api.schemas.agent import AgentActionRequest
@@ -51,6 +52,7 @@ from loreley.db.models import AgentAction, CandidateCommit, EvolutionJob, JobSta
 log = logger.bind(module="api.agent")
 
 AGENT_SCHEMA_VERSION = "agent-rest-control-facade.v1"
+_MAX_ACTION_TYPE_CHARS = 64
 _ACTION_STATUS_SUCCEEDED = "succeeded"
 _ACTION_STATUS_FAILED = "failed"
 _ACTIVE_JOB_STATUSES = (JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING)
@@ -209,22 +211,34 @@ def next_actions_from_operator_status(
 
     active_settings = settings or get_settings()
     actions: list[dict[str, Any]] = []
+    for action in (
+        _failed_stale_next_action(status_payload),
+        _baseline_next_action(status_payload),
+        _repair_next_action(status_payload, settings=active_settings),
+    ):
+        if action is not None:
+            actions.append(action)
+    return actions
+
+
+def _failed_stale_next_action(status_payload: dict[str, Any]) -> dict[str, Any] | None:
     job_leases = _nested_dict(status_payload, "job_health", "job_leases")
     failed_stale_count = _safe_int(job_leases.get("recovery_exhausted_failed"))
-    if failed_stale_count > 0:
-        limit = min(failed_stale_count, 50)
-        actions.append(
-            {
-                "action_type": "retry_failed_stale_jobs",
-                "reason": f"Retry {limit} failed jobs that exhausted stale-lease recovery.",
-                "risk": _ACTION_RISK["retry_failed_stale_jobs"],
-                "dry_run": True,
-                "params": {"all": False, "limit": limit},
-                "expected_state": {},
-                "resource": {"type": "jobs", "id": "failed_stale"},
-            }
-        )
+    if failed_stale_count <= 0:
+        return None
+    limit = min(failed_stale_count, 50)
+    return {
+        "action_type": "retry_failed_stale_jobs",
+        "reason": f"Retry {limit} failed jobs that exhausted stale-lease recovery.",
+        "risk": _ACTION_RISK["retry_failed_stale_jobs"],
+        "dry_run": True,
+        "params": {"all": False, "limit": limit},
+        "expected_state": {},
+        "resource": {"type": "jobs", "id": "failed_stale"},
+    }
 
+
+def _baseline_next_action(status_payload: dict[str, Any]) -> dict[str, Any] | None:
     scheduler = _nested_dict(status_payload, "campaign_program", "scheduler")
     active_hash = _optional_str(scheduler.get("active_hash"))
     baseline = status_payload.get("baseline")
@@ -233,22 +247,45 @@ def next_actions_from_operator_status(
         if isinstance(baseline, dict)
         else None
     )
-    if active_hash and (baseline is None or baseline_status == "failed"):
-        expected_state: dict[str, Any] = {"campaign_program_hash": active_hash}
-        if baseline_status is not None:
-            expected_state["baseline_status"] = baseline_status
-        actions.append(
-            {
-                "action_type": "baseline_ensure",
-                "reason": "Ensure the active campaign has a valid root baseline.",
-                "risk": _ACTION_RISK["baseline_ensure"],
-                "dry_run": True,
-                "params": {},
-                "expected_state": expected_state,
-                "resource": {"type": "campaign_program", "id": active_hash},
-            }
-        )
+    if not active_hash or (baseline is not None and baseline_status != "failed"):
+        return None
+    expected_state: dict[str, Any] = {"campaign_program_hash": active_hash}
+    if baseline_status is not None:
+        expected_state["baseline_status"] = baseline_status
+    return {
+        "action_type": "baseline_ensure",
+        "reason": "Ensure the active campaign has a valid root baseline.",
+        "risk": _ACTION_RISK["baseline_ensure"],
+        "dry_run": True,
+        "params": {},
+        "expected_state": expected_state,
+        "resource": {"type": "campaign_program", "id": active_hash},
+    }
 
+
+def _repair_next_action(
+    status_payload: dict[str, Any],
+    *,
+    settings: Settings,
+) -> dict[str, Any] | None:
+    if not _repair_capacity_available(status_payload, settings=settings):
+        return None
+    return {
+        "action_type": "repair_schedule_one",
+        "reason": "Schedule one eligible failed-candidate repair while repair capacity is available.",
+        "risk": _ACTION_RISK["repair_schedule_one"],
+        "dry_run": True,
+        "params": {},
+        "expected_state": {},
+        "resource": {"type": "repair_pool", "id": "eligible"},
+    }
+
+
+def _repair_capacity_available(
+    status_payload: dict[str, Any],
+    *,
+    settings: Settings,
+) -> bool:
     repair_pool = _nested_dict(status_payload, "repair_pool")
     by_repair_state = repair_pool.get("by_repair_state")
     eligible_count = (
@@ -256,28 +293,15 @@ def next_actions_from_operator_status(
         if isinstance(by_repair_state, dict)
         else 0
     )
-    active_repair_jobs = _safe_int(repair_pool.get("active_repair_jobs"))
-    max_active = max(0, int(active_settings.failed_candidate_repair_max_active_jobs))
-    if (
+    max_active = max(0, int(settings.failed_candidate_repair_max_active_jobs))
+    return (
         eligible_count > 0
-        and bool(active_settings.failed_candidate_repair_enabled)
+        and bool(settings.failed_candidate_repair_enabled)
         and max_active > 0
-        and active_repair_jobs < max_active
-        and int(active_settings.failed_candidate_repair_max_jobs_per_tick) > 0
-        and int(active_settings.failed_candidate_repair_max_tokens) > 0
-    ):
-        actions.append(
-            {
-                "action_type": "repair_schedule_one",
-                "reason": "Schedule one eligible failed-candidate repair while repair capacity is available.",
-                "risk": _ACTION_RISK["repair_schedule_one"],
-                "dry_run": True,
-                "params": {},
-                "expected_state": {},
-                "resource": {"type": "repair_pool", "id": "eligible"},
-            }
-        )
-    return actions
+        and _safe_int(repair_pool.get("active_repair_jobs")) < max_active
+        and int(settings.failed_candidate_repair_max_jobs_per_tick) > 0
+        and int(settings.failed_candidate_repair_max_tokens) > 0
+    )
 
 
 def run_agent_action(
@@ -288,80 +312,171 @@ def run_agent_action(
 ) -> dict[str, Any]:
     """Validate, optionally execute, and persist one agent action audit row."""
 
+    action_type = _normalize_action_type(request.action_type)
     idempotency_key = _normalize_idempotency_key(request.idempotency_key)
     pending_error: AgentAPIError | None = None
     output: dict[str, Any] | None = None
     with session_scope() as session:
-        existing = _idempotent_action(session, action_type=request.action_type, key=idempotency_key)
-        if existing is not None:
-            log.bind(
-                action_id=str(existing.id),
-                action_type=existing.action_type,
-            ).info("Agent action idempotency replay")
-            return _action_record_payload(existing)
-
-        now = _utc_now()
-        row = AgentAction(
-            id=uuid.uuid4(),
+        row = _new_pending_action(
+            request=request,
+            actor=actor,
+            action_type=action_type,
             idempotency_key=idempotency_key,
-            actor=_clean_actor(actor),
-            action_type=normalize_single_line(str(request.action_type or "")),
-            status="pending",
-            dry_run=bool(request.dry_run),
-            request_payload=jsonable_encoder(request.model_dump(mode="json")),
-            expected_state=jsonable_encoder(request.expected_state),
-            result_payload={},
-            created_at=now,
-            completed_at=None,
         )
-        session.add(row)
-        session.flush()
-        preconditions: list[dict[str, Any]] = []
-        try:
-            preconditions, context = _validate_action(session=session, request=request)
-            result = (
-                _dry_run_result(request=request, context=context)
-                if request.dry_run
-                else _execute_action(request=request, background_tasks=background_tasks)
-            )
-            _mark_action_succeeded(row, preconditions=preconditions, result=result)
-            log.bind(action_id=str(row.id), action_type=row.action_type, dry_run=row.dry_run).info(
-                "Agent action completed"
-            )
-        except AgentAPIError as exc:
-            pending_error = exc
-            preconditions = exc.preconditions or preconditions
-            _mark_action_failed(row, error=exc, preconditions=preconditions)
-            log.bind(
-                action_id=str(row.id),
-                action_type=row.action_type,
-                error_code=exc.error_code,
-            ).warning("Agent action failed")
-        except Exception as exc:  # pragma: no cover - defensive mapping
-            pending_error = AgentAPIError(
-                status_code=500,
-                error_code="internal_error",
-                message=clamp_text(normalize_single_line(str(exc)), 512)
-                or "Agent action failed.",
-                retryable=True,
-            )
-            _mark_action_failed(row, error=pending_error, preconditions=preconditions)
-            log.bind(action_id=str(row.id), action_type=row.action_type).exception(
-                "Agent action failed unexpectedly"
-            )
+        replayed = _insert_pending_action(
+            session=session,
+            row=row,
+            action_type=action_type,
+            idempotency_key=idempotency_key,
+        )
+        if replayed is not None:
+            return replayed
+        pending_error = _complete_action(
+            session=session,
+            row=row,
+            request=request,
+            action_type=action_type,
+            background_tasks=background_tasks,
+        )
         session.flush()
         output = _action_record_payload(row)
 
     if pending_error is not None:
         raise pending_error
-    if output is None:  # pragma: no cover - defensive
-        raise AgentAPIError(
-            status_code=500,
-            error_code="internal_error",
-            message="Agent action did not produce a result.",
-            retryable=True,
+    return _require_action_output(output)
+
+
+def _insert_pending_action(
+    *,
+    session: object,
+    row: AgentAction,
+    action_type: str,
+    idempotency_key: str,
+) -> dict[str, Any] | None:
+    existing = _idempotent_action(session, action_type=action_type, key=idempotency_key)
+    if existing is not None:
+        log.bind(action_id=str(existing.id), action_type=existing.action_type).info(
+            "Agent action idempotency replay"
         )
-    return output
+        return _action_record_payload(existing)
+
+    session.add(row)
+    try:
+        session.flush()
+    except IntegrityError as exc:
+        return _idempotency_replay_after_insert_race(
+            session=session,
+            action_type=action_type,
+            idempotency_key=idempotency_key,
+            error=exc,
+        )
+    return None
+
+
+def _idempotency_replay_after_insert_race(
+    *,
+    session: object,
+    action_type: str,
+    idempotency_key: str,
+    error: IntegrityError,
+) -> dict[str, Any] | None:
+    if idempotency_key:
+        session.rollback()
+        replayed = _load_idempotent_action(action_type=action_type, key=idempotency_key)
+        if replayed is not None:
+            log.bind(action_id=str(replayed["action_id"]), action_type=action_type).info(
+                "Agent action idempotency replay after insert race"
+            )
+            return replayed
+    raise AgentAPIError(
+        status_code=500,
+        error_code="internal_error",
+        message="Agent action audit row could not be created.",
+        retryable=True,
+    ) from error
+
+
+def _complete_action(
+    *,
+    session: object,
+    row: AgentAction,
+    request: AgentActionRequest,
+    action_type: str,
+    background_tasks: Any | None,
+) -> AgentAPIError | None:
+    preconditions: list[dict[str, Any]] = []
+    try:
+        result, preconditions = _validated_action_result(
+            session=session,
+            request=request,
+            action_type=action_type,
+            background_tasks=background_tasks,
+        )
+        _mark_action_succeeded(row, preconditions=preconditions, result=result)
+        log.bind(action_id=str(row.id), action_type=row.action_type, dry_run=row.dry_run).info(
+            "Agent action completed"
+        )
+        return None
+    except AgentAPIError as exc:
+        preconditions = exc.preconditions or preconditions
+        _mark_action_failed(row, error=exc, preconditions=preconditions)
+        log.bind(
+            action_id=str(row.id),
+            action_type=row.action_type,
+            error_code=exc.error_code,
+        ).warning("Agent action failed")
+        return exc
+    except Exception as exc:  # pragma: no cover - defensive mapping
+        error = _internal_action_error(exc)
+        _mark_action_failed(row, error=error, preconditions=preconditions)
+        log.bind(action_id=str(row.id), action_type=row.action_type).exception(
+            "Agent action failed unexpectedly"
+        )
+        return error
+
+
+def _validated_action_result(
+    *,
+    session: object,
+    request: AgentActionRequest,
+    action_type: str,
+    background_tasks: Any | None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    preconditions, context = _validate_action(
+        session=session,
+        request=request,
+        action_type=action_type,
+    )
+    if request.dry_run:
+        return _dry_run_result(action_type=action_type, context=context), preconditions
+    return (
+        _execute_action(
+            request=request,
+            action_type=action_type,
+            background_tasks=background_tasks,
+        ),
+        preconditions,
+    )
+
+
+def _internal_action_error(exc: Exception) -> AgentAPIError:
+    return AgentAPIError(
+        status_code=500,
+        error_code="internal_error",
+        message=clamp_text(normalize_single_line(str(exc)), 512) or "Agent action failed.",
+        retryable=True,
+    )
+
+
+def _require_action_output(output: dict[str, Any] | None) -> dict[str, Any]:
+    if output is not None:
+        return output
+    raise AgentAPIError(
+        status_code=500,
+        error_code="internal_error",
+        message="Agent action did not produce a result.",
+        retryable=True,
+    )
 
 
 def get_agent_action_record(*, action_id: UUID) -> dict[str, Any]:
@@ -420,7 +535,7 @@ def _idempotent_action(
         session.execute(
             select(AgentAction)
             .where(
-                AgentAction.action_type == normalize_single_line(str(action_type or "")),
+                AgentAction.action_type == action_type,
                 AgentAction.idempotency_key == key,
             )
             .order_by(AgentAction.created_at.asc(), AgentAction.id.asc())
@@ -431,20 +546,40 @@ def _idempotent_action(
     )
 
 
+def _load_idempotent_action(*, action_type: str, key: str) -> dict[str, Any] | None:
+    with session_scope() as session:
+        row = _idempotent_action(session, action_type=action_type, key=key)
+        return _action_record_payload(row) if row is not None else None
+
+
+def _new_pending_action(
+    *,
+    request: AgentActionRequest,
+    actor: str,
+    action_type: str,
+    idempotency_key: str,
+) -> AgentAction:
+    return AgentAction(
+        id=uuid.uuid4(),
+        idempotency_key=idempotency_key,
+        actor=_clean_actor(actor),
+        action_type=action_type,
+        status="pending",
+        dry_run=bool(request.dry_run),
+        request_payload=jsonable_encoder(request.model_dump(mode="json")),
+        expected_state=jsonable_encoder(request.expected_state),
+        result_payload={},
+        created_at=_utc_now(),
+        completed_at=None,
+    )
+
+
 def _validate_action(
     *,
     session: object,
     request: AgentActionRequest,
+    action_type: str,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    action_type = normalize_single_line(str(request.action_type or ""))
-    if action_type not in _ACTION_RISK:
-        raise AgentAPIError(
-            status_code=400,
-            error_code="invalid_action_type",
-            message=f"Unsupported agent action_type: {action_type or '<empty>'}.",
-            retryable=False,
-            resource={"type": "agent_action", "id": action_type or "unknown"},
-        )
     if action_type == "retry_job":
         return _validate_retry_job(session=session, request=request)
     if action_type == "retry_failed_stale_jobs":
@@ -609,38 +744,15 @@ def _validate_repair_candidate_action(
 def _execute_action(
     *,
     request: AgentActionRequest,
+    action_type: str,
     background_tasks: Any | None,
 ) -> dict[str, Any]:
-    action_type = normalize_single_line(str(request.action_type or ""))
-    reason = normalize_single_line(str(request.reason or ""))
     try:
-        if action_type == "retry_job":
-            job_id = _uuid_param(request.params, "job_id", resource_type="job")
-            return retry_job_by_id(job_id=job_id, reason=reason)
-        if action_type == "retry_failed_stale_jobs":
-            retry_all, limit = _retry_failed_stale_params(request.params)
-            return retry_failed_stale_jobs(retry_all=retry_all, limit=limit, reason=reason)
-        if action_type == "baseline_ensure":
-            task = create_baseline_ensure_task()
-            if background_tasks is not None:
-                background_tasks.add_task(run_baseline_ensure_task, task.id)
-            return {
-                "operator_task_id": str(task.id),
-                "operator_task_status": str(task.status),
-                "background_task_enqueued": background_tasks is not None,
-            }
-        if action_type == "repair_schedule_one":
-            return schedule_one_repair()
-        if action_type in _CANDIDATE_ACTIONS:
-            candidate_id = _uuid_param(
-                request.params,
-                "candidate_id",
-                resource_type="repair_candidate",
-            )
-            return update_candidate_operator_state(
-                candidate_id=candidate_id,
-                action=_CANDIDATE_ACTIONS[action_type],
-            )
+        return _execute_valid_action(
+            request=request,
+            action_type=action_type,
+            background_tasks=background_tasks,
+        )
     except JobNotFoundError as exc:
         raise _mapped_error(exc, status_code=404, error_code="not_found", resource_type="job") from exc
     except (JobRetryConflictError, RepairConflictError, OperatorTaskAlreadyActiveError) as exc:
@@ -654,18 +766,75 @@ def _execute_action(
             error_code="not_found",
             resource_type="repair_candidate",
         ) from exc
-    raise AgentAPIError(
-        status_code=400,
-        error_code="invalid_action_type",
-        message=f"Unsupported agent action_type: {action_type or '<empty>'}.",
-        retryable=False,
+
+
+def _execute_valid_action(
+    *,
+    request: AgentActionRequest,
+    action_type: str,
+    background_tasks: Any | None,
+) -> dict[str, Any]:
+    if action_type == "retry_job":
+        return _execute_retry_job(request)
+    if action_type == "retry_failed_stale_jobs":
+        return _execute_retry_failed_stale_jobs(request)
+    if action_type == "baseline_ensure":
+        return _execute_baseline_ensure(background_tasks)
+    if action_type == "repair_schedule_one":
+        return schedule_one_repair()
+    if action_type in _CANDIDATE_ACTIONS:
+        return _execute_repair_candidate_action(request, action_type=action_type)
+    raise AssertionError(f"unhandled action_type: {action_type}")
+
+
+def _execute_retry_job(request: AgentActionRequest) -> dict[str, Any]:
+    job_id = _uuid_param(request.params, "job_id", resource_type="job")
+    return retry_job_by_id(
+        job_id=job_id,
+        reason=normalize_single_line(str(request.reason or "")),
     )
 
 
-def _dry_run_result(*, request: AgentActionRequest, context: dict[str, Any]) -> dict[str, Any]:
+def _execute_retry_failed_stale_jobs(request: AgentActionRequest) -> dict[str, Any]:
+    retry_all, limit = _retry_failed_stale_params(request.params)
+    return retry_failed_stale_jobs(
+        retry_all=retry_all,
+        limit=limit,
+        reason=normalize_single_line(str(request.reason or "")),
+    )
+
+
+def _execute_baseline_ensure(background_tasks: Any | None) -> dict[str, Any]:
+    task = create_baseline_ensure_task()
+    if background_tasks is not None:
+        background_tasks.add_task(run_baseline_ensure_task, task.id)
+    return {
+        "operator_task_id": str(task.id),
+        "operator_task_status": str(task.status),
+        "background_task_enqueued": background_tasks is not None,
+    }
+
+
+def _execute_repair_candidate_action(
+    request: AgentActionRequest,
+    *,
+    action_type: str,
+) -> dict[str, Any]:
+    candidate_id = _uuid_param(
+        request.params,
+        "candidate_id",
+        resource_type="repair_candidate",
+    )
+    return update_candidate_operator_state(
+        candidate_id=candidate_id,
+        action=_CANDIDATE_ACTIONS[action_type],
+    )
+
+
+def _dry_run_result(*, action_type: str, context: dict[str, Any]) -> dict[str, Any]:
     return {
         "validated": True,
-        "would_execute": normalize_single_line(str(request.action_type or "")),
+        "would_execute": action_type,
         **jsonable_encoder(context),
     }
 
@@ -865,6 +1034,35 @@ def _mapped_error(
         retryable=False,
         resource=resource,
     )
+
+
+def _normalize_action_type(value: object) -> str:
+    action_type = normalize_single_line(str(value or ""))
+    if not action_type:
+        raise AgentAPIError(
+            status_code=400,
+            error_code="invalid_action_type",
+            message="Unsupported agent action_type: <empty>.",
+            retryable=False,
+            resource={"type": "agent_action", "id": "unknown"},
+        )
+    if len(action_type) > _MAX_ACTION_TYPE_CHARS:
+        raise AgentAPIError(
+            status_code=400,
+            error_code="invalid_action_type",
+            message=f"agent action_type must be at most {_MAX_ACTION_TYPE_CHARS} characters.",
+            retryable=False,
+            resource={"type": "agent_action", "id": "unknown"},
+        )
+    if action_type not in _ACTION_RISK:
+        raise AgentAPIError(
+            status_code=400,
+            error_code="invalid_action_type",
+            message=f"Unsupported agent action_type: {action_type}.",
+            retryable=False,
+            resource={"type": "agent_action", "id": action_type},
+        )
+    return action_type
 
 
 def _normalize_idempotency_key(value: object) -> str:

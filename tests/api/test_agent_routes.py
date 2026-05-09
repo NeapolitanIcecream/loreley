@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 import loreley.api.routers.agent as agent_router
 import loreley.api.services.agent as agent_service
@@ -203,6 +204,9 @@ class _ActionSession:
     def flush(self) -> None:
         return None
 
+    def rollback(self) -> None:
+        return None
+
     def get(self, model, key):
         if model is EvolutionJob:
             return self.jobs.get(key)
@@ -306,6 +310,74 @@ def test_agent_action_idempotency_replay_does_not_call_write_service_twice(monke
     assert calls == ["schedule_one_repair"]
     assert second["action_id"] == first["action_id"]
     assert len(session.records) == 1
+
+
+def test_agent_action_idempotency_insert_race_replays_existing_record(monkeypatch) -> None:
+    class _RacingInsertSession(_ActionSession):
+        rolled_back = False
+
+        def flush(self) -> None:
+            raise IntegrityError("insert agent action", {}, Exception("unique"))
+
+        def rollback(self) -> None:
+            self.rolled_back = True
+
+    existing = AgentAction(
+        id=uuid4(),
+        idempotency_key="agent-race-key",
+        actor="first-agent",
+        action_type="repair_schedule_one",
+        status="succeeded",
+        dry_run=False,
+        request_payload={},
+        expected_state={},
+        result_payload={"preconditions": [], "result": {"scheduled": False}},
+        created_at=datetime(2026, 5, 9, tzinfo=timezone.utc),
+        completed_at=datetime(2026, 5, 9, tzinfo=timezone.utc),
+    )
+    first_session = _RacingInsertSession()
+    second_session = _ActionSession()
+    second_session.records.append(existing)
+    sessions = iter([first_session, second_session])
+
+    @contextmanager
+    def _scope():
+        yield next(sessions)
+
+    monkeypatch.setattr(agent_service, "session_scope", _scope)
+    monkeypatch.setattr(
+        agent_service,
+        "schedule_one_repair",
+        lambda: (_ for _ in ()).throw(AssertionError("idempotency replay must not execute")),
+    )
+
+    payload = agent_service.run_agent_action(
+        AgentActionRequest(
+            action_type="repair_schedule_one",
+            dry_run=False,
+            idempotency_key="agent-race-key",
+        ),
+        actor="second-agent",
+    )
+
+    assert first_session.rolled_back is True
+    assert payload["action_id"] == existing.id
+    assert payload["result"] == {"scheduled": False}
+
+
+def test_agent_action_invalid_action_type_is_rejected_before_audit_insert(monkeypatch) -> None:
+    session = _ActionSession()
+    _install_action_session(monkeypatch, session)
+
+    with pytest.raises(AgentAPIError) as exc_info:
+        agent_service.run_agent_action(
+            AgentActionRequest(action_type="x" * 65, dry_run=True),
+            actor="test-agent",
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.error_code == "invalid_action_type"
+    assert session.records == []
 
 
 def test_agent_action_expected_state_mismatch_returns_structured_error_and_audit(

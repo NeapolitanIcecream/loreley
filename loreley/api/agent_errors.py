@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi import Request
@@ -10,28 +11,24 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 
+@dataclass(slots=True)
 class AgentAPIError(Exception):
     """Exception rendered as the agent facade structured error shape."""
 
-    def __init__(
-        self,
-        *,
-        status_code: int,
-        error_code: str,
-        message: str,
-        retryable: bool = False,
-        resource: dict[str, str] | None = None,
-        suggested_next_actions: list[dict[str, Any]] | None = None,
-        preconditions: list[dict[str, Any]] | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.status_code = int(status_code)
-        self.error_code = str(error_code)
-        self.message = str(message)
-        self.retryable = bool(retryable)
-        self.resource = resource
-        self.suggested_next_actions = suggested_next_actions or []
-        self.preconditions = preconditions or []
+    status_code: int
+    error_code: str
+    message: str
+    retryable: bool = False
+    resource: dict[str, str] | None = None
+    suggested_next_actions: list[dict[str, Any]] = field(default_factory=list)
+    preconditions: list[dict[str, Any]] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        Exception.__init__(self, self.message)
+        self.status_code = int(self.status_code)
+        self.error_code = str(self.error_code)
+        self.message = str(self.message)
+        self.retryable = bool(self.retryable)
 
     def payload(self) -> dict[str, Any]:
         return {
