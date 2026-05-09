@@ -29,6 +29,17 @@ class JobPage:
     next_cursor: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class _ProjectedJobPageScan:
+    status: JobStatus | None
+    job_kind: str | None
+    candidate_fate: str | None
+    evidence: str | None
+    limit: int
+    scan_limit: int
+    sort_ts: object
+
+
 class JobNotFoundError(RuntimeError):
     """Raised when a job cannot be found."""
 
@@ -152,23 +163,54 @@ def _job_matches_projection_filters(
     fates: dict[str, object],
     indicators: dict[str, object],
 ) -> bool:
-    if candidate_fate is not None:
-        fate = fates.get(str(getattr(row, "id", "") or ""))
-        label = str(getattr(fate, "label", None) or "unknown").strip() or "unknown"
-        if label != candidate_fate:
-            return False
+    return _job_matches_fate_filter(row, candidate_fate, fates) and _job_matches_evidence_filter(
+        row,
+        evidence,
+        indicators,
+    )
 
-    if evidence is not None:
-        indicator = indicators.get(job_candidate_commit_hash(row))
-        has_evidence = bool(getattr(indicator, "has_evaluation_evidence", False))
-        agent_visible = int(getattr(indicator, "agent_visible_evidence_count", 0) or 0) > 0
-        if evidence == _EVIDENCE_HAS_EVIDENCE and not has_evidence:
-            return False
-        if evidence == _EVIDENCE_AGENT_VISIBLE and not agent_visible:
-            return False
-        if evidence == _EVIDENCE_NONE and has_evidence:
-            return False
 
+def _job_matches_fate_filter(
+    row: EvolutionJob,
+    candidate_fate: str | None,
+    fates: dict[str, object],
+) -> bool:
+    if candidate_fate is None:
+        return True
+    fate = fates.get(str(getattr(row, "id", "") or ""))
+    label = str(getattr(fate, "label", None) or "unknown").strip() or "unknown"
+    return label == candidate_fate
+
+
+def _job_matches_evidence_filter(
+    row: EvolutionJob,
+    evidence: str | None,
+    indicators: dict[str, object],
+) -> bool:
+    if evidence is None:
+        return True
+    indicator = indicators.get(job_candidate_commit_hash(row))
+    has_evidence = bool(getattr(indicator, "has_evaluation_evidence", False))
+    agent_visible = int(getattr(indicator, "agent_visible_evidence_count", 0) or 0) > 0
+    return _evidence_state_matches_filter(
+        evidence=evidence,
+        has_evidence=has_evidence,
+        agent_visible=agent_visible,
+    )
+
+
+def _evidence_state_matches_filter(
+    *,
+    evidence: str,
+    has_evidence: bool,
+    agent_visible: bool,
+) -> bool:
+    if evidence == _EVIDENCE_HAS_EVIDENCE:
+        return has_evidence
+    if evidence == _EVIDENCE_AGENT_VISIBLE:
+        return agent_visible
+    if evidence == _EVIDENCE_NONE:
+        return not has_evidence
     return True
 
 
@@ -201,14 +243,18 @@ def list_jobs_page(
     sort_ts = func.coalesce(EvolutionJob.completed_at, EvolutionJob.created_at)
 
     if candidate_fate is not None or evidence is not None:
-        return _list_jobs_page_with_projection_filters(
+        scan = _ProjectedJobPageScan(
             status=status,
             job_kind=job_kind,
             candidate_fate=candidate_fate,
             evidence=evidence,
             limit=limit,
-            cursor=cursor,
+            scan_limit=max(limit + 1, _FILTER_SCAN_BATCH_MIN),
             sort_ts=sort_ts,
+        )
+        return _list_jobs_page_with_projection_filters(
+            scan=scan,
+            cursor=cursor,
         )
 
     with session_scope() as session:
@@ -240,60 +286,76 @@ def list_jobs_page(
 
 def _list_jobs_page_with_projection_filters(
     *,
-    status: JobStatus | None,
-    job_kind: str | None,
-    candidate_fate: str | None,
-    evidence: str | None,
-    limit: int,
+    scan: _ProjectedJobPageScan,
     cursor: str | None,
-    sort_ts: object,
 ) -> JobPage:
-    scan_after: tuple[datetime, UUID] | None = None
-    if cursor:
-        try:
-            payload = decode_cursor(cursor)
-            scan_after = (
-                _normalize_cursor_datetime(payload.get("sort_ts")),
-                UUID(str(payload.get("job_id"))),
-            )
-        except (PaginationCursorError, ValueError) as exc:
-            raise PaginationCursorError("Jobs cursor is invalid.") from exc
+    scan_after = _decode_job_cursor(cursor)
+    items = _collect_projected_page_items(scan=scan, scan_after=scan_after)
+    page_items = items[:scan.limit]
+    next_cursor = _encode_job_cursor(page_items[-1]) if len(items) > scan.limit and page_items else None
+    return JobPage(items=page_items, next_cursor=next_cursor)
 
+
+def _decode_job_cursor(cursor: str | None) -> tuple[datetime, UUID] | None:
+    if not cursor:
+        return None
+    try:
+        payload = decode_cursor(cursor)
+        return (
+            _normalize_cursor_datetime(payload.get("sort_ts")),
+            UUID(str(payload.get("job_id"))),
+        )
+    except (PaginationCursorError, ValueError) as exc:
+        raise PaginationCursorError("Jobs cursor is invalid.") from exc
+
+
+def _collect_projected_page_items(
+    *,
+    scan: _ProjectedJobPageScan,
+    scan_after: tuple[datetime, UUID] | None,
+) -> list[EvolutionJob]:
     items: list[EvolutionJob] = []
-    scan_limit = max(limit + 1, _FILTER_SCAN_BATCH_MIN)
     with session_scope() as session:
-        while len(items) <= limit:
-            stmt = _base_jobs_stmt(status=status, job_kind=job_kind)
-            if scan_after is not None:
-                cursor_ts, cursor_job_id = scan_after
-                stmt = stmt.where(
-                    or_(
-                        sort_ts < cursor_ts,
-                        and_(
-                            sort_ts == cursor_ts,
-                            EvolutionJob.id < cursor_job_id,
-                        ),
-                    )
-                )
-            stmt = stmt.order_by(sort_ts.desc(), EvolutionJob.id.desc()).limit(scan_limit)
+        while len(items) <= scan.limit:
+            stmt = _projected_page_stmt(scan=scan, scan_after=scan_after)
             rows = list(session.execute(stmt).scalars())
             if not rows:
                 break
             items.extend(
                 _filtered_jobs(
                     rows,
-                    candidate_fate=candidate_fate,
-                    evidence=evidence,
+                    candidate_fate=scan.candidate_fate,
+                    evidence=scan.evidence,
                 )
             )
-            last_raw = rows[-1]
-            scan_after = (_job_sort_datetime(last_raw), last_raw.id)
-            if len(rows) < scan_limit:
+            scan_after = _job_cursor_tuple(rows[-1])
+            if len(rows) < scan.scan_limit:
                 break
+    return items
 
-    page_items = items[:limit]
-    next_cursor = _encode_job_cursor(page_items[-1]) if len(items) > limit and page_items else None
-    return JobPage(items=page_items, next_cursor=next_cursor)
+
+def _projected_page_stmt(
+    *,
+    scan: _ProjectedJobPageScan,
+    scan_after: tuple[datetime, UUID] | None,
+):
+    stmt = _base_jobs_stmt(status=scan.status, job_kind=scan.job_kind)
+    if scan_after is not None:
+        cursor_ts, cursor_job_id = scan_after
+        stmt = stmt.where(
+            or_(
+                scan.sort_ts < cursor_ts,
+                and_(
+                    scan.sort_ts == cursor_ts,
+                    EvolutionJob.id < cursor_job_id,
+                ),
+            )
+        )
+    return stmt.order_by(scan.sort_ts.desc(), EvolutionJob.id.desc()).limit(scan.scan_limit)
+
+
+def _job_cursor_tuple(job: EvolutionJob) -> tuple[datetime, UUID]:
+    return (_job_sort_datetime(job), job.id)
 
 
 def list_jobs(
