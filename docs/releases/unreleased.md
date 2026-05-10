@@ -31,11 +31,19 @@ These notes cover changes merged after `v0.7.9-alpha`.
   actions with idempotency, optional `LORELEY_AGENT_API_TOKEN` bearer auth, and
   job/commit feedback endpoints.
 - Added an `agent_actions` table for Agent REST action audit records.
+- Added native data-preserving database migrations from schema version 5
+  (`v0.7.9-alpha`) to schema version 12, including
+  `uv run loreley db current`, `uv run loreley db migrate`, and
+  `uv run loreley db validate`.
 
 ## Changed
 
-- Bumped `INSTANCE_SCHEMA_VERSION` to `12`. Existing development databases must
-  be reset with `uv run loreley reset-db --yes` before running this version.
+- Bumped `INSTANCE_SCHEMA_VERSION` to `12`. Existing schema-version-5
+  databases should be upgraded with `uv run loreley db migrate` after taking a
+  Postgres backup. API/scheduler/worker startup also migrates automatically when
+  `DB_AUTO_MIGRATE=true`; with `DB_AUTO_MIGRATE=false`, fresh initialization and
+  upgrades require an explicit `uv run loreley db migrate` first. `reset-db
+  --yes` remains only a destructive local fallback for disposable databases.
 - The Streamlit UI now includes Campaign and Repair Pool pages. Jobs, Commits,
   Archive, and Graphs show clearer fate and evidence indicators where the API
   already has the data.

@@ -39,11 +39,16 @@ On first start the scheduler performs a repo-state root scan at `MAPELITES_EXPER
 and requires operator approval. In non-interactive environments, pass `--yes` or set
 `SCHEDULER_STARTUP_APPROVE=true`.
 
-If you are upgrading an older development database created before lease recovery was added, reset it first:
+If you are upgrading an older schema-version-5 database, migrate it before startup:
 
 ```bash
-uv run loreley reset-db --yes
+uv run loreley db migrate
 ```
+
+With `DB_AUTO_MIGRATE=true` (the default), scheduler startup initializes empty
+databases and runs the same migration under a Postgres advisory lock before
+marker validation. With `DB_AUTO_MIGRATE=false`, scheduler preflight and startup
+require `uv run loreley db migrate` to have completed first.
 
 ## Options
 

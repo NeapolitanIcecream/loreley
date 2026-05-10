@@ -32,11 +32,16 @@ summarization is enabled, preflight also requires either `OPENAI_API_KEY` /
 `LORELEY_LLM_API_KEY`, or dynamic auth via `OPENAI_DYNAMIC_API_KEY_PROVIDER`
 plus `OPENAI_DYNAMIC_API_KEY_TTL_SECONDS`.
 
-If you are upgrading an older development database created before lease recovery was added, reset it first:
+If you are upgrading an older schema-version-5 database, migrate it before startup:
 
 ```bash
-uv run loreley reset-db --yes
+uv run loreley db migrate
 ```
+
+With `DB_AUTO_MIGRATE=true` (the default), worker startup initializes empty
+databases and runs the same migration under a Postgres advisory lock before
+marker validation. With `DB_AUTO_MIGRATE=false`, worker preflight and startup
+require `uv run loreley db migrate` to have completed first.
 
 ## Options
 

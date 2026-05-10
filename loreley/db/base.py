@@ -6,15 +6,15 @@ from typing import Iterator
 
 from loguru import logger
 from rich.console import Console
-from sqlalchemy import text
 from sqlalchemy import create_engine
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.engine import URL
 from sqlalchemy.engine.url import make_url
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from loreley.config import Settings, get_settings
-from loreley.db.instance import ensure_instance_marker, seed_instance_marker
+from loreley.db.instance import ensure_instance_marker
 
 INSTANCE_SCHEMA_VERSION = 12
 _REDUNDANT_INDEX_NAMES = (
@@ -23,18 +23,6 @@ _REDUNDANT_INDEX_NAMES = (
     "ix_map_elites_repo_state_aggregates_commit",
 )
 _MANAGED_INDEX_DDL = (
-    """
-    ALTER TABLE evolution_jobs
-    ADD COLUMN IF NOT EXISTS campaign_program_hash VARCHAR(64)
-    """,
-    """
-    ALTER TABLE evaluation_attempts
-    ADD COLUMN IF NOT EXISTS campaign_program_hash VARCHAR(64)
-    """,
-    """
-    ALTER TABLE candidate_commits
-    ADD COLUMN IF NOT EXISTS campaign_program_hash VARCHAR(64)
-    """,
     """
     CREATE INDEX IF NOT EXISTS "ix_evolution_jobs_campaign_program_hash"
     ON evolution_jobs (campaign_program_hash)
@@ -146,25 +134,43 @@ def session_scope() -> Iterator[Session]:
         session.close()
 
 
-def ensure_database_schema(*, validate_marker: bool = True, settings: Settings | None = None) -> None:
-    """Ensure that all Loreley database tables exist.
+def _run_managed_post_schema_ddl(engine: Engine) -> None:
+    """Apply idempotent post-schema index cleanup and managed indexes."""
 
-    This helper imports the ORM models and issues ``CREATE TABLE IF NOT EXISTS``
-    statements for all metadata. It is safe to call multiple times.
+    with engine.begin() as conn:
+        for index_name in _REDUNDANT_INDEX_NAMES:
+            conn.execute(text(f'DROP INDEX IF EXISTS "{index_name}"'))
+        for ddl in _MANAGED_INDEX_DDL:
+            conn.execute(text(ddl))
+
+
+def ensure_database_schema(
+    *,
+    validate_marker: bool = True,
+    settings: Settings | None = None,
+    auto_migrate: bool | None = None,
+) -> None:
+    """Ensure the Loreley database schema is initialized or migrated.
+
+    Fresh databases are created at the current schema version when automatic
+    migration is enabled. Existing Loreley databases with supported older
+    schema markers are migrated before marker validation.
     """
 
     try:
         settings = settings or get_settings()
         # Import models so that all ORM tables are registered on ``Base.metadata``.
         import loreley.db.models  # noqa: F401  # pylint: disable=unused-import
+        from loreley.db.migrations.runner import ensure_schema_current
 
         engine = get_engine()
-        Base.metadata.create_all(bind=engine)
-        with engine.begin() as conn:
-            for index_name in _REDUNDANT_INDEX_NAMES:
-                conn.execute(text(f'DROP INDEX IF EXISTS "{index_name}"'))
-            for ddl in _MANAGED_INDEX_DDL:
-                conn.execute(text(ddl))
+        ensure_schema_current(
+            engine=engine,
+            settings=settings,
+            target_version=INSTANCE_SCHEMA_VERSION,
+            auto_migrate=settings.db_auto_migrate if auto_migrate is None else bool(auto_migrate),
+        )
+        _run_managed_post_schema_ddl(engine)
         if validate_marker:
             with session_scope() as session:
                 ensure_instance_marker(
@@ -189,9 +195,8 @@ def ensure_database_schema(*, validate_marker: bool = True, settings: Settings |
 def reset_database_schema(*, include_console_log: bool = True) -> None:
     """Drop and recreate all Loreley ORM tables.
 
-    Loreley intentionally does not ship migrations. For development workflows,
-    the safest way to align the DB schema with the current ORM models is to
-    drop all ORM-managed tables and recreate them.
+    This is a destructive local/disposable fallback. Normal upgrades should use
+    ``uv run loreley db migrate`` so existing experiment data is preserved.
 
     Notes:
     - Uses `DROP TABLE ... CASCADE` to handle circular foreign key references.
@@ -214,14 +219,17 @@ def reset_database_schema(*, include_console_log: bool = True) -> None:
         for table in reversed(tables):
             name = table.name.replace('"', '""')
             conn.execute(text(f'DROP TABLE IF EXISTS "{name}" CASCADE'))
+        conn.execute(text('DROP TABLE IF EXISTS "loreley_schema_migrations" CASCADE'))
 
-    Base.metadata.create_all(bind=engine)
-    with session_scope() as session:
-        seed_instance_marker(
-            session=session,
-            settings=settings,
-            schema_version=INSTANCE_SCHEMA_VERSION,
-        )
+    from loreley.db.migrations.runner import ensure_schema_current
+
+    ensure_schema_current(
+        engine=engine,
+        settings=settings,
+        target_version=INSTANCE_SCHEMA_VERSION,
+        auto_migrate=True,
+    )
+    _run_managed_post_schema_ddl(engine)
     if include_console_log:
         console.log("[bold green]Database schema reset complete[/]")
     log.info("Database schema reset complete")

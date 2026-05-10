@@ -14,7 +14,11 @@ uv sync --extra ui
 uv run loreley api
 ```
 
-This command requires `DATABASE_URL` to point at a Loreley database with an instance metadata marker (seeded automatically when you start the scheduler/worker once, or explicitly via `uv run loreley reset-db --yes`).
+This command requires `DATABASE_URL` to point at a Loreley database. Empty
+databases are initialized automatically, and schema-version-5 databases are
+migrated automatically, only when `DB_AUTO_MIGRATE=true`. With
+`DB_AUTO_MIGRATE=false`, run `uv run loreley db migrate` before starting the
+API.
 
 ## Options
 
@@ -30,4 +34,3 @@ This command requires `DATABASE_URL` to point at a Loreley database with an inst
 Logs are written to:
 
 - `logs/{experiment_namespace}/ui_api/ui_api-YYYYMMDD-HHMMSS.log`
-

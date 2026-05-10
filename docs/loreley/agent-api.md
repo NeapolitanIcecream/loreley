@@ -151,12 +151,12 @@ These endpoints reuse the existing evaluation artifact helpers and
 `build_agent_feedback_payload()`. They expose only artifacts marked
 `agent_visible`; `human_only` and `hidden` artifacts are not included.
 
-## Database Reset Note
+## Database Migration Note
 
 This facade adds the `agent_actions` table and bumps
-`INSTANCE_SCHEMA_VERSION` to `12`. Existing development databases must be reset
-before running this version:
+`INSTANCE_SCHEMA_VERSION` to `12`. Existing schema-version-5 databases should be
+migrated before running this version:
 
 ```bash
-uv run loreley reset-db --yes
+uv run loreley db migrate
 ```

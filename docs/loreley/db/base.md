@@ -14,5 +14,5 @@ Database engine and session management for Loreley.
 
 ## Schema helpers
 
-- **`ensure_database_schema()`**: imports `loreley.db.models`, calls `Base.metadata.create_all(bind=get_engine())` to create any missing tables, then validates the single-row `InstanceMetadata` marker against the current environment. This is safe to call multiple times and is used by the UI API at startup.
-- **`reset_database_schema()`**: drops and recreates all ORM tables, then seeds `InstanceMetadata` from the current environment (`EXPERIMENT_ID` and `MAPELITES_EXPERIMENT_ROOT_COMMIT`). This is the supported upgrade path for destructive schema changes.
+- **`ensure_database_schema()`**: imports `loreley.db.models`, creates a fresh current schema when the database is empty and `DB_AUTO_MIGRATE=true`, or runs native migrations for supported older `InstanceMetadata.schema_version` values before marker validation. With `DB_AUTO_MIGRATE=false`, fresh initialization and upgrades must be run explicitly with `uv run loreley db migrate`. This is safe to call multiple times and is used by API/scheduler/worker startup.
+- **`reset_database_schema()`**: drops and recreates all ORM tables through the native current-schema initializer, including `InstanceMetadata`, migration audit state, and managed indexes. This is a destructive local fallback; normal upgrades should use `uv run loreley db migrate`.

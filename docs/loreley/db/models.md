@@ -14,6 +14,7 @@ ORM models and enums for single-tenant experiment databases.
 - **`InstanceMetadata`** (`instance_metadata` table): single-row marker for DB identity.
   - Primary key: `id=1` enforced by a check constraint.
   - Stores `schema_version`, `experiment_id_raw`, `experiment_uuid`, and the canonical `root_commit_hash`.
+  - `schema_version` is the application schema marker used by native migrations and `uv run loreley db current|migrate|validate`.
   - Optional `repository_slug` and `repository_canonical_origin` fields aid observability.
 - **`CommitCard`** (`commit_cards` table): lightweight commit metadata used for inspiration and UI.
   - Primary key: `id` (UUID).

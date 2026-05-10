@@ -12,10 +12,17 @@ from loreley.naming import resolve_experiment_identity
 if TYPE_CHECKING:
     from loreley.db.models import InstanceMetadata
 
-RESET_DB_HINT = "Reset the database schema with `uv run loreley reset-db --yes`."
+MIGRATE_DB_HINT = (
+    "Run `uv run loreley db migrate`; use `uv run loreley reset-db --yes` "
+    "only for disposable local databases."
+)
+RESET_DB_HINT = (
+    "Check DATABASE_URL, EXPERIMENT_ID, and MAPELITES_EXPERIMENT_ROOT_COMMIT. "
+    "Use `uv run loreley reset-db --yes` only for disposable local databases."
+)
 INIT_DB_HINT = (
-    "Initialise the database by starting a scheduler/worker once, "
-    "or reset the schema with `uv run loreley reset-db --yes` (dev)."
+    "Initialize the database by running `uv run loreley db migrate`, "
+    "or by starting API/scheduler/worker with DB_AUTO_MIGRATE=true."
 )
 
 
@@ -71,7 +78,7 @@ def validate_instance_marker_schema(
         raise InstanceMetadataError(f"Instance metadata is missing. {INIT_DB_HINT}")
     if int(meta.schema_version or 0) != int(schema_version):
         raise InstanceMetadataError(
-            f"Instance metadata schema_version mismatch. {RESET_DB_HINT}",
+            f"Instance metadata schema_version mismatch. {MIGRATE_DB_HINT}",
         )
     return meta
 
@@ -110,7 +117,7 @@ def validate_instance_marker(
         raise InstanceMetadataError(f"Instance metadata is missing. {INIT_DB_HINT}")
     if int(meta.schema_version or 0) != int(schema_version):
         raise InstanceMetadataError(
-            f"Instance metadata schema_version mismatch. {RESET_DB_HINT}",
+            f"Instance metadata schema_version mismatch. {MIGRATE_DB_HINT}",
         )
     if str(meta.experiment_id_raw or "").strip() != identity.experiment_raw:
         raise InstanceMetadataError(
@@ -194,6 +201,7 @@ __all__ = [
     "InstanceIdentity",
     "InstanceMetadataError",
     "INIT_DB_HINT",
+    "MIGRATE_DB_HINT",
     "RESET_DB_HINT",
     "resolve_instance_identity",
     "resolve_instance_namespace_from_marker",
