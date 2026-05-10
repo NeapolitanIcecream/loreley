@@ -185,6 +185,7 @@ def _ensure_existing_schema_current(
     current_version = int(marker["schema_version"] or 0)
     if current_version == target_version:
         _create_audit_table(conn)
+        _validate_current_schema(conn, target_version=target_version)
         return MigrationResult(
             from_version=current_version,
             to_version=target_version,
@@ -250,7 +251,15 @@ def validate_database_schema(*, engine: Engine, settings: Settings, target_versi
             raise MigrationError(status.detail)
         if status.state == "future":
             raise FutureSchemaError(status.detail)
-        if status.state in {"migratable", "unsupported"}:
+        if status.state == "unsupported":
+            raise UnsupportedMigrationError(
+                status.detail
+                or (
+                    f"No Loreley native migration path from schema_version={status.schema_version} "
+                    f"to {target_version}."
+                ),
+            )
+        if status.state == "migratable":
             raise MigrationRequiredError(
                 f"Database schema_version={status.schema_version} requires migration "
                 f"to {target_version}. {MIGRATE_DB_HINT}",
