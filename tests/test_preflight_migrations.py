@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from loreley.db.base import INSTANCE_SCHEMA_VERSION
-from loreley.db.migrations.runner import SchemaStatus
+from loreley.db.migrations.runner import MigrationError, SchemaStatus
 from loreley.preflight import CheckResult, check_instance_marker, preflight_api, preflight_scheduler, preflight_worker
 from tests.support import TestSettings
 
@@ -165,6 +165,50 @@ def test_api_preflight_accepts_existing_schema_without_runtime_identity(
     results = preflight_api(settings, timeout_seconds=0.2)
 
     assert CheckResult("instance_metadata", "ok", "present") in results
+
+
+def test_api_preflight_fails_migratable_schema_when_identity_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: API preflight must not report migration-ready without required identity."""
+
+    settings = TestSettings(
+        EXPERIMENT_ID=None,
+        MAPELITES_EXPERIMENT_ROOT_COMMIT=None,
+        DB_AUTO_MIGRATE=True,
+    )
+    monkeypatch.setattr(
+        "loreley.preflight.check_database",
+        lambda **_kwargs: CheckResult("database", "ok", "reachable"),
+    )
+    monkeypatch.setattr(
+        "loreley.preflight.check_python_modules",
+        lambda *_args, **_kwargs: CheckResult("ui_api_deps", "ok", "available"),
+    )
+    monkeypatch.setattr("loreley.db.base.get_engine", lambda: SimpleNamespace(name="engine"))
+    monkeypatch.setattr(
+        "loreley.db.migrations.runner.describe_schema",
+        lambda **_kwargs: SchemaStatus(
+            schema_version=5,
+            target_version=INSTANCE_SCHEMA_VERSION,
+            state="migratable",
+            needs_migration=True,
+        ),
+    )
+
+    def fail_identity_validation(**_kwargs) -> None:
+        raise MigrationError("EXPERIMENT_ID is required.")
+
+    monkeypatch.setattr(
+        "loreley.db.migrations.runner.validate_database_identity",
+        fail_identity_validation,
+    )
+
+    results = preflight_api(settings, timeout_seconds=0.2)
+
+    marker_result = next(item for item in results if item.name == "instance_metadata")
+    assert marker_result.status == "fail"
+    assert "EXPERIMENT_ID is required" in marker_result.details
 
 
 @pytest.mark.parametrize("preflight_func", (preflight_scheduler, preflight_worker))

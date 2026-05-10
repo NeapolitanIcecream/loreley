@@ -382,7 +382,10 @@ def _check_current_instance_marker(context: _InstanceMarkerCheckContext) -> Chec
 
 
 def _check_migratable_instance_marker(context: _InstanceMarkerCheckContext) -> CheckResult:
-    if context.settings is not None and context.validate_identity:
+    if context.settings is not None and (
+        context.validate_identity or context.settings.db_auto_migrate
+    ):
+        # Startup validates marker identity before applying automatic migrations.
         context.validate_database_identity(engine=context.engine, settings=context.settings)
     if context.settings is not None and not context.settings.db_auto_migrate:
         return CheckResult(
