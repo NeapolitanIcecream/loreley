@@ -211,6 +211,33 @@ def test_api_preflight_fails_migratable_schema_when_identity_unavailable(
     assert "EXPERIMENT_ID is required" in marker_result.details
 
 
+def test_api_preflight_skips_marker_check_when_database_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: a failed API DB reachability check must not open a second connection."""
+
+    settings = TestSettings(DB_AUTO_MIGRATE=True)
+    database_result = CheckResult("database", "fail", "unreachable: postgresql://db")
+    deps_result = CheckResult("ui_api_deps", "ok", "available")
+    monkeypatch.setattr(
+        "loreley.preflight.check_database",
+        lambda **_kwargs: database_result,
+    )
+    monkeypatch.setattr(
+        "loreley.preflight.check_python_modules",
+        lambda *_args, **_kwargs: deps_result,
+    )
+
+    def fail_if_marker_checked(**_kwargs) -> CheckResult:
+        raise AssertionError("API preflight must not validate the marker after DB reachability fails")
+
+    monkeypatch.setattr("loreley.preflight.check_instance_marker", fail_if_marker_checked)
+
+    results = preflight_api(settings, timeout_seconds=0.2)
+
+    assert results == [database_result, deps_result]
+
+
 @pytest.mark.parametrize("preflight_func", (preflight_scheduler, preflight_worker))
 def test_scheduler_and_worker_preflight_include_instance_marker_check(
     monkeypatch: pytest.MonkeyPatch,

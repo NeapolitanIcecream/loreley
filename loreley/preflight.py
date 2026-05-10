@@ -775,6 +775,7 @@ def _append_database_schema_checks(
     *,
     settings: Settings,
     timeout_seconds: float,
+    validate_identity: bool = True,
 ) -> None:
     database = check_database(dsn=settings.database_dsn, timeout_seconds=timeout_seconds)
     results.append(database)
@@ -789,7 +790,13 @@ def _append_database_schema_checks(
         )
         return
 
-    results.append(check_instance_marker(schema_version=INSTANCE_SCHEMA_VERSION, settings=settings))
+    results.append(
+        check_instance_marker(
+            schema_version=INSTANCE_SCHEMA_VERSION,
+            settings=settings,
+            validate_identity=validate_identity,
+        )
+    )
 
 
 def preflight_all(settings: Settings, *, timeout_seconds: float = 2.0) -> list[CheckResult]:
@@ -808,19 +815,12 @@ def preflight_all(settings: Settings, *, timeout_seconds: float = 2.0) -> list[C
 def preflight_api(settings: Settings, *, timeout_seconds: float = 2.0) -> list[CheckResult]:
     """Preflight checks before starting the read-only UI API."""
     results: list[CheckResult] = []
-    results.append(check_database(dsn=settings.database_dsn, timeout_seconds=timeout_seconds))
-    try:
-        from loreley.db.base import INSTANCE_SCHEMA_VERSION
-    except Exception as exc:  # pragma: no cover - defensive
-        results.append(CheckResult("instance_metadata", "fail", f"failed to load DB schema version ({exc})"))
-    else:
-        results.append(
-            check_instance_marker(
-                schema_version=INSTANCE_SCHEMA_VERSION,
-                settings=settings,
-                validate_identity=False,
-            )
-        )
+    _append_database_schema_checks(
+        results,
+        settings=settings,
+        timeout_seconds=timeout_seconds,
+        validate_identity=False,
+    )
     results.append(
         check_python_modules(
             ("fastapi", "uvicorn"),
