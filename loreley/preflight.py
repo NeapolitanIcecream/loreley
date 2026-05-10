@@ -307,11 +307,22 @@ def check_campaign_program(settings: Settings) -> CheckResult:
     return CheckResult("campaign_program", "ok", details)
 
 
-def check_instance_marker(*, schema_version: int) -> CheckResult:
+def check_instance_marker(
+    *,
+    schema_version: int,
+    settings: Settings | None = None,
+    validate_identity: bool = True,
+) -> CheckResult:
     """Check that the instance metadata marker exists and matches schema_version."""
     try:
-        from loreley.db.base import session_scope
-        from loreley.db.instance import InstanceMetadataError, validate_instance_marker_schema
+        from loreley.db.base import get_engine
+        from loreley.db.instance import InstanceMetadataError, resolve_instance_identity
+        from loreley.db.migrations.runner import (
+            MigrationError,
+            describe_schema,
+            validate_database_schema,
+            validate_database_identity,
+        )
     except Exception as exc:
         return CheckResult(
             "instance_metadata",
@@ -319,13 +330,21 @@ def check_instance_marker(*, schema_version: int) -> CheckResult:
             f"failed to import DB helpers ({exc})",
         )
     try:
-        with session_scope() as session:
-            validate_instance_marker_schema(
-                session=session,
-                schema_version=schema_version,
+        engine = get_engine()
+        status = describe_schema(engine=engine, target_version=schema_version)
+        return _check_instance_marker_status(
+            _InstanceMarkerCheckContext(
+                engine=engine,
+                status=status,
+                settings=settings,
+                validate_identity=validate_identity,
+                validate_database_schema=validate_database_schema,
+                validate_database_identity=validate_database_identity,
+                resolve_instance_identity=resolve_instance_identity,
+                instance_metadata_error_type=InstanceMetadataError,
             )
-        return CheckResult("instance_metadata", "ok", "present")
-    except InstanceMetadataError as exc:
+        )
+    except MigrationError as exc:
         return CheckResult("instance_metadata", "fail", str(exc))
     except Exception as exc:
         return CheckResult(
@@ -333,6 +352,87 @@ def check_instance_marker(*, schema_version: int) -> CheckResult:
             "fail",
             f"failed to validate instance metadata ({exc})",
         )
+
+
+@dataclass(frozen=True)
+class _InstanceMarkerCheckContext:
+    engine: Any
+    status: Any
+    settings: Settings | None
+    validate_identity: bool
+    validate_database_schema: Any
+    validate_database_identity: Any
+    resolve_instance_identity: Any
+    instance_metadata_error_type: type[Exception]
+
+
+def _check_instance_marker_status(context: _InstanceMarkerCheckContext) -> CheckResult:
+    handlers = {
+        "current": _check_current_instance_marker,
+        "migratable": _check_migratable_instance_marker,
+        "fresh": _check_fresh_instance_marker,
+    }
+    handler = handlers.get(context.status.state)
+    if handler is None:
+        return CheckResult("instance_metadata", "fail", context.status.detail)
+    return handler(context)
+
+
+def _check_current_instance_marker(context: _InstanceMarkerCheckContext) -> CheckResult:
+    if context.settings is not None and context.validate_identity:
+        context.validate_database_identity(engine=context.engine, settings=context.settings)
+    if context.settings is not None:
+        context.validate_database_schema(
+            engine=context.engine,
+            settings=context.settings,
+            target_version=context.status.target_version,
+            validate_identity=False,
+        )
+    return CheckResult("instance_metadata", "ok", "present")
+
+
+def _check_migratable_instance_marker(context: _InstanceMarkerCheckContext) -> CheckResult:
+    if context.settings is not None and (
+        context.validate_identity or context.settings.db_auto_migrate
+    ):
+        # Startup validates marker identity before applying automatic migrations.
+        context.validate_database_identity(engine=context.engine, settings=context.settings)
+    if context.settings is not None and not context.settings.db_auto_migrate:
+        return CheckResult(
+            "instance_metadata",
+            "fail",
+            (
+                f"schema_version={context.status.schema_version} requires migration "
+                f"to {context.status.target_version}; run `uv run loreley db migrate`."
+            ),
+        )
+    return CheckResult(
+        "instance_metadata",
+        "ok",
+        f"schema_version={context.status.schema_version} is migratable to {context.status.target_version}",
+    )
+
+
+def _check_fresh_instance_marker(context: _InstanceMarkerCheckContext) -> CheckResult:
+    if context.settings is not None and context.settings.db_auto_migrate:
+        try:
+            context.resolve_instance_identity(context.settings)
+        except context.instance_metadata_error_type as exc:
+            return CheckResult(
+                "instance_metadata",
+                "fail",
+                f"database is empty but startup cannot initialize the schema marker ({exc})",
+            )
+        return CheckResult(
+            "instance_metadata",
+            "ok",
+            "database is empty; startup can initialize the schema",
+        )
+    return CheckResult(
+        "instance_metadata",
+        "fail",
+        "instance metadata is missing; run `uv run loreley db migrate`.",
+    )
 
 
 def check_openai_api_key(value: str | None, *, required: bool) -> CheckResult:
@@ -562,7 +662,7 @@ def preflight_scheduler(settings: Settings, *, timeout_seconds: float = 2.0) -> 
     results: list[CheckResult] = []
 
     results.append(_check_openai_api_key_for_scheduler(settings))
-    results.append(check_database(dsn=settings.database_dsn, timeout_seconds=timeout_seconds))
+    _append_database_schema_checks(results, settings=settings, timeout_seconds=timeout_seconds)
     results.append(
         check_redis(
             redis_url=settings.tasks_redis_url,
@@ -616,7 +716,7 @@ def preflight_worker(settings: Settings, *, timeout_seconds: float = 2.0) -> lis
 
     results.append(check_binary(settings.worker_repo_git_bin or "git", label="git"))
     results.append(_check_openai_api_key_for_worker(settings))
-    results.append(check_database(dsn=settings.database_dsn, timeout_seconds=timeout_seconds))
+    _append_database_schema_checks(results, settings=settings, timeout_seconds=timeout_seconds)
     results.append(
         check_redis(
             redis_url=settings.tasks_redis_url,
@@ -680,6 +780,35 @@ def preflight_worker(settings: Settings, *, timeout_seconds: float = 2.0) -> lis
     return results
 
 
+def _append_database_schema_checks(
+    results: list[CheckResult],
+    *,
+    settings: Settings,
+    timeout_seconds: float,
+    validate_identity: bool = True,
+) -> None:
+    database = check_database(dsn=settings.database_dsn, timeout_seconds=timeout_seconds)
+    results.append(database)
+    if database.status != "ok":
+        return
+
+    try:
+        from loreley.db.base import INSTANCE_SCHEMA_VERSION
+    except Exception as exc:  # pragma: no cover - defensive
+        results.append(
+            CheckResult("instance_metadata", "fail", f"failed to load DB schema version ({exc})"),
+        )
+        return
+
+    results.append(
+        check_instance_marker(
+            schema_version=INSTANCE_SCHEMA_VERSION,
+            settings=settings,
+            validate_identity=validate_identity,
+        )
+    )
+
+
 def preflight_all(settings: Settings, *, timeout_seconds: float = 2.0) -> list[CheckResult]:
     """Union of worker + scheduler checks (deduplicated by name)."""
     combined: list[CheckResult] = []
@@ -696,13 +825,12 @@ def preflight_all(settings: Settings, *, timeout_seconds: float = 2.0) -> list[C
 def preflight_api(settings: Settings, *, timeout_seconds: float = 2.0) -> list[CheckResult]:
     """Preflight checks before starting the read-only UI API."""
     results: list[CheckResult] = []
-    results.append(check_database(dsn=settings.database_dsn, timeout_seconds=timeout_seconds))
-    try:
-        from loreley.db.base import INSTANCE_SCHEMA_VERSION
-    except Exception as exc:  # pragma: no cover - defensive
-        results.append(CheckResult("instance_metadata", "fail", f"failed to load DB schema version ({exc})"))
-    else:
-        results.append(check_instance_marker(schema_version=INSTANCE_SCHEMA_VERSION))
+    _append_database_schema_checks(
+        results,
+        settings=settings,
+        timeout_seconds=timeout_seconds,
+        validate_identity=False,
+    )
     results.append(
         check_python_modules(
             ("fastapi", "uvicorn"),

@@ -151,6 +151,11 @@ class Settings(BaseSettings):
     db_max_overflow: int = Field(default=20, alias="DB_MAX_OVERFLOW")
     db_pool_timeout: int = Field(default=30, alias="DB_POOL_TIMEOUT")
     db_echo: bool = Field(default=False, alias="DB_ECHO")
+    db_auto_migrate: bool = Field(default=True, alias="DB_AUTO_MIGRATE")
+    db_migration_lock_timeout_seconds: PositiveInt = Field(
+        default=30,
+        alias="DB_MIGRATION_LOCK_TIMEOUT_SECONDS",
+    )
 
     metrics_retention_days: int = Field(default=30, alias="METRICS_RETENTION_DAYS")
 
@@ -965,6 +970,8 @@ def _build_safe_export_payload(settings: Settings, *, mask_secrets: bool) -> dic
         "db_max_overflow": settings.db_max_overflow,
         "db_pool_timeout": settings.db_pool_timeout,
         "db_echo": settings.db_echo,
+        "db_auto_migrate": settings.db_auto_migrate,
+        "db_migration_lock_timeout_seconds": settings.db_migration_lock_timeout_seconds,
         "tasks_redis_url": _safe_export_url(settings.tasks_redis_url, mask_secrets=mask_secrets),
         "tasks_redis_host": settings.tasks_redis_host,
         "tasks_redis_port": settings.tasks_redis_port,

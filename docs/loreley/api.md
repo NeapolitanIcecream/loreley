@@ -38,9 +38,10 @@ See also: [Running the UI API](../script/run_api.md)
 
 The UI API relies on the standard Loreley settings (`loreley.config.Settings`), especially
 database and logs configuration. On startup it validates that the database contains an
-`InstanceMetadata` marker (schema/version). If the marker is missing, seed it by starting
-the scheduler/worker once (or via `uv run loreley reset-db --yes`). If the schema version
-is mismatched, reset the schema with `uv run loreley reset-db --yes` (dev).
+`InstanceMetadata` marker (schema/version). Empty databases are initialized on
+startup, and schema-version-5 databases are migrated automatically, only when
+`DB_AUTO_MIGRATE=true`. With `DB_AUTO_MIGRATE=false`, run
+`uv run loreley db migrate` before startup.
 
 Common variables:
 
@@ -183,9 +184,10 @@ feedback endpoints.
 - **Write scope**: operator writes are intentionally narrow. They do not add
   authentication, restart processes, change environment variables, or bypass the
   scheduler and worker settings already in the database/runtime.
-- **Schema reset**: the agent facade adds the `agent_actions` table and bumps
-  `INSTANCE_SCHEMA_VERSION` to `12`. Existing development databases must be
-  reset with `uv run loreley reset-db --yes`.
+- **Schema migration**: the agent facade adds the `agent_actions` table and bumps
+  `INSTANCE_SCHEMA_VERSION` to `12`. Existing schema-version-5 databases should
+  be upgraded with `uv run loreley db migrate`; `reset-db --yes` is only a
+  destructive local fallback.
 - **Job artifacts**: large, audit/debug oriented payloads (planning/coding prompts, raw outputs, evaluation logs) are stored on disk and referenced via `JobArtifacts`. The API exposes:
   - `GET /jobs/{job_id}/artifacts` as an index of available URLs
   - `GET /jobs/{job_id}/artifacts/{artifact_key}` for direct downloads

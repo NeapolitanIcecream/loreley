@@ -2,10 +2,10 @@
 
 Use these commands when you need to inspect or repair individual evolution jobs.
 
-If these commands fail on an older development database with missing lease columns, reset the schema first:
+If these commands fail on an older schema-version-5 database, migrate the schema first:
 
 ```bash
-uv run loreley reset-db --yes
+uv run loreley db migrate
 ```
 
 ## List recent jobs

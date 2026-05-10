@@ -7,6 +7,7 @@ This CLI is designed to:
 - run preflight checks before starting long-running processes
 """
 
+from contextlib import redirect_stdout
 from datetime import datetime
 import os
 import sys
@@ -47,7 +48,9 @@ console = Console()
 app = typer.Typer(add_completion=False, help="Loreley unified CLI.")
 config_app = typer.Typer(help="Inspect effective Loreley configuration.")
 jobs_app = typer.Typer(help="Inspect and repair evolution jobs.")
+db_app = typer.Typer(help="Inspect and migrate the Loreley database schema.")
 app.add_typer(config_app, name="config")
+app.add_typer(db_app, name="db")
 app.add_typer(jobs_app, name="jobs")
 archive_app = typer.Typer(help="Inspect MAP-Elites archives.")
 app.add_typer(archive_app, name="archive")
@@ -837,6 +840,115 @@ def ui(
         preflight_timeout_seconds=float(preflight_timeout_seconds),
     )
     raise typer.Exit(code=int(code))
+
+
+def _db_status_payload(status: Any) -> dict[str, object]:
+    return {
+        "schema_version": status.schema_version,
+        "target": status.target_version,
+        "state": status.state,
+        "needs_migration": status.needs_migration,
+        "detail": status.detail,
+    }
+
+
+def _print_db_error_and_exit(exc: Exception) -> None:
+    console.print(f"[bold red]Database schema error[/] {exc}")
+    raise typer.Exit(code=1) from exc
+
+
+@db_app.command("current")
+def db_current(
+    ctx: typer.Context,
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Print schema status as JSON.",
+        show_default=True,
+    ),
+) -> None:
+    """Print the current database schema marker."""
+
+    with redirect_stdout(sys.stderr):
+        settings = _load_settings_or_exit()
+        _configure_logging_or_exit(settings=settings, role="db", override_level=_get_log_level(ctx))
+        try:
+            from loreley.db.base import INSTANCE_SCHEMA_VERSION, get_engine
+            from loreley.db.migrations.runner import describe_schema
+
+            status = describe_schema(engine=get_engine(), target_version=INSTANCE_SCHEMA_VERSION)
+        except Exception as exc:  # pragma: no cover - defensive
+            _print_db_error_and_exit(exc)
+
+    payload = _db_status_payload(status)
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        return
+    typer.echo(
+        "schema_version={} target={} state={} needs_migration={}".format(
+            "none" if status.schema_version is None else status.schema_version,
+            status.target_version,
+            status.state,
+            str(bool(status.needs_migration)).lower(),
+        )
+    )
+
+
+@db_app.command("migrate")
+def db_migrate(ctx: typer.Context) -> None:
+    """Migrate the database schema to the current Loreley version."""
+
+    settings = _load_settings_or_exit()
+    _configure_logging_or_exit(settings=settings, role="db", override_level=_get_log_level(ctx))
+    try:
+        from loreley.db.base import INSTANCE_SCHEMA_VERSION, get_engine
+        from loreley.db.migrations.runner import ensure_schema_current, validate_database_schema
+
+        engine = get_engine()
+        result = ensure_schema_current(
+            engine=engine,
+            settings=settings,
+            target_version=INSTANCE_SCHEMA_VERSION,
+            auto_migrate=True,
+        )
+        validate_database_schema(
+            engine=engine,
+            settings=settings,
+            target_version=INSTANCE_SCHEMA_VERSION,
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        _print_db_error_and_exit(exc)
+
+    applied = ",".join(str(version) for version in result.applied_versions) or "none"
+    from_version = "none" if result.from_version is None else str(result.from_version)
+    typer.echo(
+        "from={} to={} applied={} fresh={}".format(
+            from_version,
+            result.to_version,
+            applied,
+            str(bool(result.fresh_database)).lower(),
+        )
+    )
+
+
+@db_app.command("validate")
+def db_validate(ctx: typer.Context) -> None:
+    """Validate that the database schema is current and usable."""
+
+    settings = _load_settings_or_exit()
+    _configure_logging_or_exit(settings=settings, role="db", override_level=_get_log_level(ctx))
+    try:
+        from loreley.db.base import INSTANCE_SCHEMA_VERSION, get_engine
+        from loreley.db.migrations.runner import validate_database_schema
+
+        status = validate_database_schema(
+            engine=get_engine(),
+            settings=settings,
+            target_version=INSTANCE_SCHEMA_VERSION,
+        )
+    except Exception as exc:
+        _print_db_error_and_exit(exc)
+    typer.echo(f"valid schema_version={status.schema_version} target={status.target_version}")
 
 
 @app.command("reset-db")

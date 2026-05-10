@@ -2,10 +2,10 @@
 
 Use this runbook when `RUNNING` jobs stop making progress, the scheduler starts reclaiming stale jobs, or a job hits the stale-recovery budget and ends in `FAILED`.
 
-If the lease commands or status views fail on an older development database with missing lease columns, reset the schema first:
+If the lease commands or status views fail on an older schema-version-5 database, migrate the schema first:
 
 ```bash
-uv run loreley reset-db --yes
+uv run loreley db migrate
 ```
 
 ## What to watch

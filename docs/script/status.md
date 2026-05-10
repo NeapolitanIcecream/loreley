@@ -2,10 +2,10 @@
 
 This command provides a single, high-level operational summary without needing to dig into the database manually.
 
-If this command fails on an older development database with a missing lease column such as `lease_expires_at`, reset the schema first:
+If this command fails on an older schema-version-5 database, migrate the schema first:
 
 ```bash
-uv run loreley reset-db --yes
+uv run loreley db migrate
 ```
 
 ## Usage
