@@ -162,9 +162,63 @@ def test_api_preflight_accepts_existing_schema_without_runtime_identity(
         fail_if_identity_validated,
     )
 
+    def pass_current_schema_validation(**kwargs) -> None:
+        assert kwargs["validate_identity"] is False
+
+    monkeypatch.setattr(
+        "loreley.db.migrations.runner.validate_database_schema",
+        pass_current_schema_validation,
+    )
+
     results = preflight_api(settings, timeout_seconds=0.2)
 
     assert CheckResult("instance_metadata", "ok", "present") in results
+
+
+def test_preflight_fails_current_marker_when_current_schema_validation_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: current markers must not hide current-schema structural drift."""
+
+    settings = TestSettings(
+        EXPERIMENT_ID=None,
+        MAPELITES_EXPERIMENT_ROOT_COMMIT=None,
+        DB_AUTO_MIGRATE=True,
+    )
+    engine = SimpleNamespace(name="engine")
+    monkeypatch.setattr("loreley.db.base.get_engine", lambda: engine)
+    monkeypatch.setattr(
+        "loreley.db.migrations.runner.describe_schema",
+        lambda **_kwargs: SchemaStatus(
+            schema_version=INSTANCE_SCHEMA_VERSION,
+            target_version=INSTANCE_SCHEMA_VERSION,
+            state="current",
+            needs_migration=False,
+        ),
+    )
+
+    def fail_current_schema_validation(**kwargs) -> None:
+        assert kwargs == {
+            "engine": engine,
+            "settings": settings,
+            "target_version": INSTANCE_SCHEMA_VERSION,
+            "validate_identity": False,
+        }
+        raise MigrationError("Missing current schema tables: evolution_jobs.")
+
+    monkeypatch.setattr(
+        "loreley.db.migrations.runner.validate_database_schema",
+        fail_current_schema_validation,
+    )
+
+    result = check_instance_marker(
+        schema_version=INSTANCE_SCHEMA_VERSION,
+        settings=settings,
+        validate_identity=False,
+    )
+
+    assert result.status == "fail"
+    assert "Missing current schema tables: evolution_jobs" in result.details
 
 
 def test_api_preflight_fails_migratable_schema_when_identity_unavailable(

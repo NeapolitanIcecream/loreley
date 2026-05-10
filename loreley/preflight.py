@@ -320,6 +320,7 @@ def check_instance_marker(
         from loreley.db.migrations.runner import (
             MigrationError,
             describe_schema,
+            validate_database_schema,
             validate_database_identity,
         )
     except Exception as exc:
@@ -337,6 +338,7 @@ def check_instance_marker(
                 status=status,
                 settings=settings,
                 validate_identity=validate_identity,
+                validate_database_schema=validate_database_schema,
                 validate_database_identity=validate_database_identity,
                 resolve_instance_identity=resolve_instance_identity,
                 instance_metadata_error_type=InstanceMetadataError,
@@ -358,6 +360,7 @@ class _InstanceMarkerCheckContext:
     status: Any
     settings: Settings | None
     validate_identity: bool
+    validate_database_schema: Any
     validate_database_identity: Any
     resolve_instance_identity: Any
     instance_metadata_error_type: type[Exception]
@@ -378,6 +381,13 @@ def _check_instance_marker_status(context: _InstanceMarkerCheckContext) -> Check
 def _check_current_instance_marker(context: _InstanceMarkerCheckContext) -> CheckResult:
     if context.settings is not None and context.validate_identity:
         context.validate_database_identity(engine=context.engine, settings=context.settings)
+    if context.settings is not None:
+        context.validate_database_schema(
+            engine=context.engine,
+            settings=context.settings,
+            target_version=context.status.target_version,
+            validate_identity=False,
+        )
     return CheckResult("instance_metadata", "ok", "present")
 
 

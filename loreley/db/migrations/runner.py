@@ -237,7 +237,13 @@ def _migration_path_or_raise(current_version: int, target_version: int) -> tuple
         raise UnsupportedMigrationError(str(exc)) from exc
 
 
-def validate_database_schema(*, engine: Engine, settings: Settings, target_version: int) -> SchemaStatus:
+def validate_database_schema(
+    *,
+    engine: Engine,
+    settings: Settings,
+    target_version: int,
+    validate_identity: bool = True,
+) -> SchemaStatus:
     """Validate that the database is current and structurally usable."""
 
     with engine.connect() as conn:
@@ -265,10 +271,11 @@ def validate_database_schema(*, engine: Engine, settings: Settings, target_versi
                 f"to {target_version}. {MIGRATE_DB_HINT}",
             )
 
-        marker = _load_marker(conn)
-        if marker is None:
-            raise MigrationError("instance_metadata marker row id=1 is missing.")
-        _validate_marker_identity(marker, settings=settings)
+        if validate_identity:
+            marker = _load_marker(conn)
+            if marker is None:
+                raise MigrationError("instance_metadata marker row id=1 is missing.")
+            _validate_marker_identity(marker, settings=settings)
         _validate_current_schema(conn, target_version=int(target_version))
         return status
 
