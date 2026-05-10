@@ -307,7 +307,12 @@ def check_campaign_program(settings: Settings) -> CheckResult:
     return CheckResult("campaign_program", "ok", details)
 
 
-def check_instance_marker(*, schema_version: int, settings: Settings | None = None) -> CheckResult:
+def check_instance_marker(
+    *,
+    schema_version: int,
+    settings: Settings | None = None,
+    validate_identity: bool = True,
+) -> CheckResult:
     """Check that the instance metadata marker exists and matches schema_version."""
     try:
         from loreley.db.base import get_engine
@@ -326,51 +331,17 @@ def check_instance_marker(*, schema_version: int, settings: Settings | None = No
     try:
         engine = get_engine()
         status = describe_schema(engine=engine, target_version=schema_version)
-        if status.state == "current":
-            if settings is not None:
-                validate_database_identity(engine=engine, settings=settings)
-            return CheckResult("instance_metadata", "ok", "present")
-        if status.state == "migratable":
-            if settings is not None:
-                validate_database_identity(engine=engine, settings=settings)
-                if not settings.db_auto_migrate:
-                    return CheckResult(
-                        "instance_metadata",
-                        "fail",
-                        (
-                            f"schema_version={status.schema_version} requires migration "
-                            f"to {schema_version}; run `uv run loreley db migrate`."
-                        ),
-                    )
-            return CheckResult(
-                "instance_metadata",
-                "ok",
-                f"schema_version={status.schema_version} is migratable to {schema_version}",
+        return _check_instance_marker_status(
+            _InstanceMarkerCheckContext(
+                engine=engine,
+                status=status,
+                settings=settings,
+                validate_identity=validate_identity,
+                validate_database_identity=validate_database_identity,
+                resolve_instance_identity=resolve_instance_identity,
+                instance_metadata_error_type=InstanceMetadataError,
             )
-        if status.state == "fresh":
-            if settings is not None and settings.db_auto_migrate:
-                try:
-                    resolve_instance_identity(settings)
-                except InstanceMetadataError as exc:
-                    return CheckResult(
-                        "instance_metadata",
-                        "fail",
-                        (
-                            "database is empty but startup cannot initialize the schema "
-                            f"marker ({exc})"
-                        ),
-                    )
-                return CheckResult(
-                    "instance_metadata",
-                    "ok",
-                    "database is empty; startup can initialize the schema",
-                )
-            return CheckResult(
-                "instance_metadata",
-                "fail",
-                "instance metadata is missing; run `uv run loreley db migrate`.",
-            )
-        return CheckResult("instance_metadata", "fail", status.detail)
+        )
     except MigrationError as exc:
         return CheckResult("instance_metadata", "fail", str(exc))
     except Exception as exc:
@@ -379,6 +350,76 @@ def check_instance_marker(*, schema_version: int, settings: Settings | None = No
             "fail",
             f"failed to validate instance metadata ({exc})",
         )
+
+
+@dataclass(frozen=True)
+class _InstanceMarkerCheckContext:
+    engine: Any
+    status: Any
+    settings: Settings | None
+    validate_identity: bool
+    validate_database_identity: Any
+    resolve_instance_identity: Any
+    instance_metadata_error_type: type[Exception]
+
+
+def _check_instance_marker_status(context: _InstanceMarkerCheckContext) -> CheckResult:
+    handlers = {
+        "current": _check_current_instance_marker,
+        "migratable": _check_migratable_instance_marker,
+        "fresh": _check_fresh_instance_marker,
+    }
+    handler = handlers.get(context.status.state)
+    if handler is None:
+        return CheckResult("instance_metadata", "fail", context.status.detail)
+    return handler(context)
+
+
+def _check_current_instance_marker(context: _InstanceMarkerCheckContext) -> CheckResult:
+    if context.settings is not None and context.validate_identity:
+        context.validate_database_identity(engine=context.engine, settings=context.settings)
+    return CheckResult("instance_metadata", "ok", "present")
+
+
+def _check_migratable_instance_marker(context: _InstanceMarkerCheckContext) -> CheckResult:
+    if context.settings is not None and context.validate_identity:
+        context.validate_database_identity(engine=context.engine, settings=context.settings)
+    if context.settings is not None and not context.settings.db_auto_migrate:
+        return CheckResult(
+            "instance_metadata",
+            "fail",
+            (
+                f"schema_version={context.status.schema_version} requires migration "
+                f"to {context.status.target_version}; run `uv run loreley db migrate`."
+            ),
+        )
+    return CheckResult(
+        "instance_metadata",
+        "ok",
+        f"schema_version={context.status.schema_version} is migratable to {context.status.target_version}",
+    )
+
+
+def _check_fresh_instance_marker(context: _InstanceMarkerCheckContext) -> CheckResult:
+    if context.settings is not None and context.settings.db_auto_migrate:
+        try:
+            context.resolve_instance_identity(context.settings)
+        except context.instance_metadata_error_type as exc:
+            return CheckResult(
+                "instance_metadata",
+                "fail",
+                f"database is empty but startup cannot initialize the schema marker ({exc})",
+            )
+        return CheckResult(
+            "instance_metadata",
+            "ok",
+            "database is empty; startup can initialize the schema",
+        )
+    return CheckResult(
+        "instance_metadata",
+        "fail",
+        "instance metadata is missing; run `uv run loreley db migrate`.",
+    )
 
 
 def check_openai_api_key(value: str | None, *, required: bool) -> CheckResult:
@@ -770,7 +811,13 @@ def preflight_api(settings: Settings, *, timeout_seconds: float = 2.0) -> list[C
     except Exception as exc:  # pragma: no cover - defensive
         results.append(CheckResult("instance_metadata", "fail", f"failed to load DB schema version ({exc})"))
     else:
-        results.append(check_instance_marker(schema_version=INSTANCE_SCHEMA_VERSION, settings=settings))
+        results.append(
+            check_instance_marker(
+                schema_version=INSTANCE_SCHEMA_VERSION,
+                settings=settings,
+                validate_identity=False,
+            )
+        )
     results.append(
         check_python_modules(
             ("fastapi", "uvicorn"),

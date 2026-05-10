@@ -117,88 +117,123 @@ def ensure_schema_current(
 ) -> MigrationResult:
     """Create or migrate the Loreley schema to ``target_version``."""
 
+    with engine.begin() as conn:
+        _acquire_migration_lock(conn, settings=settings)
+        if not _table_exists(conn, "instance_metadata"):
+            return _create_fresh_schema(
+                conn,
+                settings=settings,
+                target_version=int(target_version),
+                auto_migrate=auto_migrate,
+            )
+        return _ensure_existing_schema_current(
+            conn,
+            settings=settings,
+            target_version=int(target_version),
+            auto_migrate=auto_migrate,
+        )
+
+
+def _create_fresh_schema(
+    conn: Connection,
+    *,
+    settings: Settings,
+    target_version: int,
+    auto_migrate: bool,
+) -> MigrationResult:
+    if _has_loreley_tables_without_marker(conn):
+        raise MigrationError(
+            "instance_metadata table is missing but Loreley tables exist; "
+            "refusing to guess whether this database is damaged.",
+        )
+    if not auto_migrate:
+        raise MigrationRequiredError(
+            "Loreley schema is not initialized. Run `uv run loreley db migrate` "
+            "before API/scheduler/worker startup.",
+        )
+
     import loreley.db.models  # noqa: F401  # pylint: disable=unused-import
     from loreley.db.base import Base
 
-    with engine.begin() as conn:
-        _acquire_migration_lock(conn, settings=settings)
+    _create_audit_table(conn)
+    Base.metadata.create_all(bind=conn)
+    _seed_marker(conn, settings=settings, schema_version=target_version)
+    _record_audit(
+        conn,
+        version=target_version,
+        name="fresh_create_all",
+        checksum="",
+        duration_ms=0,
+    )
+    log.info("Created fresh Loreley schema at version {}", target_version)
+    return MigrationResult(
+        from_version=None,
+        to_version=target_version,
+        applied_versions=(),
+        fresh_database=True,
+    )
 
-        has_marker_table = _table_exists(conn, "instance_metadata")
-        if not has_marker_table:
-            if _has_loreley_tables_without_marker(conn):
-                raise MigrationError(
-                    "instance_metadata table is missing but Loreley tables exist; "
-                    "refusing to guess whether this database is damaged.",
-                )
-            if not auto_migrate:
-                raise MigrationRequiredError(
-                    "Loreley schema is not initialized. Run `uv run loreley db migrate` "
-                    "before API/scheduler/worker startup.",
-                )
-            _create_audit_table(conn)
-            Base.metadata.create_all(bind=conn)
-            _seed_marker(conn, settings=settings, schema_version=target_version)
-            _record_audit(
-                conn,
-                version=target_version,
-                name="fresh_create_all",
-                checksum="",
-                duration_ms=0,
-            )
-            log.info("Created fresh Loreley schema at version {}", target_version)
-            return MigrationResult(
-                from_version=None,
-                to_version=target_version,
-                applied_versions=(),
-                fresh_database=True,
-            )
 
-        marker = _load_marker(conn)
-        if marker is None:
-            raise MigrationError(
-                "instance_metadata table exists but marker row id=1 is missing; "
-                "refusing automatic migration.",
-            )
-
-        current_version = int(marker["schema_version"] or 0)
-        if current_version == int(target_version):
-            _create_audit_table(conn)
-            return MigrationResult(
-                from_version=current_version,
-                to_version=target_version,
-                applied_versions=(),
-            )
-        if current_version > int(target_version):
-            raise FutureSchemaError(
-                f"Database schema_version={current_version} is newer than "
-                f"this Loreley binary target={target_version}.",
-            )
-
-        try:
-            path = migration_path(current_version, int(target_version))
-        except RegistryError as exc:
-            raise UnsupportedMigrationError(str(exc)) from exc
-
-        if not auto_migrate:
-            raise MigrationRequiredError(
-                f"Database schema_version={current_version} requires migration "
-                f"to {target_version}. {MIGRATE_DB_HINT}",
-            )
-
+def _ensure_existing_schema_current(
+    conn: Connection,
+    *,
+    settings: Settings,
+    target_version: int,
+    auto_migrate: bool,
+) -> MigrationResult:
+    marker = _require_instance_marker(conn)
+    current_version = int(marker["schema_version"] or 0)
+    if current_version == target_version:
         _create_audit_table(conn)
-        _validate_marker_identity(marker, settings=settings)
-        applied = _run_migrations(
-            conn,
-            path=path,
-            settings=settings,
-            target_version=int(target_version),
-        )
-        _validate_current_schema(conn, target_version=int(target_version))
         return MigrationResult(
             from_version=current_version,
-            to_version=int(target_version),
-            applied_versions=tuple(applied),
+            to_version=target_version,
+            applied_versions=(),
         )
+    if current_version > target_version:
+        raise FutureSchemaError(
+            f"Database schema_version={current_version} is newer than "
+            f"this Loreley binary target={target_version}.",
+        )
+
+    path = _migration_path_or_raise(current_version, target_version)
+    if not auto_migrate:
+        raise MigrationRequiredError(
+            f"Database schema_version={current_version} requires migration "
+            f"to {target_version}. {MIGRATE_DB_HINT}",
+        )
+
+    _create_audit_table(conn)
+    _validate_marker_identity(marker, settings=settings)
+    applied = _run_migrations(
+        conn,
+        path=path,
+        settings=settings,
+        target_version=target_version,
+    )
+    _validate_current_schema(conn, target_version=target_version)
+    return MigrationResult(
+        from_version=current_version,
+        to_version=target_version,
+        applied_versions=tuple(applied),
+    )
+
+
+def _require_instance_marker(conn: Connection) -> dict[str, Any]:
+    marker = _load_marker(conn)
+    if marker is None:
+        raise MigrationError(
+            "instance_metadata table exists but marker row id=1 is missing; "
+            "refusing automatic migration.",
+        )
+    return marker
+
+
+def _migration_path_or_raise(current_version: int, target_version: int) -> tuple[SchemaMigration, ...]:
+    try:
+        return migration_path(current_version, target_version)
+    except RegistryError as exc:
+        raise UnsupportedMigrationError(str(exc)) from exc
 
 
 def validate_database_schema(*, engine: Engine, settings: Settings, target_version: int) -> SchemaStatus:
@@ -523,31 +558,43 @@ def _validate_current_schema(conn: Connection, *, target_version: int) -> None:
             f"instance_metadata schema_version={current}, expected {target_version}.",
         )
 
-    missing_tables = [table for table in _CURRENT_SCHEMA_TABLES if not _table_exists(conn, table)]
+    missing_tables = _missing_current_schema_tables(conn)
     if missing_tables:
         raise MigrationError(f"Missing current schema tables: {', '.join(missing_tables)}.")
 
-    null_job_kind_count = conn.execute(
-        text("SELECT count(*) FROM evolution_jobs WHERE job_kind IS NULL")
-    ).scalar_one()
-    if int(null_job_kind_count or 0) != 0:
+    if _job_kind_null_count(conn) != 0:
         raise MigrationError("evolution_jobs.job_kind contains NULL values after migration.")
 
-    missing_indexes = [
-        index_name for index_name in _CURRENT_SCHEMA_INDEXES if not _index_exists(conn, index_name)
-    ]
+    missing_indexes = _missing_current_schema_indexes(conn)
     if missing_indexes:
         raise MigrationError(f"Missing current schema indexes: {', '.join(missing_indexes)}.")
 
-    missing_constraints = [
-        constraint_name
-        for table_name, constraint_name in _CURRENT_SCHEMA_CONSTRAINTS
-        if not _constraint_exists(conn, table_name=table_name, constraint_name=constraint_name)
-    ]
+    missing_constraints = _missing_current_schema_constraints(conn)
     if missing_constraints:
         raise MigrationError(
             f"Missing current schema constraints: {', '.join(missing_constraints)}.",
         )
+
+
+def _missing_current_schema_tables(conn: Connection) -> list[str]:
+    return [table for table in _CURRENT_SCHEMA_TABLES if not _table_exists(conn, table)]
+
+
+def _job_kind_null_count(conn: Connection) -> int:
+    count = conn.execute(text("SELECT count(*) FROM evolution_jobs WHERE job_kind IS NULL")).scalar_one()
+    return int(count or 0)
+
+
+def _missing_current_schema_indexes(conn: Connection) -> list[str]:
+    return [index_name for index_name in _CURRENT_SCHEMA_INDEXES if not _index_exists(conn, index_name)]
+
+
+def _missing_current_schema_constraints(conn: Connection) -> list[str]:
+    return [
+        constraint_name
+        for table_name, constraint_name in _CURRENT_SCHEMA_CONSTRAINTS
+        if not _constraint_exists(conn, table_name=table_name, constraint_name=constraint_name)
+    ]
 
 
 def _index_exists(conn: Connection, index_name: str) -> bool:
