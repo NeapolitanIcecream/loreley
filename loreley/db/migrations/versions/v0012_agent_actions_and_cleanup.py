@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
+from datetime import datetime, timezone
+from typing import Any
 import uuid
 
 from loguru import logger
@@ -10,6 +13,40 @@ from loreley.config import Settings
 from loreley.db.migrations.registry import SchemaMigration
 
 log = logger.bind(module="db.migrations")
+
+
+def _canonical_candidate_commit_rows(
+    rows: Iterable[Mapping[str, Any]],
+) -> list[Mapping[str, Any]]:
+    selected: dict[str, Mapping[str, Any]] = {}
+    for row in rows:
+        commit_hash = str(row["commit_hash"])
+        current = selected.get(commit_hash)
+        if current is None or (
+            _candidate_commit_row_sort_key(row) > _candidate_commit_row_sort_key(current)
+        ):
+            selected[commit_hash] = row
+    return [selected[commit_hash] for commit_hash in sorted(selected)]
+
+
+def _candidate_commit_row_sort_key(
+    row: Mapping[str, Any],
+) -> tuple[tuple[int, float, str], tuple[int, float, str], str]:
+    return (
+        _timestamp_sort_key(row["completed_at"]),
+        _timestamp_sort_key(row["candidate_published_at"]),
+        str(row["id"]),
+    )
+
+
+def _timestamp_sort_key(value: Any) -> tuple[int, float, str]:
+    if value is None:
+        return (0, 0.0, "")
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return (1, value.timestamp(), "")
+    return (1, 0.0, str(value))
 
 
 def _create_agent_actions(conn: Connection) -> None:
@@ -87,46 +124,48 @@ def _run_managed_index_cleanup(conn: Connection) -> None:
 
 
 def _backfill_candidate_commits(conn: Connection) -> None:
-    rows = conn.execute(
-        text(
-            """
-            WITH historical_jobs AS (
+    rows = _canonical_candidate_commit_rows(
+        conn.execute(
+            text(
+                """
+                WITH historical_jobs AS (
+                    SELECT
+                        j.id,
+                        COALESCE(NULLIF(j.result_commit_hash, ''), NULLIF(j.candidate_commit_hash, '')) AS commit_hash,
+                        NULLIF(j.base_commit_hash, '') AS base_commit_hash,
+                        j.island_id,
+                        j.run_token,
+                        j.job_kind,
+                        j.candidate_branch_name,
+                        j.candidate_published_at,
+                        j.completed_at
+                    FROM evolution_jobs j
+                    WHERE lower(j.status::text) = 'succeeded'
+                )
                 SELECT
-                    j.id,
-                    COALESCE(NULLIF(j.result_commit_hash, ''), NULLIF(j.candidate_commit_hash, '')) AS commit_hash,
-                    NULLIF(j.base_commit_hash, '') AS base_commit_hash,
-                    j.island_id,
-                    j.run_token,
-                    j.job_kind,
-                    j.candidate_branch_name,
-                    j.candidate_published_at,
-                    j.completed_at
-                FROM evolution_jobs j
-                WHERE lower(j.status::text) = 'succeeded'
+                    h.id,
+                    h.commit_hash,
+                    h.base_commit_hash,
+                    h.island_id,
+                    h.run_token,
+                    h.job_kind,
+                    h.candidate_branch_name,
+                    h.candidate_published_at,
+                    h.completed_at,
+                    cc.id AS commit_card_id,
+                    EXISTS (
+                        SELECT 1
+                        FROM map_elites_archive_cells archive
+                        WHERE archive.commit_hash = h.commit_hash
+                    ) AS archive_member
+                FROM historical_jobs h
+                LEFT JOIN commit_cards cc ON cc.commit_hash = h.commit_hash
+                WHERE h.commit_hash IS NOT NULL
+                  AND h.base_commit_hash IS NOT NULL
+                """,
             )
-            SELECT
-                h.id,
-                h.commit_hash,
-                h.base_commit_hash,
-                h.island_id,
-                h.run_token,
-                h.job_kind,
-                h.candidate_branch_name,
-                h.candidate_published_at,
-                h.completed_at,
-                cc.id AS commit_card_id,
-                EXISTS (
-                    SELECT 1
-                    FROM map_elites_archive_cells archive
-                    WHERE archive.commit_hash = h.commit_hash
-                ) AS archive_member
-            FROM historical_jobs h
-            LEFT JOIN commit_cards cc ON cc.commit_hash = h.commit_hash
-            WHERE h.commit_hash IS NOT NULL
-              AND h.base_commit_hash IS NOT NULL
-            """,
-        )
-    ).mappings()
+        ).mappings()
+    )
 
     inserted = 0
     skipped_existing = 0
