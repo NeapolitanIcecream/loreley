@@ -248,36 +248,43 @@ def validate_database_schema(
 
     with engine.connect() as conn:
         status = _describe_schema(conn, target_version=target_version)
-        if status.state == "fresh":
-            raise MigrationError(
-                "Loreley schema is not initialized. Run `uv run loreley db migrate` "
-                "or start API/scheduler/worker with DB_AUTO_MIGRATE=true.",
-            )
-        if status.state == "damaged":
-            raise MigrationError(status.detail)
-        if status.state == "future":
-            raise FutureSchemaError(status.detail)
-        if status.state == "unsupported":
-            raise UnsupportedMigrationError(
-                status.detail
-                or (
-                    f"No Loreley native migration path from schema_version={status.schema_version} "
-                    f"to {target_version}."
-                ),
-            )
-        if status.state == "migratable":
-            raise MigrationRequiredError(
-                f"Database schema_version={status.schema_version} requires migration "
-                f"to {target_version}. {MIGRATE_DB_HINT}",
-            )
-
+        _raise_if_schema_not_current(status)
         if validate_identity:
-            marker = _load_marker(conn)
-            if marker is None:
-                raise MigrationError("instance_metadata marker row id=1 is missing.")
-            _validate_marker_identity(marker, settings=settings)
+            _validate_current_schema_identity(conn, settings=settings)
         _validate_current_schema(conn, target_version=int(target_version))
         return status
+
+
+def _raise_if_schema_not_current(status: SchemaStatus) -> None:
+    if status.state == "fresh":
+        raise MigrationError(
+            "Loreley schema is not initialized. Run `uv run loreley db migrate` "
+            "or start API/scheduler/worker with DB_AUTO_MIGRATE=true.",
+        )
+    if status.state == "damaged":
+        raise MigrationError(status.detail)
+    if status.state == "future":
+        raise FutureSchemaError(status.detail)
+    if status.state == "unsupported":
+        raise UnsupportedMigrationError(
+            status.detail
+            or (
+                f"No Loreley native migration path from schema_version={status.schema_version} "
+                f"to {status.target_version}."
+            ),
+        )
+    if status.state == "migratable":
+        raise MigrationRequiredError(
+            f"Database schema_version={status.schema_version} requires migration "
+            f"to {status.target_version}. {MIGRATE_DB_HINT}",
+        )
+
+
+def _validate_current_schema_identity(conn: Connection, *, settings: Settings) -> None:
+    marker = _load_marker(conn)
+    if marker is None:
+        raise MigrationError("instance_metadata marker row id=1 is missing.")
+    _validate_marker_identity(marker, settings=settings)
 
 
 def validate_database_identity(*, engine: Engine, settings: Settings) -> None:
