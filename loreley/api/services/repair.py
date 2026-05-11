@@ -52,6 +52,16 @@ class RepairPoolPage:
     summary: dict[str, object]
 
 
+@dataclass(frozen=True, slots=True)
+class _RepairCandidateOperatorAudit:
+    candidate_id: UUID
+    action: str
+    actor: str
+    reason: str | None
+    previous_state: dict[str, object]
+    current_state: dict[str, object]
+
+
 def list_repair_pool_page(
     *,
     repair_state: str | None = None,
@@ -212,15 +222,17 @@ def update_candidate_operator_state(
         payload = _candidate_payloads(session=session, rows=[candidate])[0]
         audit = _record_repair_candidate_operator_audit(
             session=session,
-            candidate_id=candidate_id,
-            action=action,
-            actor=operator_actor,
-            reason=operator_reason,
-            previous_state=previous_state,
-            current_state={
-                "lifecycle_status": candidate.lifecycle_status,
-                "repair_state": candidate.repair_state,
-            },
+            audit=_RepairCandidateOperatorAudit(
+                candidate_id=candidate_id,
+                action=action,
+                actor=operator_actor,
+                reason=operator_reason,
+                previous_state=previous_state,
+                current_state={
+                    "lifecycle_status": candidate.lifecycle_status,
+                    "repair_state": candidate.repair_state,
+                },
+            ),
         )
         payload["operator_reason"] = operator_reason
         payload["operator_audit_task_id"] = audit.id
@@ -239,12 +251,7 @@ def update_candidate_operator_state(
 def _record_repair_candidate_operator_audit(
     *,
     session: object,
-    candidate_id: UUID,
-    action: str,
-    actor: str,
-    reason: str | None,
-    previous_state: dict[str, object],
-    current_state: dict[str, object],
+    audit: _RepairCandidateOperatorAudit,
 ) -> OperatorTask:
     now = datetime.now(timezone.utc)
     row = OperatorTask(
@@ -252,15 +259,15 @@ def _record_repair_candidate_operator_audit(
         kind=OperatorTaskKind.REPAIR_CANDIDATE_ACTION.value,
         status=OperatorTaskStatus.SUCCEEDED.value,
         request_payload={
-            "action": action,
-            "actor": actor,
-            "candidate_id": str(candidate_id),
-            "reason": reason,
+            "action": audit.action,
+            "actor": audit.actor,
+            "candidate_id": str(audit.candidate_id),
+            "reason": audit.reason,
         },
         result_payload={
-            "candidate_id": str(candidate_id),
-            "previous_state": dict(previous_state),
-            "current_state": dict(current_state),
+            "candidate_id": str(audit.candidate_id),
+            "previous_state": dict(audit.previous_state),
+            "current_state": dict(audit.current_state),
         },
         error_summary=None,
         started_at=now,
