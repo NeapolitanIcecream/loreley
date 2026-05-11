@@ -231,6 +231,8 @@ Use this index as a quick map of the rest of the documentation:
   - [v0.7.8-alpha](releases/v0.7.8-alpha.md)
 - **Configuration**
   - [Global settings](loreley/config.md)
+- **Campaigns**
+  - [Campaign program](loreley/campaign-program.md)
 - **Experiments**
   - [Repository and experiment helpers](loreley/core/experiments.md)
 - **Database**
@@ -267,10 +269,12 @@ Use this index as a quick map of the rest of the documentation:
   - [Tasks workers](loreley/tasks/workers.md)
 - **UI (optional)**
   - [UI API (`loreley.api`)](loreley/api.md)
+  - [Agent REST API](loreley/agent-api.md)
   - [Streamlit UI (`loreley.ui`)](loreley/ui.md)
 - **Operations**
   - [Doctor checks](script/doctor.md)
   - [Status](script/status.md)
+  - [Database schema commands](script/db.md)
   - [Managing jobs](script/jobs.md)
   - [Job lease recovery](script/job_leases.md)
   - [Archive stats](script/archive_stats.md)

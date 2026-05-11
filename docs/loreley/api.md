@@ -116,9 +116,12 @@ FastAPI also exposes OpenAPI docs by default:
 - `POST /jobs/retry-failed-stale`
 - `GET /jobs/{job_id}/artifacts`
 - `GET /jobs/{job_id}/artifacts/{artifact_key}`
+- `GET /jobs/{job_id}/evaluation-artifacts`
+- `GET /jobs/{job_id}/evaluation-artifacts/{artifact_key}`
 - `GET /commits`
 - `GET /commits/page`
 - `GET /commits/{commit_hash}`
+- `GET /commits/{commit_hash}/evaluation-artifacts`
 - `GET /archive/islands`
 - `GET /archive/records`
 - `GET /archive/records/page`
@@ -170,6 +173,44 @@ These routes mutate database state:
   `lifecycle_status=active` and `repair_state=audit_only`. The optional
   request `reason` is stored in a durable `operator_tasks` audit row and the
   response includes `operator_audit_task_id`.
+
+## Job And Evidence Fields
+
+Job, commit, archive, and graph rows include these operator-facing evidence
+fields when the underlying data exists:
+
+- `candidate_fate_label` and `candidate_fate_reason`: derived presentation
+  state such as `elite_inserted`, `valid_not_elite`, `candidate_failed`,
+  `repair_pending`, `discarded_for_sampling`, or `unknown`.
+- `has_evaluation_evidence`: true when a non-hidden evaluator artifact exists
+  for the candidate commit.
+- `agent_visible_evidence_count`: number of artifacts whose visibility is
+  `agent_visible`.
+- `top_evaluation_diagnosis`: first agent-visible diagnostic message or summary.
+
+`GET /jobs` and `GET /jobs/page` can filter on:
+
+- `candidate_fate=<label>`
+- `evidence=has_evidence|agent_visible|none`
+
+`GET /repair/pool` can filter on `repair_state`, `lifecycle_status`,
+`failure_kind`, and `campaign_program_hash`.
+
+## Evaluation Artifacts
+
+Evaluator-declared artifacts are stored separately from the fixed worker
+artifacts. `GET /jobs/{job_id}/evaluation-artifacts` and
+`GET /commits/{commit_hash}/evaluation-artifacts` return non-hidden artifact
+metadata:
+
+- `key`, `kind`, `mime_type`, `label`, and `summary`
+- `visibility`: `agent_visible` or `human_only`
+- `agent_projection`: `summary`, `manifest`, or `path`
+- `size_bytes`, `sha256`, and structured `diagnostics`
+- `download_url` when a stored payload is available
+
+Hidden artifacts are not listed or downloadable through these routes. Direct
+downloads use `GET /jobs/{job_id}/evaluation-artifacts/{artifact_key}`.
 
 ## Operator Status
 
@@ -236,3 +277,6 @@ feedback endpoints.
   - `GET /jobs/{job_id}/artifacts` as an index of available URLs
   - `GET /jobs/{job_id}/artifacts/{artifact_key}` for direct downloads
   Supported keys: `planning_prompt`, `planning_raw_output`, `planning_plan_json`, `coding_prompt`, `coding_raw_output`, `coding_execution_json`, `evaluation_json`, `evaluation_logs`.
+- **Evaluation artifacts**: evaluator-declared artifacts are referenced through
+  `EvaluationArtifactRecord` rows. Non-hidden records are available to UI API
+  clients; Agent REST feedback endpoints include only `agent_visible` records.

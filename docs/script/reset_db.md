@@ -6,6 +6,9 @@
 uv run loreley db migrate
 ```
 
+For non-destructive schema inspection and upgrades, see
+[Database schema commands](db.md).
+
 !!! warning
     This operation is destructive. It will irreversibly drop **all** tables in the configured database and clear the experiment-scoped Redis namespace used by Dramatiq.
 

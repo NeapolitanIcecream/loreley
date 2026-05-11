@@ -22,6 +22,9 @@ migrated automatically, only when `DB_AUTO_MIGRATE=true`. With
 `DB_AUTO_MIGRATE=false`, run `uv run loreley db migrate` before starting the
 API.
 
+For schema inspection and validation, see
+[Database schema commands](db.md).
+
 ## Auth Tokens
 
 Set `LORELEY_API_WRITE_TOKEN` before using UI API POST routes such as job retry,

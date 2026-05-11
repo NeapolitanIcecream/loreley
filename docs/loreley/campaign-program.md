@@ -76,6 +76,25 @@ When the scheduler creates seed or evolution jobs, it stores the campaign progra
 
 Repair jobs inherit the source candidate's `campaign_program_hash` by default, so repair lineage stays under the original campaign contract.
 
+## Baseline Bootstrap
+
+The active campaign program participates in the root baseline key. Before the
+scheduler dispatches or schedules mutation work, it asks
+`BaselineBootstrapService` to load or create a matching row in
+`campaign_baselines`.
+
+`BASELINE_BOOTSTRAP_POLICY` controls failure handling:
+
+- `required` (default): missing, failed, or degraded baseline state blocks
+  dispatch, seed scheduling, repair scheduling, and normal sampler jobs.
+- `warn`: Loreley records degraded baseline state and keeps scheduling, but
+  baseline deltas stay unavailable.
+
+Changing `loreley.program.md` changes the campaign program hash and therefore
+requires a separate baseline for the new contract. Valid same-key baselines are
+reused; failed or degraded same-key baselines can be rerun from the operator
+console or Agent REST facade.
+
 ## Scope Gate
 
 Workers enforce editable/protected scope after the coding agent leaves a modified worktree and before commit, push, or evaluation.

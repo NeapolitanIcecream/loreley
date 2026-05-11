@@ -17,7 +17,7 @@ Large, audit/debug oriented payloads (prompts, raw outputs, logs) are written to
 
 - **`EvolutionJobStore`**: database-facing adapter that encapsulates the lifecycle of an evolution job.
   - Constructed with `Settings` to attach worker/application metadata when persisting results.
-  - Uses `session_scope()` and the ORM models from `loreley.db.models` (`EvolutionJob`, `CommitCard`, `JobArtifacts`, `Metric`, `JobStatus`) to modify rows transactionally.
+  - Uses `session_scope()` and the ORM models from `loreley.db.models` (`EvolutionJob`, `CommitCard`, `JobArtifacts`, `EvaluationArtifactRecord`, `Metric`, `CandidateCommit`, `EvaluationAttempt`, `DiagnosticCapsule`, `JobStatus`) to modify rows transactionally.
 
 ### Job lifecycle methods
 
@@ -45,6 +45,8 @@ Large, audit/debug oriented payloads (prompts, raw outputs, logs) are written to
   - Inserts a new `CommitCard` row representing the produced commit, with bounded `subject`, `change_summary`, `key_files`, `highlights`, and optional `evaluation_summary`.
   - Inserts one `Metric` row per evaluation metric for the new commit, copying numeric `value`, `unit`, `higher_is_better`, and any structured `details`.
   - Writes planning/coding/evaluation artifacts to disk under a per-`job_id` and per-`run_token` directory, then inserts a `JobArtifacts` row containing the corresponding filesystem paths when artifact writing succeeds.
+  - Inserts `EvaluationArtifactRecord` rows for accepted evaluator-declared
+    artifacts and replaces prior rows with the same `(job_id, key)` on retry.
   - Wraps SQLAlchemy errors into `EvolutionWorkerError` so the caller can surface persistence failures cleanly.
 
 - **`mark_job_failed(job_id, message)`**:

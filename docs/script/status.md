@@ -21,6 +21,8 @@ It displays:
 - The current lease TTL, heartbeat interval, and max recovery budget.
 - Default island MAP-Elites statistics (occupied cells, coverage, QD score, normalized QD score).
 - The current best-fitness commit.
+- Current root baseline status when a matching campaign baseline is known,
+  including status, metric, value, baseline key, and failure kind.
 
 ## Options
 
@@ -37,3 +39,23 @@ The status payload includes a `job_leases` section. Use it to answer these quest
 - Have any jobs already exhausted the automatic stale-recovery budget?
 
 For step-by-step triage and manual retry instructions, see [Job lease recovery](job_leases.md).
+
+## Baseline status
+
+When a campaign baseline row matches the current experiment root, campaign
+program, evaluator identity, primary metric, runtime profile, and settings
+fingerprint, `status` adds a baseline section.
+
+In JSON output this appears as `baseline` with fields such as:
+
+- `campaign_baseline_id`
+- `baseline_key_hash`
+- `root_baseline_metric`
+- `root_baseline_value`
+- `root_baseline_status`
+- `baseline_campaign_program_hash`
+- `failure_kind`
+- `failure_summary`
+
+If no active campaign program or matching baseline is known, `baseline` is
+`null`.

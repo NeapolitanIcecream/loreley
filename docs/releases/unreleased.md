@@ -19,6 +19,10 @@ These notes cover changes merged after `v0.7.9-alpha`.
   propagation, and a worker scope gate.
 - Added ADR 0050 campaign baseline bootstrap with a `campaign_baselines`
   source-of-truth table and `BASELINE_BOOTSTRAP_POLICY=required|warn`.
+- Added evaluator-declared evaluation artifacts with bounded diagnostics,
+  visibility controls (`agent_visible`, `human_only`, `hidden`), worker-managed
+  payload storage, `evaluation_artifacts` database rows, UI API listing/download
+  routes, and agent-visible feedback projections.
 - Added the Loreley operator console API and Streamlit pages:
   `GET /api/v1/operator/status`, background baseline ensure tasks, repair-pool
   listing/actions, repair schedule-one, single job retry, and failed-stale bulk
@@ -63,6 +67,9 @@ These notes cover changes merged after `v0.7.9-alpha`.
 - `GET /api/v1/jobs` and `GET /api/v1/jobs/page` now support server-side
   `candidate_fate` and `evidence=has_evidence|agent_visible|none` filters. The
   Streamlit Jobs page passes those filters to the API before pagination.
+- Job, commit, archive, and graph API rows now expose candidate fate and
+  evaluation evidence indicators when data is available. Job and commit detail
+  payloads include non-hidden evaluation artifact metadata and agent feedback.
 - Streamlit operator write buttons now require explicit per-action checkbox
   confirmation before enabling Campaign baseline ensure, Jobs retry, Repair Pool
   schedule-one, and Repair Pool candidate state actions.
