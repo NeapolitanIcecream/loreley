@@ -263,7 +263,7 @@ def test_status_json_uses_persisted_scheduler_campaign_program(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Regression: locked/approve schedulers can run against a hash that differs from disk."""
+    """Regression: locked schedulers can run against a hash that differs from disk."""
 
     active_program_hash = "a" * 64
     disk_program_hash = "b" * 64

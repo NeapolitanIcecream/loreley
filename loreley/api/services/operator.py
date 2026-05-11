@@ -40,8 +40,8 @@ from loreley.scheduler.baselines import (
 log = logger.bind(module="api.operator")
 _BASELINE_ENSURE_PENDING_STALE_AFTER = timedelta(minutes=10)
 _BASELINE_ENSURE_RUNNING_STALE_AFTER = timedelta(hours=6)
-_BASELINE_ENSURE_INTERRUPTED_SUMMARY = (
-    "Baseline ensure task interrupted by UI API restart before completion."
+_BASELINE_ENSURE_STALE_STARTUP_SUMMARY = (
+    "Stale baseline ensure task reconciled during UI API startup."
 )
 
 
@@ -268,8 +268,12 @@ def run_baseline_ensure_task(task_id: UUID) -> None:
         _mark_task_failed_best_effort(task_id, error_summary=summary)
 
 
-def mark_interrupted_baseline_ensure_tasks_failed() -> int:
-    """Fail baseline ensure tasks left active by a previous API process."""
+def mark_stale_baseline_ensure_tasks_failed() -> int:
+    """Fail only stale baseline ensure tasks during API startup.
+
+    Recent pending/running tasks may belong to another API process in a
+    multi-worker deployment, so startup must not mark every active row failed.
+    """
 
     with session_scope() as session:
         now = db_utc_now(session)
@@ -288,14 +292,31 @@ def mark_interrupted_baseline_ensure_tasks_failed() -> int:
                 .with_for_update()
             ).scalars()
         )
+        stale_counts: dict[str, int] = {}
         for row in rows:
+            stale_status = _stale_baseline_ensure_status(row, now=now)
+            if stale_status is None:
+                continue
             row.status = OperatorTaskStatus.FAILED.value
             row.completed_at = now
-            row.error_summary = _BASELINE_ENSURE_INTERRUPTED_SUMMARY
-        count = len(rows)
+            row.error_summary = _BASELINE_ENSURE_STALE_STARTUP_SUMMARY
+            stale_counts[stale_status] = stale_counts.get(stale_status, 0) + 1
+        count = sum(stale_counts.values())
     if count:
-        log.bind(count=count).warning("Interrupted operator baseline ensure tasks marked failed")
+        log.bind(count=count, stale_counts=stale_counts).warning(
+            "Stale operator baseline ensure tasks marked failed at startup"
+        )
+    elif rows:
+        log.bind(active_count=len(rows), stale_counts={}).info(
+            "Active operator baseline ensure tasks left running at startup"
+        )
     return count
+
+
+def mark_interrupted_baseline_ensure_tasks_failed() -> int:
+    """Compatibility wrapper for the stale-only startup reconciliation."""
+
+    return mark_stale_baseline_ensure_tasks_failed()
 
 
 def list_operator_tasks(*, limit: int = 50) -> list[OperatorTask]:

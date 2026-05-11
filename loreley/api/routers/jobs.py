@@ -6,9 +6,10 @@ from enum import Enum
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 
+from loreley.api.auth import require_write_auth
 from loreley.api.artifacts import (
     ARTIFACT_KEYS,
     artifact_filename,
@@ -134,7 +135,10 @@ def get_jobs_page(
 
 
 @router.post("/jobs/retry-failed-stale", response_model=JobsRetryFailedStaleOut)
-def post_retry_failed_stale_jobs(body: JobsRetryFailedStaleRequest) -> JobsRetryFailedStaleOut:
+def post_retry_failed_stale_jobs(
+    body: JobsRetryFailedStaleRequest,
+    _actor: str = Depends(require_write_auth),
+) -> JobsRetryFailedStaleOut:
     try:
         payload = retry_failed_stale_jobs(
             retry_all=bool(body.all),
@@ -178,7 +182,11 @@ def get_job_detail(job_id: UUID) -> JobDetailOut:
 
 
 @router.post("/jobs/{job_id}/retry", response_model=JobRetryOut)
-def post_retry_job(job_id: UUID, body: JobRetryRequest | None = None) -> JobRetryOut:
+def post_retry_job(
+    job_id: UUID,
+    body: JobRetryRequest | None = None,
+    _actor: str = Depends(require_write_auth),
+) -> JobRetryOut:
     try:
         payload = retry_job_by_id(
             job_id=job_id,

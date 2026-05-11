@@ -28,7 +28,7 @@ These notes cover changes merged after `v0.7.9-alpha`.
   unique index prevents overlapping active baseline ensure tasks.
 - Added the Agent REST control facade under `/api/v1/agent`, including
   capabilities, agent-oriented status and next actions, audited dry-run/execute
-  actions with idempotency, optional `LORELEY_AGENT_API_TOKEN` bearer auth, and
+  actions with idempotency, required `LORELEY_AGENT_API_TOKEN` bearer auth, and
   job/commit feedback endpoints.
 - Added an `agent_actions` table for Agent REST action audit records.
 - Added native data-preserving database migrations from schema version 5
@@ -56,20 +56,24 @@ These notes cover changes merged after `v0.7.9-alpha`.
   `FAILED_CANDIDATE_REPAIR_MAX_DEPTH` setting is retained for compatibility but
   no longer controls active scheduling.
 - Baseline ensure from the Operator console now reruns failed or degraded
-  same-key baseline rows while still reusing valid rows. Pending or running
-  baseline ensure tasks left by a UI API restart are marked failed on startup,
-  and task-start failures are persisted when possible.
+  same-key baseline rows while still reusing valid rows. UI API startup now
+  marks only stale pending/running baseline ensure tasks failed, leaving recent
+  active tasks alone for multi-process API deployments. Task-start failures are
+  persisted when possible.
 - `GET /api/v1/jobs` and `GET /api/v1/jobs/page` now support server-side
   `candidate_fate` and `evidence=has_evidence|agent_visible|none` filters. The
   Streamlit Jobs page passes those filters to the API before pagination.
 - Streamlit operator write buttons now require explicit per-action checkbox
   confirmation before enabling Campaign baseline ensure, Jobs retry, Repair Pool
   schedule-one, and Repair Pool candidate state actions.
+- `CAMPAIGN_PROGRAM_CHANGE_POLICY=approve` is rejected until an approval
+  workflow exists. Use `locked` or `auto`.
+- The Streamlit Jobs page job-kind filter includes `seed`.
+- Direct repair candidate operator actions now persist a durable operator audit
+  row with actor, action, reason, and state transition metadata.
 
 ## Security
 
-- The operator write API remains unauthenticated by design. Deploy the UI API
-  only on trusted local or internal networks.
-- The Agent REST facade can require bearer-token auth with
-  `LORELEY_AGENT_API_TOKEN`. If unset, the agent routes remain open for local
-  development.
+- UI API POST routes require `LORELEY_API_WRITE_TOKEN`.
+- The Agent REST facade requires `LORELEY_AGENT_API_TOKEN`; if unset, agent
+  routes return `agent_auth_not_configured`.

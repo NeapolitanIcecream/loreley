@@ -99,6 +99,8 @@ Set `CAMPAIGN_PROGRAM_CHANGE_POLICY` to control changes during a running schedul
 
 - `locked` (default): read the program at scheduler startup and keep using that hash. If the file changes, the scheduler reports the new hash but does not use it.
 - `auto`: adopt and persist the changed program automatically for future jobs. Already queued/running jobs keep their original hash.
-- `approve`: the config value is accepted, but the interactive approval workflow is not implemented yet. Current behavior retains the startup hash and logs that approval is pending implementation.
+
+`approve` is not accepted until an operator approval workflow is implemented;
+use `locked` or `auto`.
 
 `LORELEY_PROFILE` and other runtime settings do not belong in `loreley.program.md`. Loreley records runtime profile and a masked effective settings fingerprint with evaluator context instead.

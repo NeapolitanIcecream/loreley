@@ -6,10 +6,9 @@ commit lineage graphs.
 
 Most pages are read-only. The operator pages can create baseline ensure tasks,
 schedule one repair job, update repair-pool candidate state, and retry failed
-or stale jobs. These writes are unauthenticated by design and should be exposed
-only on trusted local or internal networks. In the Streamlit UI, each operator
-write button stays disabled until its matching confirmation checkbox is checked
-for that action.
+or stale jobs. These writes require the API bearer token configured with
+`LORELEY_API_WRITE_TOKEN`. In the Streamlit UI, each operator write button stays
+disabled until its matching confirmation checkbox is checked for that action.
 
 ```mermaid
 flowchart LR
@@ -91,5 +90,6 @@ The Streamlit UI is multi-page (implemented under `loreley/ui/pages`):
   actions, Repair Pool schedule-one, and Repair Pool candidate
   quarantine/discard/restore each require their own checkbox confirmation before
   the write button is enabled.
-- **Security**: there is no authentication layer. Deploy the UI and API only
-  behind trusted local or internal network controls.
+- **Security**: UI API write routes require `LORELEY_API_WRITE_TOKEN`; the
+  Streamlit process sends it on POST requests when the variable is set. Deploy
+  the UI and API behind trusted local or internal network controls.

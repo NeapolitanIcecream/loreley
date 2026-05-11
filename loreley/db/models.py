@@ -67,6 +67,7 @@ class OperatorTaskKind(str, enum.Enum):
     """Background operator task kinds."""
 
     BASELINE_ENSURE = "baseline_ensure"
+    REPAIR_CANDIDATE_ACTION = "repair_candidate_action"
 
 
 class InstanceMetadata(TimestampMixin, Base):

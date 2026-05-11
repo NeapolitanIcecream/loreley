@@ -5,16 +5,16 @@ are read-only observability routes. The operator console also exposes a small
 set of write routes for local run repair: baseline ensure tasks, repair-pool
 actions, and job retries.
 
-The operator write API is unauthenticated by design. Run it only on trusted
-local or internal networks.
+UI API write routes require bearer-token auth with `LORELEY_API_WRITE_TOKEN`.
+Set the same token in the Streamlit UI process environment so operator POSTs
+include `Authorization: Bearer ...`.
 
-The agent REST facade under `/api/v1/agent` can be protected separately with
-`LORELEY_AGENT_API_TOKEN`. If that variable is unset, the agent facade remains
-open for local development.
+The agent REST facade under `/api/v1/agent` requires bearer-token auth with
+`LORELEY_AGENT_API_TOKEN`.
 
 The Streamlit UI disables its operator write buttons until the matching
-per-action confirmation checkbox is checked. That UI guard does not add
-authentication or change these API routes.
+per-action confirmation checkbox is checked. That UI guard is separate from
+the bearer-token check enforced by the API.
 
 ## Install
 
@@ -49,8 +49,8 @@ Common variables:
 - `LOGS_BASE_DIR` (optional; logs are read from `<LOGS_BASE_DIR>/logs` or `<cwd>/logs`)
 - `LOG_LEVEL`
 - `EXPERIMENT_ID` (optional; used to resolve the experiment namespace for log browsing; if unset, the API falls back to the database marker)
-- `LORELEY_AGENT_API_TOKEN` (optional; bearer token required only for
-  `/api/v1/agent/*` when set)
+- `LORELEY_API_WRITE_TOKEN` (required for UI API POST routes)
+- `LORELEY_AGENT_API_TOKEN` (required for `/api/v1/agent/*`)
 
 ## Versioning and prefix
 
@@ -125,7 +125,9 @@ These routes mutate database state:
 - `POST /repair/candidates/{candidate_id}/quarantine|discard|restore` updates
   repair-pool operator state. These actions fail with `409` while an active
   repair job exists for the candidate. Restore sets
-  `lifecycle_status=active` and `repair_state=audit_only`.
+  `lifecycle_status=active` and `repair_state=audit_only`. The optional
+  request `reason` is stored in a durable `operator_tasks` audit row and the
+  response includes `operator_audit_task_id`.
 
 ## Operator Status
 
@@ -154,8 +156,8 @@ wraps only the existing operator writes:
 `POST /api/v1/agent/actions` accepts an action envelope with `action_type`,
 `dry_run`, `idempotency_key`, `reason`, `expected_state`, and `params`. Dry-runs
 validate parameters and focused current-state checks without calling write
-services. Execute requests persist an `agent_actions` audit row and call the
-matching existing service.
+services. Execute requests persist a pending `agent_actions` audit row before
+calling side-effecting services, then update that row with the result.
 
 Structured errors are used only for agent routes:
 
@@ -174,15 +176,15 @@ feedback endpoints.
 
 ## Notes
 
-- **Authentication**: there is no authentication layer. Deploy the API only
-  behind trusted local or internal network controls. The agent facade is the
-  exception: set `LORELEY_AGENT_API_TOKEN` to require bearer-token auth for
-  `/api/v1/agent/*`.
+- **Authentication**: UI API POST routes require `LORELEY_API_WRITE_TOKEN`;
+  agent routes require `LORELEY_AGENT_API_TOKEN`. Keep the API behind trusted
+  local or internal network controls; these bearer tokens are a process-local
+  guard, not a multi-user authorization system.
 - **Streamlit confirmation**: the Streamlit operator pages require a checkbox
-  confirmation before enabling each write button. Direct API clients still call
-  the same unauthenticated POST routes.
+  confirmation before enabling each write button. Direct API clients must still
+  include the write bearer token.
 - **Write scope**: operator writes are intentionally narrow. They do not add
-  authentication, restart processes, change environment variables, or bypass the
+  user management, restart processes, change environment variables, or bypass the
   scheduler and worker settings already in the database/runtime.
 - **Schema migration**: the agent facade adds the `agent_actions` table and bumps
   `INSTANCE_SCHEMA_VERSION` to `12`. Existing schema-version-5 databases should

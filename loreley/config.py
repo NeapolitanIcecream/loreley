@@ -111,6 +111,10 @@ class Settings(BaseSettings):
         default=None,
         alias="LORELEY_AGENT_API_TOKEN",
     )
+    loreley_api_write_token: str | None = Field(
+        default=None,
+        alias="LORELEY_API_WRITE_TOKEN",
+    )
 
     # OpenAI-compatible API configuration
     openai_api_key: str | None = Field(
@@ -235,7 +239,7 @@ class Settings(BaseSettings):
         default=3,
         alias="SCHEDULER_STALE_RUNNING_MAX_RECOVERY_ATTEMPTS",
     )
-    campaign_program_change_policy: Literal["locked", "approve", "auto"] = Field(
+    campaign_program_change_policy: Literal["locked", "auto"] = Field(
         default="locked",
         alias="CAMPAIGN_PROGRAM_CHANGE_POLICY",
     )
@@ -949,6 +953,10 @@ def _build_safe_export_payload(settings: Settings, *, mask_secrets: bool) -> dic
         "logs_base_dir": settings.logs_base_dir,
         "loreley_agent_api_token": _safe_export_secret(
             settings.loreley_agent_api_token,
+            mask_secrets=mask_secrets,
+        ),
+        "loreley_api_write_token": _safe_export_secret(
+            settings.loreley_api_write_token,
             mask_secrets=mask_secrets,
         ),
         "openai_api_spec": settings.openai_api_spec,

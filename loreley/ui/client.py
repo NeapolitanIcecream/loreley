@@ -26,6 +26,7 @@ class LoreleyAPIClient:
         base_url: str,
         *,
         timeout_seconds: float = 10.0,
+        write_token: str | None = None,
         transport: "httpx.BaseTransport | None" = None,
         reuse_connections: bool = False,
     ) -> None:
@@ -34,6 +35,7 @@ class LoreleyAPIClient:
             raise APIError("Invalid API base URL: value is empty.")
         self.base_url = base_url.rstrip("/") + "/"
         self.timeout_seconds = float(timeout_seconds)
+        self.write_token = (write_token or "").strip()
         self._http = HttpClient(
             base_url=self.base_url,
             timeout_seconds=self.timeout_seconds,
@@ -63,10 +65,13 @@ class LoreleyAPIClient:
     def post_json(self, path: str, *, json_body: Any | None = None) -> Any:
         """POST JSON to the API and return a JSON response."""
         try:
+            headers = {"Accept": "application/json"}
+            if self.write_token:
+                headers["Authorization"] = f"Bearer {self.write_token}"
             response = self._http.request(
                 "POST",
                 path,
-                headers={"Accept": "application/json"},
+                headers=headers,
                 json_body=json_body if json_body is not None else {},
             )
         except HttpCallError as exc:  # pragma: no cover - network dependent

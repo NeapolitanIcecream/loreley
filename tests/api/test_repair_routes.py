@@ -10,6 +10,8 @@ from fastapi.testclient import TestClient
 import pytest
 from sqlalchemy.dialects import postgresql
 
+import loreley.api.auth as api_auth
+from loreley.api.auth import require_write_auth
 import loreley.api.routers.repair as repair_router
 import loreley.api.services.repair as repair_service
 from loreley.api.routers.repair import router as repair_api_router
@@ -19,11 +21,14 @@ from loreley.api.services.repair import (
     RepairPoolPage,
 )
 from loreley.db.models import CandidateCommit
+from tests.support import TestSettings
 
 
-def _client() -> TestClient:
+def _client(*, authenticated: bool = True) -> TestClient:
     app = FastAPI()
     app.include_router(repair_api_router, prefix="/api/v1")
+    if authenticated:
+        app.dependency_overrides[require_write_auth] = lambda: "test-operator"
     return TestClient(app)
 
 
@@ -97,6 +102,7 @@ class _RepairActionSession:
         self.assert_candidate_locked = assert_candidate_locked
         self.reject_after_candidate_lookup = reject_after_candidate_lookup
         self.statements = []
+        self.added = []
 
     def execute(self, stmt):
         self.statements.append(stmt)
@@ -111,6 +117,9 @@ class _RepairActionSession:
 
     def flush(self):
         return None
+
+    def add(self, row):
+        self.added.append(row)
 
 
 def test_repair_pool_route_returns_candidates(monkeypatch) -> None:
@@ -158,6 +167,22 @@ def test_repair_schedule_one_route_returns_scheduled_job(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json()["job_id"] == str(job_id)
+
+
+def test_repair_schedule_one_route_requires_write_auth_configuration(monkeypatch) -> None:
+    """Regression: direct repair writes must not run without a write token."""
+
+    monkeypatch.setattr(api_auth, "get_settings", lambda: TestSettings(LORELEY_API_WRITE_TOKEN=None))
+    monkeypatch.setattr(
+        repair_router,
+        "schedule_one_repair",
+        lambda: (_ for _ in ()).throw(AssertionError("unauthenticated write executed")),
+    )
+
+    response = _client(authenticated=False).post("/api/v1/repair/schedule-one", json={})
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["error_code"] == "write_auth_not_configured"
 
 
 @pytest.mark.parametrize(
@@ -346,6 +371,40 @@ def test_repair_candidate_action_conflict_returns_409(monkeypatch) -> None:
     assert response.status_code == 409
 
 
+def test_repair_candidate_action_route_passes_reason_and_returns_audit_id(monkeypatch) -> None:
+    """Regression: repair candidate action bodies accepted `reason` but ignored it."""
+
+    candidate_id = uuid4()
+    audit_id = uuid4()
+    captured: dict[str, object] = {}
+
+    def _update_candidate_operator_state(**kwargs):
+        captured.update(kwargs)
+        payload = _candidate_payload(candidate_id)
+        payload["operator_reason"] = "operator reviewed flaky failure"
+        payload["operator_audit_task_id"] = audit_id
+        return payload
+
+    monkeypatch.setattr(
+        repair_router,
+        "update_candidate_operator_state",
+        _update_candidate_operator_state,
+    )
+
+    response = _client().post(
+        f"/api/v1/repair/candidates/{candidate_id}/quarantine",
+        json={"reason": "operator reviewed flaky failure"},
+    )
+
+    assert response.status_code == 200
+    assert captured["candidate_id"] == candidate_id
+    assert captured["action"] == "quarantine"
+    assert captured["reason"] == "operator reviewed flaky failure"
+    assert captured["actor"] == "test-operator"
+    assert response.json()["reason"] == "operator reviewed flaky failure"
+    assert response.json()["operator_audit_task_id"] == str(audit_id)
+
+
 def test_restore_sets_candidate_active_audit_only(monkeypatch) -> None:
     candidate_id = uuid4()
     candidate = SimpleNamespace(
@@ -385,11 +444,33 @@ def test_restore_sets_candidate_active_audit_only(monkeypatch) -> None:
     payload = repair_service.update_candidate_operator_state(
         candidate_id=candidate_id,
         action="restore",
+        reason="operator restored after manual audit",
+        actor="operator-test",
     )
 
     assert candidate.lifecycle_status == "active"
     assert candidate.repair_state == "audit_only"
     assert payload["repair_state"] == "audit_only"
+    assert payload["operator_reason"] == "operator restored after manual audit"
+    assert len(session.added) == 1
+    audit = session.added[0]
+    assert audit.kind == "repair_candidate_action"
+    assert audit.status == "succeeded"
+    assert audit.request_payload == {
+        "action": "restore",
+        "actor": "operator-test",
+        "candidate_id": str(candidate_id),
+        "reason": "operator restored after manual audit",
+    }
+    assert audit.result_payload["previous_state"] == {
+        "lifecycle_status": "discarded",
+        "repair_state": "eligible",
+    }
+    assert audit.result_payload["current_state"] == {
+        "lifecycle_status": "active",
+        "repair_state": "audit_only",
+    }
+    assert payload["operator_audit_task_id"] == audit.id
     assert session.statements
 
 

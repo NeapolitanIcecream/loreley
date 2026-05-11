@@ -898,17 +898,6 @@ class JobScheduler:
         if report_key in self._reported_campaign_program_hashes:
             return
         self._reported_campaign_program_hashes.add(report_key)
-        if policy == "approve":
-            log.warning(
-                "Campaign program changed but approve workflow is not implemented; retaining startup hash old_hash={} new_hash={}",
-                active_hash,
-                current_hash,
-            )
-            self.console.log(
-                "[yellow]Campaign program changed[/] approve policy currently retains startup hash "
-                f"old_hash={(active_hash or 'none')[:12]} new_hash={(current_hash or 'none')[:12]}",
-            )
-            return
         log.warning(
             "Campaign program changed under locked policy; retaining startup hash old_hash={} new_hash={}",
             active_hash,

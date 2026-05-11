@@ -7,6 +7,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header
+from loguru import logger
 
 from loreley.api.agent_errors import AgentAPIError
 from loreley.api.schemas.agent import (
@@ -32,6 +33,7 @@ from loreley.api.services.evidence import (
 from loreley.config import get_settings
 
 router = APIRouter(prefix="/agent")
+log = logger.bind(module="api.agent")
 
 
 def require_agent_auth(
@@ -41,9 +43,21 @@ def require_agent_auth(
 
     token = str(get_settings().loreley_agent_api_token or "").strip()
     if not token:
-        return "local-dev"
+        log.bind(auth_scope="agent_api", reason="token_unconfigured", status_code=503).warning(
+            "Agent API request rejected by auth"
+        )
+        raise AgentAPIError(
+            status_code=503,
+            error_code="agent_auth_not_configured",
+            message="LORELEY_AGENT_API_TOKEN is required for agent routes.",
+            retryable=False,
+            resource={"type": "agent_api", "id": "configuration"},
+        )
     raw = str(authorization or "").strip()
     if not raw:
+        log.bind(auth_scope="agent_api", reason="missing_authorization", status_code=401).warning(
+            "Agent API request rejected by auth"
+        )
         raise AgentAPIError(
             status_code=401,
             error_code="unauthorized",
@@ -53,6 +67,9 @@ def require_agent_auth(
         )
     scheme, separator, supplied = raw.partition(" ")
     if not separator or scheme.lower() != "bearer":
+        log.bind(auth_scope="agent_api", reason="invalid_scheme", status_code=401).warning(
+            "Agent API request rejected by auth"
+        )
         raise AgentAPIError(
             status_code=401,
             error_code="unauthorized",
@@ -62,6 +79,9 @@ def require_agent_auth(
         )
     supplied = supplied.strip()
     if not supplied:
+        log.bind(auth_scope="agent_api", reason="missing_token", status_code=401).warning(
+            "Agent API request rejected by auth"
+        )
         raise AgentAPIError(
             status_code=401,
             error_code="unauthorized",
@@ -70,6 +90,9 @@ def require_agent_auth(
             resource={"type": "agent_api", "id": "auth"},
         )
     if not hmac.compare_digest(supplied, token):
+        log.bind(auth_scope="agent_api", reason="invalid_token", status_code=403).warning(
+            "Agent API request rejected by auth"
+        )
         raise AgentAPIError(
             status_code=403,
             error_code="forbidden",

@@ -26,11 +26,11 @@ def test_api_startup_marks_interrupted_operator_tasks(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         api_app,
-        "mark_interrupted_baseline_ensure_tasks_failed",
-        lambda: calls.append("operator_tasks") or 0,
+        "mark_stale_baseline_ensure_tasks_failed",
+        lambda: calls.append("operator_tasks_stale") or 0,
     )
 
     with TestClient(api_app.create_app()):
         pass
 
-    assert calls == ["schema", "marker", "operator_tasks"]
+    assert calls == ["schema", "marker", "operator_tasks_stale"]

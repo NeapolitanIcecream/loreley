@@ -5,14 +5,19 @@ from uuid import uuid4
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import loreley.api.auth as api_auth
+from loreley.api.auth import require_write_auth
 import loreley.api.routers.jobs as jobs_router
 from loreley.api.routers.jobs import router as jobs_api_router
 from loreley.api.services.jobs import JobNotFoundError, JobRetryConflictError, JobRetryValidationError
+from tests.support import TestSettings
 
 
-def _client() -> TestClient:
+def _client(*, authenticated: bool = True) -> TestClient:
     app = FastAPI()
     app.include_router(jobs_api_router, prefix="/api/v1")
+    if authenticated:
+        app.dependency_overrides[require_write_auth] = lambda: "test-operator"
     return TestClient(app)
 
 
@@ -32,6 +37,53 @@ def test_retry_job_route_requeues_retryable_job(monkeypatch) -> None:
     monkeypatch.setattr(jobs_router, "retry_job_by_id", _retry_job_by_id)
 
     response = _client().post(f"/api/v1/jobs/{job_id}/retry", json={"reason": "operator retry"})
+
+    assert response.status_code == 200
+    assert response.json()["new_status"] == "pending"
+
+
+def test_retry_job_route_requires_write_auth_configuration(monkeypatch) -> None:
+    """Regression: direct job retry writes must not run without a write token."""
+
+    job_id = uuid4()
+    monkeypatch.setattr(api_auth, "get_settings", lambda: TestSettings(LORELEY_API_WRITE_TOKEN=None))
+    monkeypatch.setattr(
+        jobs_router,
+        "retry_job_by_id",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("unauthenticated write executed")),
+    )
+
+    response = _client(authenticated=False).post(f"/api/v1/jobs/{job_id}/retry", json={})
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["error_code"] == "write_auth_not_configured"
+
+
+def test_retry_job_route_accepts_configured_write_token(monkeypatch) -> None:
+    job_id = uuid4()
+    monkeypatch.setattr(
+        api_auth,
+        "get_settings",
+        lambda: TestSettings(LORELEY_API_WRITE_TOKEN="secret"),
+    )
+
+    def _retry_job_by_id(**kwargs):
+        assert kwargs["job_id"] == job_id
+        return {
+            "job_id": str(job_id),
+            "previous_status": "failed",
+            "new_status": "pending",
+            "recovery_count_reset_from": 1,
+            "reason": "operator retry",
+        }
+
+    monkeypatch.setattr(jobs_router, "retry_job_by_id", _retry_job_by_id)
+
+    response = _client(authenticated=False).post(
+        f"/api/v1/jobs/{job_id}/retry",
+        json={},
+        headers={"Authorization": "Bearer secret"},
+    )
 
     assert response.status_code == 200
     assert response.json()["new_status"] == "pending"
