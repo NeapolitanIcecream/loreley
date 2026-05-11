@@ -23,6 +23,8 @@ def _make_settings() -> TestSettings:
         TASKS_REDIS_URL="redis://:redis-secret@redis.internal:6380/2",
         WORKER_KILOCODE_OPENAI_API_KEY="kilo-secret",
         WORKER_REPO_REMOTE_URL="https://token@example.com/repo.git",
+        LORELEY_AGENT_API_TOKEN="agent-secret",
+        LORELEY_API_WRITE_TOKEN="write-secret",
     )
 
 
@@ -40,6 +42,8 @@ def test_config_dump_json_masks_secrets_by_default(monkeypatch: pytest.MonkeyPat
     assert payload["openai_dynamic_api_key_ttl_seconds"] == 600
     assert payload["openai_dynamic_api_key_refresh_skew_seconds"] == 30
     assert payload["tasks_redis_password"] == "***"
+    assert payload["loreley_agent_api_token"] == "***"
+    assert payload["loreley_api_write_token"] == "***"
     assert payload["database_dsn"].startswith("postgresql+psycopg://loreley:***@")
     assert payload["worker_repo_remote_url"] == "https://example.com/repo.git"
 
@@ -143,6 +147,8 @@ def test_export_safe_masks_sensitive_fields_snapshot() -> None:
         "tasks_redis_password": payload["tasks_redis_password"],
         "worker_kilocode_openai_api_key": payload["worker_kilocode_openai_api_key"],
         "worker_repo_remote_url": payload["worker_repo_remote_url"],
+        "loreley_agent_api_token": payload["loreley_agent_api_token"],
+        "loreley_api_write_token": payload["loreley_api_write_token"],
     }
 
     assert snapshot == {
@@ -154,6 +160,8 @@ def test_export_safe_masks_sensitive_fields_snapshot() -> None:
         "tasks_redis_password": "***",
         "worker_kilocode_openai_api_key": "***",
         "worker_repo_remote_url": "https://example.com/repo.git",
+        "loreley_agent_api_token": "***",
+        "loreley_api_write_token": "***",
     }
 
 

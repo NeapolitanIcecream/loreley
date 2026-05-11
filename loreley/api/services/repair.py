@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from loguru import logger
 from sqlalchemy import and_, func, or_, select
@@ -22,6 +22,9 @@ from loreley.db.models import (
     DiagnosticCapsule,
     EvolutionJob,
     JobStatus,
+    OperatorTask,
+    OperatorTaskKind,
+    OperatorTaskStatus,
 )
 from loreley.scheduler.job_scheduler import FailedCandidateRepairSampler
 
@@ -47,6 +50,16 @@ class RepairPoolPage:
     items: list[dict[str, object]]
     next_cursor: str | None
     summary: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class _RepairCandidateOperatorAudit:
+    candidate_id: UUID
+    action: str
+    actor: str
+    reason: str | None
+    previous_state: dict[str, object]
+    current_state: dict[str, object]
 
 
 def list_repair_pool_page(
@@ -163,12 +176,20 @@ def schedule_one_repair(*, settings: Settings | None = None) -> dict[str, object
         raise RepairValidationError(str(exc)) from exc
 
 
-def update_candidate_operator_state(*, candidate_id: UUID, action: str) -> dict[str, object]:
+def update_candidate_operator_state(
+    *,
+    candidate_id: UUID,
+    action: str,
+    reason: str | None = None,
+    actor: str = "operator-api",
+) -> dict[str, object]:
     """Quarantine, discard, or restore a repair-pool candidate."""
 
     action = normalize_single_line(str(action or "")).lower()
     if action not in {"quarantine", "discard", "restore"}:
         raise RepairValidationError(f"Unsupported repair candidate action: {action!r}.")
+    operator_reason = clamp_text(normalize_single_line(str(reason or "")), 512) or None
+    operator_actor = clamp_text(normalize_single_line(str(actor or "")), 128) or "operator-api"
 
     with session_scope() as session:
         candidate = _locked_repair_candidate(
@@ -183,6 +204,10 @@ def update_candidate_operator_state(*, candidate_id: UUID, action: str) -> dict[
         if active_job is not None:
             raise RepairConflictError("Candidate has an active repair job.")
 
+        previous_state = {
+            "lifecycle_status": candidate.lifecycle_status,
+            "repair_state": candidate.repair_state,
+        }
         if action == "quarantine":
             candidate.lifecycle_status = "quarantined"
             candidate.repair_state = "quarantined"
@@ -195,13 +220,62 @@ def update_candidate_operator_state(*, candidate_id: UUID, action: str) -> dict[
 
         session.flush()
         payload = _candidate_payloads(session=session, rows=[candidate])[0]
+        audit = _record_repair_candidate_operator_audit(
+            session=session,
+            audit=_RepairCandidateOperatorAudit(
+                candidate_id=candidate_id,
+                action=action,
+                actor=operator_actor,
+                reason=operator_reason,
+                previous_state=previous_state,
+                current_state={
+                    "lifecycle_status": candidate.lifecycle_status,
+                    "repair_state": candidate.repair_state,
+                },
+            ),
+        )
+        payload["operator_reason"] = operator_reason
+        payload["operator_audit_task_id"] = audit.id
         log.bind(
             candidate_id=str(candidate_id),
             action=action,
             lifecycle_status=candidate.lifecycle_status,
             repair_state=candidate.repair_state,
+            actor=operator_actor,
+            reason_present=operator_reason is not None,
+            operator_audit_task_id=str(audit.id),
         ).info("Repair candidate operator state updated")
         return payload
+
+
+def _record_repair_candidate_operator_audit(
+    *,
+    session: object,
+    audit: _RepairCandidateOperatorAudit,
+) -> OperatorTask:
+    now = datetime.now(timezone.utc)
+    row = OperatorTask(
+        id=uuid4(),
+        kind=OperatorTaskKind.REPAIR_CANDIDATE_ACTION.value,
+        status=OperatorTaskStatus.SUCCEEDED.value,
+        request_payload={
+            "action": audit.action,
+            "actor": audit.actor,
+            "candidate_id": str(audit.candidate_id),
+            "reason": audit.reason,
+        },
+        result_payload={
+            "candidate_id": str(audit.candidate_id),
+            "previous_state": dict(audit.previous_state),
+            "current_state": dict(audit.current_state),
+        },
+        error_summary=None,
+        started_at=now,
+        completed_at=now,
+    )
+    session.add(row)
+    session.flush()
+    return row
 
 
 def _repair_schedule_noop(message: str) -> dict[str, object]:

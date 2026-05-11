@@ -59,6 +59,8 @@ class RepairScheduleOut(OrmOutModel):
 class RepairCandidateActionOut(OrmOutModel):
     candidate: RepairPoolCandidateOut
     action: str
+    reason: str | None = None
+    operator_audit_task_id: UUID | None = None
 
 
 class RepairActionRequest(BaseModel):

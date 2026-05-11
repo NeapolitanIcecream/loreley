@@ -82,7 +82,8 @@ def agent_capabilities(*, settings: Settings | None = None) -> dict[str, Any]:
         "auth": {
             "type": "bearer",
             "configured": token_configured,
-            "optional_when_unset": True,
+            "required": True,
+            "optional_when_unset": False,
             "environment_variable": "LORELEY_AGENT_API_TOKEN",
         },
         "read_resources": [
@@ -333,6 +334,7 @@ def run_agent_action(
         )
         if replayed is not None:
             return replayed
+        _commit_pending_action_before_side_effect(session=session, row=row)
         pending_error = _complete_action(
             session=session,
             row=row,
@@ -378,6 +380,25 @@ def _insert_pending_action(
     return None
 
 
+def _commit_pending_action_before_side_effect(*, session: object, row: AgentAction) -> None:
+    try:
+        session.commit()
+    except Exception as exc:
+        log.bind(action_id=str(row.id), action_type=row.action_type).exception(
+            "Agent action pending audit commit failed"
+        )
+        raise AgentAPIError(
+            status_code=500,
+            error_code="audit_persist_failed",
+            message="Agent action pending audit row could not be committed before execution.",
+            retryable=True,
+            resource={"type": "agent_action", "id": str(row.id)},
+        ) from exc
+    log.bind(action_id=str(row.id), action_type=row.action_type).info(
+        "Agent action pending audit committed before execution"
+    )
+
+
 def _idempotency_replay_after_insert_race(
     *,
     session: object,
@@ -418,6 +439,7 @@ def _complete_action(
             request=request,
             action_type=action_type,
             background_tasks=background_tasks,
+            actor=row.actor,
         )
         _mark_action_succeeded(row, preconditions=preconditions, result=result)
         log.bind(action_id=str(row.id), action_type=row.action_type, dry_run=row.dry_run).info(
@@ -448,6 +470,7 @@ def _validated_action_result(
     request: AgentActionRequest,
     action_type: str,
     background_tasks: Any | None,
+    actor: str,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     preconditions, context = _validate_action(
         session=session,
@@ -461,6 +484,7 @@ def _validated_action_result(
             request=request,
             action_type=action_type,
             background_tasks=background_tasks,
+            actor=actor,
         ),
         preconditions,
     )
@@ -843,12 +867,14 @@ def _execute_action(
     request: AgentActionRequest,
     action_type: str,
     background_tasks: Any | None,
+    actor: str,
 ) -> dict[str, Any]:
     try:
         return _execute_valid_action(
             request=request,
             action_type=action_type,
             background_tasks=background_tasks,
+            actor=actor,
         )
     except JobNotFoundError as exc:
         raise _mapped_error(exc, status_code=404, error_code="not_found", resource_type="job") from exc
@@ -870,6 +896,7 @@ def _execute_valid_action(
     request: AgentActionRequest,
     action_type: str,
     background_tasks: Any | None,
+    actor: str,
 ) -> dict[str, Any]:
     if action_type == "retry_job":
         return _execute_retry_job(request)
@@ -880,7 +907,7 @@ def _execute_valid_action(
     if action_type == "repair_schedule_one":
         return schedule_one_repair()
     if action_type in _CANDIDATE_ACTIONS:
-        return _execute_repair_candidate_action(request, action_type=action_type)
+        return _execute_repair_candidate_action(request, action_type=action_type, actor=actor)
     raise AssertionError(f"unhandled action_type: {action_type}")
 
 
@@ -905,10 +932,13 @@ def _execute_baseline_ensure(background_tasks: Any | None) -> dict[str, Any]:
     task = create_baseline_ensure_task()
     if background_tasks is not None:
         background_tasks.add_task(run_baseline_ensure_task, task.id)
+    else:
+        run_baseline_ensure_task(task.id)
     return {
         "operator_task_id": str(task.id),
         "operator_task_status": str(task.status),
         "background_task_enqueued": background_tasks is not None,
+        "ran_synchronously": background_tasks is None,
     }
 
 
@@ -916,6 +946,7 @@ def _execute_repair_candidate_action(
     request: AgentActionRequest,
     *,
     action_type: str,
+    actor: str,
 ) -> dict[str, Any]:
     candidate_id = _uuid_param(
         request.params,
@@ -925,6 +956,8 @@ def _execute_repair_candidate_action(
     return update_candidate_operator_state(
         candidate_id=candidate_id,
         action=_CANDIDATE_ACTIONS[action_type],
+        reason=normalize_single_line(str(request.reason or "")),
+        actor=actor,
     )
 
 

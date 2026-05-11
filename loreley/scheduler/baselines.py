@@ -308,7 +308,7 @@ def resolve_status_campaign_program_hash(
     """Resolve the campaign program hash status should use for baseline lookup.
 
     Status is an operational view over the scheduler's active campaign contract.
-    For long-running schedulers with locked or approve program-change policy, the
+    For long-running schedulers with locked program-change policy, the
     active hash can intentionally differ from the file currently visible on disk.
     Prefer persisted scheduler provenance before falling back to a local file
     inspection for pre-bootstrap databases.

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from loreley.api.auth import require_write_auth
 from loreley.api.pagination import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, PaginationCursorError
 from loreley.api.schemas.repair import (
     RepairActionRequest,
@@ -54,7 +55,9 @@ def get_repair_pool(
 
 
 @router.post("/repair/schedule-one", response_model=RepairScheduleOut)
-def post_repair_schedule_one() -> RepairScheduleOut:
+def post_repair_schedule_one(
+    _actor: str = Depends(require_write_auth),
+) -> RepairScheduleOut:
     try:
         return RepairScheduleOut.model_validate(schedule_one_repair())
     except RepairValidationError as exc:
@@ -64,30 +67,59 @@ def post_repair_schedule_one() -> RepairScheduleOut:
 @router.post("/repair/candidates/{candidate_id}/quarantine", response_model=RepairCandidateActionOut)
 def quarantine_repair_candidate(
     candidate_id: UUID,
-    _body: RepairActionRequest | None = None,
+    body: RepairActionRequest | None = None,
+    actor: str = Depends(require_write_auth),
 ) -> RepairCandidateActionOut:
-    return _candidate_action(candidate_id=candidate_id, action="quarantine")
+    return _candidate_action(
+        candidate_id=candidate_id,
+        action="quarantine",
+        body=body,
+        actor=actor,
+    )
 
 
 @router.post("/repair/candidates/{candidate_id}/discard", response_model=RepairCandidateActionOut)
 def discard_repair_candidate(
     candidate_id: UUID,
-    _body: RepairActionRequest | None = None,
+    body: RepairActionRequest | None = None,
+    actor: str = Depends(require_write_auth),
 ) -> RepairCandidateActionOut:
-    return _candidate_action(candidate_id=candidate_id, action="discard")
+    return _candidate_action(
+        candidate_id=candidate_id,
+        action="discard",
+        body=body,
+        actor=actor,
+    )
 
 
 @router.post("/repair/candidates/{candidate_id}/restore", response_model=RepairCandidateActionOut)
 def restore_repair_candidate(
     candidate_id: UUID,
-    _body: RepairActionRequest | None = None,
+    body: RepairActionRequest | None = None,
+    actor: str = Depends(require_write_auth),
 ) -> RepairCandidateActionOut:
-    return _candidate_action(candidate_id=candidate_id, action="restore")
+    return _candidate_action(
+        candidate_id=candidate_id,
+        action="restore",
+        body=body,
+        actor=actor,
+    )
 
 
-def _candidate_action(*, candidate_id: UUID, action: str) -> RepairCandidateActionOut:
+def _candidate_action(
+    *,
+    candidate_id: UUID,
+    action: str,
+    body: RepairActionRequest | None,
+    actor: str,
+) -> RepairCandidateActionOut:
     try:
-        candidate = update_candidate_operator_state(candidate_id=candidate_id, action=action)
+        candidate = update_candidate_operator_state(
+            candidate_id=candidate_id,
+            action=action,
+            reason=body.reason if body is not None else None,
+            actor=actor,
+        )
     except RepairNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RepairConflictError as exc:
@@ -97,4 +129,6 @@ def _candidate_action(*, candidate_id: UUID, action: str) -> RepairCandidateActi
     return RepairCandidateActionOut(
         candidate=RepairPoolCandidateOut.model_validate(candidate),
         action=action,
+        reason=candidate.get("operator_reason"),
+        operator_audit_task_id=candidate.get("operator_audit_task_id"),
     )

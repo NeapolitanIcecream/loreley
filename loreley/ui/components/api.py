@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import streamlit as st
@@ -29,7 +30,11 @@ def get_api_client(base_url: str) -> LoreleyAPIClient:
     When available, this function is wrapped by `st.cache_resource` to keep a
     single client per base URL across reruns.
     """
-    return LoreleyAPIClient(base_url, reuse_connections=True)
+    return LoreleyAPIClient(
+        base_url,
+        write_token=os.getenv("LORELEY_API_WRITE_TOKEN"),
+        reuse_connections=True,
+    )
 
 
 if hasattr(st, "cache_resource"):

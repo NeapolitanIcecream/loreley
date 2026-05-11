@@ -188,7 +188,7 @@ Every candidate should be traceable to the program version used to create it:
 Program changes during a running campaign are not accepted silently. Add:
 
 ```text
-CAMPAIGN_PROGRAM_CHANGE_POLICY=locked | approve | auto
+CAMPAIGN_PROGRAM_CHANGE_POLICY=locked | auto
 ```
 
 The default is `locked`: the scheduler reads the active program snapshot at
@@ -196,10 +196,9 @@ startup and continues creating new jobs with that hash. If the file changes,
 the scheduler reports the new hash but does not use it until the operator
 restarts or explicitly accepts it.
 
-`approve` pauses creation of new jobs when the program hash changes and asks
-the operator whether future jobs should use the new hash. Already queued and
-running jobs keep their original hash. `auto` is allowed only for experimental
-workflows and must make mixed program versions obvious in UI and exports.
+`approve` is intentionally not accepted until an operator approval workflow is
+implemented. `auto` is allowed only for experimental workflows and must make
+mixed program versions obvious in UI and exports.
 
 Repair jobs inherit the `campaign_program_hash` of their source failed
 candidate by default. Repairing old failed work under a new active program is a
@@ -283,8 +282,7 @@ storing everything in job artifacts, but it avoids making "which program
 version produced this result?" a cold-path artifact scan.
 
 Default `locked` program changes make long-running campaigns more predictable,
-but operators who want rapid prompt iteration must opt into `approve` or
-`auto`.
+but operators who want rapid prompt iteration must opt into `auto`.
 
 ## Implementation Notes
 
@@ -326,7 +324,8 @@ Phase 4:
 Phase 5:
 
 1. Add `CAMPAIGN_PROGRAM_CHANGE_POLICY`, defaulting to `locked`.
-2. Add `approve` behavior that reuses the startup-approval interaction style.
+2. Add `approve` behavior that reuses the startup-approval interaction style,
+   then add it to the accepted policy values.
 3. Add operator-facing export row fields such as `campaign_program_hash`,
    `runtime_profile`, and `effective_settings_fingerprint` when campaign result
    ledgers are introduced.

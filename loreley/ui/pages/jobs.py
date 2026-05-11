@@ -76,7 +76,7 @@ def _render_jobs_filters() -> dict[str, object]:
     page_size = st.selectbox("Page size", [50, 100, 200, 500], index=1)
     status_options = ["all", *(status.value for status in JobStatus)]
     selected_status = st.selectbox("Status filter", options=status_options, index=0)
-    job_kind = st.selectbox("Job kind", ["all", "evolution", "repair"], index=0)
+    job_kind = st.selectbox("Job kind", _job_kind_options(), index=0)
     fate_filter = st.selectbox(
         "Fate",
         _fate_filter_options(),
@@ -142,6 +142,10 @@ def _job_page_params(filters: dict[str, object]) -> dict[str, object]:
     if evidence is not None:
         params["evidence"] = evidence
     return params
+
+
+def _job_kind_options() -> list[str]:
+    return ["all", "evolution", "repair", "seed"]
 
 
 def _sync_jobs_pager(*, api_base_url: str, filters: dict[str, object]):

@@ -9,8 +9,8 @@ PR bundles, `AGENTS.md`, or CLI commands.
 
 ## Authentication
 
-Set `LORELEY_AGENT_API_TOKEN` to require bearer-token auth for all
-`/api/v1/agent/*` routes:
+Set `LORELEY_AGENT_API_TOKEN` before enabling the API. All
+`/api/v1/agent/*` routes require bearer-token auth:
 
 ```bash
 LORELEY_AGENT_API_TOKEN=replace-me
@@ -22,8 +22,8 @@ Requests must then include:
 Authorization: Bearer replace-me
 ```
 
-If `LORELEY_AGENT_API_TOKEN` is unset, agent routes stay open for local
-development. Existing UI API routes keep their current auth behavior.
+If `LORELEY_AGENT_API_TOKEN` is unset, agent routes return
+`agent_auth_not_configured` and do not execute requests.
 
 Agent-route errors use this JSON shape:
 

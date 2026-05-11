@@ -62,6 +62,18 @@ def test_ui_client_post_json_sends_body() -> None:
     assert payload == {"count": 1}
 
 
+def test_ui_client_post_json_sends_write_token_when_configured() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.headers["Authorization"] == "Bearer secret"
+        return httpx.Response(200, json={"ok": True}, request=request)
+
+    transport = httpx.MockTransport(handler)
+    client = LoreleyAPIClient("http://example.local", write_token="secret", transport=transport)
+    payload = client.post_json("/api/v1/jobs/retry-failed-stale", json_body={"limit": 1})
+    assert payload == {"ok": True}
+
+
 def test_ui_client_get_json_page_validates_paginated_shape() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(

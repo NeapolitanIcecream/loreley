@@ -22,7 +22,7 @@ from loreley.api.routers.logs import router as logs_router
 from loreley.api.routers.graphs import router as graphs_router
 from loreley.api.routers.operator import router as operator_router
 from loreley.api.routers.repair import router as repair_router
-from loreley.api.services.operator import mark_interrupted_baseline_ensure_tasks_failed
+from loreley.api.services.operator import mark_stale_baseline_ensure_tasks_failed
 from loreley.db.base import INSTANCE_SCHEMA_VERSION, ensure_database_schema, session_scope
 from loreley.db.instance import validate_instance_marker_schema
 
@@ -38,7 +38,7 @@ async def _lifespan(_app: FastAPI):
             session=session,
             schema_version=INSTANCE_SCHEMA_VERSION,
         )
-    mark_interrupted_baseline_ensure_tasks_failed()
+    mark_stale_baseline_ensure_tasks_failed()
     yield
 
 

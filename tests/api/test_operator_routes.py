@@ -12,6 +12,8 @@ import pytest
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 
+import loreley.api.auth as api_auth
+from loreley.api.auth import require_write_auth
 import loreley.api.routers.operator as operator_router
 import loreley.api.services.operator as operator_service
 from loreley.api.routers.operator import router as operator_api_router
@@ -20,11 +22,14 @@ from loreley.api.services.operator import (
     OperatorTaskNotFoundError,
 )
 from loreley.db.models import OperatorTask, OperatorTaskStatus
+from tests.support import TestSettings
 
 
-def _client() -> TestClient:
+def _client(*, authenticated: bool = True) -> TestClient:
     app = FastAPI()
     app.include_router(operator_api_router, prefix="/api/v1")
+    if authenticated:
+        app.dependency_overrides[require_write_auth] = lambda: "test-operator"
     return TestClient(app)
 
 
@@ -103,6 +108,28 @@ def test_operator_task_create_uses_background_task(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json()["id"] == str(task_id)
     assert calls == [task_id]
+
+
+def test_operator_task_create_requires_write_auth_configuration(monkeypatch, captured_logs) -> None:
+    """Regression: direct operator writes must not run without a write token."""
+
+    monkeypatch.setattr(api_auth, "get_settings", lambda: TestSettings(LORELEY_API_WRITE_TOKEN=None))
+    monkeypatch.setattr(
+        operator_router,
+        "create_baseline_ensure_task",
+        lambda: (_ for _ in ()).throw(AssertionError("unauthenticated write executed")),
+    )
+
+    response = _client(authenticated=False).post("/api/v1/operator/tasks/baseline-ensure", json={})
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["error_code"] == "write_auth_not_configured"
+    assert any(
+        record["module"] == "api.auth"
+        and record["message"] == "UI API write request rejected by auth"
+        and record["extra"].get("reason") == "token_unconfigured"
+        for record in captured_logs
+    )
 
 
 def test_operator_task_create_rejects_active_baseline_task(monkeypatch) -> None:
@@ -400,17 +427,26 @@ def test_baseline_task_start_failure_is_persisted_and_logged(monkeypatch, captur
     )
 
 
-def test_startup_marks_interrupted_baseline_tasks_failed(monkeypatch, captured_logs) -> None:
-    """Regression: API restart must clear active baseline_ensure tasks before serving."""
+def test_startup_reconciliation_leaves_recent_active_baseline_tasks_running(
+    monkeypatch,
+    captured_logs,
+) -> None:
+    """Regression: one API process startup must not fail another process's task."""
 
     now = datetime(2026, 5, 9, tzinfo=timezone.utc)
     pending = SimpleNamespace(
+        id=uuid4(),
         status=OperatorTaskStatus.PENDING.value,
+        created_at=now - timedelta(minutes=1),
+        started_at=None,
         completed_at=None,
         error_summary=None,
     )
     running = SimpleNamespace(
+        id=uuid4(),
         status=OperatorTaskStatus.RUNNING.value,
+        created_at=now - timedelta(minutes=30),
+        started_at=now - timedelta(minutes=1),
         completed_at=None,
         error_summary=None,
     )
@@ -439,16 +475,79 @@ def test_startup_marks_interrupted_baseline_tasks_failed(monkeypatch, captured_l
 
     monkeypatch.setattr(operator_service, "session_scope", _scope)
 
-    count = operator_service.mark_interrupted_baseline_ensure_tasks_failed()
+    count = operator_service.mark_stale_baseline_ensure_tasks_failed()
 
-    assert count == 2
-    for task in (pending, running):
-        assert task.status == OperatorTaskStatus.FAILED.value
-        assert task.completed_at == now
-        assert "API restart" in str(task.error_summary)
+    assert count == 0
+    assert pending.status == OperatorTaskStatus.PENDING.value
+    assert running.status == OperatorTaskStatus.RUNNING.value
+    assert pending.completed_at is None
+    assert running.completed_at is None
     assert any(
         record["module"] == "api.operator"
-        and record["message"] == "Interrupted operator baseline ensure tasks marked failed"
-        and record["extra"].get("count") == 2
+        and record["message"] == "Active operator baseline ensure tasks left running at startup"
+        and record["extra"].get("active_count") == 2
+        for record in captured_logs
+    )
+
+
+def test_startup_reconciliation_marks_only_stale_baseline_tasks_failed(
+    monkeypatch,
+    captured_logs,
+) -> None:
+    now = datetime(2026, 5, 9, tzinfo=timezone.utc)
+    stale_pending = SimpleNamespace(
+        id=uuid4(),
+        status=OperatorTaskStatus.PENDING.value,
+        created_at=now - timedelta(minutes=11),
+        started_at=None,
+        completed_at=None,
+        error_summary=None,
+    )
+    recent_running = SimpleNamespace(
+        id=uuid4(),
+        status=OperatorTaskStatus.RUNNING.value,
+        created_at=now - timedelta(hours=1),
+        started_at=now - timedelta(hours=1),
+        completed_at=None,
+        error_summary=None,
+    )
+
+    class _NowResult:
+        def scalar_one(self):
+            return now
+
+    class _RowsResult:
+        def scalars(self):
+            return [stale_pending, recent_running]
+
+    class _Session:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def execute(self, _stmt):
+            self.calls += 1
+            if self.calls == 1:
+                return _NowResult()
+            return _RowsResult()
+
+    @contextmanager
+    def _scope():
+        yield _Session()
+
+    monkeypatch.setattr(operator_service, "session_scope", _scope)
+
+    count = operator_service.mark_stale_baseline_ensure_tasks_failed()
+
+    assert count == 1
+    assert stale_pending.status == OperatorTaskStatus.FAILED.value
+    assert stale_pending.completed_at == now
+    assert "Stale baseline ensure task" in str(stale_pending.error_summary)
+    assert recent_running.status == OperatorTaskStatus.RUNNING.value
+    assert recent_running.completed_at is None
+    assert any(
+        record["module"] == "api.operator"
+        and record["message"] == "Stale operator baseline ensure tasks marked failed at startup"
+        and record["extra"].get("count") == 1
+        and record["extra"].get("stale_counts") == {"pending": 1}
         for record in captured_logs
     )

@@ -166,6 +166,10 @@ def test_jobs_global_retry_payload_is_not_tied_to_page_size(jobs_module) -> None
     assert jobs_module._retry_failed_stale_payload() == {"all": True}  # noqa: SLF001
 
 
+def test_jobs_job_kind_filter_options_include_seed_jobs(jobs_module) -> None:
+    assert jobs_module._job_kind_options() == ["all", "evolution", "repair", "seed"]  # noqa: SLF001
+
+
 def test_jobs_global_failed_stale_retry_button_requires_confirmation(jobs_module) -> None:
     jobs_module._render_jobs_actions(api_base_url="http://api.local")  # noqa: SLF001
 

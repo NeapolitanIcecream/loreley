@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
+from loreley.api.auth import require_write_auth
 from loreley.api.schemas.operator import (
     OperatorStatusOut,
     OperatorTaskOut,
@@ -32,6 +33,7 @@ def get_operator_status() -> OperatorStatusOut:
 @router.post("/operator/tasks/baseline-ensure", response_model=OperatorTaskOut)
 def create_operator_baseline_ensure_task(
     background_tasks: BackgroundTasks,
+    _actor: str = Depends(require_write_auth),
 ) -> OperatorTaskOut:
     try:
         task = create_baseline_ensure_task()

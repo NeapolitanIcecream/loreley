@@ -24,6 +24,8 @@ from loreley.api.schemas.agent import AgentActionRequest
 from loreley.db.models import AgentAction, EvolutionJob, JobStatus
 from tests.support import TestSettings
 
+_AUTH_HEADERS = {"Authorization": "Bearer secret"}
+
 
 def _client() -> TestClient:
     app = FastAPI()
@@ -33,7 +35,7 @@ def _client() -> TestClient:
     return TestClient(app)
 
 
-def _settings(token: str | None = None) -> TestSettings:
+def _settings(token: str | None = "secret") -> TestSettings:
     return TestSettings(LORELEY_AGENT_API_TOKEN=token)
 
 
@@ -41,7 +43,11 @@ def _capabilities_payload(*, token_configured: bool = False) -> dict[str, object
     return {
         "schema_version": "agent-rest-control-facade.v1",
         "database_schema_version": 12,
-        "auth": {"configured": token_configured, "optional_when_unset": True},
+        "auth": {
+            "configured": token_configured,
+            "required": True,
+            "optional_when_unset": False,
+        },
         "read_resources": [{"resource": "operator_status", "path": "/api/v1/agent/status"}],
         "actions": [
             {
@@ -115,9 +121,9 @@ def test_agent_capabilities_status_and_next_actions_serialize(monkeypatch) -> No
 
     client = _client()
 
-    capabilities = client.get("/api/v1/agent/capabilities")
-    status = client.get("/api/v1/agent/status")
-    next_actions = client.get("/api/v1/agent/next-actions")
+    capabilities = client.get("/api/v1/agent/capabilities", headers=_AUTH_HEADERS)
+    status = client.get("/api/v1/agent/status", headers=_AUTH_HEADERS)
+    next_actions = client.get("/api/v1/agent/next-actions", headers=_AUTH_HEADERS)
 
     assert capabilities.status_code == 200
     assert capabilities.json()["schema_version"] == "agent-rest-control-facade.v1"
@@ -132,8 +138,8 @@ def test_agent_capabilities_status_and_next_actions_serialize(monkeypatch) -> No
     assert status.json()["safe_next_actions"] == next_actions.json()
 
 
-def test_agent_auth_unset_token_allows_local_requests(monkeypatch) -> None:
-    monkeypatch.setattr(agent_router, "get_settings", lambda: _settings())
+def test_agent_auth_unset_token_rejects_requests(monkeypatch) -> None:
+    monkeypatch.setattr(agent_router, "get_settings", lambda: _settings(None))
     monkeypatch.setattr(
         agent_router,
         "agent_capabilities",
@@ -142,7 +148,8 @@ def test_agent_auth_unset_token_allows_local_requests(monkeypatch) -> None:
 
     response = _client().get("/api/v1/agent/capabilities")
 
-    assert response.status_code == 200
+    assert response.status_code == 503
+    assert response.json()["error_code"] == "agent_auth_not_configured"
 
 
 def test_agent_auth_configured_token_rejects_missing_and_wrong_credentials(monkeypatch) -> None:
@@ -199,6 +206,7 @@ class _ActionSession:
     def __init__(self) -> None:
         self.records: list[AgentAction] = []
         self.jobs: dict[UUID, object] = {}
+        self.commits = 0
 
     def execute(self, _stmt):
         return _ExecRows(self.records)
@@ -208,6 +216,9 @@ class _ActionSession:
 
     def flush(self) -> None:
         return None
+
+    def commit(self) -> None:
+        self.commits += 1
 
     def rollback(self) -> None:
         return None
@@ -258,6 +269,7 @@ def test_agent_action_execute_calls_write_service_and_writes_action_record(monke
     calls: list[str] = []
 
     def _schedule_one_repair():
+        assert session.commits == 1
         calls.append("schedule_one_repair")
         return {
             "scheduled": False,
@@ -283,6 +295,38 @@ def test_agent_action_execute_calls_write_service_and_writes_action_record(monke
     assert payload["result"]["scheduled"] is False
     assert session.records[0].status == "succeeded"
     assert session.records[0].actor == "test-agent"
+    assert session.commits == 1
+
+
+def test_agent_baseline_ensure_without_background_tasks_runs_task_synchronously(monkeypatch) -> None:
+    """Regression: non-FastAPI agent callers must not leave baseline tasks pending."""
+
+    task_id = uuid4()
+    session = _ActionSession()
+    _install_action_session(monkeypatch, session)
+    monkeypatch.setattr(agent_service, "operator_status", _status_payload)
+    monkeypatch.setattr(
+        agent_service,
+        "create_baseline_ensure_task",
+        lambda: SimpleNamespace(id=task_id, status="pending"),
+    )
+    calls: list[UUID] = []
+    monkeypatch.setattr(agent_service, "run_baseline_ensure_task", lambda task_id: calls.append(task_id))
+
+    payload = agent_service.run_agent_action(
+        AgentActionRequest(
+            action_type="baseline_ensure",
+            dry_run=False,
+            reason="repair baseline",
+        ),
+        actor="test-agent",
+    )
+
+    assert calls == [task_id]
+    assert payload["status"] == "succeeded"
+    assert payload["result"]["operator_task_id"] == str(task_id)
+    assert payload["result"]["background_task_enqueued"] is False
+    assert payload["result"]["ran_synchronously"] is True
 
 
 def test_agent_action_idempotency_replay_does_not_call_write_service_twice(monkeypatch) -> None:
@@ -492,6 +536,7 @@ def test_agent_action_expected_state_mismatch_returns_structured_error_and_audit
 
     response = _client().post(
         "/api/v1/agent/actions",
+        headers=_AUTH_HEADERS,
         json={
             "action_type": "retry_job",
             "dry_run": False,
@@ -577,7 +622,7 @@ def test_agent_job_feedback_excludes_non_agent_visible_evidence_from_payload(mon
         _list_evaluation_artifacts_for_job,
     )
 
-    response = _client().get(f"/api/v1/agent/jobs/{job_id}/feedback")
+    response = _client().get(f"/api/v1/agent/jobs/{job_id}/feedback", headers=_AUTH_HEADERS)
 
     assert response.status_code == 200
     payload = response.json()
@@ -637,7 +682,10 @@ def test_agent_commit_feedback_excludes_non_agent_visible_evidence_from_payload(
         _list_evaluation_artifacts_for_commit,
     )
 
-    response = _client().get(f"/api/v1/agent/commits/{commit_hash}/feedback")
+    response = _client().get(
+        f"/api/v1/agent/commits/{commit_hash}/feedback",
+        headers=_AUTH_HEADERS,
+    )
 
     assert response.status_code == 200
     payload = response.json()
