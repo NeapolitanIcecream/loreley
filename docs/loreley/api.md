@@ -52,6 +52,48 @@ Common variables:
 - `LORELEY_API_WRITE_TOKEN` (required for UI API POST routes)
 - `LORELEY_AGENT_API_TOKEN` (required for `/api/v1/agent/*`)
 
+## API Tokens
+
+Loreley does not issue `LORELEY_API_WRITE_TOKEN` or
+`LORELEY_AGENT_API_TOKEN`. Generate each value yourself and store it as a
+deployment secret:
+
+```bash
+python - <<'PY'
+import secrets
+print(secrets.token_urlsafe(32))
+PY
+```
+
+Use different values for the two tokens:
+
+```bash
+LORELEY_API_WRITE_TOKEN=<generated-write-token>
+LORELEY_AGENT_API_TOKEN=<generated-agent-token>
+```
+
+Set `LORELEY_API_WRITE_TOKEN` in both the FastAPI UI API process and the
+Streamlit UI process. The API checks it on POST routes, and the Streamlit UI
+uses the same value when it sends operator POST requests.
+
+Set `LORELEY_AGENT_API_TOKEN` in the FastAPI UI API process. Agent clients must
+send it on every `/api/v1/agent/*` request:
+
+```bash
+curl -H "Authorization: Bearer $LORELEY_AGENT_API_TOKEN" \
+  http://127.0.0.1:8000/api/v1/agent/capabilities
+```
+
+Direct clients that call UI API write routes must send
+`LORELEY_API_WRITE_TOKEN`:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/jobs/retry-failed-stale \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $LORELEY_API_WRITE_TOKEN" \
+  -d '{"limit": 1}'
+```
+
 ## Versioning and prefix
 
 All routes are served under the versioned prefix: `/api/v1`.

@@ -55,12 +55,16 @@ uv run loreley worker
 uv run loreley status
 ```
 
-### Optional UI (read-only)
+### Optional UI and operator console
 
 ```bash
 uv sync --extra ui
 uv run loreley ui
 ```
+
+Most UI pages are read-only. Operator actions such as job retry, baseline
+ensure, and repair-pool updates require `LORELEY_API_WRITE_TOKEN` in the UI API
+process and the Streamlit process.
 
 ![](./docs/assets/ui.jpeg)
 
