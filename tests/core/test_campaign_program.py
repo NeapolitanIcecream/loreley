@@ -3,7 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
+
+import pytest
 
 import loreley.core.map_elites.sampler as sampler_module
 from loreley.config import Settings
@@ -17,6 +20,10 @@ from loreley.core.campaign_program import (
     persist_campaign_program,
 )
 from loreley.core.map_elites.sampler import MapElitesSampler
+
+
+ROOT = Path(__file__).resolve().parents[2]
+CIRCLE_PACKING_PROGRAM = ROOT / "examples" / "circle-packing" / "loreley.program.md"
 
 
 def test_campaign_program_parser_extracts_recognized_sections_and_keeps_unknown_metadata() -> None:
@@ -60,6 +67,71 @@ Human-only note.
     assert "loreley.program.md" in snapshot.protected_scope
     assert "Operator note" in [section.title for section in snapshot.unknown_sections]
     assert "Operator note" not in snapshot.recognized_sections
+
+
+def test_circle_packing_campaign_program_declares_v080_contract() -> None:
+    if not CIRCLE_PACKING_PROGRAM.is_file():
+        pytest.skip(
+            "circle-packing example submodule is not initialized; "
+            f"missing {CIRCLE_PACKING_PROGRAM.relative_to(ROOT)}"
+        )
+
+    raw = CIRCLE_PACKING_PROGRAM.read_bytes()
+
+    snapshot = parse_campaign_program(raw, source_path="loreley.program.md")
+    projected = apply_campaign_program_projection(
+        CampaignProjectionInput(
+            snapshot=snapshot,
+            goal=None,
+            constraints=(),
+            acceptance_criteria=(),
+            notes=(),
+            default_goal="Global goal",
+        )
+    )
+
+    assert "LORELEY_PROFILE" not in raw.decode("utf-8")
+    assert snapshot.title == "circle-packing campaign for Loreley"
+    assert snapshot.goal is not None
+    normalized_goal = snapshot.goal.replace("`", "")
+    assert "solution.py" in snapshot.goal
+    assert "pack_circles(n=26)" in snapshot.goal
+    assert "pack_circles() equivalent to pack_circles(26)" in normalized_goal
+    assert snapshot.primary_metric is not None
+    assert snapshot.primary_metric.as_dict() == {
+        "name": "sum_radii",
+        "direction": "higher_is_better",
+        "unit": "radius_sum",
+    }
+    assert snapshot.editable_scope == ("solution.py",)
+    assert set(snapshot.protected_scope) == {
+        "README.md",
+        "pyproject.toml",
+        "scripts/**",
+        ".gitignore",
+        "loreley.program.md",
+    }
+    gate_text = " | ".join(snapshot.correctness_gates).replace("`", "").lower()
+    for expected in (
+        "positive radii",
+        "finite numeric triples",
+        "exactly n circles",
+        "in-bounds",
+        "no overlap",
+        "deterministic output",
+        "p50 runtime",
+        "250 ms",
+        "python scripts/local_eval.py --repo-root . --runs 5 --target-n 26 --json",
+    ):
+        assert expected in gate_text
+    assert projected.goal == snapshot.goal
+    assert "Editable scope: solution.py" in projected.constraints
+    assert "Protected scope: loreley.program.md" in projected.constraints
+    assert any("local_eval.py --repo-root ." in item for item in projected.constraints)
+    assert "Primary metric: sum_radii (higher is better, unit=radius_sum)" in (
+        projected.acceptance_criteria
+    )
+    assert any(item.startswith("Logging policy:") and "sum_radii" in item for item in projected.notes)
 
 
 def test_campaign_program_payloads_exclude_unknown_section_bodies() -> None:

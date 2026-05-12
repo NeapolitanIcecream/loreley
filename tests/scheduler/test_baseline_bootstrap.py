@@ -7,8 +7,9 @@ from typing import Any
 import uuid
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session as SqlAlchemySession
+from sqlalchemy.orm import sessionmaker
 
 import loreley.scheduler.baselines as baselines
 from loreley.core.campaign_program import parse_campaign_program
@@ -125,6 +126,27 @@ def _install_session(monkeypatch: pytest.MonkeyPatch, store: _BaselineStore) -> 
         yield store.session()
 
     monkeypatch.setattr(baselines, "session_scope", _scope)
+
+
+def _install_real_baseline_session(monkeypatch: pytest.MonkeyPatch) -> sessionmaker[SqlAlchemySession]:
+    engine = create_engine("sqlite:///:memory:")
+    CampaignBaseline.__table__.create(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+
+    @contextmanager
+    def _scope():
+        session = session_factory()
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    monkeypatch.setattr(baselines, "session_scope", _scope)
+    return session_factory
 
 
 def _install_baseline_eval(
@@ -255,6 +277,136 @@ def test_valid_baseline_persists_source_of_truth_and_compat_projection(
     assert [(row.name, row.value) for row in store.metrics] == [("score", pytest.approx(2.5))]
     assert contexts[0].metadata["kind"] == "baseline"
     assert contexts[0].metadata["baseline_key_hash"] == store.baselines[0].baseline_key_hash
+
+
+def test_new_baseline_row_is_not_flushed_before_required_fields_are_populated(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Regression: projection queries must not flush a half-populated baseline row."""
+
+    session_factory = _install_real_baseline_session(monkeypatch)
+    _install_baseline_eval(
+        monkeypatch,
+        tmp_path,
+        _passed_outcome(metrics=(EvaluationMetric(name="score", value=2.5),)),
+    )
+    projection_queries: list[str] = []
+
+    def querying_projection(
+        self: BaselineBootstrapService,
+        *,
+        session: SqlAlchemySession,
+        key: baselines.BaselineKey,
+        outcome: EvaluationOutcome | None,
+    ) -> None:
+        del self, outcome
+        projection_queries.append(key.hash)
+        assert session.execute(select(CampaignBaseline)).scalars().all() == []
+        return None
+
+    monkeypatch.setattr(
+        BaselineBootstrapService,
+        "_persist_projection_for_outcome",
+        querying_projection,
+    )
+
+    service = BaselineBootstrapService(
+        settings=_settings(policy="required"),
+        repo_root=tmp_path,
+        console=baselines.Console(record=True),
+    )
+    result = service.ensure_or_load_baseline(root_commit_hash="root123", campaign_program=None)
+
+    with session_factory() as session:
+        rows = session.execute(select(CampaignBaseline)).scalars().all()
+
+    assert result.can_dispatch_or_schedule is True
+    assert result.status == BASELINE_STATUS_VALID
+    assert len(rows) == 1
+    assert projection_queries == [rows[0].baseline_key_hash]
+    assert rows[0].root_commit_hash == "root123"
+    assert rows[0].primary_metric_name == "score"
+    assert rows[0].status == BASELINE_STATUS_VALID
+
+
+def test_non_valid_baseline_reuse_and_force_rerun_keep_one_complete_row(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    session_factory = _install_real_baseline_session(monkeypatch)
+    contexts: list[object] = []
+    outcomes = [
+        _passed_outcome(metrics=(EvaluationMetric(name="other", value=1.0),)),
+        _passed_outcome(metrics=(EvaluationMetric(name="score", value=3.0),)),
+    ]
+
+    class _WorkerRepository:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        @contextmanager
+        def checkout_lease_for_job(self, **kwargs: object):
+            assert kwargs["job_id"] is None
+            assert kwargs["create_branch"] is False
+            yield SimpleNamespace(worktree=tmp_path)
+
+    class _Evaluator:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def evaluate_outcome(self, context: object) -> EvaluationOutcome:
+            contexts.append(context)
+            return outcomes.pop(0)
+
+    def querying_projection(
+        self: BaselineBootstrapService,
+        *,
+        session: SqlAlchemySession,
+        key: baselines.BaselineKey,
+        outcome: EvaluationOutcome | None,
+    ) -> None:
+        del self, key, outcome
+        for row in session.execute(select(CampaignBaseline)).scalars().all():
+            assert row.root_commit_hash
+            assert row.primary_metric_name
+            assert row.status
+        return None
+
+    monkeypatch.setattr(baselines, "WorkerRepository", _WorkerRepository)
+    monkeypatch.setattr(baselines, "Evaluator", _Evaluator)
+    monkeypatch.setattr(
+        BaselineBootstrapService,
+        "_persist_projection_for_outcome",
+        querying_projection,
+    )
+
+    service = BaselineBootstrapService(
+        settings=_settings(policy="required"),
+        repo_root=tmp_path,
+        console=baselines.Console(record=True),
+    )
+
+    first = service.ensure_or_load_baseline(root_commit_hash="root123", campaign_program=None)
+    reused = service.ensure_or_load_baseline(root_commit_hash="root123", campaign_program=None)
+    rerun = service.ensure_or_load_baseline(
+        root_commit_hash="root123",
+        campaign_program=None,
+        force_rerun=True,
+    )
+
+    with session_factory() as session:
+        rows = session.execute(select(CampaignBaseline)).scalars().all()
+
+    assert first.status == BASELINE_STATUS_FAILED
+    assert reused.status == BASELINE_STATUS_FAILED
+    assert rerun.status == BASELINE_STATUS_VALID
+    assert len(contexts) == 2
+    assert len(rows) == 1
+    assert rows[0].root_commit_hash == "root123"
+    assert rows[0].primary_metric_name == "score"
+    assert rows[0].status == BASELINE_STATUS_VALID
+    assert rows[0].metric_value == pytest.approx(3.0)
 
 
 def test_valid_matching_baseline_is_loaded_without_rerunning_evaluator(

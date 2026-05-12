@@ -168,6 +168,13 @@ class ExpansionCheck:
     reasons: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class ReferenceSpec:
+    label: str
+    commit_hash: str
+    required: bool
+
+
 PHASE_PRESETS: dict[str, PhasePreset] = {
     "smoke": PhasePreset(
         name="smoke",
@@ -1080,44 +1087,124 @@ def _materialize_solution_for_commit(commit_hash: str) -> Path:
     return temp_dir
 
 
-def _collect_reference_stats(*, best_commit_hash: str | None, runs: int) -> list[dict[str, Any]]:
-    local_eval = _load_local_eval_module()
-    refs: list[tuple[str, str]] = [
-        ("root", MAPELITES_EXPERIMENT_ROOT_COMMIT),
-        ("historical_best", HISTORICAL_BEST_COMMIT),
+def _available_reference_payload(
+    *,
+    label: str,
+    commit_hash: str,
+    stats: dict[str, Any],
+) -> dict[str, Any]:
+    payload = dict(stats)
+    payload["label"] = label
+    payload["commit_hash"] = commit_hash
+    payload["status"] = "available"
+    payload["error"] = None
+    return payload
+
+
+def _missing_reference_payload(
+    *,
+    label: str,
+    commit_hash: str,
+    exc: Exception,
+) -> dict[str, Any]:
+    return {
+        "label": label,
+        "commit_hash": commit_hash,
+        "status": "missing",
+        "error": _missing_reference_error(exc),
+        "target_metrics": None,
+        "repeated_runs": None,
+    }
+
+
+def _missing_reference_error(exc: Exception) -> str:
+    text = str(exc).lower()
+    if "solution.py" in text:
+        return "solution.py is unavailable for this optional reference commit."
+    return "optional reference commit is unavailable."
+
+
+def _reference_specs(best_commit_hash: str | None) -> list[ReferenceSpec]:
+    refs = [
+        ReferenceSpec("root", MAPELITES_EXPERIMENT_ROOT_COMMIT, True),
+        ReferenceSpec("historical_best", HISTORICAL_BEST_COMMIT, False),
     ]
     if best_commit_hash:
-        refs.append(("current_best", best_commit_hash))
+        refs.append(ReferenceSpec("current_best", best_commit_hash, True))
+    return refs
 
+
+def _append_reference_stats(
+    *,
+    local_eval: Any,
+    reference: ReferenceSpec,
+    runs: int,
+    payloads: list[dict[str, Any]],
+    temp_dirs: list[Path],
+) -> bool:
+    try:
+        repo_root = _materialize_solution_for_commit(reference.commit_hash)
+    except Exception as exc:
+        if reference.required:
+            raise
+        payloads.append(
+            _missing_reference_payload(
+                label=reference.label,
+                commit_hash=reference.commit_hash,
+                exc=exc,
+            )
+        )
+        return False
+
+    temp_dirs.append(repo_root)
+    stats = local_eval.evaluate_repo(
+        repo_root=repo_root,
+        runs=runs,
+        target_n=26,
+    )
+    payloads.append(
+        _available_reference_payload(
+            label=reference.label,
+            commit_hash=reference.commit_hash,
+            stats=stats,
+        )
+    )
+    return True
+
+
+def _remove_temp_dirs(paths: Sequence[Path]) -> None:
+    for path in paths:
+        try:
+            for child in sorted(path.glob("**/*"), reverse=True):
+                if child.is_file():
+                    child.unlink()
+                elif child.is_dir():
+                    child.rmdir()
+            path.rmdir()
+        except Exception:
+            continue
+
+
+def _collect_reference_stats(*, best_commit_hash: str | None, runs: int) -> list[dict[str, Any]]:
+    local_eval = _load_local_eval_module()
     seen_hashes: set[str] = set()
     payloads: list[dict[str, Any]] = []
     temp_dirs: list[Path] = []
     try:
-        for label, commit_hash in refs:
-            if commit_hash in seen_hashes:
+        for reference in _reference_specs(best_commit_hash):
+            if reference.commit_hash in seen_hashes:
                 continue
-            seen_hashes.add(commit_hash)
-            repo_root = _materialize_solution_for_commit(commit_hash)
-            temp_dirs.append(repo_root)
-            stats = local_eval.evaluate_repo(
-                repo_root=repo_root,
+            collected = _append_reference_stats(
+                local_eval=local_eval,
+                reference=reference,
                 runs=runs,
-                target_n=26,
+                payloads=payloads,
+                temp_dirs=temp_dirs,
             )
-            stats["label"] = label
-            stats["commit_hash"] = commit_hash
-            payloads.append(stats)
+            if collected:
+                seen_hashes.add(reference.commit_hash)
     finally:
-        for path in temp_dirs:
-            try:
-                for child in sorted(path.glob("**/*"), reverse=True):
-                    if child.is_file():
-                        child.unlink()
-                    elif child.is_dir():
-                        child.rmdir()
-                path.rmdir()
-            except Exception:
-                continue
+        _remove_temp_dirs(temp_dirs)
     return payloads
 
 
@@ -1795,8 +1882,8 @@ def _render_report_markdown(report: dict[str, Any]) -> str:
             "",
             "## References",
             "",
-            "| label | commit | sum_radii | density | time_p50_ms | deterministic |",
-            "| --- | --- | ---: | ---: | ---: | --- |",
+            "| label | status | commit | sum_radii | density | time_p50_ms | deterministic | error |",
+            "| --- | --- | --- | ---: | ---: | ---: | --- | --- |",
         ]
     )
     for ref in report["references"]:
@@ -1804,13 +1891,15 @@ def _render_report_markdown(report: dict[str, Any]) -> str:
         repeated = ref.get("repeated_runs") or {}
         time_stats = repeated.get("time_ms") or {}
         lines.append(
-            "| {} | `{}` | {!r} | {!r} | {!r} | {} |".format(
+            "| {} | {} | `{}` | {!r} | {!r} | {!r} | {} | {} |".format(
                 ref.get("label"),
+                ref.get("status") or "available",
                 ref.get("commit_hash"),
                 target_metrics.get("sum_radii"),
                 target_metrics.get("packing_density"),
                 time_stats.get("p50"),
                 repeated.get("deterministic"),
+                ref.get("error") or "",
             )
         )
 

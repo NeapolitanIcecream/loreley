@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -349,6 +350,118 @@ def test_build_report_payload_tracks_runtime_and_skips_unassigned_workers() -> N
     assert report["timing"]["runtime_p50_ms"]["p50"] == pytest.approx(120.0)
     assert [item["worker_instance_id"] for item in report["worker_throughput"]] == ["worker-02"]
     assert report["best"]["runtime_p50_ms"] == pytest.approx(120.0)
+
+
+def test_run_report_records_missing_optional_historical_reference(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module("test_evol_circle_packing_report_missing_historical", EXAMPLE_SCRIPT)
+    refs_root = tmp_path / "refs"
+    output_dir = tmp_path / "reports"
+    jobs = [
+        {
+            "job_id": "job-1",
+            "status": "succeeded",
+            "is_seed_job": False,
+            "worker_instance_id": "worker-01",
+            "result_commit_hash": "current",
+            "sum_radii": 1.1,
+            "packing_density": 0.5,
+            "runtime_p50_ms": 90.0,
+            "total_duration_seconds": 300.0,
+            "planning_duration_seconds": 10.0,
+            "coding_duration_seconds": 250.0,
+            "evaluator_duration_seconds": 1.0,
+            "planning_attempts": 1,
+            "coding_attempts": 1,
+            "_created_ts": 10.0,
+            "_started_ts": 11.0,
+            "_completed_ts": 311.0,
+            "completed_at": "2026-03-11T00:05:11+00:00",
+            "last_error": None,
+        }
+    ]
+
+    class FakeLocalEval:
+        @staticmethod
+        def evaluate_repo(*, repo_root: Path, runs: int, target_n: int) -> dict[str, Any]:
+            del repo_root
+            assert runs == 3
+            assert target_n == 26
+            return {
+                "target_metrics": {"sum_radii": 0.7, "packing_density": 0.3},
+                "repeated_runs": {"time_ms": {"p50": 1.5}, "deterministic": True},
+            }
+
+    def fake_materialize(commit_hash: str) -> Path:
+        if commit_hash == "missing":
+            raise RuntimeError(
+                "Could not materialize solution.py: fatal: bad revision "
+                "/Users/chenmohan/private/repo"
+            )
+        path = refs_root / commit_hash
+        path.mkdir(parents=True)
+        (path / "solution.py").write_text("def pack_circles(n=26): return []\n", encoding="utf-8")
+        return path
+
+    monkeypatch.setattr(module, "_apply_base_env", lambda *args, **kwargs: None)
+    monkeypatch.setattr(module, "_ensure_repo_on_sys_path", lambda: None)
+    monkeypatch.setattr(module, "_load_experiment_jobs", lambda: (jobs, []))
+    monkeypatch.setattr(module, "_load_local_eval_module", lambda: FakeLocalEval)
+    monkeypatch.setattr(module, "_materialize_solution_for_commit", fake_materialize)
+    monkeypatch.setattr(module, "MAPELITES_EXPERIMENT_ROOT_COMMIT", "root")
+    monkeypatch.setattr(module, "HISTORICAL_BEST_COMMIT", "missing")
+
+    exit_code = module._run_report(phase="smoke", runs=3, output_dir=output_dir)  # noqa: SLF001
+
+    payload = json.loads((output_dir / "smoke-report.json").read_text(encoding="utf-8"))
+    markdown = (output_dir / "smoke-report.md").read_text(encoding="utf-8")
+    refs = {item["label"]: item for item in payload["references"]}
+
+    assert exit_code == 0
+    assert refs["root"]["status"] == "available"
+    assert refs["current_best"]["status"] == "available"
+    assert refs["historical_best"]["status"] == "missing"
+    assert refs["historical_best"]["error"]
+    assert refs["historical_best"]["target_metrics"] is None
+    assert refs["historical_best"]["repeated_runs"] is None
+    assert "/Users/" not in refs["historical_best"]["error"]
+    assert "/Users/" not in markdown
+    assert "historical_best" in markdown
+    assert "missing" in markdown
+
+
+def test_collect_reference_stats_keeps_current_best_reference_required(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module("test_evol_circle_packing_report_current_required", EXAMPLE_SCRIPT)
+
+    class FakeLocalEval:
+        @staticmethod
+        def evaluate_repo(*, repo_root: Path, runs: int, target_n: int) -> dict[str, Any]:
+            del repo_root, runs, target_n
+            return {
+                "target_metrics": {"sum_radii": 0.5, "packing_density": 0.2},
+                "repeated_runs": {"time_ms": {"p50": 1.0}, "deterministic": True},
+            }
+
+    def fake_materialize(commit_hash: str) -> Path:
+        if commit_hash == "current":
+            raise RuntimeError("current best missing")
+        path = tmp_path / commit_hash
+        path.mkdir()
+        (path / "solution.py").write_text("def pack_circles(n=26): return []\n", encoding="utf-8")
+        return path
+
+    monkeypatch.setattr(module, "_load_local_eval_module", lambda: FakeLocalEval)
+    monkeypatch.setattr(module, "_materialize_solution_for_commit", fake_materialize)
+    monkeypatch.setattr(module, "MAPELITES_EXPERIMENT_ROOT_COMMIT", "root")
+    monkeypatch.setattr(module, "HISTORICAL_BEST_COMMIT", "historical")
+
+    with pytest.raises(RuntimeError, match="current best missing"):
+        module._collect_reference_stats(best_commit_hash="current", runs=3)  # noqa: SLF001
 
 
 def test_evaluate_main_expansion_recommends_96_when_thresholds_met() -> None:

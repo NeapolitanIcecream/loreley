@@ -639,7 +639,10 @@ class BaselineBootstrapService:
         )
 
         with session_scope() as session:
-            row = _load_or_create_baseline_row(session=session, key_hash=key.hash)
+            row = _load_baseline_row(session=session, key_hash=key.hash)
+            is_new = row is None
+            if row is None:
+                row = CampaignBaseline(baseline_key_hash=key.hash)
             projection = self._persist_projection_for_outcome(
                 session=session,
                 key=key,
@@ -652,6 +655,8 @@ class BaselineBootstrapService:
                 outcome=outcome,
                 projection=projection,
             )
+            if is_new:
+                session.add(row)
             _flush_if_available(session)
             return row
 
@@ -862,17 +867,12 @@ def _baseline_attempt_status(*, valid: bool, policy: str) -> str:
     return BASELINE_STATUS_DEGRADED if policy == "warn" else BASELINE_STATUS_FAILED
 
 
-def _load_or_create_baseline_row(*, session: Session, key_hash: str) -> CampaignBaseline:
-    row = session.execute(
+def _load_baseline_row(*, session: Session, key_hash: str) -> CampaignBaseline | None:
+    return session.execute(
         select(CampaignBaseline).where(
             CampaignBaseline.baseline_key_hash == key_hash,
         )
     ).scalar_one_or_none()
-    if row is not None:
-        return row
-    row = CampaignBaseline(baseline_key_hash=key_hash)
-    session.add(row)
-    return row
 
 
 def _apply_baseline_row(
