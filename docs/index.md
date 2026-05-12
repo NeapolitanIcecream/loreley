@@ -233,8 +233,8 @@ Use this index as a quick map of the rest of the documentation:
 
 - **Releases**
   - [Unreleased](releases/unreleased.md)
+  - [v0.8.1-alpha](releases/v0.8.1-alpha.md)
   - [v0.8.0-alpha](releases/v0.8.0-alpha.md)
-  - [v0.7.9-alpha](releases/v0.7.9-alpha.md)
 - **Configuration**
   - [Global settings](loreley/config.md)
 - **Campaigns**
