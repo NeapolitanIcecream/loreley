@@ -56,6 +56,21 @@ build-backend = "hatchling.build"
 [tool.hatch.version]
 source = "vcs"
 
+[tool.hatch.build]
+exclude = [
+    "/.pytest_cache",
+    "/.ruff_cache",
+    "/.uv-cache",
+    "/.uv_cache",
+    "/.uv_cache_sandbox",
+    "/dist",
+    "/logs",
+    "/output",
+    "/site",
+    "/uv_cache",
+    "/uv_cache_tmp",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["loreley"]
 
