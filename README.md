@@ -25,7 +25,15 @@ git clone <YOUR_FORK_OR_ORIGIN_URL> loreley
 cd loreley
 uv sync
 docker compose up -d postgres redis
+```
 
+The local Compose file uses the PostgreSQL 18 data layout:
+`PGDATA=/var/lib/postgresql/18/docker` with the named volume mounted at
+`/var/lib/postgresql`. For a disposable local database created with an older
+layout, run `docker compose down -v` before starting again. That removes the
+local database volume.
+
+```bash
 cp env.example .env
 # Minimal required vars (in addition to defaults in env.example):
 # - EXPERIMENT_ID=<uuid or slug>

@@ -6,10 +6,11 @@ services:
       POSTGRES_USER: loreley
       POSTGRES_PASSWORD: loreley
       POSTGRES_DB: loreley
+      PGDATA: /var/lib/postgresql/18/docker
     ports:
       - "5432:5432"
     volumes:
-      - loreley_postgres_data:/var/lib/postgresql/data
+      - loreley_postgres_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U loreley -d loreley"]
       interval: 5s
@@ -33,5 +34,4 @@ services:
 volumes:
   loreley_postgres_data:
   loreley_redis_data:
-
 

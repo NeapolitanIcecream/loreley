@@ -88,6 +88,12 @@ If you have Docker installed, you can start the required services with:
 docker compose up -d postgres redis
 ```
 
+PostgreSQL 18 stores data under `/var/lib/postgresql/18/docker`. The Compose
+file mounts the named volume at `/var/lib/postgresql` and sets `PGDATA` to that
+versioned directory. If you only have disposable local data from an older
+layout, run `docker compose down -v` before restarting; this deletes the local
+database volume.
+
 ### Configure
 
 All runtime configuration is provided via environment variables and loaded by `loreley.config.Settings`.
