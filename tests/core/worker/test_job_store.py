@@ -621,36 +621,34 @@ def test_failure_artifacts_replace_prior_synthetic_failure_key_on_retry(
     assert row.kind == "failure"
 
 
-def test_failure_artifacts_do_not_dedupe_synthetic_key_collision(
+def test_failure_artifacts_disambiguate_synthetic_key_collision(
     settings: Settings,
 ) -> None:
-    """Regression: evaluator artifact key collision hid the synthetic failure artifact."""
+    """Regression: evaluator artifact key collision rolled back structured failure persistence."""
 
     job_id = uuid.uuid4()
     session = _UniqueEvaluationArtifactSession()
     store = EvolutionJobStore(settings=settings)
 
-    with pytest.raises(SQLAlchemyError, match="duplicate evaluation_artifacts"):
-        store._record_failure_artifacts(
-            session=session,
-            request=_failure_artifact_request(job_id=job_id, summary="failed before artifacts"),
-            commit_hash="failedcommit",
-            artifact_result=JobArtifactWriteResult(
-                fixed=FixedJobArtifactPaths(),
-                evaluation_artifacts=(
-                    _materialized_benchmark_artifact(key="evaluation_failure"),
-                ),
+    store._record_failure_artifacts(
+        session=session,
+        request=_failure_artifact_request(job_id=job_id, summary="failed before artifacts"),
+        commit_hash="failedcommit",
+        artifact_result=JobArtifactWriteResult(
+            fixed=FixedJobArtifactPaths(),
+            evaluation_artifacts=(
+                _materialized_benchmark_artifact(key="evaluation_failure"),
             ),
-        )
+        ),
+    )
 
-    row = session.records[(job_id, "evaluation_failure")]
-    assert row.kind == "failure"
-    assert row.summary == "failed before artifacts"
-    assert [
-        record.kind
-        for record in session.added
-        if isinstance(record, EvaluationArtifactRecord)
-    ] == ["failure"]
+    synthetic = session.records[(job_id, "evaluation_failure")]
+    evaluator = session.records[(job_id, "evaluation_failure_artifact")]
+    assert len(session.records) == 2
+    assert synthetic.kind == "failure"
+    assert synthetic.summary == "failed before artifacts"
+    assert evaluator.kind == "benchmark_json"
+    assert evaluator.artifact_metadata["original_key"] == "evaluation_failure"
 
 
 def test_evaluator_artifacts_replace_prior_key_on_retry(settings: Settings) -> None:

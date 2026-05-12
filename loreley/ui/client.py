@@ -19,7 +19,7 @@ class APIError(HttpCallError):
 
 
 class LoreleyAPIClient:
-    """Small JSON client for the read-only UI API."""
+    """Small JSON client for the UI API."""
 
     def __init__(
         self,

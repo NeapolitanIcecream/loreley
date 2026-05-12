@@ -49,6 +49,20 @@ log = logger.bind(module="worker.job_store")
 
 _WORKER_ID_MAX_CHARS = int(getattr(EvolutionJob.__table__.c.worker_id.type, "length", 128) or 128)
 _WORKER_ID_HASH_CHARS = 12
+_FAILURE_ARTIFACT_KEY = "evaluation_failure"
+
+
+def _unique_evaluation_artifact_record_key(base_key: str, used_keys: set[str]) -> str:
+    base = (base_key or "artifact").strip() or "artifact"
+    for index in range(1, 1000):
+        suffix = "_artifact" if index == 1 else f"_artifact_{index}"
+        stem = base[: max(1, 128 - len(suffix))]
+        candidate = f"{stem}{suffix}"
+        if candidate not in used_keys:
+            return candidate
+    digest = hashlib.sha256(base.encode("utf-8")).hexdigest()[:8]
+    suffix = f"_{digest}"
+    return f"{base[: max(1, 128 - len(suffix))]}{suffix}"
 
 __all__ = [
     "EvolutionJobStore",
@@ -929,17 +943,22 @@ class EvolutionJobStore:
         )
         if not commit_hash:
             return
-        records = [
-            self._failure_artifact_record(
-                job_id=request.job_ctx.job_id,
-                commit_hash=commit_hash,
-                outcome=request.outcome,
-            ),
-            *self._evaluation_artifact_records_for_failure(
+        failure_record = self._failure_artifact_record(
+            job_id=request.job_ctx.job_id,
+            commit_hash=commit_hash,
+            outcome=request.outcome,
+        )
+        materialized_records = self._disambiguate_evaluation_artifact_record_keys(
+            self._evaluation_artifact_records_for_failure(
                 job_id=request.job_ctx.job_id,
                 commit_hash=commit_hash,
                 artifacts=artifact_result.evaluation_artifacts,
             ),
+            reserved_keys={failure_record.key},
+        )
+        records = [
+            failure_record,
+            *materialized_records,
         ]
         self._replace_evaluation_artifact_records(session=session, records=records)
 
@@ -1049,7 +1068,7 @@ class EvolutionJobStore:
             job_id=job_id,
             commit_card_id=None,
             commit_hash=commit_hash,
-            key="evaluation_failure",
+            key=_FAILURE_ARTIFACT_KEY,
             kind="failure",
             mime_type="text/plain",
             label="Evaluation failure",
@@ -1062,6 +1081,26 @@ class EvolutionJobStore:
             diagnostics=[],
             artifact_metadata={"outcome_kind": outcome.outcome_kind},
         )
+
+    @staticmethod
+    def _disambiguate_evaluation_artifact_record_keys(
+        records: Sequence[EvaluationArtifactRecord],
+        *,
+        reserved_keys: set[str],
+    ) -> list[EvaluationArtifactRecord]:
+        used = set(reserved_keys)
+        disambiguated: list[EvaluationArtifactRecord] = []
+        for record in records:
+            original_key = str(record.key or "").strip()
+            if original_key in used:
+                record.key = _unique_evaluation_artifact_record_key(original_key, used)
+                metadata = dict(record.artifact_metadata or {})
+                metadata.setdefault("original_key", original_key)
+                metadata.setdefault("key_collision", "failure_artifact")
+                record.artifact_metadata = metadata
+            used.add(str(record.key))
+            disambiguated.append(record)
+        return disambiguated
 
     @staticmethod
     def _evaluation_artifact_records_for_failure(

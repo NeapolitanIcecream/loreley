@@ -52,6 +52,12 @@ Common variables:
 - `LORELEY_API_WRITE_TOKEN` (required for UI API POST routes)
 - `LORELEY_AGENT_API_TOKEN` (required for `/api/v1/agent/*`)
 
+API preflight reports missing `LORELEY_API_WRITE_TOKEN` and
+`LORELEY_AGENT_API_TOKEN` as warnings. The API can still serve read-only routes
+without them. Protected POST routes return `write_auth_not_configured`, and
+agent routes return `agent_auth_not_configured`, until the matching token is
+set.
+
 ## API Tokens
 
 Loreley does not issue `LORELEY_API_WRITE_TOKEN` or

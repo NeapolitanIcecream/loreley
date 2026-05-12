@@ -787,7 +787,7 @@ def api(
         show_default=True,
     ),
 ) -> None:
-    """Run the read-only UI API (FastAPI via uvicorn)."""
+    """Run the UI API (FastAPI via uvicorn)."""
     settings = _load_settings_or_exit()
     log_level = _get_log_level(ctx)
     _configure_logging_or_exit(settings=settings, role="ui_api", override_level=log_level)

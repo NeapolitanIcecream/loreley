@@ -92,18 +92,20 @@ def test_list_jobs_page_applies_job_kind_filter(monkeypatch: pytest.MonkeyPatch)
     assert "repair" in params.values()
 
 
-def test_list_jobs_page_filters_candidate_fate_before_pagination(
+def test_list_jobs_page_pushes_candidate_fate_filter_into_sql(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Regression: sparse candidate_fate filters must not scan unbounded Python batches."""
+
     now = datetime(2026, 3, 11, tzinfo=timezone.utc)
     rows = [
         SimpleNamespace(id=uuid4(), completed_at=now, created_at=now, status=JobStatus.SUCCEEDED),
-        SimpleNamespace(id=uuid4(), completed_at=now, created_at=now, status=JobStatus.SUCCEEDED),
-        SimpleNamespace(id=uuid4(), completed_at=now, created_at=now, status=JobStatus.SUCCEEDED),
     ]
+    statements: list[object] = []
 
     class _Session:
-        def execute(self, _stmt):
+        def execute(self, stmt):
+            statements.append(stmt)
             return _ExecResult(rows)
 
     @contextmanager
@@ -111,40 +113,25 @@ def test_list_jobs_page_filters_candidate_fate_before_pagination(
         yield _Session()
 
     monkeypatch.setattr(jobs_service, "session_scope", _fake_scope)
-    monkeypatch.setattr(
-        jobs_service,
-        "load_candidate_fates_for_jobs",
-        lambda _rows: {
-            str(rows[0].id): SimpleNamespace(label="candidate_failed"),
-            str(rows[1].id): SimpleNamespace(label="elite_inserted"),
-            str(rows[2].id): SimpleNamespace(label="elite_inserted"),
-        },
-    )
-
     page = jobs_service.list_jobs_page(candidate_fate="elite_inserted", limit=1)
 
-    assert page.items == [rows[1]]
-    assert page.next_cursor is not None
-    assert decode_cursor(page.next_cursor)["job_id"] == str(rows[1].id)
+    assert not hasattr(jobs_service, "load_candidate_fates_for_jobs")
+    assert page.items == rows
+    assert page.next_cursor is None
+    assert len(statements) == 1
+    compiled = statements[0].compile()
+    sql = str(compiled)
+    params = {str(key): value for key, value in compiled.params.items()}
+    assert "candidate_commits" in sql
+    assert "map_elites_archive_cells" in sql
+    assert "elite_inserted" in params.values()
 
 
-def test_list_jobs_filters_evidence_before_offset(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_list_jobs_pushes_evidence_filter_into_sql(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: sparse evidence filters must not scan unbounded Python batches."""
+
     now = datetime(2026, 3, 11, tzinfo=timezone.utc)
     rows = [
-        SimpleNamespace(
-            id=uuid4(),
-            completed_at=now,
-            created_at=now,
-            status=JobStatus.SUCCEEDED,
-            result_commit_hash="c1",
-        ),
-        SimpleNamespace(
-            id=uuid4(),
-            completed_at=now,
-            created_at=now,
-            status=JobStatus.SUCCEEDED,
-            result_commit_hash="c2",
-        ),
         SimpleNamespace(
             id=uuid4(),
             completed_at=now,
@@ -153,9 +140,11 @@ def test_list_jobs_filters_evidence_before_offset(monkeypatch: pytest.MonkeyPatc
             result_commit_hash="c3",
         ),
     ]
+    statements: list[object] = []
 
     class _Session:
-        def execute(self, _stmt):
+        def execute(self, stmt):
+            statements.append(stmt)
             return _ExecResult(rows)
 
     @contextmanager
@@ -163,61 +152,46 @@ def test_list_jobs_filters_evidence_before_offset(monkeypatch: pytest.MonkeyPatc
         yield _Session()
 
     monkeypatch.setattr(jobs_service, "session_scope", _fake_scope)
-    monkeypatch.setattr(
-        jobs_service,
-        "load_evidence_indicators_by_commit_hash",
-        lambda _hashes: {
-            "c1": SimpleNamespace(has_evaluation_evidence=False, agent_visible_evidence_count=0),
-            "c2": SimpleNamespace(has_evaluation_evidence=True, agent_visible_evidence_count=1),
-            "c3": SimpleNamespace(has_evaluation_evidence=True, agent_visible_evidence_count=2),
-        },
-    )
-
     result = jobs_service.list_jobs(evidence="agent_visible", limit=1, offset=1)
 
-    assert result == [rows[2]]
+    assert not hasattr(jobs_service, "load_evidence_indicators_by_commit_hash")
+    assert result == rows
+    assert len(statements) == 1
+    compiled = statements[0].compile()
+    sql = str(compiled)
+    params = {str(key): value for key, value in compiled.params.items()}
+    assert "evaluation_artifacts" in sql
+    assert "agent_visible" in params.values()
+    assert 1 in params.values()
 
 
-def test_list_jobs_projection_filter_uses_bounded_scan_batches(
+def test_list_jobs_projection_filter_uses_one_sql_query_for_large_offsets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    now = datetime(2026, 3, 11, tzinfo=timezone.utc)
-    rows = [
-        SimpleNamespace(
-            id=uuid4(),
-            completed_at=now,
-            created_at=now,
-            status=JobStatus.SUCCEEDED,
-            result_commit_hash="c1",
-        )
-    ]
+    """Regression: offset pagination with sparse projection filters must not batch-scan."""
+
     statements: list[object] = []
 
     class _Session:
         def execute(self, stmt):
             statements.append(stmt)
-            return _ExecResult(rows if len(statements) == 1 else [])
+            return _ExecResult([])
 
     @contextmanager
     def _fake_scope():
         yield _Session()
 
     monkeypatch.setattr(jobs_service, "session_scope", _fake_scope)
-    monkeypatch.setattr(
-        jobs_service,
-        "load_evidence_indicators_by_commit_hash",
-        lambda _hashes: {
-            "c1": SimpleNamespace(has_evaluation_evidence=True, agent_visible_evidence_count=1),
-        },
-    )
-
     result = jobs_service.list_jobs(evidence="has_evidence", limit=1, offset=200_000)
 
+    assert not hasattr(jobs_service, "load_evidence_indicators_by_commit_hash")
     assert result == []
     assert len(statements) == 1
-    params = {str(key): value for key, value in statements[0].compile().params.items()}
-    assert 200_001 not in params.values()
-    assert jobs_service._FILTER_SCAN_BATCH_MIN in params.values()  # noqa: SLF001
+    compiled = statements[0].compile()
+    sql = str(compiled)
+    params = {str(key): value for key, value in compiled.params.items()}
+    assert "evaluation_artifacts" in sql
+    assert 200_000 in params.values()
 
 
 def test_list_commits_page_applies_cursor_without_offset(monkeypatch: pytest.MonkeyPatch) -> None:

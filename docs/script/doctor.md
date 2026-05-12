@@ -29,6 +29,10 @@ This command performs quick preflight checks to reduce onboarding friction befor
   - Unknown backend types fall back to a warning because binary checks are skipped.
 - For UI/API:
   - Warns if UI extras (`fastapi`, `uvicorn`, `streamlit`) are not installed.
+  - Warns when `LORELEY_API_WRITE_TOKEN` is unset. Read-only API routes still
+    work, but UI API POST routes return `write_auth_not_configured`.
+  - Warns when `LORELEY_AGENT_API_TOKEN` is unset. Non-agent routes still work,
+    but `/api/v1/agent/*` returns `agent_auth_not_configured`.
 
 ## Usage
 

@@ -44,6 +44,10 @@ PY
 Use different values for the two tokens. See
 [UI API](../loreley/api.md#api-tokens) for request examples.
 
+Startup preflight reports missing tokens as warnings. The API still starts for
+read-only routes; protected UI API POST routes and `/api/v1/agent/*` return
+configuration errors until their matching token is set.
+
 ## Options
 
 - `--host`: bind host (default: `127.0.0.1`)

@@ -66,7 +66,9 @@ These notes cover changes merged after `v0.7.9-alpha`.
   persisted when possible.
 - `GET /api/v1/jobs` and `GET /api/v1/jobs/page` now support server-side
   `candidate_fate` and `evidence=has_evidence|agent_visible|none` filters. The
-  Streamlit Jobs page passes those filters to the API before pagination.
+  Streamlit Jobs page passes those filters to the API before pagination. The
+  API now applies those filters in SQL, avoiding unbounded application-layer
+  scans for sparse projection filters.
 - Job, commit, archive, and graph API rows now expose candidate fate and
   evaluation evidence indicators when data is available. Job and commit detail
   payloads include non-hidden evaluation artifact metadata and agent feedback.
@@ -79,8 +81,16 @@ These notes cover changes merged after `v0.7.9-alpha`.
 - Direct repair candidate operator actions now persist a durable operator audit
   row with actor, action, reason, and state transition metadata.
 
+## Fixed
+
+- Failure persistence now disambiguates evaluator artifact keys that collide
+  with the worker's synthetic `evaluation_failure` record, so the collision
+  cannot roll back the structured failed-candidate state.
+
 ## Security
 
 - UI API POST routes require `LORELEY_API_WRITE_TOKEN`.
 - The Agent REST facade requires `LORELEY_AGENT_API_TOKEN`; if unset, agent
   routes return `agent_auth_not_configured`.
+- API preflight now reports missing `LORELEY_API_WRITE_TOKEN` and
+  `LORELEY_AGENT_API_TOKEN` as warnings without blocking read-only API startup.

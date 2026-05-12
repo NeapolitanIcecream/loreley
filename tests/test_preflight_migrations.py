@@ -175,6 +175,66 @@ def test_api_preflight_accepts_existing_schema_without_runtime_identity(
     assert CheckResult("instance_metadata", "ok", "present") in results
 
 
+def test_api_preflight_warns_about_missing_control_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: API doctor should surface disabled write/agent surfaces."""
+
+    settings = TestSettings(
+        LORELEY_API_WRITE_TOKEN=None,
+        LORELEY_AGENT_API_TOKEN=None,
+    )
+
+    def append_schema_ok(results: list[CheckResult], **_kwargs) -> None:
+        results.append(CheckResult("database", "ok", "reachable"))
+        results.append(CheckResult("instance_metadata", "ok", "present"))
+
+    monkeypatch.setattr("loreley.preflight._append_database_schema_checks", append_schema_ok)
+    monkeypatch.setattr(
+        "loreley.preflight.check_python_modules",
+        lambda *_args, **_kwargs: CheckResult("ui_api_deps", "ok", "available"),
+    )
+
+    results = preflight_api(settings, timeout_seconds=0.2)
+
+    assert any(
+        item.name == "api_write_token"
+        and item.status == "warn"
+        and "LORELEY_API_WRITE_TOKEN" in item.details
+        for item in results
+    )
+    assert any(
+        item.name == "agent_api_token"
+        and item.status == "warn"
+        and "LORELEY_AGENT_API_TOKEN" in item.details
+        for item in results
+    )
+
+
+def test_api_preflight_reports_configured_control_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = TestSettings(
+        LORELEY_API_WRITE_TOKEN="write-token",
+        LORELEY_AGENT_API_TOKEN="agent-token",
+    )
+
+    def append_schema_ok(results: list[CheckResult], **_kwargs) -> None:
+        results.append(CheckResult("database", "ok", "reachable"))
+        results.append(CheckResult("instance_metadata", "ok", "present"))
+
+    monkeypatch.setattr("loreley.preflight._append_database_schema_checks", append_schema_ok)
+    monkeypatch.setattr(
+        "loreley.preflight.check_python_modules",
+        lambda *_args, **_kwargs: CheckResult("ui_api_deps", "ok", "available"),
+    )
+
+    results = preflight_api(settings, timeout_seconds=0.2)
+
+    assert CheckResult("api_write_token", "ok", "configured") in results
+    assert CheckResult("agent_api_token", "ok", "configured") in results
+
+
 def test_preflight_fails_current_marker_when_current_schema_validation_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -289,7 +349,10 @@ def test_api_preflight_skips_marker_check_when_database_unreachable(
 
     results = preflight_api(settings, timeout_seconds=0.2)
 
-    assert results == [database_result, deps_result]
+    assert database_result in results
+    assert deps_result in results
+    assert any(item.name == "api_write_token" and item.status == "warn" for item in results)
+    assert any(item.name == "agent_api_token" and item.status == "warn" for item in results)
 
 
 @pytest.mark.parametrize("preflight_func", (preflight_scheduler, preflight_worker))
