@@ -168,6 +168,13 @@ class ExpansionCheck:
     reasons: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class ReferenceSpec:
+    label: str
+    commit_hash: str
+    required: bool
+
+
 PHASE_PRESETS: dict[str, PhasePreset] = {
     "smoke": PhasePreset(
         name="smoke",
@@ -1117,60 +1124,87 @@ def _missing_reference_error(exc: Exception) -> str:
     return "optional reference commit is unavailable."
 
 
-def _collect_reference_stats(*, best_commit_hash: str | None, runs: int) -> list[dict[str, Any]]:
-    local_eval = _load_local_eval_module()
-    refs: list[tuple[str, str, bool]] = [
-        ("root", MAPELITES_EXPERIMENT_ROOT_COMMIT, True),
-        ("historical_best", HISTORICAL_BEST_COMMIT, False),
+def _reference_specs(best_commit_hash: str | None) -> list[ReferenceSpec]:
+    refs = [
+        ReferenceSpec("root", MAPELITES_EXPERIMENT_ROOT_COMMIT, True),
+        ReferenceSpec("historical_best", HISTORICAL_BEST_COMMIT, False),
     ]
     if best_commit_hash:
-        refs.append(("current_best", best_commit_hash, True))
+        refs.append(ReferenceSpec("current_best", best_commit_hash, True))
+    return refs
 
+
+def _append_reference_stats(
+    *,
+    local_eval: Any,
+    reference: ReferenceSpec,
+    runs: int,
+    payloads: list[dict[str, Any]],
+    temp_dirs: list[Path],
+) -> bool:
+    try:
+        repo_root = _materialize_solution_for_commit(reference.commit_hash)
+    except Exception as exc:
+        if reference.required:
+            raise
+        payloads.append(
+            _missing_reference_payload(
+                label=reference.label,
+                commit_hash=reference.commit_hash,
+                exc=exc,
+            )
+        )
+        return False
+
+    temp_dirs.append(repo_root)
+    stats = local_eval.evaluate_repo(
+        repo_root=repo_root,
+        runs=runs,
+        target_n=26,
+    )
+    payloads.append(
+        _available_reference_payload(
+            label=reference.label,
+            commit_hash=reference.commit_hash,
+            stats=stats,
+        )
+    )
+    return True
+
+
+def _remove_temp_dirs(paths: Sequence[Path]) -> None:
+    for path in paths:
+        try:
+            for child in sorted(path.glob("**/*"), reverse=True):
+                if child.is_file():
+                    child.unlink()
+                elif child.is_dir():
+                    child.rmdir()
+            path.rmdir()
+        except Exception:
+            continue
+
+
+def _collect_reference_stats(*, best_commit_hash: str | None, runs: int) -> list[dict[str, Any]]:
+    local_eval = _load_local_eval_module()
     seen_hashes: set[str] = set()
     payloads: list[dict[str, Any]] = []
     temp_dirs: list[Path] = []
     try:
-        for label, commit_hash, required in refs:
-            if commit_hash in seen_hashes:
+        for reference in _reference_specs(best_commit_hash):
+            if reference.commit_hash in seen_hashes:
                 continue
-            try:
-                repo_root = _materialize_solution_for_commit(commit_hash)
-            except Exception as exc:
-                if required:
-                    raise
-                payloads.append(
-                    _missing_reference_payload(
-                        label=label,
-                        commit_hash=commit_hash,
-                        exc=exc,
-                    )
-                )
-                continue
-            seen_hashes.add(commit_hash)
-            temp_dirs.append(repo_root)
-            stats = local_eval.evaluate_repo(
-                repo_root=repo_root,
+            collected = _append_reference_stats(
+                local_eval=local_eval,
+                reference=reference,
                 runs=runs,
-                target_n=26,
+                payloads=payloads,
+                temp_dirs=temp_dirs,
             )
-            payloads.append(
-                _available_reference_payload(
-                    label=label,
-                    commit_hash=commit_hash,
-                    stats=stats,
-                )
-            )
+            if collected:
+                seen_hashes.add(reference.commit_hash)
     finally:
-        for path in temp_dirs:
-            try:
-                for child in sorted(path.glob("**/*"), reverse=True):
-                    if child.is_file():
-                        child.unlink()
-                    elif child.is_dir():
-                        child.rmdir()
-                path.rmdir()
-            except Exception:
-                continue
+        _remove_temp_dirs(temp_dirs)
     return payloads
 
 
