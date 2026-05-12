@@ -5,7 +5,8 @@ Planning utilities for Loreley's autonomous worker, responsible for turning comm
 ## Domain types
 
 - **`CommitMetric`**: lightweight value object describing a single evaluation metric (`name`, numeric `value`, optional `unit`, `higher_is_better` flag, and human-readable `summary`).
-- **`CommitPlanningContext`**: shared context for one commit, including the `commit_hash`, bounded `subject` and `change_summary`, optional `trajectory` rollup lines (baseline-aligned unique-path summary), optional `trajectory_meta` counters, optional `key_files`, bounded `highlights`, an optional `evaluation_summary`, a sequence of `CommitMetric` instances, and optional MAP-Elites context (`cell_index`, `objective`, `measures`); normalises all collections to tuples on initialisation.
+- **`CommitEvaluationArtifactFeedback`**: bounded agent-facing projection of one persisted evaluator artifact, including key, kind, optional summary, diagnostics, visibility, size/hash, and an optional `loreley://evaluation-artifacts/...` URI.
+- **`CommitPlanningContext`**: shared context for one commit, including the `commit_hash`, bounded `subject` and `change_summary`, optional `trajectory` rollup lines (baseline-aligned unique-path summary), optional `trajectory_meta` counters, optional `key_files`, bounded `highlights`, an optional `evaluation_summary`, a sequence of `CommitMetric` instances, optional agent-visible `evaluation_artifacts`, and optional MAP-Elites context (`cell_index`, `objective`, `measures`); normalises all collections to tuples on initialisation.
 - **`IterationContext`**: small structured facts about the current sampling stage, including whether the job is a seed job, the sampling strategy label, and a bounded list of iteration facts.
 - **`PlanningAgentRequest`**: input payload for the planning agent containing the `base` commit context, a sequence of `inspirations`, the plain-language global evolution `goal`, and an optional `iteration_context`. List-like fields are normalised to tuples.
 - **`PlanDocument`**: Markdown plan document emitted by the backend (`summary`, full `markdown`, plus best-effort `focus_metrics` and `guardrails` derived from request context).
@@ -35,6 +36,9 @@ unique path `LCA(base,inspiration) -> inspiration` and rendering a bounded summa
 - Planning relies on `loreley.core.worker.agent` for shared backend abstractions (`AgentBackend`, `AgentTask`, `AgentInvocation`) and a shared retry loop (`run_agent_task()`).
 - Backends may return plain-text Markdown directly or structured JSON/JSONL output that wraps the final Markdown payload. The worker unwraps those common formats on a best-effort basis before extracting a short summary.
 - The worker requests a simple Markdown structure using `##` headings for Summary / Steps / Validation, with Notes optional.
+- Evaluation evidence in prompts is untrusted diagnostic input. Only artifacts
+  marked `agent_visible` are projected into planning/coding context, and the
+  projection is bounded by `WORKER_EVALUATION_AGENT_FEEDBACK_*` settings.
 
 ## Planning agent
 

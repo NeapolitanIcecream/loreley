@@ -7,7 +7,7 @@ ORM models and enums for single-tenant experiment databases.
 - **`TimestampMixin`**: adds `created_at` and `updated_at` columns that default to `now()` and automatically update on modification.
 - **`JobStatus`**: string-based `Enum` capturing the lifecycle of an evolution job (`PENDING`, `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED`).
 - **`OperatorTaskStatus`**: string-based `Enum` for UI API background tasks (`PENDING`, `RUNNING`, `SUCCEEDED`, `FAILED`).
-- **`OperatorTaskKind`**: string-based `Enum` for UI API task kinds. The first kind is `BASELINE_ENSURE`.
+- **`OperatorTaskKind`**: string-based `Enum` for UI API task kinds. The first kind is `BASELINE_ENSURE`; direct repair candidate actions use `REPAIR_CANDIDATE_ACTION`.
 
 ## Core models
 
@@ -32,11 +32,25 @@ ORM models and enums for single-tenant experiment databases.
   - Unique constraint on `baseline_key_hash`, which covers the root commit, campaign program hash, evaluator identity, primary metric contract, runtime profile, and effective settings fingerprint.
   - Stores the root commit hash, optional `campaign_program_hash`, evaluator name/version, primary metric name and direction, runtime profile, settings fingerprint, baseline status (`valid`, `failed`, or `degraded`), metric value/unit when valid, and failure details when invalid.
   - Optionally links to the root `CommitCard` and `Metric` rows used for compatibility projections, but archive/status baseline reads should key off `campaign_baselines`.
+- **`CandidateCommit`** (`candidate_commits` table): durable ledger row for a worker-produced candidate commit.
+  - Primary key: `id` (UUID).
+  - Stores the candidate commit hash, parent hash, nearest viable ancestor, produced job, run token, job kind, repair lineage, campaign program hash, publication state, evaluation state, archive state, lifecycle state, and repair-pool counters.
+  - Failed candidates can be present here without a `CommitCard` and without entering the MAP-Elites archive.
+- **`DiagnosticCapsule`** (`diagnostic_capsules` table): sanitized evaluator failure evidence safe for repair prompts.
+  - Stores a bounded JSON payload, policy version, whether the policy passed, and omitted-reason codes.
+  - Links to the candidate, job, and evaluation attempt when available.
+- **`EvaluationAttempt`** (`evaluation_attempts` table): one evaluator outcome observed for a candidate commit.
+  - Stores evaluator identity, campaign program hash, outcome kind, failure stage/kind, repairability, safe failure summary, diagnostic capsule link, artifact policy version, and start/finish timestamps.
 - **`OperatorTask`** (`operator_tasks` table): background task state for the local operator console.
   - Primary key: `id` (UUID).
   - Stores `kind`, `status`, JSONB request/result payloads, an optional error summary, and start/completion timestamps.
   - The first task kind is `baseline_ensure`, created by the UI API and executed with FastAPI background tasks.
+  - Direct repair candidate operator actions write `repair_candidate_action` audit rows with actor, action, reason, and state transition metadata.
   - A partial unique index allows only one active `baseline_ensure` task in `pending` or `running` state.
+- **`AgentAction`** (`agent_actions` table): audited Agent REST facade action record.
+  - Primary key: `id` (UUID).
+  - Stores actor, action type, dry-run flag, expected state, request/result payloads, error code/summary, and completion timestamp.
+  - A partial unique index on `(action_type, idempotency_key)` applies when `idempotency_key` is non-empty, so retried Agent REST requests can replay a prior result instead of executing the underlying write twice.
 - **`EvolutionJob`** (`evolution_jobs` table): represents a single evolution iteration scheduled by the system.
   - Tracks current `status`, base commit, island ID, inspiration commit hashes, size-bounded job spec fields (`goal`, `constraints`, `acceptance_criteria`, `notes`, `tags`, sampling hints), human-readable `plan_summary`, priority, scheduling/processing timestamps, and last error if any.
   - Stores optional `campaign_program_hash` for the campaign contract used to create the job.
@@ -46,6 +60,11 @@ ORM models and enums for single-tenant experiment databases.
   - Stores result/ingestion indexing fields (`result_commit_hash`, ingestion status/attempts/delta/cell index) without embedding large JSON payloads.
 - **`JobArtifacts`** (`job_artifacts` table): filesystem references for cold-path artifacts produced by the worker.
   - Stores paths to planning/coding/evaluation prompts, raw outputs, and logs.
+- **`EvaluationArtifactRecord`** (`evaluation_artifacts` table): evaluator-declared diagnostic artifact metadata materialized by a job.
+  - Primary key: `id` (UUID).
+  - Unique constraint on `(job_id, key)` so retries can replace stable artifact keys for the same job.
+  - Stores job id, optional commit-card id, commit hash, key, kind, MIME type, label, summary, visibility, agent projection, optional storage path, payload size, SHA-256, structured diagnostics, and metadata.
+  - UI API listing and downloads exclude `hidden` artifacts; Agent REST feedback includes only `agent_visible` records.
 - **`CommitChunkSummary`** (`commit_chunk_summaries` table): cached trajectory summaries for commit chains.
   - Primary key: `(start_commit_hash, end_commit_hash, block_size)`.
   - Stores the summarizer model and bounded summary text for rollups.

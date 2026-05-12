@@ -55,12 +55,16 @@ uv run loreley worker
 uv run loreley status
 ```
 
-### Optional UI (read-only)
+### Optional UI and operator console
 
 ```bash
 uv sync --extra ui
 uv run loreley ui
 ```
+
+Most UI pages are read-only. Operator actions such as job retry, baseline
+ensure, and repair-pool updates require `LORELEY_API_WRITE_TOKEN` in the UI API
+process and the Streamlit process.
 
 ![](./docs/assets/ui.jpeg)
 
@@ -69,6 +73,6 @@ uv run loreley ui
 - Local overview: [`docs/index.md`](docs/index.md)
 - Online docs: [NeapolitanIcecream.github.io/loreley](https://NeapolitanIcecream.github.io/loreley/)
 - Quickstart guides: [`docs/loreley/config.md`](docs/loreley/config.md), [`docs/script/run_scheduler.md`](docs/script/run_scheduler.md), [`docs/script/run_worker.md`](docs/script/run_worker.md)
-- Operations: [`docs/script/status.md`](docs/script/status.md), [`docs/script/jobs.md`](docs/script/jobs.md), [`docs/script/job_leases.md`](docs/script/job_leases.md), [`docs/script/config_dump.md`](docs/script/config_dump.md), [`docs/script/archive_stats.md`](docs/script/archive_stats.md)
+- Operations: [`docs/script/status.md`](docs/script/status.md), [`docs/script/db.md`](docs/script/db.md), [`docs/script/jobs.md`](docs/script/jobs.md), [`docs/script/job_leases.md`](docs/script/job_leases.md), [`docs/script/config_dump.md`](docs/script/config_dump.md), [`docs/script/archive_stats.md`](docs/script/archive_stats.md)
 - Upgrade notes: [`docs/releases/unreleased.md`](docs/releases/unreleased.md), [`docs/releases/v0.7.9-alpha.md`](docs/releases/v0.7.9-alpha.md), [`docs/releases/v0.7.8-alpha.md`](docs/releases/v0.7.8-alpha.md)
 - Architecture decisions: [`docs/adr/index.md`](docs/adr/index.md)

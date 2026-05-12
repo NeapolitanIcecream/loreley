@@ -1,6 +1,8 @@
 # Running the UI API
 
-This command starts the **read-only** UI API based on FastAPI.
+This command starts the UI API based on FastAPI. Most routes are read-only.
+Operator write routes and agent control routes can mutate database state and
+require bearer-token auth.
 
 ## Install UI dependencies
 
@@ -19,6 +21,28 @@ databases are initialized automatically, and schema-version-5 databases are
 migrated automatically, only when `DB_AUTO_MIGRATE=true`. With
 `DB_AUTO_MIGRATE=false`, run `uv run loreley db migrate` before starting the
 API.
+
+For schema inspection and validation, see
+[Database schema commands](db.md).
+
+## Auth Tokens
+
+Set `LORELEY_API_WRITE_TOKEN` before using UI API POST routes such as job retry,
+baseline ensure, repair schedule-one, or repair candidate actions.
+
+Set `LORELEY_AGENT_API_TOKEN` before using `/api/v1/agent/*` routes.
+
+Generate each token yourself:
+
+```bash
+python - <<'PY'
+import secrets
+print(secrets.token_urlsafe(32))
+PY
+```
+
+Use different values for the two tokens. See
+[UI API](../loreley/api.md#api-tokens) for request examples.
 
 ## Options
 

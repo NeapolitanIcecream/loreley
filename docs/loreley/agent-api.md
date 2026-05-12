@@ -16,6 +16,16 @@ Set `LORELEY_AGENT_API_TOKEN` before enabling the API. All
 LORELEY_AGENT_API_TOKEN=replace-me
 ```
 
+Loreley does not issue this token. Generate a random value and store it as a
+deployment secret:
+
+```bash
+python - <<'PY'
+import secrets
+print(secrets.token_urlsafe(32))
+PY
+```
+
 Requests must then include:
 
 ```http
@@ -42,7 +52,8 @@ Agent-route errors use this JSON shape:
 Use capabilities before issuing writes:
 
 ```bash
-curl http://127.0.0.1:8000/api/v1/agent/capabilities
+curl -H 'Authorization: Bearer replace-me' \
+  http://127.0.0.1:8000/api/v1/agent/capabilities
 ```
 
 The response includes the facade schema version, database schema version, auth
@@ -86,6 +97,7 @@ Example dry-run:
 ```bash
 curl -X POST http://127.0.0.1:8000/api/v1/agent/actions \
   -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer replace-me' \
   -d '{
     "action_type": "retry_job",
     "dry_run": true,
@@ -126,13 +138,26 @@ Focused v1 expected-state fields:
   `active_repair_job_id`
 - Baseline ensure: `campaign_program_hash`, `baseline_status`
 
+Action parameters:
+
+| Action | Required `params` | Notes |
+| --- | --- | --- |
+| `retry_job` | `{"job_id": "<uuid>"}` | Accepts `FAILED` jobs and `RUNNING` jobs whose lease state is `missing` or `stale`. |
+| `retry_failed_stale_jobs` | `{"all": true}` or `{"limit": N}` | `all` must be a boolean. Use either `all=true` or `limit`, not both. |
+| `baseline_ensure` | `{}` | Creates a UI API operator task. When called through FastAPI it runs as a background task. |
+| `repair_schedule_one` | `{}` | Uses the same repair capacity, token budget, and campaign-baseline gates as scheduler repair dispatch. |
+| `repair_candidate_quarantine` | `{"candidate_id": "<uuid>"}` | Fails with `409` while an active repair job exists for the candidate. |
+| `repair_candidate_discard` | `{"candidate_id": "<uuid>"}` | High-risk action; excludes the candidate from default future sampling. |
+| `repair_candidate_restore` | `{"candidate_id": "<uuid>"}` | Restores the candidate to `lifecycle_status=active` and `repair_state=audit_only`. |
+
 ## Action Audit Records
 
 Every accepted action request writes an `agent_actions` audit record. Fetch it
 with:
 
 ```bash
-curl http://127.0.0.1:8000/api/v1/agent/actions/<action_id>
+curl -H 'Authorization: Bearer replace-me' \
+  http://127.0.0.1:8000/api/v1/agent/actions/<action_id>
 ```
 
 Records include the action id, status, dry-run flag, risk, preconditions,
@@ -143,8 +168,10 @@ result or structured error, and timestamps.
 Use feedback endpoints to retrieve agent-safe evaluation evidence:
 
 ```bash
-curl http://127.0.0.1:8000/api/v1/agent/jobs/<job_id>/feedback
-curl http://127.0.0.1:8000/api/v1/agent/commits/<commit_hash>/feedback
+curl -H 'Authorization: Bearer replace-me' \
+  http://127.0.0.1:8000/api/v1/agent/jobs/<job_id>/feedback
+curl -H 'Authorization: Bearer replace-me' \
+  http://127.0.0.1:8000/api/v1/agent/commits/<commit_hash>/feedback
 ```
 
 These endpoints reuse the existing evaluation artifact helpers and

@@ -49,6 +49,7 @@ With `DB_AUTO_MIGRATE=true` (the default), scheduler startup initializes empty
 databases and runs the same migration under a Postgres advisory lock before
 marker validation. With `DB_AUTO_MIGRATE=false`, scheduler preflight and startup
 require `uv run loreley db migrate` to have completed first.
+For schema inspection and validation, see [Database schema commands](db.md).
 
 ## Options
 

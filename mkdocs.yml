@@ -52,6 +52,7 @@ nav:
   - Operations:
       - Doctor (environment checks): script/doctor.md
       - Status: script/status.md
+      - Database schema commands: script/db.md
       - Managing jobs: script/jobs.md
       - Job lease recovery: script/job_leases.md
       - Archive stats: script/archive_stats.md

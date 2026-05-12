@@ -21,6 +21,7 @@ The table includes:
 - `status`
 - `lease`: derived lease state for the current row
 - `recovery`: the current `recovery_count`
+- `fate`: operator-facing candidate fate label when Loreley can derive one
 - `base_commit`
 - `completed_at`
 
@@ -57,6 +58,11 @@ This command shows the current job status, timestamps, `recovery_count`, and a l
 - `run_token`
 - `heartbeat_at`
 - `lease_expires_at`
+
+It also includes candidate fate fields:
+
+- `candidate_fate_label`
+- `candidate_fate_reason`
 
 ## List stale-failed jobs
 
