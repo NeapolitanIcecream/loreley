@@ -108,6 +108,18 @@ def has_failures(results: Sequence[CheckResult], *, treat_warnings_as_errors: bo
     return bool(warn and treat_warnings_as_errors)
 
 
+_API_STARTUP_NON_BLOCKING_WARNING_NAMES = frozenset({"api_write_token", "agent_api_token"})
+
+
+def has_api_startup_failures(results: Sequence[CheckResult]) -> bool:
+    """Return True when API preflight results should block startup."""
+    return any(
+        item.status == "fail"
+        or (item.status == "warn" and item.name not in _API_STARTUP_NON_BLOCKING_WARNING_NAMES)
+        for item in results
+    )
+
+
 def to_json(results: Sequence[CheckResult]) -> str:
     """Serialize results as JSON."""
     payload = [{"name": r.name, "status": r.status, "details": r.details} for r in results]
@@ -141,6 +153,28 @@ def check_python_modules(
         label,
         "warn",
         f"missing modules: {missing}. {install_hint}",
+    )
+
+
+def _check_api_write_token(settings: Settings) -> CheckResult:
+    if str(settings.loreley_api_write_token or "").strip():
+        return CheckResult("api_write_token", "ok", "configured")
+    return CheckResult(
+        "api_write_token",
+        "warn",
+        "LORELEY_API_WRITE_TOKEN is not set; read-only routes remain available, "
+        "but UI API POST routes return write_auth_not_configured.",
+    )
+
+
+def _check_agent_api_token(settings: Settings) -> CheckResult:
+    if str(settings.loreley_agent_api_token or "").strip():
+        return CheckResult("agent_api_token", "ok", "configured")
+    return CheckResult(
+        "agent_api_token",
+        "warn",
+        "LORELEY_AGENT_API_TOKEN is not set; read-only and operator routes remain available, "
+        "but /api/v1/agent/* routes return agent_auth_not_configured.",
     )
 
 
@@ -823,7 +857,7 @@ def preflight_all(settings: Settings, *, timeout_seconds: float = 2.0) -> list[C
 
 
 def preflight_api(settings: Settings, *, timeout_seconds: float = 2.0) -> list[CheckResult]:
-    """Preflight checks before starting the read-only UI API."""
+    """Preflight checks before starting the UI API."""
     results: list[CheckResult] = []
     _append_database_schema_checks(
         results,
@@ -831,6 +865,8 @@ def preflight_api(settings: Settings, *, timeout_seconds: float = 2.0) -> list[C
         timeout_seconds=timeout_seconds,
         validate_identity=False,
     )
+    results.append(_check_api_write_token(settings))
+    results.append(_check_agent_api_token(settings))
     results.append(
         check_python_modules(
             ("fastapi", "uvicorn"),

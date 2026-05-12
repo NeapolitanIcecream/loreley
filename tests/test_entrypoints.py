@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import signal
 import sys
+from types import SimpleNamespace
 
 from rich.console import Console
 
@@ -146,6 +147,92 @@ def test_run_ui_preflight_warning_blocks_startup_before_spawning_processes(
 
     assert rc == 1
     assert timeouts == [1.25]
+    assert "Preflight failed" in console.export_text()
+
+
+def test_run_api_preflight_token_warnings_do_not_block_read_only_startup(
+    monkeypatch,
+    settings,
+) -> None:
+    """Regression: missing control tokens should warn without disabling read-only routes."""
+
+    run_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    monkeypatch.setattr(
+        entrypoints,
+        "preflight_api",
+        lambda *_args, **_kwargs: [
+            CheckResult(
+                "api_write_token",
+                "warn",
+                "LORELEY_API_WRITE_TOKEN is not set; POST routes are disabled.",
+            ),
+            CheckResult(
+                "agent_api_token",
+                "warn",
+                "LORELEY_AGENT_API_TOKEN is not set; agent routes are disabled.",
+            ),
+        ],
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "uvicorn",
+        SimpleNamespace(run=lambda *args, **kwargs: run_calls.append((args, kwargs))),
+    )
+
+    console = Console(record=True)
+    rc = entrypoints.run_api(
+        settings=settings,
+        console=console,
+        host="127.0.0.1",
+        port=8123,
+        reload=False,
+        preflight=True,
+        preflight_timeout_seconds=0.25,
+    )
+
+    assert rc == 0
+    assert run_calls
+    output = console.export_text()
+    assert "LORELEY_API_WRITE_TOKEN is not set" in output
+    assert "LORELEY_AGENT_API_TOKEN is not set" in output
+    assert "Preflight failed" not in output
+
+
+def test_run_api_preflight_dependency_warnings_block_startup(
+    monkeypatch,
+    settings,
+) -> None:
+    """Regression: API dependency/setup warnings must not be treated like token warnings."""
+
+    run_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    monkeypatch.setattr(
+        entrypoints,
+        "preflight_api",
+        lambda *_args, **_kwargs: [
+            CheckResult("ui_api_deps", "warn", "missing modules: ['fastapi']."),
+        ],
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "uvicorn",
+        SimpleNamespace(run=lambda *args, **kwargs: run_calls.append((args, kwargs))),
+    )
+
+    console = Console(record=True)
+    rc = entrypoints.run_api(
+        settings=settings,
+        console=console,
+        host="127.0.0.1",
+        port=8123,
+        reload=False,
+        preflight=True,
+        preflight_timeout_seconds=0.25,
+    )
+
+    assert rc == 1
+    assert not run_calls
     assert "Preflight failed" in console.export_text()
 
 

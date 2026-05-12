@@ -27,6 +27,7 @@ from rich.console import Console
 
 from loreley.config import Settings
 from loreley.preflight import (
+    has_api_startup_failures,
     has_failures,
     preflight_api,
     preflight_scheduler,
@@ -352,10 +353,10 @@ def run_api(
     preflight_timeout_seconds: float = 2.0,
     uvicorn_log_level: str | None = None,
 ) -> int:
-    """Run the read-only UI API (FastAPI via uvicorn)."""
+    """Run the UI API (FastAPI via uvicorn)."""
     if preflight:
         results = preflight_api(settings, timeout_seconds=preflight_timeout_seconds)
-        if has_failures(results, treat_warnings_as_errors=True):
+        if has_api_startup_failures(results):
             render_results(console, results, title="Loreley UI API preflight")
             ok, warn, fail = (0, 0, 0)
             try:
@@ -367,6 +368,9 @@ def run_api(
             console.log(f"[bold red]Preflight failed[/] ok={ok} warn={warn} fail={fail}")
             console.log("Hint: install UI extras with `uv sync --extra ui` and ensure DB is reachable.")
             return 1
+        warnings = [item for item in results if item.status == "warn"]
+        if warnings:
+            render_results(console, warnings, title="Loreley UI API preflight warnings")
 
     try:
         import uvicorn
@@ -813,8 +817,9 @@ def run_ui(
 ) -> int:
     """Run the Streamlit UI.
 
-    The UI is a read-only dashboard that calls the UI API via HTTP. It does not
-    require direct database connectivity.
+    The UI calls the UI API via HTTP and does not require direct database
+    connectivity. Most pages are read-only; operator pages can send authenticated
+    write requests.
     """
     preflight_rc = _run_ui_preflight(
         settings=settings,
