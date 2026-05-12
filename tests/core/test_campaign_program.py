@@ -6,6 +6,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 import loreley.core.map_elites.sampler as sampler_module
 from loreley.config import Settings
 from loreley.core.campaign_program import (
@@ -68,6 +70,12 @@ Human-only note.
 
 
 def test_circle_packing_campaign_program_declares_v080_contract() -> None:
+    if not CIRCLE_PACKING_PROGRAM.is_file():
+        pytest.skip(
+            "circle-packing example submodule is not initialized; "
+            f"missing {CIRCLE_PACKING_PROGRAM.relative_to(ROOT)}"
+        )
+
     raw = CIRCLE_PACKING_PROGRAM.read_bytes()
 
     snapshot = parse_campaign_program(raw, source_path="loreley.program.md")
