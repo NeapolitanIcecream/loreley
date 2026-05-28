@@ -35,6 +35,7 @@ class _FakeSession:
     seed_count: int
     executed: list[object]
     unfinished_seed_count: int = 0
+    pending_ingestion_seed_count: int = 0
 
     def execute(self, stmt: Any) -> _FakeResult:
         self.executed.append(stmt)
@@ -45,6 +46,14 @@ class _FakeSession:
             raise AssertionError("seed scheduling must not execute select(EvolutionJob)")
 
         descriptions = list(getattr(stmt, "column_descriptions", []))
+        if len(descriptions) == 3:
+            return _FakeResult(
+                (
+                    self.seed_count,
+                    self.unfinished_seed_count,
+                    self.pending_ingestion_seed_count,
+                )
+            )
         if len(descriptions) == 2:
             return _FakeResult((self.seed_count, self.unfinished_seed_count))
         if len(descriptions) == 1:
@@ -280,6 +289,49 @@ def test_seed_scheduling_counts_in_flight_seed_jobs_as_warmup_candidates(
 
     # Act
     created = scheduler._maybe_schedule_seed_jobs(unfinished_jobs=2)
+
+    # Assert
+    assert created == 0
+    assert cast(Any, scheduler.job_scheduler).created_calls == []
+    assert len(executed) == 1
+
+
+def test_seed_scheduling_counts_uningested_succeeded_seed_jobs_as_warmup_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    # Arrange
+    settings = settings.model_copy(
+        update={
+            "mapelites_experiment_root_commit": "deadbeef",
+            "mapelites_seed_population_size": 10,
+            "mapelites_feature_normalization_warmup_samples": 10,
+            "scheduler_max_unfinished_jobs": 4,
+        }
+    )
+    scheduler = _make_scheduler(settings=settings, records=[])
+    scheduler._max_total_jobs = 100
+    scheduler._total_jobs_count = 10
+    cast(Any, scheduler.manager).history_count = 8
+    cast(Any, scheduler.job_scheduler).created_return = 2
+
+    executed: list[object] = []
+    fake_session = _FakeSession(
+        total_jobs=10,
+        seed_count=10,
+        unfinished_seed_count=0,
+        pending_ingestion_seed_count=2,
+        executed=executed,
+    )
+
+    @contextmanager
+    def _session_scope() -> Iterator[_FakeSession]:
+        yield fake_session
+
+    monkeypatch.setattr(scheduler_main, "session_scope", _session_scope)
+
+    # Act
+    created = scheduler._maybe_schedule_seed_jobs(unfinished_jobs=0)
 
     # Assert
     assert created == 0

@@ -13,7 +13,7 @@ from git import Repo
 from git.exc import GitCommandError, InvalidGitRepositoryError, NoSuchPathError
 from loguru import logger
 from rich.console import Console
-from sqlalchemy import and_, case, func, select
+from sqlalchemy import and_, case, func, or_, select
 
 from loreley.config import Settings, get_settings, resolve_default_island_id
 from loreley.core.experiments import ExperimentError, bootstrap_instance
@@ -607,6 +607,18 @@ class EvolutionScheduler:
 
         with session_scope() as session:
             unfinished_seed_statuses = (JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING)
+            pending_ingestion_status = or_(
+                EvolutionJob.ingestion_status.is_(None),
+                EvolutionJob.ingestion_status == "",
+                EvolutionJob.ingestion_status.not_in(("failed", "succeeded", "skipped")),
+            )
+            succeeded_seed_requiring_ingestion = and_(
+                EvolutionJob.is_seed_job.is_(True),
+                EvolutionJob.status == JobStatus.SUCCEEDED,
+                EvolutionJob.result_commit_hash.is_not(None),
+                EvolutionJob.result_commit_hash != "",
+                pending_ingestion_status,
+            )
             stmt = select(
                 func.coalesce(
                     func.sum(case((EvolutionJob.is_seed_job.is_(True), 1), else_=0)),
@@ -627,10 +639,15 @@ class EvolutionScheduler:
                     ),
                     0,
                 ),
+                func.coalesce(
+                    func.sum(case((succeeded_seed_requiring_ingestion, 1), else_=0)),
+                    0,
+                ),
             )
             seed_row = session.execute(stmt).one()
             seed_count = int(seed_row[0])
             unfinished_seed_jobs = int(seed_row[1])
+            pending_ingestion_seed_jobs = int(seed_row[2])
         total_jobs = self._get_total_jobs_count()
         non_seed_jobs_exist = total_jobs > seed_count
 
@@ -666,7 +683,9 @@ class EvolutionScheduler:
         if remaining_total <= 0:
             return 0
 
-        pending_warmup_samples = warmup_sample_count + unfinished_seed_jobs
+        pending_warmup_samples = (
+            warmup_sample_count + unfinished_seed_jobs + pending_ingestion_seed_jobs
+        )
         remaining_seed = seed_population_size - pending_warmup_samples
         to_create_candidates = [remaining_seed, capacity]
         to_create_candidates.append(remaining_total)
