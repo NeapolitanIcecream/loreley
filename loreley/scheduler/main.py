@@ -13,7 +13,7 @@ from git import Repo
 from git.exc import GitCommandError, InvalidGitRepositoryError, NoSuchPathError
 from loguru import logger
 from rich.console import Console
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, func, or_, select
 
 from loreley.config import Settings, get_settings, resolve_default_island_id
 from loreley.core.experiments import ExperimentError, bootstrap_instance
@@ -58,6 +58,13 @@ class _RepoStateStartupApproval:
     root_commit: str
     eligible_files: int
     details: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class _SeedWarmupJobCounts:
+    seed_jobs: int
+    unfinished_seed_jobs: int
+    pending_ingestion_seed_jobs: int
 
 
 class EvolutionScheduler:
@@ -603,16 +610,10 @@ class EvolutionScheduler:
         if records:
             return 0
 
-        from loreley.db.models import EvolutionJob  # Local import to avoid cycles.
-
-        with session_scope() as session:
-            stmt = select(
-                func.coalesce(
-                    func.sum(case((EvolutionJob.is_seed_job.is_(True), 1), else_=0)),
-                    0,
-                ),
-            )
-            seed_count = int(session.execute(stmt).scalar_one())
+        seed_counts = self._count_seed_warmup_job_counts()
+        seed_count = seed_counts.seed_jobs
+        unfinished_seed_jobs = seed_counts.unfinished_seed_jobs
+        pending_ingestion_seed_jobs = seed_counts.pending_ingestion_seed_jobs
         total_jobs = self._get_total_jobs_count()
         non_seed_jobs_exist = total_jobs > seed_count
 
@@ -630,7 +631,10 @@ class EvolutionScheduler:
             int(getattr(self.settings, "mapelites_feature_normalization_warmup_samples", 0) or 0),
         )
         seed_population_size = max(configured_seed_population, warmup_required)
-        if seed_population_size <= 0 or seed_count >= seed_population_size:
+        if seed_population_size <= 0:
+            return 0
+        warmup_sample_count = self.manager.count_pca_history_samples(default_island)
+        if warmup_sample_count >= seed_population_size:
             return 0
 
         max_jobs = max(0, int(self.settings.scheduler_max_unfinished_jobs))
@@ -645,7 +649,10 @@ class EvolutionScheduler:
         if remaining_total <= 0:
             return 0
 
-        remaining_seed = seed_population_size - seed_count
+        pending_warmup_samples = (
+            warmup_sample_count + unfinished_seed_jobs + pending_ingestion_seed_jobs
+        )
+        remaining_seed = seed_population_size - pending_warmup_samples
         to_create_candidates = [remaining_seed, capacity]
         to_create_candidates.append(remaining_total)
         to_create = max(0, min(to_create_candidates))
@@ -660,20 +667,74 @@ class EvolutionScheduler:
         )
         if created:
             self.console.log(
-                "[bold green]Scheduled seed jobs[/] count={} root={} island={}".format(
+                "[bold green]Scheduled seed jobs[/] count={} root={} island={} warmup_samples={}/{}".format(
                     created,
                     root_hash,
                     default_island,
+                    warmup_sample_count,
+                    seed_population_size,
                 ),
             )
             log.info(
-                "Scheduled {} seed jobs from root {} on island {} (unfinished_jobs={})",
+                "Scheduled {} seed jobs from root {} on island {} "
+                "(unfinished_jobs={} warmup_samples={} target_samples={})",
                 created,
                 root_hash,
                 default_island,
                 unfinished_jobs,
+                warmup_sample_count,
+                seed_population_size,
             )
         return created
+
+    def _count_seed_warmup_job_counts(self) -> _SeedWarmupJobCounts:
+        from loreley.db.models import EvolutionJob, JobStatus  # Local import to avoid cycles.
+
+        unfinished_seed_statuses = (JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING)
+        pending_ingestion_status = or_(
+            EvolutionJob.ingestion_status.is_(None),
+            EvolutionJob.ingestion_status == "",
+            EvolutionJob.ingestion_status.not_in(("failed", "succeeded", "skipped")),
+        )
+        succeeded_seed_requiring_ingestion = and_(
+            EvolutionJob.is_seed_job.is_(True),
+            EvolutionJob.status == JobStatus.SUCCEEDED,
+            EvolutionJob.result_commit_hash.is_not(None),
+            EvolutionJob.result_commit_hash != "",
+            pending_ingestion_status,
+        )
+        stmt = select(
+            func.coalesce(
+                func.sum(case((EvolutionJob.is_seed_job.is_(True), 1), else_=0)),
+                0,
+            ),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (
+                            and_(
+                                EvolutionJob.is_seed_job.is_(True),
+                                EvolutionJob.status.in_(unfinished_seed_statuses),
+                            ),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ),
+                0,
+            ),
+            func.coalesce(
+                func.sum(case((succeeded_seed_requiring_ingestion, 1), else_=0)),
+                0,
+            ),
+        )
+        with session_scope() as session:
+            row = session.execute(stmt).one()
+        return _SeedWarmupJobCounts(
+            seed_jobs=int(row[0]),
+            unfinished_seed_jobs=int(row[1]),
+            pending_ingestion_seed_jobs=int(row[2]),
+        )
 
     def _find_root_commit_for_experiment_chain(
         self,
