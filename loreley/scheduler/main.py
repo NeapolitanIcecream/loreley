@@ -630,7 +630,10 @@ class EvolutionScheduler:
             int(getattr(self.settings, "mapelites_feature_normalization_warmup_samples", 0) or 0),
         )
         seed_population_size = max(configured_seed_population, warmup_required)
-        if seed_population_size <= 0 or seed_count >= seed_population_size:
+        if seed_population_size <= 0:
+            return 0
+        warmup_sample_count = self.manager.count_pca_history_samples(default_island)
+        if warmup_sample_count >= seed_population_size:
             return 0
 
         max_jobs = max(0, int(self.settings.scheduler_max_unfinished_jobs))
@@ -645,7 +648,7 @@ class EvolutionScheduler:
         if remaining_total <= 0:
             return 0
 
-        remaining_seed = seed_population_size - seed_count
+        remaining_seed = seed_population_size - warmup_sample_count
         to_create_candidates = [remaining_seed, capacity]
         to_create_candidates.append(remaining_total)
         to_create = max(0, min(to_create_candidates))
@@ -660,18 +663,23 @@ class EvolutionScheduler:
         )
         if created:
             self.console.log(
-                "[bold green]Scheduled seed jobs[/] count={} root={} island={}".format(
+                "[bold green]Scheduled seed jobs[/] count={} root={} island={} warmup_samples={}/{}".format(
                     created,
                     root_hash,
                     default_island,
+                    warmup_sample_count,
+                    seed_population_size,
                 ),
             )
             log.info(
-                "Scheduled {} seed jobs from root {} on island {} (unfinished_jobs={})",
+                "Scheduled {} seed jobs from root {} on island {} "
+                "(unfinished_jobs={} warmup_samples={} target_samples={})",
                 created,
                 root_hash,
                 default_island,
                 unfinished_jobs,
+                warmup_sample_count,
+                seed_population_size,
             )
         return created
 

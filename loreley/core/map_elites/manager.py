@@ -302,6 +302,12 @@ class MapElitesManager:
             effective_island,
         )
 
+    def count_pca_history_samples(self, island_id: str | None = None) -> int:
+        """Return the number of non-empty PCA history samples for an island."""
+        effective_island = island_id or self._default_island
+        state = self._ensure_island(effective_island)
+        return sum(1 for entry in state.history if entry.dimensions > 0)
+
     def get_cell_commits(self, island_id: str | None = None) -> dict[int, str]:
         """Return a lightweight mapping of occupied cell indices to commit hashes."""
         effective_island = island_id or self._default_island

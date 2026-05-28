@@ -52,9 +52,13 @@ class _FakeSession:
 @dataclass
 class _DummyManager:
     records: list[object]
+    history_count: int = 0
 
     def get_records(self, _island_id: str) -> list[object]:
         return self.records
+
+    def count_pca_history_samples(self, _island_id: str | None = None) -> int:
+        return self.history_count
 
 
 @dataclass
@@ -173,15 +177,59 @@ def test_seed_scheduling_creates_limited_jobs_without_loading_rows(
     created = scheduler._maybe_schedule_seed_jobs(unfinished_jobs=1)
 
     # Assert
-    # remaining_seed = 10 - 2 = 8
+    # remaining_seed = 10 - 0 = 10
     # capacity = 4 - 1 = 3
     # remaining_total = 20 - 2 = 18
-    # to_create = min(8, 3, 18) = 3
+    # to_create = min(10, 3, 18) = 3
     assert created == 3
     assert cast(Any, scheduler.job_scheduler).created_calls == [
         {
             "base_commit_hash": "deadbeef",
             "count": 3,
+            "island_id": "main",
+            "refresh_campaign_program": False,
+        }
+    ]
+    assert len(executed) == 1
+
+
+def test_seed_scheduling_replenishes_failed_seed_jobs_until_warmup_samples_exist(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    # Arrange
+    settings = settings.model_copy(
+        update={
+            "mapelites_experiment_root_commit": "deadbeef",
+            "mapelites_seed_population_size": 10,
+            "mapelites_feature_normalization_warmup_samples": 10,
+            "scheduler_max_unfinished_jobs": 4,
+        }
+    )
+    scheduler = _make_scheduler(settings=settings, records=[])
+    scheduler._max_total_jobs = 100
+    scheduler._total_jobs_count = 10
+    cast(Any, scheduler.manager).history_count = 6
+    cast(Any, scheduler.job_scheduler).created_return = 4
+
+    executed: list[object] = []
+    fake_session = _FakeSession(total_jobs=10, seed_count=10, executed=executed)
+
+    @contextmanager
+    def _session_scope() -> Iterator[_FakeSession]:
+        yield fake_session
+
+    monkeypatch.setattr(scheduler_main, "session_scope", _session_scope)
+
+    # Act
+    created = scheduler._maybe_schedule_seed_jobs(unfinished_jobs=0)
+
+    # Assert
+    assert created == 4
+    assert cast(Any, scheduler.job_scheduler).created_calls == [
+        {
+            "base_commit_hash": "deadbeef",
+            "count": 4,
             "island_id": "main",
             "refresh_campaign_program": False,
         }
