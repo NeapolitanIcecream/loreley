@@ -12,6 +12,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import SQLAlchemyError
 
 from loreley.core.contracts import clamp_text, normalize_single_line
+from loreley.core.usage import persist_usage_events
 from loreley.core.worker.artifacts import (
     FailureJobArtifactWriteRequest,
     FixedJobArtifactPaths,
@@ -509,6 +510,12 @@ class EvolutionJobStore:
                         outcome=request.evaluation_outcome,
                     )
                 )
+                self._persist_agent_usage(
+                    session=session,
+                    job_ctx=request.job_ctx,
+                    plan=request.plan,
+                    coding=request.coding,
+                )
         except SQLAlchemyError as exc:
             raise EvolutionWorkerError(
                 f"Failed to persist results for job {request.job_ctx.job_id}: {exc}"
@@ -632,6 +639,36 @@ class EvolutionJobStore:
                     higher_is_better=metric.higher_is_better,
                     details=dict(metric.details or {}),
                 )
+            )
+
+    def _persist_agent_usage(
+        self,
+        *,
+        session: Any,
+        job_ctx: "JobContext",
+        plan: PlanningAgentResponse | None,
+        coding: CodingAgentResponse | None,
+    ) -> None:
+        events = []
+        if plan is not None:
+            events.extend(plan.usage_events or ())
+        if coding is not None:
+            events.extend(coding.usage_events or ())
+        if not events:
+            return
+        inserted = persist_usage_events(
+            [
+                event.with_context(job_id=job_ctx.job_id, run_token=job_ctx.run_token)
+                for event in events
+            ],
+            session=session,
+            settings=self.settings,
+        )
+        if inserted:
+            log.info(
+                "Persisted {} agent LLM usage event(s) for job {}",
+                inserted,
+                job_ctx.job_id,
             )
 
     @staticmethod
@@ -838,6 +875,12 @@ class EvolutionJobStore:
                     request=request,
                     commit_hash=commit_hash,
                     artifact_result=artifact_result,
+                )
+                self._persist_agent_usage(
+                    session=session,
+                    job_ctx=request.job_ctx,
+                    plan=request.plan,
+                    coding=request.coding,
                 )
                 self._mark_job_row_failed(job=job, message=request.message)
                 self._update_candidate_after_failure(

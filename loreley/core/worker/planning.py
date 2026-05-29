@@ -6,12 +6,14 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Sequence
+from uuid import UUID
 
 from loguru import logger
 from rich.console import Console
 
 from loreley.config import Settings, get_settings
 from loreley.core.contracts import clamp_text, normalize_single_line
+from loreley.core.usage import LLMUsageEventPayload
 from loreley.core.worker.agent import (
     AgentBackend,
     AgentInvocation,
@@ -180,6 +182,8 @@ class PlanningAgentRequest:
     constraints: Sequence[str] = field(default_factory=tuple)
     acceptance_criteria: Sequence[str] = field(default_factory=tuple)
     iteration_context: IterationContext | None = None
+    job_id: UUID | None = None
+    run_token: UUID | None = None
 
     def __post_init__(self) -> None:
         self.inspirations = tuple(self.inspirations or ())
@@ -559,6 +563,7 @@ class PlanningAgentResponse:
     stderr: str
     attempts: int
     duration_seconds: float
+    usage_events: tuple[LLMUsageEventPayload, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True, slots=True)
@@ -908,6 +913,7 @@ class PlanningAgent(TruncationMixin):
                 extra_env=dict(self.settings.worker_planning_extra_env or {}),
                 error_cls=PlanningError,
                 full_auto=False,
+                usage_tracking_enabled=self.settings.llm_usage_tracking_enabled,
             )
 
     def plan(
@@ -920,7 +926,13 @@ class PlanningAgent(TruncationMixin):
         worktree = Path(working_dir).expanduser().resolve()
         prompt = self._render_prompt(request)
 
-        task = AgentTask(name="planning", prompt=prompt)
+        task = AgentTask(
+            name="planning",
+            prompt=prompt,
+            job_id=request.job_id,
+            run_token=request.run_token,
+            phase="planning",
+        )
 
         def _debug_hook(
             attempt: int,
@@ -988,6 +1000,7 @@ class PlanningAgent(TruncationMixin):
             stderr=invocation.stderr,
             attempts=attempts,
             duration_seconds=invocation.duration_seconds,
+            usage_events=tuple(invocation.usage_events or ()),
         )
 
     def _render_prompt(self, request: PlanningAgentRequest) -> str:

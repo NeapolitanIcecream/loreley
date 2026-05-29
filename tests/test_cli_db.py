@@ -43,7 +43,10 @@ def test_db_current_prints_script_friendly_status(
     captured = capsys.readouterr()
 
     assert code == 0
-    assert captured.out.strip() == "schema_version=5 target=12 state=migratable needs_migration=true"
+    assert captured.out.strip() == (
+        f"schema_version=5 target={INSTANCE_SCHEMA_VERSION} state=migratable "
+        "needs_migration=true"
+    )
 
 
 def test_db_current_json_includes_schema_state(
@@ -54,7 +57,7 @@ def test_db_current_json_includes_schema_state(
     monkeypatch.setattr(
         "loreley.db.migrations.runner.describe_schema",
         lambda **_kwargs: SchemaStatus(
-            schema_version=12,
+            schema_version=INSTANCE_SCHEMA_VERSION,
             target_version=INSTANCE_SCHEMA_VERSION,
             state="current",
             needs_migration=False,
@@ -66,7 +69,7 @@ def test_db_current_json_includes_schema_state(
     payload = json.loads(capsys.readouterr().out)
 
     assert code == 0
-    assert payload["schema_version"] == 12
+    assert payload["schema_version"] == INSTANCE_SCHEMA_VERSION
     assert payload["needs_migration"] is False
 
 
@@ -94,7 +97,7 @@ def test_db_current_json_stdout_stays_json_with_real_setup_side_effects(
     monkeypatch.setattr(
         "loreley.db.migrations.runner.describe_schema",
         lambda **_kwargs: SchemaStatus(
-            schema_version=12,
+            schema_version=INSTANCE_SCHEMA_VERSION,
             target_version=INSTANCE_SCHEMA_VERSION,
             state="current",
             needs_migration=False,
@@ -108,9 +111,9 @@ def test_db_current_json_stdout_stays_json_with_real_setup_side_effects(
     expected = {
         "detail": "schema is current",
         "needs_migration": False,
-        "schema_version": 12,
+        "schema_version": INSTANCE_SCHEMA_VERSION,
         "state": "current",
-        "target": 12,
+        "target": INSTANCE_SCHEMA_VERSION,
     }
     assert code == 0
     assert captured.out == f"{json.dumps(expected, ensure_ascii=False, sort_keys=True)}\n"
@@ -137,14 +140,14 @@ def test_db_migrate_runs_explicit_migration_even_when_auto_disabled(
         return MigrationResult(
             from_version=5,
             to_version=INSTANCE_SCHEMA_VERSION,
-            applied_versions=(6, 7, 8, 9, 10, 11, 12),
+            applied_versions=(6, 7, 8, 9, 10, 11, 12, 13),
         )
 
     monkeypatch.setattr("loreley.db.migrations.runner.ensure_schema_current", fake_ensure)
     monkeypatch.setattr(
         "loreley.db.migrations.runner.validate_database_schema",
         lambda **_kwargs: SchemaStatus(
-            schema_version=12,
+            schema_version=INSTANCE_SCHEMA_VERSION,
             target_version=INSTANCE_SCHEMA_VERSION,
             state="current",
             needs_migration=False,
@@ -156,7 +159,10 @@ def test_db_migrate_runs_explicit_migration_even_when_auto_disabled(
 
     assert code == 0
     assert calls[0]["auto_migrate"] is True
-    assert "from=5 to=12 applied=6,7,8,9,10,11,12 fresh=false" in captured.out
+    assert (
+        f"from=5 to={INSTANCE_SCHEMA_VERSION} applied=6,7,8,9,10,11,12,13 fresh=false"
+        in captured.out
+    )
 
 
 def test_db_validate_reports_current_schema(
@@ -167,7 +173,7 @@ def test_db_validate_reports_current_schema(
     monkeypatch.setattr(
         "loreley.db.migrations.runner.validate_database_schema",
         lambda **_kwargs: SchemaStatus(
-            schema_version=12,
+            schema_version=INSTANCE_SCHEMA_VERSION,
             target_version=INSTANCE_SCHEMA_VERSION,
             state="current",
             needs_migration=False,
@@ -178,4 +184,6 @@ def test_db_validate_reports_current_schema(
     captured = capsys.readouterr()
 
     assert code == 0
-    assert captured.out.strip() == "valid schema_version=12 target=12"
+    assert captured.out.strip() == (
+        f"valid schema_version={INSTANCE_SCHEMA_VERSION} target={INSTANCE_SCHEMA_VERSION}"
+    )

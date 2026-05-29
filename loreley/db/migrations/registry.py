@@ -31,6 +31,7 @@ def _load_migrations() -> tuple[SchemaMigration, ...]:
         v0010_operator_tasks,
         v0011_operator_active_baseline_guard,
         v0012_agent_actions_and_cleanup,
+        v0013_llm_usage_events,
     )
 
     return (
@@ -41,6 +42,7 @@ def _load_migrations() -> tuple[SchemaMigration, ...]:
         v0010_operator_tasks.MIGRATION,
         v0011_operator_active_baseline_guard.MIGRATION,
         v0012_agent_actions_and_cleanup.MIGRATION,
+        v0013_llm_usage_events.MIGRATION,
     )
 
 

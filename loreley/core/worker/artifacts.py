@@ -8,6 +8,7 @@ persist only their paths in the database.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from decimal import Decimal
 import hashlib
 import json
 import mimetypes
@@ -631,6 +632,8 @@ def _write_failure_fixed_job_artifacts(
                     "stderr": request.plan.stderr,
                     "attempts": request.plan.attempts,
                     "duration_seconds": request.plan.duration_seconds,
+                    "usage_events": _usage_event_summaries(request.plan.usage_events),
+                    "usage_summary": _usage_summary(request.plan.usage_events),
                 },
             },
         )
@@ -658,6 +661,8 @@ def _write_failure_fixed_job_artifacts(
                     "stderr": request.coding.stderr,
                     "attempts": request.coding.attempts,
                     "duration_seconds": request.coding.duration_seconds,
+                    "usage_events": _usage_event_summaries(request.coding.usage_events),
+                    "usage_summary": _usage_summary(request.coding.usage_events),
                 },
             },
         )
@@ -744,6 +749,8 @@ def _write_fixed_job_artifacts(
                 "stderr": request.plan.stderr,
                 "attempts": request.plan.attempts,
                 "duration_seconds": request.plan.duration_seconds,
+                "usage_events": _usage_event_summaries(request.plan.usage_events),
+                "usage_summary": _usage_summary(request.plan.usage_events),
             },
         },
     )
@@ -768,6 +775,8 @@ def _write_fixed_job_artifacts(
                 "stderr": request.coding.stderr,
                 "attempts": request.coding.attempts,
                 "duration_seconds": request.coding.duration_seconds,
+                "usage_events": _usage_event_summaries(request.coding.usage_events),
+                "usage_summary": _usage_summary(request.coding.usage_events),
             },
         },
     )
@@ -818,3 +827,72 @@ def _write_evaluation_result_artifacts(
     )
     _write_text(evaluation_logs, "\n".join(str(line) for line in request.evaluation.logs))
     return evaluation_artifacts, validation_warnings
+
+
+def _usage_event_summaries(events: Sequence[object]) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
+    for event in events or ():
+        as_artifact_dict = getattr(event, "as_artifact_dict", None)
+        if callable(as_artifact_dict):
+            summaries.append(as_artifact_dict())
+    return summaries
+
+
+_USAGE_SUMMARY_TOKEN_FIELDS = (
+    "input_tokens",
+    "cached_input_tokens",
+    "cache_write_tokens",
+    "output_tokens",
+    "reasoning_output_tokens",
+    "total_tokens",
+)
+
+
+def _usage_summary(events: Sequence[object]) -> dict[str, Any]:
+    materialized = tuple(events or ())
+    summary = _empty_usage_summary(event_count=len(materialized))
+    cost_total = Decimal("0")
+    priced_count = 0
+    for event in materialized:
+        _add_usage_token_counts(summary, event)
+        cost = _usage_cost_or_none(event)
+        if cost is not None:
+            cost_total += cost
+            priced_count += 1
+        _add_usage_cost_source_count(summary, event)
+    if priced_count:
+        summary["cost_usd"] = str(cost_total)
+    return summary
+
+
+def _empty_usage_summary(*, event_count: int) -> dict[str, Any]:
+    summary = {field_name: 0 for field_name in _USAGE_SUMMARY_TOKEN_FIELDS}
+    summary.update(
+        {
+            "event_count": event_count,
+            "cost_usd": None,
+            "unpriced_count": 0,
+            "unavailable_count": 0,
+        }
+    )
+    return summary
+
+
+def _add_usage_token_counts(summary: dict[str, Any], event: object) -> None:
+    for field_name in _USAGE_SUMMARY_TOKEN_FIELDS:
+        summary[field_name] += int(getattr(event, field_name, 0) or 0)
+
+
+def _usage_cost_or_none(event: object) -> Decimal | None:
+    cost = getattr(event, "cost_usd", None)
+    if cost is None:
+        return None
+    return cost if isinstance(cost, Decimal) else Decimal(str(cost))
+
+
+def _add_usage_cost_source_count(summary: dict[str, Any], event: object) -> None:
+    cost_source = str(getattr(event, "cost_source", "") or "")
+    if cost_source == "unpriced":
+        summary["unpriced_count"] += 1
+    elif cost_source == "unavailable":
+        summary["unavailable_count"] += 1

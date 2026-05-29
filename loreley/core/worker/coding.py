@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Sequence
+from uuid import UUID
 
 from git import Repo
 from git.exc import InvalidGitRepositoryError, NoSuchPathError
@@ -14,6 +15,7 @@ from loguru import logger
 from rich.console import Console
 
 from loreley.config import Settings, get_settings
+from loreley.core.usage import LLMUsageEventPayload
 from loreley.core.worker.agent import (
     AgentBackend,
     AgentInvocation,
@@ -77,6 +79,8 @@ class CodingAgentRequest:
     acceptance_criteria: Sequence[str] = field(default_factory=tuple)
     iteration_context: IterationContext | None = None
     additional_notes: Sequence[str] = field(default_factory=tuple)
+    job_id: UUID | None = None
+    run_token: UUID | None = None
 
     def __post_init__(self) -> None:
         self.goal = (self.goal or "").strip()
@@ -99,6 +103,7 @@ class CodingAgentResponse:
     stderr: str
     attempts: int
     duration_seconds: float
+    usage_events: tuple[LLMUsageEventPayload, ...] = field(default_factory=tuple)
 
 
 class CodingAgent(TruncationMixin):
@@ -132,6 +137,7 @@ class CodingAgent(TruncationMixin):
                 extra_env=dict(self.settings.worker_coding_extra_env or {}),
                 error_cls=CodingError,
                 full_auto=True,
+                usage_tracking_enabled=self.settings.llm_usage_tracking_enabled,
             )
 
     def implement(
@@ -145,7 +151,13 @@ class CodingAgent(TruncationMixin):
         prompt = self._render_prompt(request, worktree=worktree)
         baseline_status = self._snapshot_worktree_state(worktree)
 
-        task = AgentTask(name="coding", prompt=prompt)
+        task = AgentTask(
+            name="coding",
+            prompt=prompt,
+            job_id=request.job_id,
+            run_token=request.run_token,
+            phase="coding",
+        )
 
         class _NoRepoChangeError(CodingError):
             """Raised when a coding attempt does not produce repository changes."""
@@ -231,6 +243,7 @@ class CodingAgent(TruncationMixin):
             stderr=invocation.stderr,
             attempts=attempts,
             duration_seconds=invocation.duration_seconds,
+            usage_events=tuple(invocation.usage_events or ()),
         )
 
     # Internal helpers --------------------------------------------------

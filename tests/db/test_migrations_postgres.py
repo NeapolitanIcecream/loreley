@@ -365,7 +365,7 @@ def _insert_v5_fixture_rows(
     conn.execute(text(_V5_INSERT_ARCHIVE_CELL))
 
 
-def test_fresh_database_path_seeds_schema_version_12(
+def test_fresh_database_path_seeds_current_schema_version(
     postgres_engine: Engine,
     migration_settings: TestSettings,
 ) -> None:
@@ -377,17 +377,18 @@ def test_fresh_database_path_seeds_schema_version_12(
     )
 
     assert result.fresh_database is True
-    assert result.to_version == 12
+    assert result.to_version == INSTANCE_SCHEMA_VERSION
     with postgres_engine.connect() as conn:
         version = conn.execute(text("SELECT schema_version FROM instance_metadata WHERE id = 1")).scalar_one()
         audit = conn.execute(
-            text("SELECT name FROM loreley_schema_migrations WHERE version = 12")
+            text("SELECT name FROM loreley_schema_migrations WHERE version = :version"),
+            {"version": INSTANCE_SCHEMA_VERSION},
         ).scalar_one()
-    assert version == 12
+    assert version == INSTANCE_SCHEMA_VERSION
     assert audit == "fresh_create_all"
 
 
-def test_v5_fixture_migrates_to_v12_preserves_rows_and_backfills_candidates(
+def test_v5_fixture_migrates_to_current_preserves_rows_and_backfills_candidates(
     postgres_engine: Engine,
     migration_settings: TestSettings,
 ) -> None:
@@ -401,14 +402,17 @@ def test_v5_fixture_migrates_to_v12_preserves_rows_and_backfills_candidates(
     )
 
     assert result.from_version == 5
-    assert result.applied_versions == (6, 7, 8, 9, 10, 11, 12)
+    assert result.applied_versions == (6, 7, 8, 9, 10, 11, 12, 13)
     validate_database_schema(
         engine=postgres_engine,
         settings=migration_settings,
         target_version=INSTANCE_SCHEMA_VERSION,
     )
     with postgres_engine.connect() as conn:
-        assert conn.execute(text("SELECT schema_version FROM instance_metadata WHERE id = 1")).scalar_one() == 12
+        assert (
+            conn.execute(text("SELECT schema_version FROM instance_metadata WHERE id = 1")).scalar_one()
+            == INSTANCE_SCHEMA_VERSION
+        )
         assert conn.execute(text("SELECT count(*) FROM commit_cards")).scalar_one() == 2
         assert conn.execute(text("SELECT count(*) FROM metrics")).scalar_one() == 1
         assert conn.execute(text("SELECT count(*) FROM evolution_jobs")).scalar_one() == 3
@@ -459,7 +463,7 @@ def test_v5_fixture_migrates_to_v12_preserves_rows_and_backfills_candidates(
     assert candidates["commit-b"]["repair_state"] == "audit_only"
     assert candidates["commit-b"]["repair_source_candidate_id"] is None
     assert candidates["commit-b"]["campaign_program_hash"] is None
-    assert audit_versions == [6, 7, 8, 9, 10, 11, 12]
+    assert audit_versions == [6, 7, 8, 9, 10, 11, 12, 13]
 
 
 def test_migration_is_idempotent_after_v5_upgrade(

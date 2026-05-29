@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
+from uuid import UUID
+
+from loreley.core.usage import LLMUsageEventPayload
 
 
 @dataclass(slots=True, frozen=True)
@@ -13,6 +16,7 @@ class AgentInvocation:
     stdout: str
     stderr: str
     duration_seconds: float
+    usage_events: tuple[LLMUsageEventPayload, ...] = ()
 
 
 @dataclass(slots=True)
@@ -21,6 +25,10 @@ class AgentTask:
 
     name: str
     prompt: str
+    job_id: UUID | None = None
+    run_token: UUID | None = None
+    phase: str | None = None
+    attempt: int | None = None
 
 
 class AgentBackend(Protocol):
@@ -40,4 +48,3 @@ __all__ = [
     "AgentInvocation",
     "AgentTask",
 ]
-

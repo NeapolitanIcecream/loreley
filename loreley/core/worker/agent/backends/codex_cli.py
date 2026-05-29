@@ -12,6 +12,7 @@ from time import monotonic
 from loguru import logger
 
 from loreley.config import get_settings
+from loreley.core.usage import codex_usage_event_from_jsonl, unavailable_usage_event
 from loreley.core.worker.agent.contracts import AgentInvocation, AgentTask
 from loreley.core.worker.agent.utils import truncate_text, validate_workdir
 
@@ -42,6 +43,7 @@ class CodexCliBackend:
     ephemeral: bool = True
     capture_last_message: bool = True
     isolate_home: bool = True
+    usage_tracking_enabled: bool = True
 
     def run(
         self,
@@ -99,6 +101,7 @@ class CodexCliBackend:
         raw_stdout = (result.stdout or "").strip()
         stderr = (result.stderr or "").strip()
         stdout = captured_last_message or raw_stdout
+        usage_events = self._usage_events_from_stdout(raw_stdout=raw_stdout, task=task)
 
         log.debug(
             "Codex CLI finished (exit_code={}, duration={:.2f}s) for task={}",
@@ -118,9 +121,12 @@ class CodexCliBackend:
                 if snippet and (label != "last_message" or snippet != truncate_text(raw_stdout, limit=400)):
                     details.append(f"{label}: {snippet}")
             detail_suffix = f" {' '.join(details)}" if details else ""
-            raise self.error_cls(
+            error = self.error_cls(
                 f"codex exec failed with exit code {result.returncode}.{detail_suffix}",
             )
+            if usage_events:
+                setattr(error, "usage_events", usage_events)
+            raise error
 
         if captured_last_message and raw_stdout and captured_last_message != raw_stdout:
             log.debug(
@@ -142,6 +148,7 @@ class CodexCliBackend:
             stdout=stdout,
             stderr=stderr,
             duration_seconds=duration,
+            usage_events=usage_events,
         )
 
     def _build_command(
@@ -172,10 +179,54 @@ class CodexCliBackend:
         if self.color:
             command.extend(["--color", self.color])
 
+        if self.usage_tracking_enabled:
+            command.append("--json")
+
         if output_last_message_path is not None:
             command.extend(["--output-last-message", str(output_last_message_path)])
 
         return command
+
+    def _usage_events_from_stdout(self, *, raw_stdout: str, task: AgentTask) -> tuple:
+        if not self.usage_tracking_enabled:
+            return ()
+        phase = task.phase or task.name or ""
+        external_id = self._usage_external_id(task, phase=phase)
+        event = codex_usage_event_from_jsonl(
+            raw_stdout,
+            phase=phase,
+            job_id=task.job_id,
+            run_token=task.run_token,
+            model=self.model,
+            settings=get_settings(),
+            external_usage_id=external_id,
+        )
+        if event is not None:
+            return (event,)
+        if task.job_id is None or task.run_token is None:
+            return ()
+        return (
+            unavailable_usage_event(
+                source="codex_cli",
+                phase=phase,
+                provider="openai",
+                model=self.model or "",
+                api_surface="codex_exec",
+                job_id=task.job_id,
+                run_token=task.run_token,
+                reason="codex exec --json did not emit a token_count event",
+                external_usage_id=external_id,
+            ),
+        )
+
+    @staticmethod
+    def _usage_external_id(task: AgentTask, *, phase: str) -> str:
+        if task.job_id is None or task.run_token is None or not phase:
+            return ""
+        external_id = f"codex:{task.job_id}:{task.run_token}:{phase}"
+        if task.attempt is not None:
+            external_id = f"{external_id}:attempt:{max(1, int(task.attempt))}"
+        return external_id
 
     def _read_last_message(self, path: Path | None) -> str:
         if path is None:
@@ -240,6 +291,7 @@ def codex_planning_backend() -> CodexCliBackend:
         error_cls=PlanningError,
         full_auto=False,
         sandbox="read-only",
+        usage_tracking_enabled=settings.llm_usage_tracking_enabled,
     )
 
 
@@ -258,6 +310,7 @@ def codex_coding_backend() -> CodexCliBackend:
         error_cls=CodingError,
         full_auto=True,
         sandbox="workspace-write",
+        usage_tracking_enabled=settings.llm_usage_tracking_enabled,
     )
 
 

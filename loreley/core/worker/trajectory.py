@@ -27,6 +27,7 @@ from tenacity import RetryError
 from loreley.config import Settings, get_settings
 from loreley.core.openai_auth import DynamicOpenAIKeyUnavailableError, get_internal_openai_api_key
 from loreley.core.openai_retry import openai_retrying, retry_error_details
+from loreley.core.usage import normalize_openai_usage_event, record_usage_event
 from loreley.db.models import CommitCard, CommitChunkSummary
 
 log = logger.bind(module="worker.trajectory")
@@ -872,6 +873,7 @@ class _ChunkSummarizer:
                             max_output_tokens=self._max_tokens,
                             instructions=instructions,
                         )
+                        self._record_usage(response, api_surface="responses")
                         text = (response.output_text or "").strip()
                     else:
                         response = client.chat.completions.create(
@@ -883,6 +885,7 @@ class _ChunkSummarizer:
                             temperature=self._temperature,
                             max_tokens=self._max_tokens,
                         )
+                        self._record_usage(response, api_surface="chat_completions")
                         text = _extract_chat_completion_text(response).strip()
 
                     if not text:
@@ -921,6 +924,16 @@ Return a compact summary describing the overall trajectory across these steps.
         if self.settings.openai_base_url:
             client_kwargs["base_url"] = self.settings.openai_base_url
         return OpenAI(**client_kwargs) if client_kwargs else OpenAI()
+
+    def _record_usage(self, response: object, *, api_surface: str) -> None:
+        event = normalize_openai_usage_event(
+            response,
+            phase="trajectory_summary",
+            model=self._model,
+            api_surface=api_surface,
+            settings=self.settings,
+        )
+        record_usage_event(event, settings=self.settings)
 
 
 def _extract_chat_completion_text(response: Any) -> str:

@@ -29,6 +29,7 @@ from loreley.api.schemas.jobs import (
     JobsRetryFailedStaleOut,
     JobsRetryFailedStaleRequest,
 )
+from loreley.api.schemas.usage import UsageEventOut
 from loreley.api.services.candidate_fates import (
     job_candidate_commit_hash,
     load_candidate_fates_for_jobs,
@@ -54,6 +55,7 @@ from loreley.api.services.jobs import (
     retry_failed_stale_jobs,
     retry_job_by_id,
 )
+from loreley.api.services.usage import UsageJobNotFoundError, list_usage_events_for_job
 from loreley.core.candidate_fate import CANDIDATE_FATE_LABELS, CandidateFate
 from loreley.db.models import JobStatus
 
@@ -214,6 +216,15 @@ def get_job_evaluation_artifacts(job_id: UUID) -> list[EvaluationArtifactOut]:
         EvaluationArtifactOut.model_validate(build_evaluation_artifact_payload(row))
         for row in rows
     ]
+
+
+@router.get("/jobs/{job_id}/usage", response_model=list[UsageEventOut])
+def get_job_usage(job_id: UUID) -> list[UsageEventOut]:
+    try:
+        rows = list_usage_events_for_job(job_id=job_id)
+    except UsageJobNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return [UsageEventOut.model_validate(row) for row in rows]
 
 
 @router.get("/jobs/{job_id}/evaluation-artifacts/{artifact_key}")

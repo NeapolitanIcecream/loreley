@@ -258,6 +258,7 @@ def _render_job_detail(
     _render_detail_list_expander("Constraints", detail.get("constraints"))
     _render_detail_list_expander("Acceptance criteria", detail.get("acceptance_criteria"))
     _render_detail_list_expander("Inspirations", detail.get("inspiration_commit_hashes"))
+    _render_usage_section(api_base_url=api_base_url, job_id=job_id)
     _render_evidence_sections(api_base_url=api_base_url, job_id=job_id, detail=detail)
 
 
@@ -301,6 +302,43 @@ def _render_detail_list_expander(label: str, raw_items: object) -> None:
             return
         for item in items:
             st.write(f"- {item}")
+
+
+def _render_usage_section(*, api_base_url: str, job_id: str) -> None:
+    usage = api_get_or_stop(api_base_url, f"/api/v1/jobs/{job_id}/usage")
+    rows = usage if isinstance(usage, list) else []
+    with st.expander("LLM Usage", expanded=False):
+        if not rows:
+            st.write("No LLM usage recorded for this job.")
+            return
+        try:
+            import pandas as pd
+        except Exception as exc:  # pragma: no cover
+            st.error(f"Missing pandas dependency: {exc}")
+            return
+        df = pd.DataFrame(rows)
+        display_columns = [
+            column
+            for column in [
+                "created_at",
+                "phase",
+                "source",
+                "provider",
+                "model",
+                "api_surface",
+                "total_tokens",
+                "input_tokens",
+                "cached_input_tokens",
+                "cache_write_tokens",
+                "output_tokens",
+                "reasoning_output_tokens",
+                "cost_usd",
+                "cost_source",
+                "pricing_version",
+            ]
+            if column in df.columns
+        ]
+        st.dataframe(df[display_columns] if display_columns else df, width="stretch")
 
 
 def _render_evidence_sections(

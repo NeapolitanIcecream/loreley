@@ -195,6 +195,7 @@ def test_jobs_single_job_retry_button_requires_job_confirmation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(jobs_module, "_render_evidence_sections", lambda **_kwargs: None)
+    monkeypatch.setattr(jobs_module, "_render_usage_section", lambda **_kwargs: None)
 
     jobs_module._render_job_detail(  # noqa: SLF001
         api_base_url="http://api.local",
@@ -234,6 +235,7 @@ def test_jobs_single_job_retry_click_posts_when_confirmed(
         return {"job_id": "job-123"}
 
     monkeypatch.setattr(jobs_module, "_render_evidence_sections", lambda **_kwargs: None)
+    monkeypatch.setattr(jobs_module, "_render_usage_section", lambda **_kwargs: None)
     monkeypatch.setattr(jobs_module, "api_post_or_stop", _post)
 
     _FakeStreamlitModule.button_clicks["retry_job_job-123"] = True
