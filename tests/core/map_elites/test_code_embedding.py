@@ -158,6 +158,72 @@ def test_embed_batch_aligns_vectors_by_response_index(settings: Settings) -> Non
     ]
 
 
+def test_embed_batch_records_usage_after_validation(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dims = int(settings.mapelites_code_embedding_dimensions or 0)
+    response = SimpleNamespace(
+        model=settings.mapelites_code_embedding_model,
+        usage=SimpleNamespace(prompt_tokens=11, total_tokens=11),
+        data=[SimpleNamespace(index=0, embedding=[1.0] * dims)],
+    )
+    recorded: list[object] = []
+
+    class _FakeEmbeddings:
+        def create(self, *, model, input, dimensions):  # type: ignore[no-untyped-def]
+            return response
+
+    class _FakeClient:
+        embeddings = _FakeEmbeddings()
+
+    def _record(event: object, **_kwargs: object) -> int:
+        recorded.append(event)
+        return 1
+
+    monkeypatch.setattr(code_embedding_module, "record_usage_event", _record)
+
+    embedder = CodeEmbedder(settings=settings, client=_FakeClient())  # type: ignore[arg-type]
+
+    vectors = embedder._embed_batch(["a"])
+
+    assert vectors == [(1.0,) * dims]
+    assert len(recorded) == 1
+
+
+def test_embed_batch_does_not_record_usage_for_invalid_response(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dims = int(settings.mapelites_code_embedding_dimensions or 0)
+    response = SimpleNamespace(
+        model=settings.mapelites_code_embedding_model,
+        usage=SimpleNamespace(prompt_tokens=11, total_tokens=11),
+        data=[SimpleNamespace(index=0, embedding=[1.0] * dims)],
+    )
+    recorded: list[object] = []
+
+    class _FakeEmbeddings:
+        def create(self, *, model, input, dimensions):  # type: ignore[no-untyped-def]
+            return response
+
+    class _FakeClient:
+        embeddings = _FakeEmbeddings()
+
+    def _record(event: object, **_kwargs: object) -> int:
+        recorded.append(event)
+        return 1
+
+    monkeypatch.setattr(code_embedding_module, "record_usage_event", _record)
+
+    embedder = CodeEmbedder(settings=settings, client=_FakeClient())  # type: ignore[arg-type]
+
+    with pytest.raises(RuntimeError, match="missing indices"):
+        embedder._embed_batch(["a", "b"])
+
+    assert recorded == []
+
+
 def test_embed_batch_supports_local_hash_model(
     settings: Settings,
     captured_logs: list[dict[str, Any]],

@@ -216,7 +216,6 @@ class CodeEmbedder:
                         input=payload,
                         dimensions=self._dimensions,
                     )
-                    self._record_usage(response)
                     vectors: list[Vector | None] = [None] * len(payload)
                     for item in response.data:
                         index = getattr(item, "index", None)
@@ -239,7 +238,9 @@ class CodeEmbedder:
                     if missing:
                         raise RuntimeError(f"Embedding response missing indices: {missing}.")
 
-                    return [vector for vector in vectors if vector is not None]
+                    ordered_vectors = [vector for vector in vectors if vector is not None]
+                    self._record_usage(response)
+                    return ordered_vectors
         except RetryError as exc:
             attempts, last_exc = retry_error_details(exc, default_attempts=self._max_retries)
             log.error("Embedding batch failed after {} attempts: {}", attempts, last_exc)
