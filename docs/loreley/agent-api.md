@@ -180,9 +180,10 @@ These endpoints reuse the existing evaluation artifact helpers and
 
 ## Database Migration Note
 
-This facade adds the `agent_actions` table and bumps
-`INSTANCE_SCHEMA_VERSION` to `12`. Existing schema-version-5 databases should be
-migrated before running this version:
+The agent facade was introduced with the `agent_actions` table in schema
+version 12. The current Loreley schema is version 13, which also includes the
+LLM usage ledger. Existing schema-version-5 or schema-version-12 databases
+should be migrated before running this version:
 
 ```bash
 uv run loreley db migrate

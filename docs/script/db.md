@@ -17,7 +17,7 @@ uv run loreley db current
 Example output:
 
 ```text
-schema_version=5 target=12 state=migratable needs_migration=true
+schema_version=5 target=13 state=migratable needs_migration=true
 ```
 
 Machine-readable output:
@@ -51,7 +51,7 @@ same migration chain twice.
 Example output:
 
 ```text
-from=5 to=12 applied=6,7,8,9,10,11,12 fresh=false
+from=5 to=13 applied=6,7,8,9,10,11,12,13 fresh=false
 ```
 
 `uv run loreley db migrate` always runs the explicit migration path, even when

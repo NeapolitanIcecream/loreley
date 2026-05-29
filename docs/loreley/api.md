@@ -124,6 +124,9 @@ FastAPI also exposes OpenAPI docs by default:
 - `GET /jobs/{job_id}/artifacts/{artifact_key}`
 - `GET /jobs/{job_id}/evaluation-artifacts`
 - `GET /jobs/{job_id}/evaluation-artifacts/{artifact_key}`
+- `GET /jobs/{job_id}/usage`
+- `GET /usage/summary`
+- `GET /usage/events/page`
 - `GET /commits`
 - `GET /commits/page`
 - `GET /commits/{commit_hash}`
@@ -202,6 +205,22 @@ fields when the underlying data exists:
 `GET /repair/pool` can filter on `repair_state`, `lifecycle_status`,
 `failure_kind`, and `campaign_program_hash`.
 
+## LLM Usage
+
+LLM usage routes expose the `llm_usage_events` ledger added in schema version
+13. They are read-only and support dashboard views, job debugging, and cost
+exports.
+
+- `GET /usage/summary` returns token and cost aggregates. Optional filters:
+  `job_id`, `source`, `phase`, and `model`.
+- `GET /usage/events/page` returns a cursor-paginated event page. Optional
+  filters: `job_id`, `source`, `phase`, `model`, and `limit`.
+- `GET /jobs/{job_id}/usage` returns all usage rows attributed to one job.
+
+Usage rows can include provider-reported USD cost, locally estimated USD cost,
+or tokens without cost when no matching pricing rule is available. The API does
+not return prompts, raw transcripts, credentials, or full CLI event streams.
+
 ## Evaluation Artifacts
 
 Evaluator-declared artifacts are stored separately from the fixed worker
@@ -275,10 +294,11 @@ feedback endpoints.
 - **Write scope**: operator writes are intentionally narrow. They do not add
   user management, restart processes, change environment variables, or bypass the
   scheduler and worker settings already in the database/runtime.
-- **Schema migration**: the agent facade adds the `agent_actions` table and bumps
-  `INSTANCE_SCHEMA_VERSION` to `12`. Existing schema-version-5 databases should
-  be upgraded with `uv run loreley db migrate`; `reset-db --yes` is only a
-  destructive local fallback.
+- **Schema migration**: the usage ledger adds the `llm_usage_events` table and
+  bumps `INSTANCE_SCHEMA_VERSION` to `13`. Existing schema-version-5 or
+  schema-version-12 databases should be upgraded with
+  `uv run loreley db migrate`; `reset-db --yes` is only a destructive local
+  fallback.
 - **Job artifacts**: large, audit/debug oriented payloads (planning/coding prompts, raw outputs, evaluation logs) are stored on disk and referenced via `JobArtifacts`. The API exposes:
   - `GET /jobs/{job_id}/artifacts` as an index of available URLs
   - `GET /jobs/{job_id}/artifacts/{artifact_key}` for direct downloads
