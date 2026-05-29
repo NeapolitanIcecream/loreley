@@ -913,6 +913,7 @@ class PlanningAgent(TruncationMixin):
                 extra_env=dict(self.settings.worker_planning_extra_env or {}),
                 error_cls=PlanningError,
                 full_auto=False,
+                usage_tracking_enabled=self.settings.llm_usage_tracking_enabled,
             )
 
     def plan(

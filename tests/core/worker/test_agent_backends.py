@@ -414,6 +414,28 @@ def test_codex_backend_uses_env_models(monkeypatch: pytest.MonkeyPatch) -> None:
     get_settings.cache_clear()
 
 
+def test_builtin_codex_agents_honor_usage_tracking_opt_out(settings: Settings) -> None:
+    from loreley.core.worker.coding import CodingAgent
+    from loreley.core.worker.planning import PlanningAgent
+
+    settings.worker_planning_backend = None
+    settings.worker_coding_backend = None
+    settings.llm_usage_tracking_enabled = False
+
+    planning_agent = PlanningAgent(settings=settings)
+    coding_agent = CodingAgent(settings=settings)
+
+    planning_backend = planning_agent.backend
+    coding_backend = coding_agent.backend
+
+    assert isinstance(planning_backend, CodexCliBackend)
+    assert isinstance(coding_backend, CodexCliBackend)
+    assert planning_backend.usage_tracking_enabled is False
+    assert coding_backend.usage_tracking_enabled is False
+    assert "--json" not in planning_backend._build_command(output_last_message_path=None)
+    assert "--json" not in coding_backend._build_command(output_last_message_path=None)
+
+
 def test_cursor_cli_backend_builds_command(tmp_path: Path, monkeypatch) -> None:
     repo_dir = tmp_path / "repo"
     (repo_dir / ".git").mkdir(parents=True)

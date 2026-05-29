@@ -137,6 +137,7 @@ class CodingAgent(TruncationMixin):
                 extra_env=dict(self.settings.worker_coding_extra_env or {}),
                 error_cls=CodingError,
                 full_auto=True,
+                usage_tracking_enabled=self.settings.llm_usage_tracking_enabled,
             )
 
     def implement(
