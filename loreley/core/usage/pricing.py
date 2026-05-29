@@ -122,8 +122,7 @@ def estimate_cost_usd(event: LLMUsageEventPayload, rule: PriceRule) -> Decimal |
     if input_rate is None and cached_rate is None and cache_write_rate is None and output_rate is None:
         return None
 
-    cached_tokens = min(event.cached_input_tokens, event.input_tokens)
-    billable_input = max(event.input_tokens - cached_tokens, 0)
+    billable_input = _billable_regular_input_tokens(event)
     total = Decimal("0")
     if input_rate is not None:
         total += Decimal(billable_input) * input_rate
@@ -134,6 +133,17 @@ def estimate_cost_usd(event: LLMUsageEventPayload, rule: PriceRule) -> Decimal |
     if output_rate is not None:
         total += Decimal(event.output_tokens) * output_rate
     return (total / _ONE_MILLION).quantize(_COST_QUANT, rounding=ROUND_HALF_UP)
+
+
+def _billable_regular_input_tokens(event: LLMUsageEventPayload) -> int:
+    if _cache_reads_are_separate_input_counter(event):
+        return event.input_tokens
+    cached_tokens = min(event.cached_input_tokens, event.input_tokens)
+    return max(event.input_tokens - cached_tokens, 0)
+
+
+def _cache_reads_are_separate_input_counter(event: LLMUsageEventPayload) -> bool:
+    return event.source == "kilo_cli" or event.api_surface == "kilo_run"
 
 
 def _pricing_payload_from_settings(settings: Settings) -> Mapping[str, Any]:

@@ -234,7 +234,7 @@ def test_kilo_usage_parser_estimates_cost_when_provider_cost_is_missing(settings
             "tokens": {
                 "input": 100,
                 "output": 40,
-                "cache": {"read": 20, "write": 10},
+                "cache": {"read": 120, "write": 10},
             },
         },
     ]
@@ -248,6 +248,8 @@ def test_kilo_usage_parser_estimates_cost_when_provider_cost_is_missing(settings
     )
 
     assert event is not None
+    assert event.input_tokens == 100
+    assert event.cached_input_tokens == 120
     assert event.cost_source == "estimated"
     assert event.pricing_version == "kilo-test"
-    assert str(event.cost_usd) == "0.00017000"
+    assert str(event.cost_usd) == "0.00021500"
