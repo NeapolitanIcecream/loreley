@@ -172,7 +172,10 @@ def test_validate_database_schema_preserves_unsupported_diagnostic(
             target_version=db_base.INSTANCE_SCHEMA_VERSION,
             state="unsupported",
             needs_migration=True,
-            detail="No Loreley native migration path from schema_version=4 to 12.",
+            detail=(
+                "No Loreley native migration path from schema_version=4 "
+                f"to {db_base.INSTANCE_SCHEMA_VERSION}."
+            ),
         ),
     )
 

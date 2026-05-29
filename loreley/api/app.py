@@ -22,6 +22,7 @@ from loreley.api.routers.logs import router as logs_router
 from loreley.api.routers.graphs import router as graphs_router
 from loreley.api.routers.operator import router as operator_router
 from loreley.api.routers.repair import router as repair_router
+from loreley.api.routers.usage import router as usage_router
 from loreley.api.services.operator import mark_stale_baseline_ensure_tasks_failed
 from loreley.db.base import INSTANCE_SCHEMA_VERSION, ensure_database_schema, session_scope
 from loreley.db.instance import validate_instance_marker_schema
@@ -63,6 +64,7 @@ def create_app() -> FastAPI:
     app.include_router(operator_router, prefix=API_V1_PREFIX, tags=["operator"])
     app.include_router(repair_router, prefix=API_V1_PREFIX, tags=["repair"])
     app.include_router(agent_router, prefix=API_V1_PREFIX, tags=["agent"])
+    app.include_router(usage_router, prefix=API_V1_PREFIX, tags=["usage"])
     return app
 
 

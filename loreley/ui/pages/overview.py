@@ -16,12 +16,14 @@ def _build_overview_kpis(
     islands: object,
     jobs: object,
     island_id: object,
+    usage: object | None = None,
 ) -> dict[str, Any]:
     job_rows = _job_rows(jobs)
     island_rows = _island_rows(islands)
     status_counts = _job_status_counts(job_rows)
     metric_name, best_fitness = _overview_metric_summary(island_rows)
     selected_stats = _selected_island_stats(island_rows, island_id)
+    usage_summary = _dict_value(usage)
 
     return {
         "status_counts": status_counts,
@@ -36,6 +38,10 @@ def _build_overview_kpis(
         "norm_qd_score": selected_stats.get("norm_qd_score") if selected_stats else None,
         "occupied": selected_stats.get("occupied") if selected_stats else None,
         "cells": selected_stats.get("cells") if selected_stats else None,
+        "usage_cost_usd": usage_summary.get("cost_usd"),
+        "usage_total_tokens": usage_summary.get("total_tokens"),
+        "usage_unpriced_events": usage_summary.get("unpriced_events"),
+        "usage_unavailable_events": usage_summary.get("unavailable_events"),
     }
 
 
@@ -140,6 +146,7 @@ def render() -> None:
         params={"max_nodes": 1000},
     ) or {}
     operator = api_get_or_stop(api_base_url, "/api/v1/operator/status") or {}
+    usage = api_get_or_stop(api_base_url, "/api/v1/usage/summary") or {}
 
     # KPI cards
     try:
@@ -149,7 +156,12 @@ def render() -> None:
         return
 
     jobs_df: Any = pd.DataFrame(jobs)
-    kpis = _build_overview_kpis(islands=islands, jobs=jobs, island_id=island_id)
+    kpis = _build_overview_kpis(
+        islands=islands,
+        jobs=jobs,
+        island_id=island_id,
+        usage=usage,
+    )
     status_counts = kpis["status_counts"]
     total_jobs = kpis["total_jobs"]
     succeeded = kpis["succeeded"]
@@ -161,6 +173,10 @@ def render() -> None:
     norm_qd_score = kpis["norm_qd_score"]
     occupied = kpis["occupied"]
     cells = kpis["cells"]
+    usage_cost_usd = kpis["usage_cost_usd"]
+    usage_total_tokens = kpis["usage_total_tokens"]
+    usage_unpriced_events = kpis["usage_unpriced_events"]
+    usage_unavailable_events = kpis["usage_unavailable_events"]
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Jobs (loaded)", f"{total_jobs}")
@@ -190,6 +206,12 @@ def render() -> None:
         if isinstance(occupied, (int, float)) and isinstance(cells, (int, float))
         else "n/a",
     )
+
+    u1, u2, u3, u4 = st.columns(4)
+    u1.metric("LLM cost", _format_usd(usage_cost_usd))
+    u2.metric("LLM tokens", _format_int(usage_total_tokens))
+    u3.metric("Unpriced usage", _format_int(usage_unpriced_events))
+    u4.metric("Unavailable usage", _format_int(usage_unavailable_events))
 
     _render_operator_status_band(operator)
 
@@ -330,3 +352,17 @@ def _count_value(data: dict[str, object], group_key: str, item_key: str) -> int:
 def _short_hash(value: object) -> str | None:
     text = str(value or "").strip()
     return text[:12] if text else None
+
+
+def _format_usd(value: object) -> str:
+    try:
+        return f"${float(value):,.4f}"
+    except (TypeError, ValueError):
+        return "tokens only"
+
+
+def _format_int(value: object) -> str:
+    try:
+        return f"{int(value or 0):,}"
+    except (TypeError, ValueError):
+        return "0"

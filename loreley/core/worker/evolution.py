@@ -50,6 +50,7 @@ from loreley.core.worker.commit_summary import (
     CommitSummaryUnavailableError,
 )
 from loreley.core.worker.trajectory import build_inspiration_trajectory_rollup
+from loreley.core.usage import persist_usage_events, usage_context
 from loreley.core.worker.job_store import (
     EvolutionJobStore,
     EvolutionWorkerError,
@@ -389,7 +390,12 @@ class EvolutionWorker:
         heartbeat.raise_if_lease_lost()
         repair_context = self._prepare_repair_worktree(job_ctx, checkout)
         heartbeat.raise_if_lease_lost()
-        prompt_context = self._build_prompt_context(job_ctx, repair_context=repair_context)
+        with usage_context(
+            job_id=job_ctx.job_id,
+            run_token=job_ctx.run_token,
+            phase="trajectory_summary",
+        ):
+            prompt_context = self._build_prompt_context(job_ctx, repair_context=repair_context)
         heartbeat.raise_if_lease_lost()
         return prompt_context
 
@@ -742,10 +748,21 @@ class EvolutionWorker:
             constraints=job_ctx.constraints,
             acceptance_criteria=job_ctx.acceptance_criteria,
             iteration_context=prompt_context.iteration_context,
+            job_id=job_ctx.job_id,
+            run_token=job_ctx.run_token,
         )
         try:
-            return self.planning_agent.plan(request, working_dir=checkout.worktree)
+            with usage_context(
+                job_id=job_ctx.job_id,
+                run_token=job_ctx.run_token,
+                phase="planning",
+            ):
+                return self.planning_agent.plan(request, working_dir=checkout.worktree)
         except PlanningError as exc:
+            self._persist_agent_usage_events_best_effort(
+                job_ctx=job_ctx,
+                events=self._usage_events_from_exception(exc),
+            )
             raise EvolutionWorkerError(f"Planning agent failed for job {job_ctx.job_id}: {exc}") from exc
 
     def _run_coding(
@@ -765,10 +782,21 @@ class EvolutionWorker:
             acceptance_criteria=job_ctx.acceptance_criteria,
             iteration_context=prompt_context.iteration_context,
             additional_notes=(*job_ctx.notes, *self._repair_coding_notes(job_ctx)),
+            job_id=job_ctx.job_id,
+            run_token=job_ctx.run_token,
         )
         try:
-            return self.coding_agent.implement(request, working_dir=checkout.worktree)
+            with usage_context(
+                job_id=job_ctx.job_id,
+                run_token=job_ctx.run_token,
+                phase="coding",
+            ):
+                return self.coding_agent.implement(request, working_dir=checkout.worktree)
         except CodingError as exc:
+            self._persist_agent_usage_events_best_effort(
+                job_ctx=job_ctx,
+                events=(*plan.usage_events, *self._usage_events_from_exception(exc)),
+            )
             raise EvolutionWorkerError(f"Coding agent failed for job {job_ctx.job_id}: {exc}") from exc
 
     @staticmethod
@@ -789,11 +817,16 @@ class EvolutionWorker:
         coding: CodingAgentResponse,
     ) -> str:
         try:
-            return self.summarizer.generate(
-                job=job_ctx,
-                plan=plan.plan,
-                coding=coding.report,
-            )
+            with usage_context(
+                job_id=job_ctx.job_id,
+                run_token=job_ctx.run_token,
+                phase="commit_summary",
+            ):
+                return self.summarizer.generate(
+                    job=job_ctx,
+                    plan=plan.plan,
+                    coding=coding.report,
+                )
         except (CommitSummaryError, CommitSummaryUnavailableError) as exc:
             log.warning("Commit summarizer failed; falling back to non-LLM subject: {}", exc)
             fallback = (
@@ -931,6 +964,7 @@ class EvolutionWorker:
         console.log(f"[bold red]Evolution worker[/] job={job_id} failed: {message}")
         if self._persist_structured_worker_failure(run_token, message, context):
             return
+        self._persist_failure_context_agent_usage(context)
         recorded = self.job_store.mark_job_failed(job_id, message, run_token=run_token)
         if not recorded and run_token is not None:
             log.warning(
@@ -964,6 +998,52 @@ class EvolutionWorker:
                 candidate_commit_hash=context.candidate_commit_hash,
             )
         )
+
+    def _persist_failure_context_agent_usage(self, context: _JobFailureContext | None) -> None:
+        if context is None:
+            return
+        events = []
+        if context.plan is not None:
+            events.extend(context.plan.usage_events or ())
+        if context.coding is not None:
+            events.extend(context.coding.usage_events or ())
+        self._persist_agent_usage_events_best_effort(job_ctx=context.job_ctx, events=events)
+
+    def _persist_agent_usage_events_best_effort(
+        self,
+        *,
+        job_ctx: JobContext,
+        events: Sequence[object],
+    ) -> None:
+        materialized = []
+        for event in events or ():
+            with_context = getattr(event, "with_context", None)
+            if callable(with_context):
+                materialized.append(
+                    with_context(job_id=job_ctx.job_id, run_token=job_ctx.run_token)
+                )
+        if not materialized:
+            return
+        try:
+            inserted = persist_usage_events(materialized, settings=self.settings)
+        except Exception as exc:  # pragma: no cover - best-effort observability
+            log.warning("Failed to persist agent LLM usage for job {}: {}", job_ctx.job_id, exc)
+            return
+        if inserted:
+            log.info(
+                "Persisted {} detached agent LLM usage event(s) for job {}",
+                inserted,
+                job_ctx.job_id,
+            )
+
+    @staticmethod
+    def _usage_events_from_exception(exc: Exception) -> tuple[object, ...]:
+        value = getattr(exc, "usage_events", ())
+        if isinstance(value, tuple):
+            return value
+        if isinstance(value, list):
+            return tuple(value)
+        return ()
 
     # Data extraction utilities -------------------------------------------
 

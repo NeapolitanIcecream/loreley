@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -11,10 +12,12 @@ import pytest
 import loreley.api.routers.archive as archive_router
 import loreley.api.routers.commits as commits_router
 import loreley.api.routers.jobs as jobs_router
+import loreley.api.routers.usage as usage_router
 from loreley.api.pagination import PaginationCursorError
 from loreley.api.routers.archive import router as archive_api_router
 from loreley.api.routers.commits import router as commits_api_router
 from loreley.api.routers.jobs import router as jobs_api_router
+from loreley.api.routers.usage import router as usage_api_router
 from loreley.api.services.archive import ArchiveRecordPage
 from loreley.api.services.commits import CommitPage
 from loreley.api.services.evidence import EvidenceIndicator
@@ -29,6 +32,7 @@ def _build_test_client() -> TestClient:
     app.include_router(jobs_api_router, prefix="/api/v1")
     app.include_router(commits_api_router, prefix="/api/v1")
     app.include_router(archive_api_router, prefix="/api/v1")
+    app.include_router(usage_api_router, prefix="/api/v1")
     return TestClient(app)
 
 
@@ -223,6 +227,71 @@ def test_jobs_page_route_serializes_candidate_fate(monkeypatch) -> None:
     item = response.json()["items"][0]
     assert item["candidate_fate_label"] == "elite_inserted"
     assert item["candidate_fate_reason"] == "Candidate entered an empty archive niche."
+
+
+def test_usage_summary_route_returns_aggregates(monkeypatch) -> None:
+    monkeypatch.setattr(
+        usage_router,
+        "usage_summary",
+        lambda **_kwargs: {
+            "event_count": 2,
+            "total_tokens": 150,
+            "input_tokens": 100,
+            "cached_input_tokens": 20,
+            "cache_write_tokens": 0,
+            "output_tokens": 50,
+            "reasoning_output_tokens": 5,
+            "cost_usd": Decimal("0.0123"),
+            "unpriced_events": 1,
+            "unavailable_events": 0,
+            "by_source": [],
+            "by_phase": [],
+            "by_model": [],
+        },
+    )
+
+    response = _build_test_client().get("/api/v1/usage/summary")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total_tokens"] == 150
+    assert payload["cost_usd"] == "0.0123"
+
+
+def test_job_usage_route_returns_usage_rows(monkeypatch) -> None:
+    job_id = uuid4()
+    event_id = uuid4()
+    row = SimpleNamespace(
+        id=event_id,
+        job_id=job_id,
+        run_token=None,
+        phase="planning",
+        source="kilo_cli",
+        provider="openrouter",
+        model="openai/gpt-5.2",
+        api_surface="kilo_run",
+        input_tokens=10,
+        cached_input_tokens=100,
+        cache_write_tokens=0,
+        output_tokens=20,
+        reasoning_output_tokens=5,
+        total_tokens=130,
+        cost_usd=Decimal("0.025"),
+        cost_source="provider_reported",
+        pricing_version="",
+        raw_usage={"message_count": 1},
+        external_usage_id="kilo:sess-1",
+        created_at=datetime(2026, 5, 29, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(jobs_router, "list_usage_events_for_job", lambda **_kwargs: [row])
+
+    response = _build_test_client().get(f"/api/v1/jobs/{job_id}/usage")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload[0]["id"] == str(event_id)
+    assert payload[0]["source"] == "kilo_cli"
+    assert payload[0]["cost_usd"] == "0.025"
 
 
 def test_commits_page_route_returns_items_and_next_cursor(monkeypatch) -> None:

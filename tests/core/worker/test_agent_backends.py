@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import json
+import sqlite3
 import subprocess
 import sys
 import types
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import pytest
 
 from loreley.config import Settings
+from loreley.core.usage import LLMUsageEventPayload
 from loreley.core.worker.agent import (
     AgentInvocation,
     AgentTask,
@@ -152,6 +156,7 @@ def test_codex_cli_backend_builds_noninteractive_command_and_reads_last_message(
     assert "-a" in command_list and "never" in command_list
     assert "--sandbox" in command_list and "workspace-write" in command_list
     assert "--color" in command_list and "never" in command_list
+    assert "--json" in command_list
     assert "--output-last-message" in command_list
     assert "--profile" in command_list and "prof" in command_list
     assert "--model" in command_list and "gpt-5.4" in command_list
@@ -186,7 +191,7 @@ def test_codex_cli_backend_allows_omitting_model_and_skips_model_flag() -> None:
         "--sandbox",
         "read-only",
     ]
-    assert command[7:] == ["exec", "--ephemeral", "--color", "never"]
+    assert command[7:] == ["exec", "--ephemeral", "--color", "never", "--json"]
 
 
 def test_codex_cli_backend_isolates_codex_home_for_read_only_without_config(
@@ -322,6 +327,72 @@ def test_codex_cli_backend_defaults_to_read_only_for_planning(
     command_list = list(captured["command"])
     assert "--sandbox" in command_list and "read-only" in command_list
     assert "-a" in command_list and "never" in command_list
+
+
+def test_codex_cli_backend_parses_json_token_count(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+
+    def fake_run(command, cwd, env, input, text, capture_output, timeout, check):  # noqa: ANN001
+        output_path = Path(command[command.index("--output-last-message") + 1])
+        output_path.write_text("## Summary\n- Done.\n", encoding="utf-8")
+        payload = {
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {
+                        "input_tokens": 100,
+                        "cached_input_tokens": 25,
+                        "output_tokens": 40,
+                        "reasoning_output_tokens": 10,
+                        "total_tokens": 140,
+                    }
+                },
+            },
+        }
+        return types.SimpleNamespace(stdout=json.dumps(payload), stderr="", returncode=0)
+
+    monkeypatch.setattr(codex_cli.subprocess, "run", fake_run)
+
+    job_id = uuid4()
+    run_token = uuid4()
+    backend = CodexCliBackend(
+        bin="codex",
+        model="gpt-codex",
+        timeout_seconds=5,
+        extra_env={},
+        error_cls=RuntimeError,
+        full_auto=False,
+    )
+
+    invocation = backend.run(
+        AgentTask(
+            name="planning",
+            prompt="plan",
+            job_id=job_id,
+            run_token=run_token,
+            phase="planning",
+            attempt=3,
+        ),
+        working_dir=repo_dir,
+    )
+
+    assert invocation.stdout == "## Summary\n- Done."
+    assert len(invocation.usage_events) == 1
+    event = invocation.usage_events[0]
+    assert event.source == "codex_cli"
+    assert event.phase == "planning"
+    assert event.job_id == job_id
+    assert event.run_token == run_token
+    assert event.input_tokens == 100
+    assert event.cached_input_tokens == 25
+    assert event.output_tokens == 40
+    assert event.reasoning_output_tokens == 10
+    assert event.external_usage_id == f"codex:{job_id}:{run_token}:planning:attempt:3"
 
 
 def test_codex_backend_uses_env_models(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -619,6 +690,108 @@ def test_kilocode_cli_backend_omits_optional_flags_when_disabled(
     assert "--variant" not in command_list
     assert "--auto" in command_list
     assert "plan something" in command_list
+
+
+def test_kilocode_cli_backend_titles_session_and_reads_usage_db(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+    usage_db = tmp_path / "kilo.db"
+    with sqlite3.connect(usage_db) as conn:
+        conn.execute(
+            """
+            CREATE TABLE session (
+                id TEXT PRIMARY KEY,
+                title TEXT,
+                directory TEXT,
+                time_created INTEGER,
+                time_updated INTEGER
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE message (
+                id TEXT PRIMARY KEY,
+                session_id TEXT,
+                time_created INTEGER,
+                data TEXT
+            )
+            """
+        )
+
+    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+        title = command[command.index("--title") + 1]
+        with sqlite3.connect(usage_db) as conn:
+            conn.execute(
+                "INSERT INTO session (id, title, directory, time_created, time_updated) VALUES (?, ?, ?, ?, ?)",
+                ("sess-usage", title, cwd, 1, 2),
+            )
+            conn.execute(
+                "INSERT INTO message (id, session_id, time_created, data) VALUES (?, ?, ?, ?)",
+                (
+                    "msg-1",
+                    "sess-usage",
+                    3,
+                    json.dumps(
+                        {
+                            "role": "assistant",
+                            "providerID": "openrouter",
+                            "modelID": "openai/gpt-5.2",
+                            "cost": 0.025,
+                            "tokens": {
+                                "input": 10,
+                                "output": 20,
+                                "reasoning": 3,
+                                "cache": {"read": 100, "write": 5},
+                            },
+                        }
+                    ),
+                ),
+            )
+        return types.SimpleNamespace(stdout="done", stderr="", returncode=0)
+
+    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    job_id = uuid4()
+    run_token = uuid4()
+    backend = KilocodeCliBackend(
+        bin="kilo",
+        timeout_seconds=30,
+        extra_env={},
+        error_cls=RuntimeError,
+        usage_db_path=str(usage_db),
+    )
+
+    invocation = backend.run(
+        AgentTask(
+            name="coding",
+            prompt="do it",
+            job_id=job_id,
+            run_token=run_token,
+            phase="coding",
+            attempt=4,
+        ),
+        working_dir=repo_dir,
+    )
+
+    command_list = list(invocation.command)
+    assert "--title" in command_list
+    assert (
+        command_list[command_list.index("--title") + 1]
+        == f"loreley:{job_id}:{run_token}:coding:attempt:4"
+    )
+    assert len(invocation.usage_events) == 1
+    event = invocation.usage_events[0]
+    assert event.source == "kilo_cli"
+    assert event.provider == "openrouter"
+    assert event.model == "openai/gpt-5.2"
+    assert event.cached_input_tokens == 100
+    assert event.cache_write_tokens == 5
+    assert event.cost_source == "provider_reported"
+    assert str(event.cost_usd) == "0.025"
+    assert event.external_usage_id == f"kilo:{job_id}:{run_token}:coding:attempt:4"
 
 
 def test_kilocode_cli_backend_raises_on_nonzero_exit_with_stdout_and_stderr_context(
@@ -1116,6 +1289,12 @@ def test_run_agent_task_retries_on_post_check(tmp_path: Path) -> None:
                 stdout=str(self.calls),
                 stderr="",
                 duration_seconds=0.0,
+                usage_events=(
+                    _usage_event(
+                        external_usage_id=f"dummy:{task.attempt}",
+                        input_tokens=10 * self.calls,
+                    ),
+                ),
             )
 
     backend = DummyBackend()
@@ -1162,3 +1341,152 @@ def test_run_agent_task_retries_on_post_check(tmp_path: Path) -> None:
     assert backend.calls == 2
     assert debug_events[0][3] == "RuntimeError"
     assert debug_events[1][3] is None
+    assert [event.external_usage_id for event in invocation.usage_events] == [
+        "dummy:1",
+        "dummy:2",
+    ]
+    assert [event.input_tokens for event in invocation.usage_events] == [10, 20]
+
+
+def test_run_agent_task_preserves_coercion_failure_usage(tmp_path: Path) -> None:
+    class DummyBackend:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def run(self, task: AgentTask, *, working_dir: Path) -> AgentInvocation:  # noqa: ARG002
+            self.calls += 1
+            stdout = "bad" if self.calls == 1 else "2"
+            return AgentInvocation(
+                command=("dummy", str(self.calls)),
+                stdout=stdout,
+                stderr="",
+                duration_seconds=0.0,
+                usage_events=(
+                    _usage_event(
+                        external_usage_id=f"dummy:{task.attempt}",
+                        output_tokens=self.calls,
+                    ),
+                ),
+            )
+
+    backend = DummyBackend()
+
+    value, invocation, attempts = run_agent_task(
+        backend=backend,
+        task=AgentTask(name="test", prompt="hi"),
+        working_dir=tmp_path,
+        max_attempts=2,
+        coerce_result=lambda inv: int(inv.stdout),
+        retryable_exceptions=(ValueError,),
+        error_cls=RuntimeError,
+        error_message="should-not-fail",
+    )
+
+    assert value == 2
+    assert attempts == 2
+    assert [event.external_usage_id for event in invocation.usage_events] == [
+        "dummy:1",
+        "dummy:2",
+    ]
+    assert [event.output_tokens for event in invocation.usage_events] == [1, 2]
+
+
+def test_run_agent_task_preserves_retryable_exception_usage(tmp_path: Path) -> None:
+    class DummyBackend:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def run(self, task: AgentTask, *, working_dir: Path) -> AgentInvocation:  # noqa: ARG002
+            self.calls += 1
+            if self.calls == 1:
+                error = RuntimeError("transient")
+                setattr(
+                    error,
+                    "usage_events",
+                    (
+                        _usage_event(
+                            external_usage_id=f"dummy:{task.attempt}",
+                            input_tokens=5,
+                        ),
+                    ),
+                )
+                raise error
+            return AgentInvocation(
+                command=("dummy", "ok"),
+                stdout="ok",
+                stderr="",
+                duration_seconds=0.0,
+                usage_events=(
+                    _usage_event(
+                        external_usage_id=f"dummy:{task.attempt}",
+                        input_tokens=7,
+                    ),
+                ),
+            )
+
+    value, invocation, attempts = run_agent_task(
+        backend=DummyBackend(),
+        task=AgentTask(name="test", prompt="hi"),
+        working_dir=tmp_path,
+        max_attempts=2,
+        coerce_result=lambda inv: inv.stdout,
+        retryable_exceptions=(RuntimeError,),
+        error_cls=RuntimeError,
+        error_message="should-not-fail",
+    )
+
+    assert value == "ok"
+    assert attempts == 2
+    assert [event.external_usage_id for event in invocation.usage_events] == [
+        "dummy:1",
+        "dummy:2",
+    ]
+    assert [event.input_tokens for event in invocation.usage_events] == [5, 7]
+
+
+def test_run_agent_task_exhausted_error_carries_attempt_usage(tmp_path: Path) -> None:
+    class DummyBackend:
+        def run(self, task: AgentTask, *, working_dir: Path) -> AgentInvocation:  # noqa: ARG002
+            return AgentInvocation(
+                command=("dummy", str(task.attempt)),
+                stdout="not-an-int",
+                stderr="",
+                duration_seconds=0.0,
+                usage_events=(
+                    _usage_event(
+                        external_usage_id=f"dummy:{task.attempt}",
+                        input_tokens=int(task.attempt or 0),
+                    ),
+                ),
+            )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        run_agent_task(
+            backend=DummyBackend(),
+            task=AgentTask(name="test", prompt="hi"),
+            working_dir=tmp_path,
+            max_attempts=2,
+            coerce_result=lambda inv: int(inv.stdout),
+            retryable_exceptions=(ValueError,),
+            error_cls=RuntimeError,
+            error_message="all attempts failed",
+        )
+
+    usage_events = exc_info.value.usage_events
+    assert [event.external_usage_id for event in usage_events] == ["dummy:1", "dummy:2"]
+    assert [event.input_tokens for event in usage_events] == [1, 2]
+
+
+def _usage_event(
+    *,
+    external_usage_id: str,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+) -> LLMUsageEventPayload:
+    return LLMUsageEventPayload(
+        source="dummy",
+        phase="test",
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        external_usage_id=external_usage_id,
+    )

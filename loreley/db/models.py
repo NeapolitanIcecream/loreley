@@ -15,6 +15,7 @@ from sqlalchemy import (
     Float,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -747,6 +748,59 @@ class JobArtifacts(TimestampMixin, Base):
 
     evaluation_json_path: Mapped[str | None] = mapped_column(String(1024))
     evaluation_logs_path: Mapped[str | None] = mapped_column(String(1024))
+
+
+class LLMUsageEvent(TimestampMixin, Base):
+    """Append-only LLM usage and cost ledger."""
+
+    __tablename__ = "llm_usage_events"
+    __table_args__ = (
+        Index("ix_llm_usage_events_job_created", "job_id", "created_at"),
+        Index("ix_llm_usage_events_run_token", "run_token"),
+        Index("ix_llm_usage_events_source_created", "source", "created_at"),
+        Index("ix_llm_usage_events_phase_created", "phase", "created_at"),
+        Index("ix_llm_usage_events_model_created", "model", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("evolution_jobs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    run_token: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    phase: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    model: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    api_surface: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    input_tokens: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    cached_input_tokens: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    cache_write_tokens: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    output_tokens: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    reasoning_output_tokens: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    total_tokens: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    cost_usd: Mapped[Any | None] = mapped_column(Numeric(18, 8))
+    cost_source: Mapped[str] = mapped_column(String(32), default="unpriced", nullable=False)
+    pricing_version: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    raw_usage: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JSONB),
+        default=dict,
+        nullable=False,
+    )
+    external_usage_id: Mapped[str] = mapped_column(String(256), default="", nullable=False)
+
+
+Index(
+    "uq_llm_usage_events_external_usage_id",
+    LLMUsageEvent.external_usage_id,
+    unique=True,
+    postgresql_where=(LLMUsageEvent.external_usage_id != ""),
+)
 
 
 class EvaluationArtifactRecord(TimestampMixin, Base):

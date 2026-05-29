@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
+import sqlite3
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -10,6 +12,7 @@ from loguru import logger
 
 from loreley.config import Settings, get_settings
 from loreley.core.openai_auth import get_agent_openai_api_key
+from loreley.core.usage import kilo_usage_event_from_messages, unavailable_usage_event
 from loreley.core.worker.agent.contracts import AgentInvocation, AgentTask
 from loreley.core.worker.agent.utils import truncate_text, validate_workdir
 
@@ -36,6 +39,8 @@ class KilocodeCliBackend:
     json_output: bool = False
     error_cls: type[RuntimeError] = RuntimeError
     settings: Settings | None = None
+    usage_tracking_enabled: bool = True
+    usage_db_path: str | None = None
 
     def run(
         self,
@@ -49,7 +54,8 @@ class KilocodeCliBackend:
             agent_name=task.name or "Agent",
         )
 
-        command = self._build_command(task.prompt)
+        usage_title = self._usage_title(task)
+        command = self._build_command(task.prompt, title=usage_title)
         command_for_log = command[:-1] + [f"<prompt:{len(task.prompt)} chars>"]
 
         explicit_extra_env = self.extra_env or {}
@@ -91,6 +97,11 @@ class KilocodeCliBackend:
         duration = monotonic() - start
         stdout = (result.stdout or "").strip()
         stderr = (result.stderr or "").strip()
+        usage_events = self._usage_events_from_kilo_db(
+            task=task,
+            title=usage_title,
+            worktree=worktree,
+        )
 
         log.debug(
             "Kilocode CLI finished (exit_code={}, duration={:.2f}s) for task={}",
@@ -106,9 +117,12 @@ class KilocodeCliBackend:
                 if snippet:
                     details.append(f"{label}: {snippet}")
             detail_suffix = f" {' '.join(details)}" if details else ""
-            raise self.error_cls(
+            error = self.error_cls(
                 f"kilo run failed with exit code {result.returncode}.{detail_suffix}",
             )
+            if usage_events:
+                setattr(error, "usage_events", usage_events)
+            raise error
 
         if not stdout:
             log.warning(
@@ -122,13 +136,14 @@ class KilocodeCliBackend:
             stdout=stdout,
             stderr=stderr,
             duration_seconds=duration,
+            usage_events=usage_events,
         )
 
     def _resolve_api_key(self) -> str | None:
         settings = self.settings or get_settings()
         return get_agent_openai_api_key(settings)
 
-    def _build_command(self, prompt: str) -> list[str]:
+    def _build_command(self, prompt: str, *, title: str | None = None) -> list[str]:
         command: list[str] = [self.bin, "run", "--auto"]
 
         if self.json_output:
@@ -146,8 +161,151 @@ class KilocodeCliBackend:
         if selected_variant:
             command.extend(["--variant", selected_variant])
 
+        if title:
+            command.extend(["--title", title])
+
         command.append(prompt)
         return command
+
+    def _usage_title(self, task: AgentTask) -> str | None:
+        if not self.usage_tracking_enabled:
+            return None
+        phase = task.phase or task.name or ""
+        if task.job_id is None or task.run_token is None or not phase:
+            return None
+        title = f"loreley:{task.job_id}:{task.run_token}:{phase}"
+        if task.attempt is not None:
+            title = f"{title}:attempt:{max(1, int(task.attempt))}"
+        return title
+
+    def _usage_events_from_kilo_db(
+        self,
+        *,
+        task: AgentTask,
+        title: str | None,
+        worktree: Path,
+    ) -> tuple:
+        if not self.usage_tracking_enabled or not title:
+            return ()
+        phase = task.phase or task.name or ""
+        external_id = self._usage_external_id(task, phase=phase)
+        try:
+            event = self._read_usage_event(
+                title=title,
+                worktree=worktree,
+                task=task,
+                external_usage_id=external_id,
+            )
+        except Exception as exc:  # pragma: no cover - filesystem/SQLite dependent
+            log.warning("Failed to read Kilocode usage for title={}: {}", title, exc)
+            event = unavailable_usage_event(
+                source="kilo_cli",
+                phase=phase,
+                api_surface="kilo_run",
+                job_id=task.job_id,
+                run_token=task.run_token,
+                reason=f"kilo usage DB read failed: {exc}",
+                external_usage_id=external_id,
+            )
+        if event is None:
+            event = unavailable_usage_event(
+                source="kilo_cli",
+                phase=phase,
+                api_surface="kilo_run",
+                job_id=task.job_id,
+                run_token=task.run_token,
+                reason="kilo usage session was not found or had no token records",
+                external_usage_id=external_id,
+            )
+        return (event,)
+
+    def _read_usage_event(
+        self,
+        *,
+        title: str,
+        worktree: Path,
+        task: AgentTask,
+        external_usage_id: str,
+    ):
+        db_path = self._resolved_usage_db_path()
+        if not db_path.is_file():
+            return None
+        uri = f"file:{db_path.as_posix()}?mode=ro"
+        with sqlite3.connect(uri, uri=True) as conn:
+            conn.row_factory = sqlite3.Row
+            session_row = conn.execute(
+                """
+                SELECT id
+                FROM session
+                WHERE title = ?
+                  AND (directory = ? OR ? = '')
+                ORDER BY time_updated DESC, time_created DESC
+                LIMIT 1
+                """,
+                (title, str(worktree), str(worktree)),
+            ).fetchone()
+            if session_row is None:
+                session_row = conn.execute(
+                    """
+                    SELECT id
+                    FROM session
+                    WHERE title = ?
+                    ORDER BY time_updated DESC, time_created DESC
+                    LIMIT 1
+                    """,
+                    (title,),
+                ).fetchone()
+            if session_row is None:
+                return None
+            session_id = str(session_row["id"])
+            rows = conn.execute(
+                """
+                SELECT data
+                FROM message
+                WHERE session_id = ?
+                ORDER BY time_created ASC, id ASC
+                """,
+                (session_id,),
+            ).fetchall()
+        messages: list[dict[str, object]] = []
+        for row in rows:
+            try:
+                payload = json.loads(str(row["data"] or "{}"))
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                messages.append(payload)
+        event = kilo_usage_event_from_messages(
+            messages,
+            phase=task.phase or task.name or "",
+            job_id=task.job_id,
+            run_token=task.run_token,
+            title=title,
+            session_id=session_id,
+            settings=self.settings or get_settings(),
+            external_usage_id=external_usage_id,
+        )
+        if event is None:
+            return None
+        return event.with_context(job_id=task.job_id, run_token=task.run_token, phase=task.phase)
+
+    @staticmethod
+    def _usage_external_id(task: AgentTask, *, phase: str) -> str:
+        if task.job_id is None or task.run_token is None or not phase:
+            return ""
+        external_id = f"kilo:{task.job_id}:{task.run_token}:{phase}"
+        if task.attempt is not None:
+            external_id = f"{external_id}:attempt:{max(1, int(task.attempt))}"
+        return external_id
+
+    def _resolved_usage_db_path(self) -> Path:
+        settings = self.settings or get_settings()
+        raw = (
+            self.usage_db_path
+            or getattr(settings, "worker_kilocode_usage_db_path", None)
+            or "~/.local/share/kilo/kilo.db"
+        )
+        return Path(str(raw)).expanduser()
 
 
 def _build_kilocode_openai_env(settings, *, api_key: str | None = None) -> dict[str, str]:
@@ -224,6 +382,8 @@ def kilocode_backend() -> KilocodeCliBackend:
         json_output=bool(json_output_value),
         extra_env=extra_env,
         settings=settings,
+        usage_tracking_enabled=bool(settings.llm_usage_tracking_enabled),
+        usage_db_path=settings.worker_kilocode_usage_db_path,
     )
 
 
@@ -254,6 +414,8 @@ def kilocode_planning_backend() -> KilocodeCliBackend:
         extra_env=extra_env,
         error_cls=PlanningError,
         settings=settings,
+        usage_tracking_enabled=bool(settings.llm_usage_tracking_enabled),
+        usage_db_path=settings.worker_kilocode_usage_db_path,
     )
 
 
@@ -284,6 +446,8 @@ def kilocode_coding_backend() -> KilocodeCliBackend:
         extra_env=extra_env,
         error_cls=CodingError,
         settings=settings,
+        usage_tracking_enabled=bool(settings.llm_usage_tracking_enabled),
+        usage_db_path=settings.worker_kilocode_usage_db_path,
     )
 
 

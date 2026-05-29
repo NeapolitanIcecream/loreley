@@ -21,6 +21,7 @@ from loreley.api.agent_errors import (
 )
 from loreley.api.routers.agent import router as agent_api_router
 from loreley.api.schemas.agent import AgentActionRequest
+from loreley.db.base import INSTANCE_SCHEMA_VERSION
 from loreley.db.models import AgentAction, EvolutionJob, JobStatus
 from tests.support import TestSettings
 
@@ -42,7 +43,7 @@ def _settings(token: str | None = "secret") -> TestSettings:
 def _capabilities_payload(*, token_configured: bool = False) -> dict[str, object]:
     return {
         "schema_version": "agent-rest-control-facade.v1",
-        "database_schema_version": 12,
+        "database_schema_version": INSTANCE_SCHEMA_VERSION,
         "auth": {
             "configured": token_configured,
             "required": True,

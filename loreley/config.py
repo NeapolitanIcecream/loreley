@@ -143,6 +143,18 @@ class Settings(BaseSettings):
         default="responses",
         alias="OPENAI_API_SPEC",
     )
+    llm_usage_tracking_enabled: bool = Field(
+        default=True,
+        alias="LLM_USAGE_TRACKING_ENABLED",
+    )
+    llm_usage_pricing_path: str | None = Field(
+        default=None,
+        alias="LLM_USAGE_PRICING_PATH",
+    )
+    llm_usage_pricing_json: str | None = Field(
+        default=None,
+        alias="LLM_USAGE_PRICING_JSON",
+    )
 
     database_url: str | None = Field(default=None, alias="DATABASE_URL")
     db_scheme: str = Field(default="postgresql+psycopg", alias="DB_SCHEME")
@@ -435,6 +447,10 @@ class Settings(BaseSettings):
     worker_kilocode_json_output: bool = Field(
         default=False,
         alias="WORKER_KILOCODE_JSON_OUTPUT",
+    )
+    worker_kilocode_usage_db_path: str | None = Field(
+        default=None,
+        alias="WORKER_KILOCODE_USAGE_DB_PATH",
     )
     worker_kilocode_openai_api_spec: Literal["responses", "chat_completions"] | None = Field(
         default=None,
@@ -967,6 +983,9 @@ def _build_safe_export_payload(settings: Settings, *, mask_secrets: bool) -> dic
         "openai_dynamic_api_key_refresh_skew_seconds": (
             settings.openai_dynamic_api_key_refresh_skew_seconds
         ),
+        "llm_usage_tracking_enabled": settings.llm_usage_tracking_enabled,
+        "llm_usage_pricing_path": settings.llm_usage_pricing_path,
+        "llm_usage_pricing_json_configured": bool(settings.llm_usage_pricing_json),
         "mapelites_experiment_root_commit": settings.mapelites_experiment_root_commit,
         "database_dsn": _safe_export_database_dsn(settings, mask_secrets=mask_secrets),
         "db_scheme": settings.db_scheme,
@@ -1021,6 +1040,7 @@ def _build_safe_export_payload(settings: Settings, *, mask_secrets: bool) -> dic
         "worker_kilocode_model": settings.worker_kilocode_model,
         "worker_kilocode_variant": settings.worker_kilocode_variant,
         "worker_kilocode_json_output": settings.worker_kilocode_json_output,
+        "worker_kilocode_usage_db_path": settings.worker_kilocode_usage_db_path,
         "worker_kilocode_openai_api_spec": settings.worker_kilocode_openai_api_spec,
         "worker_kilocode_openai_base_url": _safe_export_url(
             settings.worker_kilocode_openai_base_url,

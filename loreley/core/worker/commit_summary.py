@@ -12,6 +12,7 @@ from tenacity import RetryError
 from loreley.config import Settings, get_settings
 from loreley.core.openai_auth import get_internal_openai_api_key
 from loreley.core.openai_retry import openai_retrying, retry_error_details
+from loreley.core.usage import normalize_openai_usage_event, record_usage_event
 from loreley.core.worker.coding import ExecutionReport
 from loreley.core.worker.planning import PlanDocument
 
@@ -89,6 +90,7 @@ class CommitSummarizer:
                             max_output_tokens=self._max_tokens,
                             instructions=instructions,
                         )
+                        self._record_usage(response, job=job, api_surface="responses")
                         subject = (response.output_text or "").strip()
                     else:
                         response = client.chat.completions.create(
@@ -100,6 +102,7 @@ class CommitSummarizer:
                             temperature=self._temperature,
                             max_tokens=self._max_tokens,
                         )
+                        self._record_usage(response, job=job, api_surface="chat_completions")
                         subject = self._extract_chat_completion_text(response).strip()
                     if not subject:
                         raise CommitSummaryError("Commit summarizer returned empty output.")
@@ -130,6 +133,18 @@ class CommitSummarizer:
             raise CommitSummaryUnavailableError(
                 f"Commit summarizer could not initialize an OpenAI client: {exc}",
             ) from exc
+
+    def _record_usage(self, response: object, *, job: JobContext, api_surface: str) -> None:
+        event = normalize_openai_usage_event(
+            response,
+            phase="commit_summary",
+            model=self._model,
+            api_surface=api_surface,
+            job_id=job.job_id,
+            run_token=job.run_token,
+            settings=self.settings,
+        )
+        record_usage_event(event, settings=self.settings)
 
     def _build_prompt(
         self,

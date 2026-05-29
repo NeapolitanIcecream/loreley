@@ -41,6 +41,7 @@ _LORELEY_TABLES = (
     "campaign_baselines",
     "operator_tasks",
     "agent_actions",
+    "llm_usage_events",
 )
 _CURRENT_SCHEMA_TABLES = (*_LORELEY_TABLES, _AUDIT_TABLE)
 _CURRENT_SCHEMA_INDEXES = (
@@ -52,6 +53,12 @@ _CURRENT_SCHEMA_INDEXES = (
     "ix_evaluation_attempts_campaign_program_hash",
     "uq_operator_tasks_active_baseline_ensure",
     "uq_agent_actions_action_idempotency",
+    "ix_llm_usage_events_job_created",
+    "ix_llm_usage_events_run_token",
+    "ix_llm_usage_events_source_created",
+    "ix_llm_usage_events_phase_created",
+    "ix_llm_usage_events_model_created",
+    "uq_llm_usage_events_external_usage_id",
 )
 _CURRENT_SCHEMA_CONSTRAINTS = (
     ("evaluation_artifacts", "uq_evaluation_artifacts_job_key"),

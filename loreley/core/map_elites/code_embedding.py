@@ -17,6 +17,7 @@ from tenacity import RetryError
 from loreley.config import Settings, get_settings
 from loreley.core.openai_auth import DynamicOpenAIKeyUnavailableError, get_internal_openai_api_key
 from loreley.core.openai_retry import openai_retrying, retry_error_details
+from loreley.core.usage import normalize_openai_usage_event, record_usage_event
 from .chunk import ChunkedFile, FileChunk
 
 
@@ -215,6 +216,7 @@ class CodeEmbedder:
                         input=payload,
                         dimensions=self._dimensions,
                     )
+                    self._record_usage(response)
                     vectors: list[Vector | None] = [None] * len(payload)
                     for item in response.data:
                         index = getattr(item, "index", None)
@@ -359,6 +361,16 @@ class CodeEmbedder:
         if self.settings.openai_base_url:
             client_kwargs["base_url"] = self.settings.openai_base_url
         return OpenAI(**client_kwargs) if client_kwargs else OpenAI()
+
+    def _record_usage(self, response: object) -> None:
+        event = normalize_openai_usage_event(
+            response,
+            phase="embedding",
+            model=self._model,
+            api_surface="embeddings",
+            settings=self.settings,
+        )
+        record_usage_event(event, settings=self.settings)
 
 
 def embed_chunked_files(
