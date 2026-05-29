@@ -336,7 +336,7 @@ def test_codex_cli_backend_parses_json_token_count(
     repo_dir = tmp_path / "repo"
     (repo_dir / ".git").mkdir(parents=True)
 
-    def fake_run(command, cwd, env, input, text, capture_output, timeout, check):  # noqa: ANN001
+    def fake_run(command, **_kwargs):  # noqa: ANN001
         output_path = Path(command[command.index("--output-last-message") + 1])
         output_path.write_text("## Summary\n- Done.\n", encoding="utf-8")
         payload = {
@@ -722,7 +722,8 @@ def test_kilocode_cli_backend_titles_session_and_reads_usage_db(
             """
         )
 
-    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+    def fake_run(command, **kwargs):  # noqa: ANN001
+        cwd = kwargs["cwd"]
         title = command[command.index("--title") + 1]
         with sqlite3.connect(usage_db) as conn:
             conn.execute(

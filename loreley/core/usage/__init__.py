@@ -13,6 +13,7 @@ from loreley.core.usage.events import (
     usage_context,
 )
 from loreley.core.usage.normalizers import (
+    UsageEventMetadata,
     codex_usage_event_from_jsonl,
     kilo_usage_event_from_messages,
     normalize_openai_usage_event,
@@ -27,6 +28,7 @@ __all__ = [
     "COST_SOURCE_UNPRICED",
     "LLMUsageEventPayload",
     "UsageContext",
+    "UsageEventMetadata",
     "codex_usage_event_from_jsonl",
     "current_usage_context",
     "kilo_usage_event_from_messages",

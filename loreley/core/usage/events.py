@@ -12,6 +12,8 @@ COST_SOURCE_ESTIMATED = "estimated"
 COST_SOURCE_UNPRICED = "unpriced"
 COST_SOURCE_UNAVAILABLE = "unavailable"
 
+_UNHANDLED = object()
+
 
 def _uuid_or_none(value: UUID | str | None) -> UUID | None:
     if value is None or isinstance(value, UUID):
@@ -41,6 +43,42 @@ def _decimal_or_none(value: Decimal | str | float | int | None) -> Decimal | Non
         return None
 
 
+def _sanitized_scalar_usage_payload(value: object) -> Any:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value[:512] if isinstance(value, str) else value
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, UUID):
+        return str(value)
+    return _UNHANDLED
+
+
+def _sanitized_mapping_usage_payload(value: Mapping[object, object], *, depth: int) -> dict[str, Any]:
+    return {
+        str(key)[:128]: sanitized_usage_payload(item, depth=depth + 1)
+        for key, item in list(value.items())[:64]
+    }
+
+
+def _sanitized_sequence_usage_payload(value: list[object] | tuple[object, ...], *, depth: int) -> list[Any]:
+    return [sanitized_usage_payload(item, depth=depth + 1) for item in value[:64]]
+
+
+def _model_dump_usage_payload(value: object) -> object:
+    model_dump = getattr(value, "model_dump", None)
+    if not callable(model_dump):
+        return _UNHANDLED
+    try:
+        return model_dump(mode="json", exclude_none=True)
+    except TypeError:
+        try:
+            return model_dump()
+        except Exception:
+            return str(type(value).__name__)
+    except Exception:
+        return str(type(value).__name__)
+
+
 def sanitized_usage_payload(value: object, *, depth: int = 0) -> Any:
     """Return a JSON-safe, bounded usage-only payload.
 
@@ -50,35 +88,16 @@ def sanitized_usage_payload(value: object, *, depth: int = 0) -> Any:
 
     if depth > 5:
         return str(type(value).__name__)
-    if value is None or isinstance(value, (bool, int, float, str)):
-        if isinstance(value, str):
-            return value[:512]
-        return value
-    if isinstance(value, Decimal):
-        return str(value)
-    if isinstance(value, UUID):
-        return str(value)
+    scalar = _sanitized_scalar_usage_payload(value)
+    if scalar is not _UNHANDLED:
+        return scalar
     if isinstance(value, Mapping):
-        out: dict[str, Any] = {}
-        for key, item in list(value.items())[:64]:
-            out[str(key)[:128]] = sanitized_usage_payload(item, depth=depth + 1)
-        return out
+        return _sanitized_mapping_usage_payload(value, depth=depth)
     if isinstance(value, (list, tuple)):
-        return [sanitized_usage_payload(item, depth=depth + 1) for item in value[:64]]
-    model_dump = getattr(value, "model_dump", None)
-    if callable(model_dump):
-        try:
-            return sanitized_usage_payload(
-                model_dump(mode="json", exclude_none=True),
-                depth=depth + 1,
-            )
-        except TypeError:
-            try:
-                return sanitized_usage_payload(model_dump(), depth=depth + 1)
-            except Exception:
-                return str(type(value).__name__)
-        except Exception:
-            return str(type(value).__name__)
+        return _sanitized_sequence_usage_payload(value, depth=depth)
+    dumped = _model_dump_usage_payload(value)
+    if dumped is not _UNHANDLED:
+        return sanitized_usage_payload(dumped, depth=depth + 1)
     if hasattr(value, "__dict__"):
         return sanitized_usage_payload(vars(value), depth=depth + 1)
     return str(value)[:512]

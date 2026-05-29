@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from decimal import Decimal
 import json
 from typing import Any, Iterable, Mapping
@@ -16,32 +17,140 @@ from loreley.core.usage.events import (
 from loreley.core.usage.pricing import price_usage_event
 
 
+@dataclass(frozen=True, slots=True)
+class UsageEventMetadata:
+    source: str = ""
+    phase: str = ""
+    provider: str = ""
+    model: str = ""
+    api_surface: str = ""
+    job_id: UUID | str | None = None
+    run_token: UUID | str | None = None
+    external_usage_id: str = ""
+
+
+_USAGE_METADATA_FIELDS = frozenset(
+    (
+        "source",
+        "phase",
+        "provider",
+        "model",
+        "api_surface",
+        "job_id",
+        "run_token",
+        "external_usage_id",
+    )
+)
+
+
+def _usage_metadata_values(metadata: UsageEventMetadata) -> dict[str, Any]:
+    values = {
+        "source": metadata.source,
+        "phase": metadata.phase,
+        "provider": metadata.provider,
+        "model": metadata.model,
+        "api_surface": metadata.api_surface,
+        "job_id": metadata.job_id,
+        "run_token": metadata.run_token,
+        "external_usage_id": metadata.external_usage_id,
+    }
+    return {key: value for key, value in values.items() if value not in ("", None)}
+
+
+def _usage_event_metadata(
+    event_metadata: UsageEventMetadata | None,
+    values: Mapping[str, Any],
+    *,
+    defaults: Mapping[str, Any] | None = None,
+) -> UsageEventMetadata:
+    unknown = set(values) - _USAGE_METADATA_FIELDS
+    if unknown:
+        unknown_text = ", ".join(sorted(unknown))
+        raise TypeError(f"unexpected usage metadata fields: {unknown_text}")
+
+    merged: dict[str, Any] = dict(defaults or {})
+    if event_metadata is not None:
+        merged.update(_usage_metadata_values(event_metadata))
+    merged.update({key: value for key, value in values.items() if value is not None})
+    return UsageEventMetadata(
+        source=str(merged.get("source") or ""),
+        phase=str(merged.get("phase") or ""),
+        provider=str(merged.get("provider") or ""),
+        model=str(merged.get("model") or ""),
+        api_surface=str(merged.get("api_surface") or ""),
+        job_id=merged.get("job_id") or None,
+        run_token=merged.get("run_token") or None,
+        external_usage_id=str(merged.get("external_usage_id") or ""),
+    )
+
+
+@dataclass(slots=True)
+class _KiloUsageTotals:
+    provider: str = ""
+    model: str = ""
+    input_tokens: int = 0
+    cached_input_tokens: int = 0
+    cache_write_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_output_tokens: int = 0
+    cost_usd: Decimal = Decimal("0")
+    cost_seen: bool = False
+    message_count: int = 0
+
+    def add_message(self, message: Mapping[str, Any]) -> None:
+        tokens = _kilo_assistant_tokens(message)
+        if tokens is None:
+            return
+        self.message_count += 1
+        self.provider = str(message.get("providerID") or self.provider or "")
+        self.model = str(message.get("modelID") or self.model or "")
+        cache = _mapping(tokens.get("cache"))
+        self.input_tokens += _int_mapping(tokens, "input")
+        self.cached_input_tokens += _int_mapping(cache, "read")
+        self.cache_write_tokens += _int_mapping(cache, "write")
+        self.output_tokens += _int_mapping(tokens, "output")
+        self.reasoning_output_tokens += _int_mapping(tokens, "reasoning")
+        cost = _decimal(message.get("cost"))
+        if cost is not None:
+            self.cost_usd += cost
+            self.cost_seen = True
+
+    @property
+    def total_tokens(self) -> int:
+        return (
+            self.input_tokens
+            + self.cached_input_tokens
+            + self.cache_write_tokens
+            + self.output_tokens
+        )
+
+
 def normalize_openai_usage_event(
     response: object,
     *,
-    source: str = "openai_sdk",
-    phase: str,
-    provider: str = "openai",
-    model: str,
-    api_surface: str,
-    job_id: UUID | None = None,
-    run_token: UUID | None = None,
+    event_metadata: UsageEventMetadata | None = None,
     settings: object | None = None,
-    external_usage_id: str | None = None,
+    **metadata_values: Any,
 ) -> LLMUsageEventPayload | None:
     usage = _attr(response, "usage")
     if usage is None:
         return None
+    metadata = _usage_event_metadata(
+        event_metadata,
+        metadata_values,
+        defaults={"source": "openai_sdk", "provider": "openai"},
+    )
     context = current_usage_context()
-    phase_value = phase or context.phase or ""
+    phase_value = metadata.phase or context.phase or ""
+    api_surface = metadata.api_surface
     event = LLMUsageEventPayload(
-        source=source,
+        source=metadata.source,
         phase=phase_value,
-        provider=provider,
-        model=model or str(_attr(response, "model") or ""),
+        provider=metadata.provider,
+        model=metadata.model or str(_attr(response, "model") or ""),
         api_surface=api_surface,
-        job_id=job_id or context.job_id,
-        run_token=run_token or context.run_token,
+        job_id=metadata.job_id or context.job_id,
+        run_token=metadata.run_token or context.run_token,
         input_tokens=_input_tokens(usage, api_surface=api_surface),
         cached_input_tokens=_cached_input_tokens(usage),
         cache_write_tokens=_cache_write_tokens(usage),
@@ -50,7 +159,7 @@ def normalize_openai_usage_event(
         total_tokens=_int_attr(usage, "total_tokens"),
         cost_source=COST_SOURCE_UNPRICED,
         raw_usage={"usage": sanitized_usage_payload(usage)},
-        external_usage_id=external_usage_id or str(_attr(response, "id") or ""),
+        external_usage_id=metadata.external_usage_id or str(_attr(response, "id") or ""),
     )
     if event.total_tokens <= 0 and event.input_tokens <= 0 and event.output_tokens <= 0:
         return None
@@ -60,28 +169,30 @@ def normalize_openai_usage_event(
 def codex_usage_event_from_jsonl(
     jsonl_text: str,
     *,
-    phase: str,
-    job_id: UUID | None = None,
-    run_token: UUID | None = None,
-    model: str | None = None,
+    event_metadata: UsageEventMetadata | None = None,
     settings: object | None = None,
-    external_usage_id: str = "",
+    **metadata_values: Any,
 ) -> LLMUsageEventPayload | None:
     token_event = _last_codex_token_count(jsonl_text)
     if token_event is None:
         return None
+    metadata = _usage_event_metadata(
+        event_metadata,
+        metadata_values,
+        defaults={"source": "codex_cli", "provider": "openai", "api_surface": "codex_exec"},
+    )
     info = _mapping(_attr(token_event, "info"))
     usage = _mapping(info.get("total_token_usage")) or _mapping(info.get("last_token_usage"))
     if not usage:
         return None
     event = LLMUsageEventPayload(
-        source="codex_cli",
-        phase=phase,
-        provider="openai",
-        model=model or str(info.get("model") or ""),
-        api_surface="codex_exec",
-        job_id=job_id,
-        run_token=run_token,
+        source=metadata.source,
+        phase=metadata.phase,
+        provider=metadata.provider,
+        model=metadata.model or str(info.get("model") or ""),
+        api_surface=metadata.api_surface,
+        job_id=metadata.job_id,
+        run_token=metadata.run_token,
         input_tokens=_int_mapping(usage, "input_tokens"),
         cached_input_tokens=_int_mapping(usage, "cached_input_tokens"),
         output_tokens=_int_mapping(usage, "output_tokens"),
@@ -97,7 +208,7 @@ def codex_usage_event_from_jsonl(
                 }
             )
         },
-        external_usage_id=external_usage_id,
+        external_usage_id=metadata.external_usage_id,
     )
     return price_usage_event(event, settings=settings)  # type: ignore[arg-type]
 
@@ -105,104 +216,97 @@ def codex_usage_event_from_jsonl(
 def kilo_usage_event_from_messages(
     messages: Iterable[Mapping[str, Any]],
     *,
-    phase: str,
-    job_id: UUID | None = None,
-    run_token: UUID | None = None,
+    event_metadata: UsageEventMetadata | None = None,
     title: str = "",
     session_id: str = "",
     settings: object | None = None,
-    external_usage_id: str | None = None,
+    **metadata_values: Any,
 ) -> LLMUsageEventPayload | None:
-    total_input = 0
-    total_cached = 0
-    total_cache_write = 0
-    total_output = 0
-    total_reasoning = 0
-    total_cost = Decimal("0")
-    cost_seen = False
-    provider = ""
-    model = ""
-    counted_messages = 0
-    for message in messages:
-        if str(message.get("role") or "") != "assistant":
-            continue
-        tokens = _mapping(message.get("tokens"))
-        if not tokens:
-            continue
-        counted_messages += 1
-        provider = str(message.get("providerID") or provider or "")
-        model = str(message.get("modelID") or model or "")
-        cache = _mapping(tokens.get("cache"))
-        total_input += _int_mapping(tokens, "input")
-        total_cached += _int_mapping(cache, "read")
-        total_cache_write += _int_mapping(cache, "write")
-        total_output += _int_mapping(tokens, "output")
-        total_reasoning += _int_mapping(tokens, "reasoning")
-        cost = _decimal(message.get("cost"))
-        if cost is not None:
-            total_cost += cost
-            cost_seen = True
-    if counted_messages <= 0:
+    totals = _kilo_usage_totals(messages)
+    if totals.message_count <= 0:
         return None
-    event = LLMUsageEventPayload(
-        source="kilo_cli",
-        phase=phase,
-        provider=provider,
-        model=model,
-        api_surface="kilo_run",
-        job_id=job_id,
-        run_token=run_token,
-        input_tokens=total_input,
-        cached_input_tokens=total_cached,
-        cache_write_tokens=total_cache_write,
-        output_tokens=total_output,
-        reasoning_output_tokens=total_reasoning,
-        total_tokens=total_input + total_cached + total_cache_write + total_output,
-        cost_usd=total_cost if cost_seen else None,
-        cost_source=COST_SOURCE_PROVIDER_REPORTED if cost_seen else COST_SOURCE_UNPRICED,
-        raw_usage={
-            "session_id": session_id,
-            "title": title,
-            "message_count": counted_messages,
-            "tokens": {
-                "input": total_input,
-                "cache_read": total_cached,
-                "cache_write": total_cache_write,
-                "output": total_output,
-                "reasoning": total_reasoning,
-            },
-            "cost": str(total_cost) if cost_seen else None,
-        },
-        external_usage_id=external_usage_id or (f"kilo:{session_id}" if session_id else ""),
+    metadata = _usage_event_metadata(
+        event_metadata,
+        metadata_values,
+        defaults={"source": "kilo_cli", "api_surface": "kilo_run"},
     )
-    if cost_seen:
+    event = LLMUsageEventPayload(
+        source=metadata.source,
+        phase=metadata.phase,
+        provider=totals.provider,
+        model=totals.model,
+        api_surface=metadata.api_surface,
+        job_id=metadata.job_id,
+        run_token=metadata.run_token,
+        input_tokens=totals.input_tokens,
+        cached_input_tokens=totals.cached_input_tokens,
+        cache_write_tokens=totals.cache_write_tokens,
+        output_tokens=totals.output_tokens,
+        reasoning_output_tokens=totals.reasoning_output_tokens,
+        total_tokens=totals.total_tokens,
+        cost_usd=totals.cost_usd if totals.cost_seen else None,
+        cost_source=COST_SOURCE_PROVIDER_REPORTED if totals.cost_seen else COST_SOURCE_UNPRICED,
+        raw_usage=_kilo_raw_usage(totals=totals, title=title, session_id=session_id),
+        external_usage_id=metadata.external_usage_id or (f"kilo:{session_id}" if session_id else ""),
+    )
+    if totals.cost_seen:
         return event
     return price_usage_event(event, settings=settings)  # type: ignore[arg-type]
 
 
+def _kilo_usage_totals(messages: Iterable[Mapping[str, Any]]) -> _KiloUsageTotals:
+    totals = _KiloUsageTotals()
+    for message in messages:
+        totals.add_message(message)
+    return totals
+
+
+def _kilo_assistant_tokens(message: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    if str(message.get("role") or "") != "assistant":
+        return None
+    tokens = _mapping(message.get("tokens"))
+    return tokens or None
+
+
+def _kilo_raw_usage(
+    *,
+    totals: _KiloUsageTotals,
+    title: str,
+    session_id: str,
+) -> dict[str, Any]:
+    return {
+        "session_id": session_id,
+        "title": title,
+        "message_count": totals.message_count,
+        "tokens": {
+            "input": totals.input_tokens,
+            "cache_read": totals.cached_input_tokens,
+            "cache_write": totals.cache_write_tokens,
+            "output": totals.output_tokens,
+            "reasoning": totals.reasoning_output_tokens,
+        },
+        "cost": str(totals.cost_usd) if totals.cost_seen else None,
+    }
+
+
 def unavailable_usage_event(
     *,
-    source: str,
-    phase: str,
-    provider: str = "",
-    model: str = "",
-    api_surface: str = "",
-    job_id: UUID | None = None,
-    run_token: UUID | None = None,
     reason: str,
-    external_usage_id: str = "",
+    event_metadata: UsageEventMetadata | None = None,
+    **metadata_values: Any,
 ) -> LLMUsageEventPayload:
+    metadata = _usage_event_metadata(event_metadata, metadata_values)
     return LLMUsageEventPayload(
-        source=source,
-        phase=phase,
-        provider=provider,
-        model=model,
-        api_surface=api_surface,
-        job_id=job_id,
-        run_token=run_token,
+        source=metadata.source,
+        phase=metadata.phase,
+        provider=metadata.provider,
+        model=metadata.model,
+        api_surface=metadata.api_surface,
+        job_id=metadata.job_id,
+        run_token=metadata.run_token,
         cost_source=COST_SOURCE_UNAVAILABLE,
         raw_usage={"unavailable_reason": str(reason or "usage unavailable")[:512]},
-        external_usage_id=external_usage_id,
+        external_usage_id=metadata.external_usage_id,
     )
 
 
@@ -223,24 +327,23 @@ def _last_codex_token_count(jsonl_text: str) -> Mapping[str, Any] | None:
 
 
 def _find_token_count(value: object) -> Mapping[str, Any] | None:
-    if isinstance(value, Mapping):
-        if value.get("type") == "token_count":
-            return value
-        for key in ("payload", "msg", "message", "event", "data"):
-            nested = value.get(key)
-            candidate = _find_token_count(nested)
-            if candidate is not None:
-                return candidate
-        for nested in value.values():
-            candidate = _find_token_count(nested)
-            if candidate is not None:
-                return candidate
-    elif isinstance(value, list):
-        for nested in value:
-            candidate = _find_token_count(nested)
-            if candidate is not None:
-                return candidate
+    stack = [value]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, Mapping) and current.get("type") == "token_count":
+            return current
+        stack.extend(reversed(tuple(_token_count_children(current))))
     return None
+
+
+def _token_count_children(value: object) -> Iterable[object]:
+    if isinstance(value, Mapping):
+        for key in ("payload", "msg", "message", "event", "data"):
+            if key in value:
+                yield value[key]
+        yield from value.values()
+    elif isinstance(value, list):
+        yield from value
 
 
 def _input_tokens(usage: object, *, api_surface: str) -> int:

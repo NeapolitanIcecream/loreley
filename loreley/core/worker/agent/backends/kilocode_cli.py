@@ -58,20 +58,79 @@ class KilocodeCliBackend:
         command = self._build_command(task.prompt, title=usage_title)
         command_for_log = command[:-1] + [f"<prompt:{len(task.prompt)} chars>"]
 
+        env = self._build_env()
+        result, duration = self._run_cli(
+            command=command,
+            command_for_log=command_for_log,
+            env=env,
+            task=task,
+            worktree=worktree,
+        )
+        stdout = (result.stdout or "").strip()
+        stderr = (result.stderr or "").strip()
+        usage_events = self._usage_events_from_kilo_db(
+            task=task,
+            title=usage_title,
+            worktree=worktree,
+        )
+
+        log.debug(
+            "Kilocode CLI finished (exit_code={}, duration={:.2f}s) for task={}",
+            result.returncode,
+            duration,
+            task.name,
+        )
+
+        self._raise_for_failure(
+            result=result,
+            stdout=stdout,
+            stderr=stderr,
+            usage_events=usage_events,
+        )
+
+        if not stdout:
+            log.warning(
+                "Kilocode CLI produced an empty stdout payload for task={} (command={})",
+                task.name,
+                command_for_log,
+            )
+
+        return AgentInvocation(
+            command=tuple(command),
+            stdout=stdout,
+            stderr=stderr,
+            duration_seconds=duration,
+            usage_events=usage_events,
+        )
+
+    def _build_env(self) -> dict[str, str]:
         explicit_extra_env = self.extra_env or {}
-        preserve_extra_env_api_key = "KILO_OPENAI_API_KEY" in explicit_extra_env
         env = os.environ.copy()
         env.update(explicit_extra_env)
-        if not preserve_extra_env_api_key:
-            try:
-                runtime_api_key = self._resolve_api_key()
-            except Exception as exc:
-                raise self.error_cls(
-                    "failed to resolve Kilocode OpenAI API key before launch.",
-                ) from exc
-            if runtime_api_key:
-                env["KILO_OPENAI_API_KEY"] = runtime_api_key
+        if "KILO_OPENAI_API_KEY" in explicit_extra_env:
+            return env
+        runtime_api_key = self._resolved_runtime_api_key()
+        if runtime_api_key:
+            env["KILO_OPENAI_API_KEY"] = runtime_api_key
+        return env
 
+    def _resolved_runtime_api_key(self) -> str | None:
+        try:
+            return self._resolve_api_key()
+        except Exception as exc:
+            raise self.error_cls(
+                "failed to resolve Kilocode OpenAI API key before launch.",
+            ) from exc
+
+    def _run_cli(
+        self,
+        *,
+        command: list[str],
+        command_for_log: list[str],
+        env: dict[str, str],
+        task: AgentTask,
+        worktree: Path,
+    ):
         start = monotonic()
         log.debug(
             "Running Kilocode CLI command: {} (cwd={}) for task={}",
@@ -93,51 +152,34 @@ class KilocodeCliBackend:
             raise self.error_cls(
                 f"kilo run timed out after {self.timeout_seconds}s.",
             ) from exc
+        return result, monotonic() - start
 
-        duration = monotonic() - start
-        stdout = (result.stdout or "").strip()
-        stderr = (result.stderr or "").strip()
-        usage_events = self._usage_events_from_kilo_db(
-            task=task,
-            title=usage_title,
-            worktree=worktree,
+    def _raise_for_failure(
+        self,
+        *,
+        result,
+        stdout: str,
+        stderr: str,
+        usage_events: tuple,
+    ) -> None:
+        if result.returncode == 0:
+            return
+        detail_suffix = self._failure_detail_suffix(stdout=stdout, stderr=stderr)
+        error = self.error_cls(
+            f"kilo run failed with exit code {result.returncode}.{detail_suffix}",
         )
+        if usage_events:
+            setattr(error, "usage_events", usage_events)
+        raise error
 
-        log.debug(
-            "Kilocode CLI finished (exit_code={}, duration={:.2f}s) for task={}",
-            result.returncode,
-            duration,
-            task.name,
-        )
-
-        if result.returncode != 0:
-            details: list[str] = []
-            for label, payload in (("stderr", stderr), ("stdout", stdout)):
-                snippet = truncate_text(payload, limit=400)
-                if snippet:
-                    details.append(f"{label}: {snippet}")
-            detail_suffix = f" {' '.join(details)}" if details else ""
-            error = self.error_cls(
-                f"kilo run failed with exit code {result.returncode}.{detail_suffix}",
-            )
-            if usage_events:
-                setattr(error, "usage_events", usage_events)
-            raise error
-
-        if not stdout:
-            log.warning(
-                "Kilocode CLI produced an empty stdout payload for task={} (command={})",
-                task.name,
-                command_for_log,
-            )
-
-        return AgentInvocation(
-            command=tuple(command),
-            stdout=stdout,
-            stderr=stderr,
-            duration_seconds=duration,
-            usage_events=usage_events,
-        )
+    @staticmethod
+    def _failure_detail_suffix(*, stdout: str, stderr: str) -> str:
+        details: list[str] = []
+        for label, payload in (("stderr", stderr), ("stdout", stdout)):
+            snippet = truncate_text(payload, limit=400)
+            if snippet:
+                details.append(f"{label}: {snippet}")
+        return f" {' '.join(details)}" if details else ""
 
     def _resolve_api_key(self) -> str | None:
         settings = self.settings or get_settings()
