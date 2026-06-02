@@ -12,6 +12,7 @@ processes start (scheduler / worker).
 
 import json
 import shutil
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Literal, Sequence
@@ -594,6 +595,7 @@ def _check_agent_backend(
     *,
     kind: Literal["planning", "coding"],
     settings: Settings,
+    timeout_seconds: float = 2.0,
 ) -> list[CheckResult]:
     """Validate the planning/coding backend configuration.
 
@@ -611,18 +613,48 @@ def _check_agent_backend(
 
     if not backend_ref:
         # Default: Kilocode CLI backend.
-        results.append(check_binary(default_bin, label=f"kilocode({kind})"))
-        return results
+        from loreley.core.worker.agent.backends import KilocodeCliBackend
+
+        backend = KilocodeCliBackend(
+            bin=str(default_bin),
+            mode=settings.worker_kilocode_mode,
+            agent=settings.worker_kilocode_agent or settings.worker_kilocode_mode,
+            model=settings.worker_kilocode_model,
+            variant=settings.worker_kilocode_variant,
+            json_output=bool(settings.worker_kilocode_json_output),
+            settings=settings,
+            usage_tracking_enabled=bool(settings.llm_usage_tracking_enabled),
+            usage_db_path=settings.worker_kilocode_usage_db_path,
+        )
+        return _check_kilocode_backend(
+            kind=kind,
+            backend=backend,
+            settings=settings,
+            timeout_seconds=timeout_seconds,
+        )
 
     try:
         from loreley.core.worker.agent import load_agent_backend
-        from loreley.core.worker.agent.backends import CodexCliBackend, CursorCliBackend
+        from loreley.core.worker.agent.backends import (
+            CodexCliBackend,
+            CursorCliBackend,
+            KilocodeCliBackend,
+        )
 
         backend = load_agent_backend(backend_ref, label=label)
         results.append(CheckResult(label, "ok", f"loaded: {backend_ref!r}"))
 
         # Best-effort binary checks for built-in backends.
-        if isinstance(backend, (CodexCliBackend, CursorCliBackend)):
+        if isinstance(backend, KilocodeCliBackend):
+            results.extend(
+                _check_kilocode_backend(
+                    kind=kind,
+                    backend=backend,
+                    settings=settings,
+                    timeout_seconds=timeout_seconds,
+                )
+            )
+        elif isinstance(backend, (CodexCliBackend, CursorCliBackend)):
             results.append(check_binary(str(backend.bin), label=f"{kind}_agent_bin"))
         else:
             bin_value = getattr(backend, "bin", None)
@@ -640,6 +672,247 @@ def _check_agent_backend(
     except Exception as exc:
         results.append(CheckResult(label, "fail", f"failed to load backend {backend_ref!r} ({exc})"))
         return results
+
+
+def _check_kilocode_backend(
+    *,
+    kind: Literal["planning", "coding"],
+    backend: Any,
+    settings: Settings,
+    timeout_seconds: float,
+) -> list[CheckResult]:
+    from loreley.core.worker.agent.backends import kilocode_cli
+
+    results: list[CheckResult] = []
+    bin_value = str(getattr(backend, "bin", "") or settings.worker_kilocode_bin or "kilo")
+    binary = check_binary(bin_value, label=f"kilocode({kind})")
+    results.append(binary)
+    if binary.status != "ok":
+        return results
+
+    try:
+        capabilities = kilocode_cli.discover_kilo_cli_capabilities(
+            bin_value,
+            timeout_seconds=timeout_seconds,
+        )
+    except Exception as exc:
+        results.append(
+            CheckResult(
+                f"{kind}_kilocode_cli",
+                "fail",
+                f"failed to inspect Kilo CLI command API ({exc})",
+            )
+        )
+        return results
+
+    required_flags = _required_kilocode_run_flags(kind=kind, backend=backend, settings=settings)
+    missing_required = sorted(required_flags - capabilities.run_flags)
+    version_detail = f"version={capabilities.version or 'unknown'}"
+    if missing_required:
+        results.append(
+            CheckResult(
+                f"{kind}_kilocode_cli",
+                "fail",
+                f"{version_detail}; missing required run flag(s): {', '.join(missing_required)}",
+            )
+        )
+    else:
+        results.append(
+            CheckResult(
+                f"{kind}_kilocode_cli",
+                "ok",
+                f"{version_detail}; required run flags present",
+            )
+        )
+
+    if _kilocode_usage_tracking_enabled(backend=backend, settings=settings):
+        configured_usage_db = (
+            getattr(backend, "usage_db_path", None)
+            or getattr(settings, "worker_kilocode_usage_db_path", None)
+        )
+        if not capabilities.supports_title:
+            results.append(
+                CheckResult(
+                    f"{kind}_kilocode_usage_db",
+                    "fail",
+                    "usage tracking requires kilo run --title, but kilo run --help does not expose --title",
+                )
+            )
+        elif not capabilities.supports_db_path and not configured_usage_db:
+            results.append(
+                CheckResult(
+                    f"{kind}_kilocode_usage_db",
+                    "warn",
+                    "usage tracking unavailable; kilo db path is not supported and WORKER_KILOCODE_USAGE_DB_PATH is unset",
+                )
+            )
+        else:
+            results.append(
+                _check_kilocode_usage_db(
+                    kind=kind,
+                    backend=backend,
+                    settings=settings,
+                    timeout_seconds=timeout_seconds,
+                )
+            )
+
+    results.append(
+        _check_kilocode_provider_config(
+            kind=kind,
+            backend=backend,
+            settings=settings,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+    return results
+
+
+def _kilocode_usage_tracking_enabled(*, backend: Any, settings: Settings) -> bool:
+    return bool(getattr(backend, "usage_tracking_enabled", settings.llm_usage_tracking_enabled))
+
+
+def _required_kilocode_run_flags(
+    *,
+    kind: Literal["planning", "coding"],
+    backend: Any,
+    settings: Settings,
+) -> set[str]:
+    del kind
+    flags = {"--auto"}
+    if bool(getattr(backend, "json_output", settings.worker_kilocode_json_output)):
+        flags.add("--format")
+    selected_agent = (
+        getattr(backend, "agent", None)
+        or getattr(backend, "mode", None)
+        or settings.worker_kilocode_agent
+        or settings.worker_kilocode_mode
+        or ""
+    )
+    if str(selected_agent).strip():
+        flags.add("--agent")
+    selected_model = getattr(backend, "model", None) or settings.worker_kilocode_model or ""
+    if str(selected_model).strip():
+        flags.add("--model")
+    selected_variant = getattr(backend, "variant", None) or settings.worker_kilocode_variant or ""
+    if str(selected_variant).strip():
+        flags.add("--variant")
+    if _kilocode_usage_tracking_enabled(backend=backend, settings=settings):
+        flags.add("--title")
+    return flags
+
+
+def _check_kilocode_provider_config(
+    *,
+    kind: Literal["planning", "coding"],
+    backend: Any,
+    settings: Settings,
+    timeout_seconds: float,
+) -> CheckResult:
+    from loreley.core.worker.agent.backends import kilocode_cli
+
+    mode = str(getattr(settings, "worker_kilocode_provider_config_mode", "auto") or "auto")
+    provider_env = getattr(backend, "extra_env", None)
+    if not provider_env:
+        provider_env = kilocode_cli._build_kilocode_openai_env(settings)  # noqa: SLF001
+    if not provider_env:
+        if mode == "none":
+            return CheckResult(
+                f"{kind}_kilocode_provider",
+                "ok",
+                "provider injection disabled; relying on Kilo persisted auth/config",
+            )
+        return CheckResult(
+            f"{kind}_kilocode_provider",
+            "ok",
+            "no worker-specific provider injection requested",
+        )
+    if "KILO_PROVIDER_TYPE" in provider_env:
+        return CheckResult(
+            f"{kind}_kilocode_provider",
+            "warn",
+            "legacy_env provider mode selected; verify this Kilo version still resolves KILO_OPENAI_*",
+        )
+
+    config_content = provider_env.get(kilocode_cli.KILO_CONFIG_CONTENT_ENV)
+    if not config_content:
+        return CheckResult(
+            f"{kind}_kilocode_provider",
+            "warn",
+            "provider injection requested but no supported adapter env was generated",
+        )
+    try:
+        payload = json.loads(config_content)
+        provider_ids = sorted((payload.get("provider") or {}).keys())
+        provider_id = provider_ids[0] if provider_ids else "openai"
+    except Exception:
+        provider_id = "openai"
+
+    ok, detail = kilocode_cli.probe_kilo_config_content_support(
+        str(getattr(backend, "bin", "") or settings.worker_kilocode_bin or "kilo"),
+        provider_id=provider_id,
+        timeout_seconds=timeout_seconds,
+    )
+    if ok:
+        return CheckResult(
+            f"{kind}_kilocode_provider",
+            "ok",
+            f"provider injection verified via {detail} (provider={provider_id})",
+        )
+    if mode == "config":
+        return CheckResult(
+            f"{kind}_kilocode_provider",
+            "fail",
+            f"WORKER_KILOCODE_PROVIDER_CONFIG_MODE=config but Kilo config injection was not verified: {detail}",
+        )
+    return CheckResult(
+        f"{kind}_kilocode_provider",
+        "warn",
+        f"Kilo provider injection is unverified in auto mode: {detail}",
+    )
+
+
+def _check_kilocode_usage_db(
+    *,
+    kind: Literal["planning", "coding"],
+    backend: Any,
+    settings: Settings,
+    timeout_seconds: float,
+) -> CheckResult:
+    from loreley.core.worker.agent.backends import kilocode_cli
+
+    bin_value = str(getattr(backend, "bin", "") or settings.worker_kilocode_bin or "kilo")
+    configured_path = (
+        getattr(backend, "usage_db_path", None)
+        or getattr(settings, "worker_kilocode_usage_db_path", None)
+    )
+    db_path = kilocode_cli.resolved_kilo_usage_db_path(
+        kilo_bin=bin_value,
+        configured_path=configured_path,
+        timeout_seconds=timeout_seconds,
+    )
+    if not db_path.is_file():
+        return CheckResult(
+            f"{kind}_kilocode_usage_db",
+            "warn",
+            f"usage tracking unavailable; DB not found: {db_path}",
+        )
+    try:
+        uri = f"file:{db_path.as_posix()}?mode=ro"
+        with sqlite3.connect(uri, uri=True) as conn:
+            missing = kilocode_cli.kilo_usage_schema_missing_reason(conn)
+    except Exception as exc:
+        return CheckResult(
+            f"{kind}_kilocode_usage_db",
+            "warn",
+            f"usage tracking unavailable; failed to inspect {db_path}: {exc}",
+        )
+    if missing:
+        return CheckResult(f"{kind}_kilocode_usage_db", "warn", missing)
+    return CheckResult(
+        f"{kind}_kilocode_usage_db",
+        "ok",
+        f"usage DB schema compatible: {db_path}",
+    )
 
 
 def _check_dynamic_openai_agent_ttl(settings: Settings) -> list[CheckResult]:
@@ -807,8 +1080,20 @@ def preflight_worker(settings: Settings, *, timeout_seconds: float = 2.0) -> lis
         )
     )
 
-    results.extend(_check_agent_backend(kind="planning", settings=settings))
-    results.extend(_check_agent_backend(kind="coding", settings=settings))
+    results.extend(
+        _check_agent_backend(
+            kind="planning",
+            settings=settings,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+    results.extend(
+        _check_agent_backend(
+            kind="coding",
+            settings=settings,
+            timeout_seconds=timeout_seconds,
+        )
+    )
     results.extend(_check_dynamic_openai_agent_ttl(settings))
 
     return results

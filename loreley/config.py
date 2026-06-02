@@ -452,6 +452,10 @@ class Settings(BaseSettings):
         default=None,
         alias="WORKER_KILOCODE_USAGE_DB_PATH",
     )
+    worker_kilocode_provider_config_mode: Literal["auto", "config", "legacy_env", "none"] = Field(
+        default="auto",
+        alias="WORKER_KILOCODE_PROVIDER_CONFIG_MODE",
+    )
     worker_kilocode_openai_api_spec: Literal["responses", "chat_completions"] | None = Field(
         default=None,
         alias="WORKER_KILOCODE_OPENAI_API_SPEC",
@@ -1041,6 +1045,7 @@ def _build_safe_export_payload(settings: Settings, *, mask_secrets: bool) -> dic
         "worker_kilocode_variant": settings.worker_kilocode_variant,
         "worker_kilocode_json_output": settings.worker_kilocode_json_output,
         "worker_kilocode_usage_db_path": settings.worker_kilocode_usage_db_path,
+        "worker_kilocode_provider_config_mode": settings.worker_kilocode_provider_config_mode,
         "worker_kilocode_openai_api_spec": settings.worker_kilocode_openai_api_spec,
         "worker_kilocode_openai_base_url": _safe_export_url(
             settings.worker_kilocode_openai_base_url,
