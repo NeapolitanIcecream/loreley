@@ -1277,8 +1277,8 @@ def test_kilocode_backend_config_mode_resolves_api_key_at_run_time(
 
     captured_envs: list[dict[str, str]] = []
 
-    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
-        captured_envs.append(env)
+    def fake_run(_command, **kwargs):  # noqa: ANN001
+        captured_envs.append(kwargs["env"])
         return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
 
     monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
@@ -1321,8 +1321,8 @@ def test_kilocode_backend_config_mode_does_not_resolve_api_key_without_config_re
 
     captured_envs: list[dict[str, str]] = []
 
-    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
-        captured_envs.append(env)
+    def fake_run(_command, **kwargs):  # noqa: ANN001
+        captured_envs.append(kwargs["env"])
         return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
 
     def fail_lookup(_settings):  # noqa: ANN001

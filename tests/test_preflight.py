@@ -208,6 +208,35 @@ def test_kilocode_preflight_uses_default_backend_settings_when_ref_is_blank(monk
     assert "--variant" in cli_result.details
 
 
+def test_kilocode_preflight_fails_when_usage_tracking_requires_unsupported_title(
+    monkeypatch,
+) -> None:
+    from loreley.core.worker.agent.backends import kilocode_cli
+
+    monkeypatch.setattr("loreley.preflight.shutil.which", lambda _name: "/usr/bin/kilo")
+    monkeypatch.setenv("WORKER_KILOCODE_PROVIDER_CONFIG_MODE", "none")
+    monkeypatch.setenv("LLM_USAGE_TRACKING_ENABLED", "true")
+
+    def fake_discover(*_args, **_kwargs):  # noqa: ANN002
+        return kilocode_cli.KiloCliCapabilities(
+            version="7.3.16",
+            run_flags=frozenset({"--auto"}),
+            supports_db_path=True,
+        )
+
+    monkeypatch.setattr(kilocode_cli, "discover_kilo_cli_capabilities", fake_discover)
+    settings = TestSettings(WORKER_PLANNING_BACKEND="")
+
+    results = _check_agent_backend(kind="planning", settings=settings)
+
+    cli_result = next(item for item in results if item.name == "planning_kilocode_cli")
+    usage_result = next(item for item in results if item.name == "planning_kilocode_usage_db")
+    assert cli_result.status == "fail"
+    assert "--title" in cli_result.details
+    assert usage_result.status == "fail"
+    assert "--title" in usage_result.details
+
+
 def test_kilocode_preflight_fails_config_mode_when_provider_probe_fails(monkeypatch) -> None:
     from loreley.core.worker.agent.backends import kilocode_cli
 

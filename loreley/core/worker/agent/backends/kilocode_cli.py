@@ -529,31 +529,34 @@ def _kilocode_provider_config_mode(settings) -> KiloProviderConfigMode:
     return normalized  # type: ignore[return-value]
 
 
+def _stripped_setting(settings, name: str) -> str:
+    return str(getattr(settings, name, "") or "").strip()
+
+
+def _has_kilocode_api_key_source(settings, *, api_key: str | None = None) -> bool:
+    values = (
+        api_key,
+        getattr(settings, "worker_kilocode_openai_api_key", ""),
+        getattr(settings, "openai_api_key", ""),
+        getattr(settings, "openai_dynamic_api_key_provider", ""),
+    )
+    return any(str(value or "").strip() for value in values)
+
+
 def _kilocode_provider_input(settings, *, api_key: str | None = None) -> dict[str, object]:
-    worker_base_url = (getattr(settings, "worker_kilocode_openai_base_url", None) or "").strip()
-    worker_model = (getattr(settings, "worker_kilocode_openai_model", None) or "").strip()
+    worker_base_url = _stripped_setting(settings, "worker_kilocode_openai_base_url")
+    worker_model = _stripped_setting(settings, "worker_kilocode_openai_model")
     worker_api_spec = getattr(settings, "worker_kilocode_openai_api_spec", None)
 
-    base_url = worker_base_url or (getattr(settings, "openai_base_url", None) or "").strip()
-    model = worker_model
+    base_url = worker_base_url or _stripped_setting(settings, "openai_base_url")
     api_spec = worker_api_spec or getattr(settings, "openai_api_spec", None)
-    has_api_key_source = bool(
-        str(api_key or "").strip()
-        or str(getattr(settings, "worker_kilocode_openai_api_key", "") or "").strip()
-        or str(getattr(settings, "openai_api_key", "") or "").strip()
-        or str(getattr(settings, "openai_dynamic_api_key_provider", "") or "").strip()
-    )
-    has_provider_config = bool(
-        has_api_key_source
-        or base_url
-        or model
-        or worker_api_spec
-    )
+    has_api_key_source = _has_kilocode_api_key_source(settings, api_key=api_key)
+    has_provider_config = any((has_api_key_source, base_url, worker_model, worker_api_spec))
     provider_id = _kilocode_provider_id(api_spec=api_spec, has_provider_config=has_provider_config)
     return {
         "api_spec": api_spec,
         "base_url": base_url,
-        "model": model,
+        "model": worker_model,
         "provider_id": provider_id,
         "has_api_key_source": has_api_key_source,
         "has_provider_config": has_provider_config,

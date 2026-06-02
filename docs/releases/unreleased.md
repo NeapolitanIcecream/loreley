@@ -12,3 +12,6 @@ These notes cover changes merged after `v0.8.2-alpha`.
 - Kilocode usage tracking now resolves the DB path through `kilo db path` when
   `WORKER_KILOCODE_USAGE_DB_PATH` is unset and records explicit unavailable
   usage events when the DB is missing or the schema no longer matches.
+  Preflight now fails when usage tracking is enabled but the installed Kilo
+  binary does not expose `kilo run --title`, because tracked worker commands use
+  that flag to correlate Kilo sessions with Loreley jobs.

@@ -725,17 +725,17 @@ def _check_kilocode_backend(
             )
         )
 
-    if bool(getattr(backend, "usage_tracking_enabled", settings.llm_usage_tracking_enabled)):
+    if _kilocode_usage_tracking_enabled(backend=backend, settings=settings):
         configured_usage_db = (
             getattr(backend, "usage_db_path", None)
             or getattr(settings, "worker_kilocode_usage_db_path", None)
         )
-        if "--title" not in capabilities.run_flags:
+        if not capabilities.supports_title:
             results.append(
                 CheckResult(
                     f"{kind}_kilocode_usage_db",
-                    "warn",
-                    "usage tracking may be unavailable because kilo run --help does not expose --title",
+                    "fail",
+                    "usage tracking requires kilo run --title, but kilo run --help does not expose --title",
                 )
             )
         elif not capabilities.supports_db_path and not configured_usage_db:
@@ -767,6 +767,10 @@ def _check_kilocode_backend(
     return results
 
 
+def _kilocode_usage_tracking_enabled(*, backend: Any, settings: Settings) -> bool:
+    return bool(getattr(backend, "usage_tracking_enabled", settings.llm_usage_tracking_enabled))
+
+
 def _required_kilocode_run_flags(
     *,
     kind: Literal["planning", "coding"],
@@ -792,6 +796,8 @@ def _required_kilocode_run_flags(
     selected_variant = getattr(backend, "variant", None) or settings.worker_kilocode_variant or ""
     if str(selected_variant).strip():
         flags.add("--variant")
+    if _kilocode_usage_tracking_enabled(backend=backend, settings=settings):
+        flags.add("--title")
     return flags
 
 

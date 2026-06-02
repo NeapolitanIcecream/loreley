@@ -111,9 +111,10 @@ resolved once per backend/preflight invocation:
 - `supports_db_path`
 - `provider_config_mode`: detected or configured
 
-Preflight should fail if required run flags are missing. It should warn, not
-fail, when optional usage tracking or provider injection capabilities cannot be
-confirmed.
+Preflight should fail if required run flags are missing. When LLM usage
+tracking is enabled, `--title` is required because Loreley uses Kilo session
+titles to correlate usage rows. Preflight should warn, not fail, when optional
+usage DB discovery or provider injection capabilities cannot be confirmed.
 
 ### 2. Keep command construction stable
 
