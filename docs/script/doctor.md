@@ -24,6 +24,13 @@ This command performs quick preflight checks to reduce onboarding friction befor
   - `WORKER_REPO_REMOTE_URL` is set.
   - `WORKER_EVALUATOR_PLUGIN` is set and importable (after applying `WORKER_EVALUATOR_PYTHON_PATHS`).
   - Planning/coding backend binaries are present for built-in backends (`kilo`, `codex`, `cursor-agent`).
+  - Kilocode backends expose the required `kilo run` flags for the configured
+    command shape.
+  - Kilocode provider injection is verified when `WORKER_KILOCODE_OPENAI_*`
+    settings require isolated config, or reported separately when it is
+    disabled, legacy-only, or unverified.
+  - Kilocode usage DB discovery and schema are checked when LLM usage tracking
+    is enabled.
   - Dynamic OpenAI token TTL is long enough for Kilocode planning/coding
     timeouts, or a warning is reported.
   - Unknown backend types fall back to a warning because binary checks are skipped.

@@ -27,7 +27,14 @@ and Loreley only applies best-effort JSON/JSONL unwrapping when it is enabled.
 When wiring Kilocode to an OpenAI-compatible provider, worker-specific
 `WORKER_KILOCODE_OPENAI_*` values take precedence; otherwise Loreley falls back
 to the global `OPENAI_*` / `LORELEY_LLM_*` settings for API key, base URL, and
-API spec.
+API spec. Current Kilo releases are configured through isolated config content:
+`WORKER_KILOCODE_PROVIDER_CONFIG_MODE=auto` uses `KILO_CONFIG_CONTENT` with
+`{env:LORELEY_KILO_OPENAI_API_KEY}` and
+`{env:LORELEY_KILO_OPENAI_BASE_URL}` references so secrets are resolved at
+subprocess launch without being written into the config JSON. Operators can set
+`WORKER_KILOCODE_PROVIDER_CONFIG_MODE=legacy_env` for older Kilo versions that
+still require `KILO_PROVIDER_TYPE` / `KILO_OPENAI_*`, or `none` to rely on
+Kilo's persisted auth/config.
 
 Provide a generic `kilocode_backend()` factory plus worker-aware factories that
 raise the planning/coding agent error types for retries and debug artifacts.
@@ -43,3 +50,9 @@ raise the planning/coding agent error types for retries and debug artifacts.
   Kilocode agent, but new configuration should prefer `WORKER_KILOCODE_AGENT`.
 - Structured JSON output is no longer the default; enable it explicitly only
   when you want raw Kilocode event streams.
+- `loreley doctor` distinguishes Kilocode binary discovery, `kilo run` command
+  API compatibility, provider injection verification, and usage DB availability.
+- Usage DB discovery prefers `WORKER_KILOCODE_USAGE_DB_PATH`, then
+  `kilo db path`, then the historical `~/.local/share/kilo/kilo.db` fallback.
+  Missing or incompatible Kilo usage tables produce unavailable usage events
+  after a successful Kilo run instead of failing the worker task.

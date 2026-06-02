@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import monotonic
+from typing import Literal
 
 from loguru import logger
 
@@ -17,6 +19,155 @@ from loreley.core.worker.agent.contracts import AgentInvocation, AgentTask
 from loreley.core.worker.agent.utils import truncate_text, validate_workdir
 
 log = logger.bind(module="worker.agent.backends.kilocode_cli")
+
+KILO_CONFIG_CONTENT_ENV = "KILO_CONFIG_CONTENT"
+LORELEY_KILO_OPENAI_API_KEY_ENV = "LORELEY_KILO_OPENAI_API_KEY"
+LORELEY_KILO_OPENAI_BASE_URL_ENV = "LORELEY_KILO_OPENAI_BASE_URL"
+KILO_CONFIG_SCHEMA_URL = "https://app.kilo.ai/config.json"
+KILO_PROVIDER_CONFIG_MODES = ("auto", "config", "legacy_env", "none")
+KiloProviderConfigMode = Literal["auto", "config", "legacy_env", "none"]
+
+_KILO_RUN_FLAG_PATTERN = re.compile(r"(?<![\w-])--[A-Za-z0-9][A-Za-z0-9-]*")
+_KILO_VERSION_PATTERN = re.compile(r"\b(\d+(?:\.\d+){1,3}(?:[-+][0-9A-Za-z.]+)?)\b")
+_KILO_USAGE_REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
+    "session": frozenset({"id", "title", "directory", "time_created", "time_updated"}),
+    "message": frozenset({"id", "session_id", "time_created", "data"}),
+}
+
+
+class KiloUsageUnavailableError(RuntimeError):
+    """Usage data is unavailable after a successful Kilo invocation."""
+
+
+@dataclass(frozen=True, slots=True)
+class KiloCliCapabilities:
+    """Best-effort view of the installed Kilo CLI command surface."""
+
+    version: str | None
+    run_flags: frozenset[str]
+    supports_db_path: bool
+    provider_config_mode: str = "unknown"
+
+    @property
+    def supports_auto(self) -> bool:
+        return "--auto" in self.run_flags
+
+    @property
+    def supports_agent(self) -> bool:
+        return "--agent" in self.run_flags
+
+    @property
+    def supports_model(self) -> bool:
+        return "--model" in self.run_flags
+
+    @property
+    def supports_variant(self) -> bool:
+        return "--variant" in self.run_flags
+
+    @property
+    def supports_title(self) -> bool:
+        return "--title" in self.run_flags
+
+    @property
+    def supports_format_json(self) -> bool:
+        return "--format" in self.run_flags
+
+
+def parse_kilo_version(output: str) -> str | None:
+    """Extract the first semantic-version-looking token from Kilo output."""
+
+    match = _KILO_VERSION_PATTERN.search(str(output or ""))
+    return match.group(1) if match else None
+
+
+def parse_kilo_run_flags(help_output: str) -> frozenset[str]:
+    """Extract long flags from ``kilo run --help`` output."""
+
+    return frozenset(_KILO_RUN_FLAG_PATTERN.findall(str(help_output or "")))
+
+
+def discover_kilo_cli_capabilities(
+    kilo_bin: str,
+    *,
+    timeout_seconds: float = 2.0,
+) -> KiloCliCapabilities:
+    """Probe the installed Kilo CLI without requiring provider credentials."""
+
+    version_result = _run_kilo_probe([kilo_bin, "--version"], timeout_seconds=timeout_seconds)
+    help_result = _run_kilo_probe([kilo_bin, "run", "--help"], timeout_seconds=timeout_seconds)
+    db_path_result = _run_kilo_probe([kilo_bin, "db", "path"], timeout_seconds=timeout_seconds)
+    version_text = "\n".join(filter(None, [version_result.stdout, version_result.stderr]))
+    help_text = "\n".join(filter(None, [help_result.stdout, help_result.stderr]))
+    return KiloCliCapabilities(
+        version=parse_kilo_version(version_text),
+        run_flags=parse_kilo_run_flags(help_text),
+        supports_db_path=db_path_result.returncode == 0 and bool((db_path_result.stdout or "").strip()),
+    )
+
+
+def probe_kilo_config_content_support(
+    kilo_bin: str,
+    *,
+    provider_id: str = "openai",
+    timeout_seconds: float = 2.0,
+) -> tuple[bool, str]:
+    """Return whether ``KILO_CONFIG_CONTENT`` is loaded by ``kilo debug config``."""
+
+    env = os.environ.copy()
+    env[LORELEY_KILO_OPENAI_API_KEY_ENV] = "loreley-probe-key"
+    env[LORELEY_KILO_OPENAI_BASE_URL_ENV] = "https://example.invalid/v1"
+    env[KILO_CONFIG_CONTENT_ENV] = _build_kilo_config_content(
+        provider_id=provider_id,
+        base_url=env[LORELEY_KILO_OPENAI_BASE_URL_ENV],
+        model="loreley-probe-model",
+        include_api_key=True,
+    )
+    result = _run_kilo_probe(
+        [kilo_bin, "debug", "config"],
+        timeout_seconds=timeout_seconds,
+        env=env,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        return False, detail or "kilo debug config failed"
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        return False, f"kilo debug config did not emit JSON ({exc})"
+
+    provider_payload = payload.get("provider", {}).get(provider_id, {})
+    options = provider_payload.get("options", {}) if isinstance(provider_payload, dict) else {}
+    if options.get("apiKey") != env[LORELEY_KILO_OPENAI_API_KEY_ENV]:
+        return False, f"{KILO_CONFIG_CONTENT_ENV} did not resolve apiKey env references"
+    if options.get("baseURL") != env[LORELEY_KILO_OPENAI_BASE_URL_ENV]:
+        return False, f"{KILO_CONFIG_CONTENT_ENV} did not resolve baseURL env references"
+    return True, KILO_CONFIG_CONTENT_ENV
+
+
+def _run_kilo_probe(
+    command: list[str],
+    *,
+    timeout_seconds: float,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            command,
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        return subprocess.CompletedProcess(command, returncode=127, stdout="", stderr=str(exc))
+    except subprocess.TimeoutExpired as exc:
+        return subprocess.CompletedProcess(
+            command,
+            returncode=124,
+            stdout=exc.stdout or "",
+            stderr=exc.stderr or f"timed out after {timeout_seconds}s",
+        )
 
 
 @dataclass(slots=True)
@@ -107,11 +258,14 @@ class KilocodeCliBackend:
         explicit_extra_env = self.extra_env or {}
         env = os.environ.copy()
         env.update(explicit_extra_env)
-        if "KILO_OPENAI_API_KEY" in explicit_extra_env:
+        if _has_explicit_kilocode_api_key(explicit_extra_env):
+            return env
+        runtime_api_key_env = _runtime_api_key_env_name(explicit_extra_env)
+        if runtime_api_key_env is None:
             return env
         runtime_api_key = self._resolved_runtime_api_key()
         if runtime_api_key:
-            env["KILO_OPENAI_API_KEY"] = runtime_api_key
+            env[runtime_api_key_env] = runtime_api_key
         return env
 
     def _resolved_runtime_api_key(self) -> str | None:
@@ -271,10 +425,13 @@ class KilocodeCliBackend:
     ):
         db_path = self._resolved_usage_db_path()
         if not db_path.is_file():
-            return None
+            raise KiloUsageUnavailableError(f"kilo usage DB not found: {db_path}")
         uri = f"file:{db_path.as_posix()}?mode=ro"
         with sqlite3.connect(uri, uri=True) as conn:
             conn.row_factory = sqlite3.Row
+            missing_schema = kilo_usage_schema_missing_reason(conn)
+            if missing_schema:
+                raise KiloUsageUnavailableError(missing_schema)
             session_row = conn.execute(
                 """
                 SELECT id
@@ -342,38 +499,37 @@ class KilocodeCliBackend:
 
     def _resolved_usage_db_path(self) -> Path:
         settings = self.settings or get_settings()
-        raw = (
-            self.usage_db_path
-            or getattr(settings, "worker_kilocode_usage_db_path", None)
-            or "~/.local/share/kilo/kilo.db"
+        return resolved_kilo_usage_db_path(
+            kilo_bin=self.bin,
+            configured_path=self.usage_db_path
+            or getattr(settings, "worker_kilocode_usage_db_path", None),
         )
-        return Path(str(raw)).expanduser()
 
 
 def _build_kilocode_openai_env(settings, *, api_key: str | None = None) -> dict[str, str]:
-    """Translate Loreley settings into Kilo Code CLI provider env config.
+    """Translate Loreley OpenAI-compatible settings into Kilo provider config."""
 
-    Worker-specific ``WORKER_KILOCODE_OPENAI_*`` values take precedence. When
-    absent, Loreley falls back to the global OpenAI-compatible settings so the
-    same gateway credentials can drive both internal SDK calls and the spawned
-    Kilo subprocess.
+    mode = _kilocode_provider_config_mode(settings)
+    if mode == "none":
+        return {}
 
-    Kilo Code CLI supports provider configuration through environment variables.
-    For OpenAI-compatible
-    endpoints, use:
-    - ``KILO_PROVIDER_TYPE=openai`` (Chat Completions)
-    - ``KILO_PROVIDER_TYPE=openai-responses`` (Responses)
-    - ``KILO_OPENAI_API_KEY``
-    - ``KILO_OPENAI_BASE_URL`` (optional; required for OpenAI-compatible gateways)
-    - ``KILO_OPENAI_MODEL_ID``
+    provider_input = _kilocode_provider_input(settings, api_key=api_key)
+    if not provider_input["has_provider_config"]:
+        return {}
+    if mode == "legacy_env":
+        return _build_kilocode_legacy_openai_env(provider_input, api_key=api_key)
+    return _build_kilocode_config_openai_env(provider_input, api_key=api_key)
 
-    Loreley maps ``WORKER_KILOCODE_OPENAI_API_SPEC`` to the provider type:
-    - ``chat_completions`` -> ``openai``
-    - ``responses`` -> ``openai-responses``
 
-    Reference: ``cli/docs/ENVIRONMENT_VARIABLES.md`` in the upstream Kilocode repo.
-    """
+def _kilocode_provider_config_mode(settings) -> KiloProviderConfigMode:
+    raw = str(getattr(settings, "worker_kilocode_provider_config_mode", "auto") or "auto").strip()
+    normalized = raw.lower()
+    if normalized not in KILO_PROVIDER_CONFIG_MODES:
+        return "auto"
+    return normalized  # type: ignore[return-value]
 
+
+def _kilocode_provider_input(settings, *, api_key: str | None = None) -> dict[str, object]:
     worker_base_url = (getattr(settings, "worker_kilocode_openai_base_url", None) or "").strip()
     worker_model = (getattr(settings, "worker_kilocode_openai_model", None) or "").strip()
     worker_api_spec = getattr(settings, "worker_kilocode_openai_api_spec", None)
@@ -381,18 +537,50 @@ def _build_kilocode_openai_env(settings, *, api_key: str | None = None) -> dict[
     base_url = worker_base_url or (getattr(settings, "openai_base_url", None) or "").strip()
     model = worker_model
     api_spec = worker_api_spec or getattr(settings, "openai_api_spec", None)
+    has_api_key_source = bool(
+        str(api_key or "").strip()
+        or str(getattr(settings, "worker_kilocode_openai_api_key", "") or "").strip()
+        or str(getattr(settings, "openai_api_key", "") or "").strip()
+        or str(getattr(settings, "openai_dynamic_api_key_provider", "") or "").strip()
+    )
+    has_provider_config = bool(
+        has_api_key_source
+        or base_url
+        or model
+        or worker_api_spec
+    )
+    provider_id = _kilocode_provider_id(api_spec=api_spec, has_provider_config=has_provider_config)
+    return {
+        "api_spec": api_spec,
+        "base_url": base_url,
+        "model": model,
+        "provider_id": provider_id,
+        "has_api_key_source": has_api_key_source,
+        "has_provider_config": has_provider_config,
+    }
 
-    env: dict[str, str] = {}
-    provider_type: str | None = None
+
+def _kilocode_provider_id(*, api_spec: object, has_provider_config: bool) -> str | None:
     if api_spec == "responses":
-        provider_type = "openai-responses"
-    elif api_spec == "chat_completions":
-        provider_type = "openai"
-    elif api_key or base_url or model:
-        provider_type = "openai"
+        return "openai-responses"
+    if api_spec == "chat_completions":
+        return "openai"
+    if has_provider_config:
+        return "openai"
+    return None
 
-    if provider_type:
-        env["KILO_PROVIDER_TYPE"] = provider_type
+
+def _build_kilocode_legacy_openai_env(
+    provider_input: dict[str, object],
+    *,
+    api_key: str | None = None,
+) -> dict[str, str]:
+    env: dict[str, str] = {}
+    provider_id = str(provider_input.get("provider_id") or "")
+    base_url = str(provider_input.get("base_url") or "")
+    model = str(provider_input.get("model") or "")
+    if provider_id:
+        env["KILO_PROVIDER_TYPE"] = provider_id
 
     resolved_api_key = str(api_key or "").strip()
     if resolved_api_key:
@@ -402,6 +590,117 @@ def _build_kilocode_openai_env(settings, *, api_key: str | None = None) -> dict[
     if model:
         env["KILO_OPENAI_MODEL_ID"] = model
     return env
+
+
+def _build_kilocode_config_openai_env(
+    provider_input: dict[str, object],
+    *,
+    api_key: str | None = None,
+) -> dict[str, str]:
+    provider_id = str(provider_input.get("provider_id") or "")
+    if not provider_id:
+        return {}
+    base_url = str(provider_input.get("base_url") or "")
+    model = str(provider_input.get("model") or "")
+    include_api_key = bool(provider_input.get("has_api_key_source"))
+    env: dict[str, str] = {
+        KILO_CONFIG_CONTENT_ENV: _build_kilo_config_content(
+            provider_id=provider_id,
+            base_url=base_url,
+            model=model,
+            include_api_key=include_api_key,
+        )
+    }
+    if base_url:
+        env[LORELEY_KILO_OPENAI_BASE_URL_ENV] = base_url
+    resolved_api_key = str(api_key or "").strip()
+    if resolved_api_key:
+        env[LORELEY_KILO_OPENAI_API_KEY_ENV] = resolved_api_key
+    return env
+
+
+def _build_kilo_config_content(
+    *,
+    provider_id: str,
+    base_url: str,
+    model: str,
+    include_api_key: bool,
+) -> str:
+    options: dict[str, str] = {}
+    if include_api_key:
+        options["apiKey"] = f"{{env:{LORELEY_KILO_OPENAI_API_KEY_ENV}}}"
+    if base_url:
+        options["baseURL"] = f"{{env:{LORELEY_KILO_OPENAI_BASE_URL_ENV}}}"
+    payload: dict[str, object] = {
+        "$schema": KILO_CONFIG_SCHEMA_URL,
+        "provider": {
+            provider_id: {
+                "options": options,
+            }
+        },
+    }
+    normalized_model = _kilo_config_model(provider_id=provider_id, model=model)
+    if normalized_model:
+        payload["model"] = normalized_model
+    return json.dumps(payload, separators=(",", ":"), sort_keys=True)
+
+
+def _kilo_config_model(*, provider_id: str, model: str) -> str:
+    value = str(model or "").strip()
+    if not value:
+        return ""
+    if "/" in value:
+        return value
+    return f"{provider_id}/{value}"
+
+
+def _has_explicit_kilocode_api_key(env: dict[str, str]) -> bool:
+    return bool(
+        str(env.get(LORELEY_KILO_OPENAI_API_KEY_ENV, "") or "").strip()
+        or str(env.get("KILO_OPENAI_API_KEY", "") or "").strip()
+    )
+
+
+def _runtime_api_key_env_name(env: dict[str, str]) -> str | None:
+    if LORELEY_KILO_OPENAI_API_KEY_ENV in str(env.get(KILO_CONFIG_CONTENT_ENV, "")):
+        return LORELEY_KILO_OPENAI_API_KEY_ENV
+    if any(
+        key in env
+        for key in ("KILO_PROVIDER_TYPE", "KILO_OPENAI_BASE_URL", "KILO_OPENAI_MODEL_ID")
+    ):
+        return "KILO_OPENAI_API_KEY"
+    return None
+
+
+def resolved_kilo_usage_db_path(
+    *,
+    kilo_bin: str,
+    configured_path: str | None = None,
+    timeout_seconds: float = 2.0,
+) -> Path:
+    raw_configured = str(configured_path or "").strip()
+    if raw_configured:
+        return Path(raw_configured).expanduser()
+    result = _run_kilo_probe([kilo_bin, "db", "path"], timeout_seconds=timeout_seconds)
+    raw = (result.stdout or "").strip()
+    if result.returncode == 0 and raw:
+        return Path(raw).expanduser()
+    return Path("~/.local/share/kilo/kilo.db").expanduser()
+
+
+def kilo_usage_schema_missing_reason(conn: sqlite3.Connection) -> str | None:
+    for table, required_columns in _KILO_USAGE_REQUIRED_COLUMNS.items():
+        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        if not rows:
+            return f"kilo usage DB schema incompatible: missing table {table}"
+        present = {str(row[1]) for row in rows}
+        missing = sorted(required_columns - present)
+        if missing:
+            return (
+                f"kilo usage DB schema incompatible: missing column "
+                f"{table}.{missing[0]}"
+            )
+    return None
 
 
 def kilocode_backend() -> KilocodeCliBackend:
@@ -495,7 +794,11 @@ def kilocode_coding_backend() -> KilocodeCliBackend:
 
 __all__ = [
     "KilocodeCliBackend",
+    "KiloCliCapabilities",
+    "discover_kilo_cli_capabilities",
     "kilocode_backend",
     "kilocode_coding_backend",
     "kilocode_planning_backend",
+    "parse_kilo_run_flags",
+    "parse_kilo_version",
 ]

@@ -714,6 +714,94 @@ def test_kilocode_cli_backend_omits_optional_flags_when_disabled(
     assert "plan something" in command_list
 
 
+def test_kilocode_capability_parser_recognizes_current_run_flags() -> None:
+    help_output = """
+    kilo run [message..]
+      --format      format: default or json
+      --title       title for the session
+      --variant     model variant
+      --agent       agent to use
+      -m, --model   model to use
+      --auto        auto-approve all permissions
+    """
+
+    flags = kilocode_cli.parse_kilo_run_flags(help_output)
+
+    assert {"--auto", "--agent", "--model", "--format", "--title", "--variant"} <= flags
+
+
+def test_kilocode_capabilities_expose_supported_features() -> None:
+    capabilities = kilocode_cli.KiloCliCapabilities(
+        version="7.3.16",
+        run_flags=frozenset({"--auto", "--agent", "--model", "--format", "--title", "--variant"}),
+        supports_db_path=True,
+    )
+
+    assert capabilities.supports_auto is True
+    assert capabilities.supports_agent is True
+    assert capabilities.supports_model is True
+    assert capabilities.supports_format_json is True
+    assert capabilities.supports_title is True
+    assert capabilities.supports_variant is True
+    assert capabilities.supports_db_path is True
+
+
+def test_kilocode_default_provider_adapter_uses_isolated_config_env_refs() -> None:
+    settings = Settings.model_validate(
+        {
+            "WORKER_KILOCODE_OPENAI_API_KEY": "sk-worker",
+            "WORKER_KILOCODE_OPENAI_BASE_URL": "https://worker.example.com/v1",
+            "WORKER_KILOCODE_OPENAI_MODEL": "gpt-5.4",
+            "WORKER_KILOCODE_OPENAI_API_SPEC": "responses",
+        }
+    )
+
+    env = kilocode_cli._build_kilocode_openai_env(settings)  # noqa: SLF001
+    config = json.loads(env["KILO_CONFIG_CONTENT"])
+
+    assert "KILO_PROVIDER_TYPE" not in env
+    assert "KILO_OPENAI_API_KEY" not in env
+    assert "sk-worker" not in env["KILO_CONFIG_CONTENT"]
+    assert env["LORELEY_KILO_OPENAI_BASE_URL"] == "https://worker.example.com/v1"
+    assert config["model"] == "openai-responses/gpt-5.4"
+    assert config["provider"]["openai-responses"]["options"] == {
+        "apiKey": "{env:LORELEY_KILO_OPENAI_API_KEY}",
+        "baseURL": "{env:LORELEY_KILO_OPENAI_BASE_URL}",
+    }
+
+
+def test_kilocode_provider_adapter_supports_legacy_env_mode() -> None:
+    settings = Settings.model_validate(
+        {
+            "WORKER_KILOCODE_PROVIDER_CONFIG_MODE": "legacy_env",
+            "WORKER_KILOCODE_OPENAI_BASE_URL": "https://worker.example.com/v1",
+            "WORKER_KILOCODE_OPENAI_MODEL": "gpt-5.4",
+            "WORKER_KILOCODE_OPENAI_API_SPEC": "chat_completions",
+        }
+    )
+
+    env = kilocode_cli._build_kilocode_openai_env(settings, api_key="sk-runtime")  # noqa: SLF001
+
+    assert env == {
+        "KILO_PROVIDER_TYPE": "openai",
+        "KILO_OPENAI_API_KEY": "sk-runtime",
+        "KILO_OPENAI_BASE_URL": "https://worker.example.com/v1",
+        "KILO_OPENAI_MODEL_ID": "gpt-5.4",
+    }
+
+
+def test_kilocode_provider_adapter_none_mode_disables_injection() -> None:
+    settings = Settings.model_validate(
+        {
+            "WORKER_KILOCODE_PROVIDER_CONFIG_MODE": "none",
+            "WORKER_KILOCODE_OPENAI_BASE_URL": "https://worker.example.com/v1",
+            "WORKER_KILOCODE_OPENAI_API_KEY": "sk-worker",
+        }
+    )
+
+    assert kilocode_cli._build_kilocode_openai_env(settings) == {}  # noqa: SLF001
+
+
 def test_kilocode_cli_backend_titles_session_and_reads_usage_db(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -815,6 +903,79 @@ def test_kilocode_cli_backend_titles_session_and_reads_usage_db(
     assert event.cost_source == "provider_reported"
     assert str(event.cost_usd) == "0.025"
     assert event.external_usage_id == f"kilo:{job_id}:{run_token}:coding:attempt:4"
+
+
+def test_kilocode_usage_db_resolution_prefers_kilo_db_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    explicit = tmp_path / "explicit.db"
+    discovered = tmp_path / "discovered.db"
+    calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):  # noqa: ANN001
+        calls.append(command)
+        return types.SimpleNamespace(stdout=f"{discovered}\n", stderr="", returncode=0)
+
+    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+
+    assert (
+        kilocode_cli.resolved_kilo_usage_db_path(
+            kilo_bin="kilo",
+            configured_path=str(explicit),
+        )
+        == explicit
+    )
+    assert calls == []
+    assert (
+        kilocode_cli.resolved_kilo_usage_db_path(
+            kilo_bin="kilo",
+            configured_path=None,
+        )
+        == discovered
+    )
+    assert calls == [["kilo", "db", "path"]]
+
+
+def test_kilocode_usage_db_schema_mismatch_returns_unavailable_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+    usage_db = tmp_path / "kilo.db"
+    with sqlite3.connect(usage_db) as conn:
+        conn.execute("CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT)")
+
+    def fake_run(*_args, **_kwargs):  # noqa: ANN002
+        return types.SimpleNamespace(stdout="done", stderr="", returncode=0)
+
+    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    job_id = uuid4()
+    run_token = uuid4()
+    backend = KilocodeCliBackend(
+        bin="kilo",
+        timeout_seconds=30,
+        extra_env={},
+        error_cls=RuntimeError,
+        usage_db_path=str(usage_db),
+    )
+
+    invocation = backend.run(
+        AgentTask(
+            name="coding",
+            prompt="do it",
+            job_id=job_id,
+            run_token=run_token,
+            phase="coding",
+        ),
+        working_dir=repo_dir,
+    )
+
+    assert len(invocation.usage_events) == 1
+    event = invocation.usage_events[0]
+    assert event.cost_source == "unavailable"
+    assert "missing column session.directory" in event.raw_usage["unavailable_reason"]
 
 
 def test_kilocode_cli_backend_raises_on_nonzero_exit_with_stdout_and_stderr_context(
@@ -922,9 +1083,13 @@ def test_kilocode_backend_factory_uses_env_settings(monkeypatch: pytest.MonkeyPa
     assert backend.model == "openai/gpt-5.4"
     assert backend.variant == "high"
     assert backend.json_output is True
-    assert backend.extra_env["KILO_PROVIDER_TYPE"] == "openai-responses"
-    assert backend.extra_env["KILO_OPENAI_BASE_URL"] == "https://example.invalid/v1"
-    assert backend.extra_env["KILO_OPENAI_MODEL_ID"] == "gpt-4o-mini"
+    config = json.loads(backend.extra_env["KILO_CONFIG_CONTENT"])
+    assert "KILO_PROVIDER_TYPE" not in backend.extra_env
+    assert backend.extra_env["LORELEY_KILO_OPENAI_BASE_URL"] == "https://example.invalid/v1"
+    assert config["model"] == "openai-responses/gpt-4o-mini"
+    assert config["provider"]["openai-responses"]["options"]["apiKey"] == (
+        "{env:LORELEY_KILO_OPENAI_API_KEY}"
+    )
 
     get_settings.cache_clear()
 
@@ -946,8 +1111,9 @@ def test_kilocode_backend_factory_falls_back_to_global_openai_aliases(
 
     backend = kilocode_backend()
 
-    assert backend.extra_env["KILO_PROVIDER_TYPE"] == "openai"
-    assert backend.extra_env["KILO_OPENAI_BASE_URL"] == "https://alias.example.com/v1"
+    config = json.loads(backend.extra_env["KILO_CONFIG_CONTENT"])
+    assert backend.extra_env["LORELEY_KILO_OPENAI_BASE_URL"] == "https://alias.example.com/v1"
+    assert "openai" in config["provider"]
 
     get_settings.cache_clear()
 
@@ -968,8 +1134,9 @@ def test_kilocode_backend_factory_prefers_worker_specific_openai_config(
 
     backend = kilocode_backend()
 
-    assert backend.extra_env["KILO_PROVIDER_TYPE"] == "openai-responses"
-    assert backend.extra_env["KILO_OPENAI_BASE_URL"] == "https://worker.example.com/v1"
+    config = json.loads(backend.extra_env["KILO_CONFIG_CONTENT"])
+    assert backend.extra_env["LORELEY_KILO_OPENAI_BASE_URL"] == "https://worker.example.com/v1"
+    assert "openai-responses" in config["provider"]
 
     get_settings.cache_clear()
 
@@ -989,8 +1156,9 @@ def test_kilocode_backend_factory_keeps_global_api_spec_under_partial_worker_ove
 
     backend = kilocode_backend()
 
-    assert backend.extra_env["KILO_PROVIDER_TYPE"] == "openai-responses"
-    assert backend.extra_env["KILO_OPENAI_BASE_URL"] == "https://worker.example.com/v1"
+    config = json.loads(backend.extra_env["KILO_CONFIG_CONTENT"])
+    assert backend.extra_env["LORELEY_KILO_OPENAI_BASE_URL"] == "https://worker.example.com/v1"
+    assert "openai-responses" in config["provider"]
 
     get_settings.cache_clear()
 
@@ -1059,7 +1227,8 @@ def test_kilocode_backend_factory_maps_openai_api_spec_to_provider_type(
 
     backend = kilocode_backend()
 
-    assert backend.extra_env["KILO_PROVIDER_TYPE"] == expected_provider_type
+    config = json.loads(backend.extra_env["KILO_CONFIG_CONTENT"])
+    assert expected_provider_type in config["provider"]
 
     get_settings.cache_clear()
 
@@ -1097,6 +1266,92 @@ def test_kilocode_backend_resolves_api_key_at_run_time(
     backend.run(AgentTask(name="planning", prompt="plan again"), working_dir=repo_dir)
 
     assert captured_keys == ["dyn-1", "dyn-2"]
+
+
+def test_kilocode_backend_config_mode_resolves_api_key_at_run_time(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+
+    captured_envs: list[dict[str, str]] = []
+
+    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+        captured_envs.append(env)
+        return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
+
+    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    api_keys = iter(["dyn-1", "dyn-2"])
+    monkeypatch.setattr(
+        kilocode_cli,
+        "get_agent_openai_api_key",
+        lambda _settings: next(api_keys),
+    )
+    settings = Settings.model_validate(
+        {
+            "WORKER_KILOCODE_OPENAI_BASE_URL": "https://worker.example.com/v1",
+            "OPENAI_DYNAMIC_API_KEY_PROVIDER": "tests.provider:token",
+            "OPENAI_DYNAMIC_API_KEY_TTL_SECONDS": 600,
+        }
+    )
+
+    backend = KilocodeCliBackend(
+        bin="kilo",
+        timeout_seconds=30,
+        extra_env=kilocode_cli._build_kilocode_openai_env(settings),  # noqa: SLF001
+        settings=settings,
+        error_cls=RuntimeError,
+    )
+
+    backend.run(AgentTask(name="planning", prompt="plan"), working_dir=repo_dir)
+    backend.run(AgentTask(name="planning", prompt="plan again"), working_dir=repo_dir)
+
+    assert [env["LORELEY_KILO_OPENAI_API_KEY"] for env in captured_envs] == ["dyn-1", "dyn-2"]
+    assert all("KILO_OPENAI_API_KEY" not in env for env in captured_envs)
+    assert all("dyn-" not in env["KILO_CONFIG_CONTENT"] for env in captured_envs)
+
+
+def test_kilocode_backend_config_mode_does_not_resolve_api_key_without_config_reference(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+
+    captured_envs: list[dict[str, str]] = []
+
+    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+        captured_envs.append(env)
+        return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
+
+    def fail_lookup(_settings):  # noqa: ANN001
+        raise RuntimeError("should not resolve a Kilo API key")
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("LORELEY_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_DYNAMIC_API_KEY_PROVIDER", raising=False)
+    monkeypatch.delenv("WORKER_KILOCODE_OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(kilocode_cli, "get_agent_openai_api_key", fail_lookup)
+    settings = Settings.model_validate(
+        {
+            "WORKER_KILOCODE_OPENAI_BASE_URL": "https://worker.example.com/v1",
+        }
+    )
+
+    backend = KilocodeCliBackend(
+        bin="kilo",
+        timeout_seconds=30,
+        extra_env=kilocode_cli._build_kilocode_openai_env(settings),  # noqa: SLF001
+        settings=settings,
+        error_cls=RuntimeError,
+    )
+
+    backend.run(AgentTask(name="planning", prompt="plan"), working_dir=repo_dir)
+
+    assert "LORELEY_KILO_OPENAI_API_KEY" not in captured_envs[0]
+    assert "{env:LORELEY_KILO_OPENAI_API_KEY}" not in captured_envs[0]["KILO_CONFIG_CONTENT"]
 
 
 def test_kilocode_backend_runtime_api_key_does_not_overwrite_shared_cache(
