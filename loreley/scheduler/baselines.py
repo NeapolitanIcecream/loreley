@@ -3,7 +3,7 @@ from __future__ import annotations
 """Campaign baseline bootstrap and comparability helpers."""
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import math
@@ -39,15 +39,34 @@ log = logger.bind(module="scheduler.baselines")
 BASELINE_STATUS_VALID = "valid"
 BASELINE_STATUS_FAILED = "failed"
 BASELINE_STATUS_DEGRADED = "degraded"
-_RECORDED_BASELINE_STATUSES = frozenset(
+_RETRYABLE_BASELINE_STATUSES = frozenset(
     {
-        BASELINE_STATUS_VALID,
         BASELINE_STATUS_FAILED,
         BASELINE_STATUS_DEGRADED,
     }
 )
 
 _BASELINE_FAILURE_TEXT_MAX = 4096
+_BASELINE_RETRY_COOLDOWN_SECONDS = 300
+_BASELINE_RETRYABLE_FAILURE_KINDS = frozenset(
+    {
+        "baseline_evaluation_failed",
+        "evaluation_missing_result",
+        "evaluator_error",
+        "infrastructure_error",
+        "service_unavailable",
+        "timeout",
+        "worker_timeout",
+    }
+)
+_BASELINE_NON_RETRYABLE_FAILURE_KINDS = frozenset(
+    {
+        "primary_metric_direction_conflict",
+        "primary_metric_missing",
+        "primary_metric_non_finite",
+        "primary_metric_not_configured",
+    }
+)
 _CAMPAIGN_PROGRAM_HASH_UNSET = object()
 
 
@@ -498,12 +517,18 @@ class BaselineBootstrapService:
         )
         existing = self._load_baseline_by_key(key.hash)
         policy = self._policy()
-        if (
-            existing is not None
-            and existing.status in _RECORDED_BASELINE_STATUSES
-            and (existing.status == BASELINE_STATUS_VALID or not force_rerun)
-        ):
+        if existing is not None and existing.status == BASELINE_STATUS_VALID:
             return self._result_from_row(existing, key_hash=key.hash, policy=policy)
+        if existing is not None and existing.status in _RETRYABLE_BASELINE_STATUSES and not force_rerun:
+            if not _should_retry_existing_baseline(existing, now=datetime.now(timezone.utc)):
+                return self._result_from_row(existing, key_hash=key.hash, policy=policy)
+            log.info(
+                "Campaign baseline retrying key={} status={} failure_kind={} cooldown_seconds={}",
+                key.hash,
+                existing.status,
+                existing.failure_kind,
+                _BASELINE_RETRY_COOLDOWN_SECONDS,
+            )
 
         outcome: EvaluationOutcome | None = None
         failure_kind: str | None = None
@@ -867,6 +892,49 @@ def _baseline_attempt_status(*, valid: bool, policy: str) -> str:
     return BASELINE_STATUS_DEGRADED if policy == "warn" else BASELINE_STATUS_FAILED
 
 
+def _baseline_retry_reference_time(row: CampaignBaseline) -> datetime | None:
+    for attr in ("finished_at", "updated_at", "created_at"):
+        value = _baseline_timestamp_as_utc(getattr(row, attr, None))
+        if value is not None:
+            return value
+    return None
+
+
+def _baseline_retry_cooldown_elapsed(row: CampaignBaseline, *, now: datetime) -> bool:
+    reference = _baseline_retry_reference_time(row)
+    if reference is None:
+        return True
+    normalized_now = _baseline_timestamp_as_utc(now) or datetime.now(timezone.utc)
+    return normalized_now - reference >= timedelta(seconds=_BASELINE_RETRY_COOLDOWN_SECONDS)
+
+
+def _baseline_timestamp_as_utc(value: datetime | None) -> datetime | None:
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _baseline_failure_is_retryable(row: CampaignBaseline) -> bool:
+    failure_kind = normalize_single_line(str(getattr(row, "failure_kind", "") or "")).lower()
+    if not failure_kind:
+        return False
+    if failure_kind in _BASELINE_NON_RETRYABLE_FAILURE_KINDS:
+        return False
+    if failure_kind in _BASELINE_RETRYABLE_FAILURE_KINDS:
+        return True
+    return failure_kind.endswith("_error")
+
+
+def _should_retry_existing_baseline(row: CampaignBaseline, *, now: datetime) -> bool:
+    return (
+        row.status in _RETRYABLE_BASELINE_STATUSES
+        and _baseline_failure_is_retryable(row)
+        and _baseline_retry_cooldown_elapsed(row, now=now)
+    )
+
+
 def _load_baseline_row(*, session: Session, key_hash: str) -> CampaignBaseline | None:
     return session.execute(
         select(CampaignBaseline).where(
@@ -883,6 +951,7 @@ def _apply_baseline_row(
     outcome: EvaluationOutcome | None,
     projection: tuple[Any, Any | None] | None,
 ) -> None:
+    now = datetime.now(timezone.utc)
     row.root_commit_hash = key.root_commit_hash
     row.campaign_program_hash = key.campaign_program_hash
     row.evaluator_name = _baseline_evaluator_name(key=key, outcome=outcome)
@@ -899,8 +968,8 @@ def _apply_baseline_row(
     row.failure_summary = None if attempt.valid else _bounded_failure_text(attempt.failure_summary)
     row.commit_card_id = projection[0] if projection is not None else None
     row.metric_id = projection[1] if projection is not None and attempt.metric is not None else None
-    row.started_at = outcome.started_at if outcome is not None else datetime.now(timezone.utc)
-    row.finished_at = outcome.finished_at if outcome is not None else datetime.now(timezone.utc)
+    row.started_at = outcome.started_at if outcome is not None and outcome.started_at is not None else now
+    row.finished_at = outcome.finished_at if outcome is not None and outcome.finished_at is not None else now
 
 
 def _baseline_evaluator_name(*, key: BaselineKey, outcome: EvaluationOutcome | None) -> str | None:
