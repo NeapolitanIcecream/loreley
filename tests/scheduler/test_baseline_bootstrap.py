@@ -749,6 +749,86 @@ def test_non_retryable_baseline_attempt_does_not_retry_after_cooldown(
 
 
 @pytest.mark.parametrize(
+    ("reference_case", "expected_status", "expected_evaluations"),
+    [
+        ("updated_expired", BASELINE_STATUS_VALID, 1),
+        ("updated_recent", BASELINE_STATUS_FAILED, 0),
+        ("created_expired", BASELINE_STATUS_VALID, 1),
+    ],
+)
+def test_retryable_baseline_attempt_uses_timestamp_fallback_when_finished_at_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    reference_case: str,
+    expected_status: str,
+    expected_evaluations: int,
+) -> None:
+    settings = _settings(policy="required")
+    key = build_baseline_key(settings=settings, root_commit_hash="root123", campaign_program=None)
+    row_id = uuid.uuid4()
+    expired_at = datetime.now(timezone.utc) - timedelta(
+        seconds=baselines._BASELINE_RETRY_COOLDOWN_SECONDS + 1,
+    )
+    recent_at = datetime.now(timezone.utc)
+    updated_at: datetime | None
+    created_at: datetime
+    if reference_case == "updated_expired":
+        updated_at = expired_at.replace(tzinfo=None)
+        created_at = recent_at
+    elif reference_case == "updated_recent":
+        updated_at = recent_at
+        created_at = expired_at
+    else:
+        updated_at = None
+        created_at = expired_at.replace(tzinfo=None)
+    row = CampaignBaseline(
+        baseline_key_hash=key.hash,
+        root_commit_hash="root123",
+        campaign_program_hash=None,
+        evaluator_name="tests.support:plugin",
+        evaluator_version=None,
+        primary_metric_name="score",
+        primary_metric_higher_is_better=True,
+        runtime_profile=settings.profile,
+        effective_settings_fingerprint=key.effective_settings_fingerprint,
+        status=BASELINE_STATUS_FAILED,
+        failure_kind="evaluator_error",
+        failure_summary="temporary evaluator failure",
+        finished_at=None,
+        updated_at=updated_at,
+        created_at=created_at,
+    )
+    row.id = row_id
+    store = _BaselineStore()
+    store.baselines.append(row)
+    contexts: list[object] = []
+    _install_session(monkeypatch, store)
+    _install_baseline_eval_sequence(
+        monkeypatch,
+        tmp_path,
+        [_passed_outcome(metrics=(EvaluationMetric(name="score", value=2.5),))],
+        contexts,
+    )
+
+    service = BaselineBootstrapService(
+        settings=settings,
+        repo_root=tmp_path,
+        console=baselines.Console(record=True),
+    )
+    result = service.ensure_or_load_baseline(root_commit_hash="root123", campaign_program=None)
+
+    assert result.status == expected_status
+    assert len(contexts) == expected_evaluations
+    assert len(store.baselines) == 1
+    assert store.baselines[0].id == row_id
+    if expected_status == BASELINE_STATUS_VALID:
+        assert store.baselines[0].failure_kind is None
+        assert store.baselines[0].metric_value == pytest.approx(2.5)
+    else:
+        assert store.baselines[0].failure_kind == "evaluator_error"
+
+
+@pytest.mark.parametrize(
     ("policy", "expected_first_status"),
     [
         ("required", BASELINE_STATUS_FAILED),
