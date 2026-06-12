@@ -74,8 +74,6 @@ Triage is intentionally small:
 - failed-stale jobs recommend `retry_failed_stale_jobs`;
 - missing or failed baseline for the active campaign recommends
   `baseline_ensure`;
-- eligible repair candidates with repair capacity recommend
-  `repair_schedule_one`;
 - active campaign program mismatch is blocking and does not recommend a write.
 
 ## Actions
@@ -87,7 +85,7 @@ Supported `action_type` values:
 - `retry_job`
 - `retry_failed_stale_jobs`
 - `baseline_ensure`
-- `repair_schedule_one`
+- `repair_schedule_one` (deprecated no-op compatibility action)
 - `repair_candidate_quarantine`
 - `repair_candidate_discard`
 - `repair_candidate_restore`
@@ -114,10 +112,10 @@ curl -X POST http://127.0.0.1:8000/api/v1/agent/actions \
   -H 'Content-Type: application/json' \
   -H 'Authorization: Bearer replace-me' \
   -d '{
-    "action_type": "repair_schedule_one",
+    "action_type": "baseline_ensure",
     "dry_run": false,
-    "idempotency_key": "triage-2026-05-09T12:00Z-repair-1",
-    "reason": "eligible repair candidate and capacity available",
+    "idempotency_key": "triage-2026-05-09T12:00Z-baseline-1",
+    "reason": "active campaign baseline is missing or failed",
     "params": {},
     "expected_state": {}
   }'
@@ -145,7 +143,7 @@ Action parameters:
 | `retry_job` | `{"job_id": "<uuid>"}` | Accepts `FAILED` jobs and `RUNNING` jobs whose lease state is `missing` or `stale`. |
 | `retry_failed_stale_jobs` | `{"all": true}` or `{"limit": N}` | `all` must be a boolean. Use either `all=true` or `limit`, not both. |
 | `baseline_ensure` | `{}` | Creates a UI API operator task. When called through FastAPI it runs as a background task. |
-| `repair_schedule_one` | `{}` | Uses the same repair capacity, token budget, and campaign-baseline gates as scheduler repair dispatch. |
+| `repair_schedule_one` | `{}` | Deprecated compatibility action. It validates and executes as a disabled no-op; new work uses evaluator-guided in-loop rework. |
 | `repair_candidate_quarantine` | `{"candidate_id": "<uuid>"}` | Fails with `409` while an active repair job exists for the candidate. |
 | `repair_candidate_discard` | `{"candidate_id": "<uuid>"}` | High-risk action; excludes the candidate from default future sampling. |
 | `repair_candidate_restore` | `{"candidate_id": "<uuid>"}` | Restores the candidate to `lifecycle_status=active` and `repair_state=audit_only`. |

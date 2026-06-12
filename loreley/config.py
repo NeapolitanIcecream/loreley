@@ -310,6 +310,22 @@ class Settings(BaseSettings):
         default=16_384,
         alias="FAILED_CANDIDATE_REPAIR_MAX_DIAGNOSTIC_BYTES",
     )
+    worker_evaluator_rework_enabled: bool = Field(
+        default=True,
+        alias="WORKER_EVALUATOR_REWORK_ENABLED",
+    )
+    worker_evaluator_rework_max_attempts: int = Field(
+        default=1,
+        alias="WORKER_EVALUATOR_REWORK_MAX_ATTEMPTS",
+    )
+    worker_evaluator_rework_failure_kinds: str = Field(
+        default="compile,typecheck,lint,test,validation",
+        alias="WORKER_EVALUATOR_REWORK_FAILURE_KINDS",
+    )
+    worker_evaluator_rework_max_seconds: int = Field(
+        default=1800,
+        alias="WORKER_EVALUATOR_REWORK_MAX_SECONDS",
+    )
 
     worker_repo_remote_url: str | None = Field(
         default=None,
@@ -1105,6 +1121,12 @@ def _build_safe_export_payload(settings: Settings, *, mask_secrets: bool) -> dic
         "failed_candidate_repair_max_diagnostic_bytes": (
             settings.failed_candidate_repair_max_diagnostic_bytes
         ),
+        "worker_evaluator_rework_enabled": settings.worker_evaluator_rework_enabled,
+        "worker_evaluator_rework_max_attempts": settings.worker_evaluator_rework_max_attempts,
+        "worker_evaluator_rework_failure_kinds": (
+            settings.worker_evaluator_rework_failure_kinds
+        ),
+        "worker_evaluator_rework_max_seconds": settings.worker_evaluator_rework_max_seconds,
     }
 
 

@@ -1,12 +1,11 @@
 # Streamlit UI (loreley.ui)
 
 Loreley ships an optional Streamlit dashboard for observability and local
-operator repair. It calls the [UI API](api.md) and renders tables, charts, and
+operator actions. It calls the [UI API](api.md) and renders tables, charts, and
 commit lineage graphs.
 
-Most pages are read-only. The operator pages can create baseline ensure tasks,
-schedule one repair job, update repair-pool candidate state, and retry failed
-or stale jobs. These writes require the API bearer token configured with
+Most pages are read-only. The operator pages can create baseline ensure tasks
+and retry failed or stale jobs. These writes require the API bearer token configured with
 `LORELEY_API_WRITE_TOKEN`. In the Streamlit UI, each operator write button stays
 disabled until its matching confirmation checkbox is checked for that action.
 
@@ -70,8 +69,6 @@ The Streamlit UI is multi-page (implemented under `loreley/ui/pages`):
 - **Overview**: quick KPIs, fitness trend, island table.
 - **Campaign**: campaign program sections, warnings, active/current hash
   comparison, baseline status, and baseline ensure background tasks.
-- **Repair Pool**: failed-candidate table, diagnostic summary, repair attempts,
-  baseline/program context, schedule-one, quarantine, discard, and restore.
 - **Jobs**: job table with status, kind, fate, and evidence filters; single-job
   retry and bulk failed-stale retry.
 - **Commits**: commit table with search, fate/evidence indicators, and commit
@@ -86,10 +83,9 @@ The Streamlit UI is multi-page (implemented under `loreley/ui/pages`):
 ## Notes
 
 - **Caching**: the Streamlit UI caches API GET calls (default: ~60s); use the sidebar **Refresh data** button to clear cache. Write actions clear the cache before rerunning the page.
-- **Operator write confirmations**: Campaign baseline ensure, Jobs retry
-  actions, Repair Pool schedule-one, and Repair Pool candidate
-  quarantine/discard/restore each require their own checkbox confirmation before
-  the write button is enabled.
+- **Operator write confirmations**: Campaign baseline ensure and Jobs retry
+  actions require their own checkbox confirmation before the write button is
+  enabled.
 - **Security**: UI API write routes require `LORELEY_API_WRITE_TOKEN`; the
   Streamlit process sends it on POST requests when the variable is set. Deploy
   the UI and API behind trusted local or internal network controls.

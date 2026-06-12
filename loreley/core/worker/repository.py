@@ -473,6 +473,26 @@ class WorkerRepository:
         except GitCommandError as exc:
             raise self._wrap_git_error(exc, "Failed to clean worker worktree") from exc
 
+    def reset_mixed_to_commit(
+        self,
+        commit_hash: str,
+        *,
+        worktree: Path | None = None,
+    ) -> None:
+        """Move HEAD to a commit while preserving the resulting diff in the worktree."""
+
+        target_commit = str(commit_hash or "").strip()
+        if not target_commit:
+            raise RepositoryError("Commit hash must be provided for mixed reset.")
+        repo = self._repo_for_worktree(worktree)
+        try:
+            repo.git.reset("--mixed", target_commit)
+        except GitCommandError as exc:
+            raise self._wrap_git_error(
+                exc,
+                f"Failed to reset worker worktree to {target_commit}",
+            ) from exc
+
     def current_commit(self, *, worktree: Path | None = None) -> str:
         """Return the current HEAD commit hash."""
         repo = self._repo_for_worktree(worktree)

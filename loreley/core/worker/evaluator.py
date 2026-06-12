@@ -24,6 +24,8 @@ log = logger.bind(module="worker.evaluator")
 
 __all__ = [
     "ArtifactValidationWarning",
+    "EvalFail",
+    "EvalPass",
     "EvaluationArtifact",
     "EvaluationContext",
     "EvaluationDiagnostic",
@@ -35,6 +37,7 @@ __all__ = [
     "EvaluationResult",
     "Evaluator",
     "coerce_evaluation_artifacts",
+    "eval_fail_kind_from_failure_kind",
 ]
 
 ArtifactVisibility = Literal["agent_visible", "human_only", "hidden"]
@@ -48,7 +51,15 @@ EvaluationOutcomeKind = Literal[
     "inconclusive",
 ]
 EvaluationRepairability = Literal["repairable", "not_repairable", "unknown"]
-
+EvalFailKind = Literal[
+    "compile",
+    "typecheck",
+    "lint",
+    "test",
+    "validation",
+    "benchmark",
+    "other",
+]
 _ARTIFACT_KEY_PATTERN = re.compile(r"[^A-Za-z0-9_.-]+")
 _VALID_VISIBILITIES: set[str] = {"agent_visible", "human_only", "hidden"}
 _VALID_AGENT_PROJECTIONS: set[str] = {"summary", "manifest", "path"}
@@ -67,6 +78,24 @@ _VALID_OUTCOME_KINDS: set[str] = {
     "inconclusive",
 }
 _VALID_REPAIRABILITY: set[str] = {"repairable", "not_repairable", "unknown"}
+_VALID_EVAL_FAIL_KINDS: set[str] = {
+    "compile",
+    "typecheck",
+    "lint",
+    "test",
+    "validation",
+    "benchmark",
+    "other",
+}
+_EVAL_FAIL_KIND_TO_FAILURE_KIND: dict[str, str] = {
+    "compile": "compile_failed",
+    "typecheck": "typecheck_failed",
+    "lint": "lint_failed",
+    "test": "test_failed",
+    "validation": "validation_failed",
+    "benchmark": "benchmark_failed",
+    "other": "other_failed",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,6 +253,57 @@ class EvaluationMetric:
         }
 
 
+EvalPassMetricInput = EvaluationMetric | Mapping[str, Any]
+EvaluatorArtifactInput = EvaluationArtifact | Mapping[str, Any]
+
+
+def _coerce_public_metrics(metrics_payload: Any) -> tuple[EvaluationMetric, ...]:
+    if metrics_payload is None:
+        return tuple()
+    if isinstance(metrics_payload, EvaluationMetric):
+        return (metrics_payload,)
+    if isinstance(metrics_payload, Mapping):
+        metrics_iterable: Sequence[Any] = (metrics_payload,)
+    else:
+        try:
+            metrics_iterable = tuple(metrics_payload)
+        except TypeError as exc:
+            raise ValueError("EvalPass metrics must be iterable.") from exc
+    metrics: list[EvaluationMetric] = []
+    for item in metrics_iterable:
+        if isinstance(item, EvaluationMetric):
+            metrics.append(item)
+            continue
+        if isinstance(item, Mapping):
+            name = str(item.get("name") or "").strip()
+            if not name:
+                raise ValueError("EvalPass metric entries must include a non-empty name.")
+            if "value" not in item:
+                raise ValueError("EvalPass metric entries must include a value.")
+            metrics.append(
+                EvaluationMetric(
+                    name=name,
+                    value=float(item["value"]),
+                    unit=str(item["unit"]).strip() if item.get("unit") is not None else None,
+                    higher_is_better=bool(item.get("higher_is_better", True)),
+                    details=dict(item.get("details") or {}),
+                )
+            )
+            continue
+        raise ValueError(f"Unsupported EvalPass metric entry type: {type(item)!r}")
+    return tuple(metrics)
+
+
+def _normalise_sequence_public(values: str | Sequence[str] | None) -> tuple[str, ...]:
+    if values is None:
+        return tuple()
+    if isinstance(values, str):
+        values_iterable: Sequence[Any] = (values,)
+    else:
+        values_iterable = tuple(values)
+    return tuple(str(value).strip() for value in values_iterable if str(value).strip())
+
+
 @dataclass(slots=True)
 class EvaluationContext:
     """Information shared with the evaluation plugin."""
@@ -267,6 +347,70 @@ class EvaluationResult:
         artifacts, warnings = coerce_evaluation_artifacts(self.artifacts)
         self.artifacts = artifacts
         self.artifact_validation_warnings = tuple(self.artifact_validation_warnings or ()) + warnings
+
+
+@dataclass(slots=True)
+class EvalPass:
+    """Simple public evaluator success result."""
+
+    summary: str
+    metrics: EvalPassMetricInput | Sequence[EvalPassMetricInput] | None = field(default_factory=tuple)
+    tests_executed: str | Sequence[str] | None = field(default_factory=tuple)
+    logs: str | Sequence[str] | None = field(default_factory=tuple)
+    extra: dict[str, Any] | None = None
+    artifacts: EvaluatorArtifactInput | Sequence[EvaluatorArtifactInput] | None = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        result = EvaluationResult(
+            summary=self.summary,
+            metrics=_coerce_public_metrics(self.metrics),
+            tests_executed=_normalise_sequence_public(self.tests_executed),
+            logs=_normalise_sequence_public(self.logs),
+            extra=dict(self.extra or {}),
+            artifacts=self.artifacts,
+        )
+        self.summary = result.summary
+        self.metrics = result.metrics
+        self.tests_executed = result.tests_executed
+        self.logs = result.logs
+        self.extra = result.extra
+        self.artifacts = result.artifacts
+
+    def to_result(self) -> EvaluationResult:
+        return EvaluationResult(
+            summary=self.summary,
+            metrics=self.metrics,
+            tests_executed=self.tests_executed,
+            logs=self.logs,
+            extra=dict(self.extra or {}),
+            artifacts=self.artifacts,
+        )
+
+
+@dataclass(slots=True)
+class EvalFail:
+    """Simple public evaluator candidate-failure result."""
+
+    kind: EvalFailKind
+    summary: str
+    details: str | None = None
+    artifacts: EvaluatorArtifactInput | Sequence[EvaluatorArtifactInput] | None = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        kind = normalize_single_line(str(self.kind or "")).lower()
+        if kind not in _VALID_EVAL_FAIL_KINDS:
+            raise ValueError(
+                "EvalFail kind must be one of: "
+                f"{', '.join(sorted(_VALID_EVAL_FAIL_KINDS))}."
+            )
+        self.kind = cast(EvalFailKind, kind)
+        self.summary = (
+            clamp_text(normalize_single_line(str(self.summary or "")), 4096)
+            or "Evaluator reported a candidate failure without a bounded summary."
+        )
+        self.details = _optional_bounded_line(self.details, 4096)
+        artifacts, _warnings = coerce_evaluation_artifacts(self.artifacts)
+        self.artifacts = artifacts
 
 
 @dataclass(slots=True)
@@ -422,13 +566,13 @@ class EvaluationPlugin(Protocol):
     def __call__(
         self,
         context: EvaluationContext,
-    ) -> EvaluationResult | EvaluationOutcome | Mapping[str, Any]:
+    ) -> EvalPass | EvalFail | EvaluationResult | EvaluationOutcome | Mapping[str, Any]:
         ...
 
 
 EvaluationCallable = Callable[
     [EvaluationContext],
-    EvaluationResult | EvaluationOutcome | Mapping[str, Any],
+    EvalPass | EvalFail | EvaluationResult | EvaluationOutcome | Mapping[str, Any],
 ]
 
 
@@ -502,6 +646,19 @@ def coerce_evaluation_artifacts(
         seen_keys.add(artifact.key)
         artifacts.append(artifact)
     return tuple(artifacts), tuple(warnings)
+
+
+def eval_fail_kind_from_failure_kind(value: object) -> EvalFailKind | None:
+    """Return the public EvalFail kind represented by an internal failure kind."""
+
+    normalized = normalize_single_line(str(value or "")).lower()
+    if normalized in _VALID_EVAL_FAIL_KINDS:
+        return cast(EvalFailKind, normalized)
+    if normalized.endswith("_failed"):
+        candidate = normalized[: -len("_failed")]
+        if candidate in _VALID_EVAL_FAIL_KINDS:
+            return cast(EvalFailKind, candidate)
+    return None
 
 
 def _artifact_from_mapping(
@@ -1060,6 +1217,25 @@ class Evaluator:
         started_at: datetime,
         finished_at: datetime,
     ) -> EvaluationOutcome:
+        if isinstance(payload, EvalPass):
+            return EvaluationOutcome(
+                evaluator_name=evaluator_name,
+                candidate_commit_hash=context.candidate_commit_hash,
+                outcome_kind="passed",
+                result=payload.to_result(),
+                started_at=started_at,
+                finished_at=finished_at,
+            )
+
+        if isinstance(payload, EvalFail):
+            return self._candidate_failure_from_eval_fail(
+                payload,
+                context=context,
+                evaluator_name=evaluator_name,
+                started_at=started_at,
+                finished_at=finished_at,
+            )
+
         if isinstance(payload, EvaluationOutcome):
             outcome = payload
             outcome.evaluator_name = outcome.evaluator_name or evaluator_name
@@ -1094,6 +1270,43 @@ class Evaluator:
             candidate_commit_hash=context.candidate_commit_hash,
             outcome_kind="passed",
             result=self._coerce_result(payload),
+            started_at=started_at,
+            finished_at=finished_at,
+        )
+
+    def _candidate_failure_from_eval_fail(
+        self,
+        payload: EvalFail,
+        *,
+        context: EvaluationContext,
+        evaluator_name: str,
+        started_at: datetime,
+        finished_at: datetime,
+    ) -> EvaluationOutcome:
+        failure_kwargs: dict[str, Any] = {}
+        if payload.details:
+            if payload.kind in {"compile", "typecheck", "lint"}:
+                failure_kwargs["compiler_errors_summary"] = payload.details
+            elif payload.kind in {"test", "validation", "benchmark"}:
+                failure_kwargs["failing_tests_summary"] = payload.details
+            else:
+                failure_kwargs["stack_trace_summary"] = payload.details
+        return EvaluationOutcome(
+            evaluator_name=evaluator_name,
+            candidate_commit_hash=context.candidate_commit_hash,
+            outcome_kind="candidate_failed",
+            failure=EvaluationFailureResult(
+                failure_stage="evaluation",
+                failure_kind=_EVAL_FAIL_KIND_TO_FAILURE_KIND[payload.kind],
+                repairability="repairable",
+                repairability_reason=(
+                    "EvalFail represents candidate-owned evaluator failure; "
+                    "worker policy decides whether to rework."
+                ),
+                safe_failure_summary=payload.summary,
+                **failure_kwargs,
+            ),
+            artifacts=payload.artifacts,
             started_at=started_at,
             finished_at=finished_at,
         )

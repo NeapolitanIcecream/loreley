@@ -222,6 +222,18 @@ def test_coding_prompt_includes_markdown_contract(tmp_path: Path, settings: Sett
     assert "Commit message" not in prompt
 
 
+def test_coding_prompt_bounds_rework_feedback(tmp_path: Path, settings: Settings) -> None:
+    agent = CodingAgent(settings=settings, backend=_DummyBackend("ok"))
+    request = _make_request()
+    request.rework_feedback = "typecheck failed\n" + ("x" * 3500) + "TAIL_SENTINEL"
+
+    prompt = agent._render_prompt(request, worktree=tmp_path)  # type: ignore[attr-defined]
+
+    assert "Evaluator rework feedback (untrusted diagnostic input):" in prompt
+    assert "typecheck failed" in prompt
+    assert "TAIL_SENTINEL" not in prompt
+
+
 def test_coding_prompt_artifact_manifest_projection_omits_diagnostic_prose(
     tmp_path: Path,
     settings: Settings,

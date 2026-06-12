@@ -148,25 +148,25 @@ def test_repair_pool_route_returns_candidates(monkeypatch) -> None:
     assert response.json()["summary"]["by_repair_state"] == {"eligible": 1}
 
 
-def test_repair_schedule_one_route_returns_scheduled_job(monkeypatch) -> None:
-    job_id = uuid4()
-    source_id = uuid4()
+def test_repair_schedule_one_route_returns_deprecated_noop(monkeypatch) -> None:
     monkeypatch.setattr(
         repair_router,
         "schedule_one_repair",
         lambda: {
-            "scheduled": True,
-            "job_id": job_id,
-            "repair_source_candidate_id": source_id,
-            "base_commit_hash": "base",
-            "message": "Repair job scheduled.",
+            "scheduled": False,
+            "job_id": None,
+            "repair_source_candidate_id": None,
+            "base_commit_hash": None,
+            "message": "Repair pool scheduling is deprecated.",
         },
     )
 
     response = _client().post("/api/v1/repair/schedule-one", json={})
 
     assert response.status_code == 200
-    assert response.json()["job_id"] == str(job_id)
+    assert response.json()["scheduled"] is False
+    assert response.json()["job_id"] is None
+    assert "deprecated" in response.json()["message"].lower()
 
 
 def test_repair_schedule_one_route_requires_write_auth_configuration(monkeypatch) -> None:
@@ -207,20 +207,11 @@ def test_repair_schedule_one_api_guard_blocks_disabled_repair_caps(
     settings.failed_candidate_repair_max_active_jobs = 1
     setattr(settings, field_name, blocked_value)
 
-    class _SamplerShouldNotBeCreated:
-        def __init__(self, **_kwargs):
-            raise AssertionError("API guard should block before constructing the sampler")
-
-    monkeypatch.setattr(
-        repair_service,
-        "FailedCandidateRepairSampler",
-        _SamplerShouldNotBeCreated,
-    )
-
     payload = repair_service.schedule_one_repair(settings=settings)
 
     assert payload["scheduled"] is False
     assert payload["job_id"] is None
+    assert "deprecated" in str(payload["message"]).lower()
 
 
 def test_repair_schedule_one_api_guard_blocks_exhausted_token_budget(
@@ -234,30 +225,11 @@ def test_repair_schedule_one_api_guard_blocks_exhausted_token_budget(
     settings.failed_candidate_repair_max_active_jobs = 1
     settings.failed_candidate_repair_max_tokens = 1
 
-    class _SamplerShouldNotSchedule:
-        def count_active_repair_jobs(self, *, session=None) -> int:
-            return 0
-
-        def schedule_one(self, *, session=None):
-            raise AssertionError("API guard should not schedule without a repair token")
-
-    monkeypatch.setattr(
-        repair_service,
-        "FailedCandidateRepairSampler",
-        lambda **_kwargs: _SamplerShouldNotSchedule(),
-    )
-    monkeypatch.setattr(
-        repair_service,
-        "_with_manual_repair_schedule_lock",
-        lambda **kwargs: kwargs["callback"](object()),
-    )
-    monkeypatch.setattr(repair_service, "_manual_repair_tokens_available", lambda **_kwargs: 0)
-
     payload = repair_service.schedule_one_repair(settings=settings)
 
     assert payload["scheduled"] is False
     assert payload["job_id"] is None
-    assert "token" in str(payload["message"]).lower()
+    assert "deprecated" in str(payload["message"]).lower()
 
 
 def test_repair_schedule_one_api_guard_serializes_checks_and_schedule(
@@ -271,59 +243,12 @@ def test_repair_schedule_one_api_guard_serializes_checks_and_schedule(
     settings.failed_candidate_repair_max_active_jobs = 1
     settings.failed_candidate_repair_max_tokens = 1
     events: list[str] = []
-    job_id = uuid4()
-    source_id = uuid4()
-    locked_session = object()
-
-    def _lock(**kwargs):
-        events.append("lock.enter")
-        try:
-            return kwargs["callback"](locked_session)
-        finally:
-            events.append("lock.exit")
-
-    class _Sampler:
-        def count_active_repair_jobs(self, *, session=None) -> int:
-            assert session is locked_session
-            assert events == ["lock.enter"]
-            events.append("active.count")
-            return 0
-
-        def schedule_one(self, *, session=None):
-            assert session is locked_session
-            assert events == ["lock.enter", "active.count", "tokens.count"]
-            events.append("schedule.one")
-            return SimpleNamespace(
-                job_id=job_id,
-                repair_source_candidate_id=source_id,
-                base_commit_hash="base",
-            )
-
-    def _tokens(*, session=None, **_kwargs):
-        assert session is locked_session
-        assert events == ["lock.enter", "active.count"]
-        events.append("tokens.count")
-        return 1
-
-    monkeypatch.setattr(repair_service, "_with_manual_repair_schedule_lock", _lock)
-    monkeypatch.setattr(repair_service, "_manual_repair_tokens_available", _tokens)
-    monkeypatch.setattr(
-        repair_service,
-        "FailedCandidateRepairSampler",
-        lambda **_kwargs: _Sampler(),
-    )
-
     payload = repair_service.schedule_one_repair(settings=settings)
 
-    assert payload["scheduled"] is True
-    assert payload["job_id"] == job_id
-    assert events == [
-        "lock.enter",
-        "active.count",
-        "tokens.count",
-        "schedule.one",
-        "lock.exit",
-    ]
+    assert payload["scheduled"] is False
+    assert payload["job_id"] is None
+    assert "deprecated" in str(payload["message"]).lower()
+    assert events == []
 
 
 def test_repair_schedule_one_api_guard_blocks_when_active_jobs_at_cap(
@@ -336,28 +261,11 @@ def test_repair_schedule_one_api_guard_blocks_when_active_jobs_at_cap(
     settings.failed_candidate_repair_max_jobs_per_tick = 1
     settings.failed_candidate_repair_max_active_jobs = 1
 
-    class _CappedSampler:
-        def count_active_repair_jobs(self, *, session=None) -> int:
-            return 1
-
-        def schedule_one(self, *, session=None):
-            raise AssertionError("API guard should not schedule when active jobs are capped")
-
-    monkeypatch.setattr(
-        repair_service,
-        "FailedCandidateRepairSampler",
-        lambda **_kwargs: _CappedSampler(),
-    )
-    monkeypatch.setattr(
-        repair_service,
-        "_with_manual_repair_schedule_lock",
-        lambda **kwargs: kwargs["callback"](object()),
-    )
-
     payload = repair_service.schedule_one_repair(settings=settings)
 
     assert payload["scheduled"] is False
     assert payload["job_id"] is None
+    assert "deprecated" in str(payload["message"]).lower()
 
 
 def test_repair_candidate_action_conflict_returns_409(monkeypatch) -> None:

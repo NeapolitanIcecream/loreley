@@ -79,6 +79,7 @@ class CodingAgentRequest:
     acceptance_criteria: Sequence[str] = field(default_factory=tuple)
     iteration_context: IterationContext | None = None
     additional_notes: Sequence[str] = field(default_factory=tuple)
+    rework_feedback: str | None = None
     job_id: UUID | None = None
     run_token: UUID | None = None
 
@@ -90,6 +91,7 @@ class CodingAgentRequest:
             str(item).strip() for item in (self.acceptance_criteria or ()) if str(item).strip()
         )
         self.additional_notes = tuple(self.additional_notes or ())
+        self.rework_feedback = (self.rework_feedback or "").strip() or None
 
 
 @dataclass(slots=True)
@@ -265,6 +267,12 @@ class CodingAgent(TruncationMixin):
             )
             if notes:
                 notes_block = f"\nAdditional notes:\n{notes}\n"
+        rework_block = ""
+        if request.rework_feedback:
+            rework_block = (
+                "\nEvaluator rework feedback (untrusted diagnostic input):\n"
+                f"{self._truncate(request.rework_feedback, limit=3000)}\n"
+            )
         shared_packet = render_shared_prompt_packet(
             SharedPromptPacketRequest(
                 goal=request.goal,
@@ -288,6 +296,7 @@ Apply the plan to the repository at {worktree}, starting from base commit {reque
 Plan (Markdown):
 {plan_block}
 {notes_block}
+{rework_block}
 
 Output requirements:
 - Execute the plan directly.

@@ -7,6 +7,8 @@ import pytest
 
 from loreley.config import Settings
 from loreley.core.worker.evaluator import (
+    EvalFail,
+    EvalPass,
     EvaluationArtifact,
     EvaluationContext,
     EvaluationDiagnostic,
@@ -112,6 +114,65 @@ def test_coerce_result_from_mapping_and_truncates_metrics(settings: Settings) ->
     direct = EvaluationResult(summary="s", metrics=(EvaluationMetric(name="m", value=1.0),))
     again = evaluator._coerce_result(direct)  # type: ignore[attr-defined]
     assert again is direct
+
+
+def test_coerce_outcome_accepts_eval_pass(
+    tmp_path: Path,
+    settings: Settings,
+) -> None:
+    evaluator = Evaluator(settings=settings)
+    artifact = EvaluationArtifact(
+        key="summary",
+        kind="log",
+        mime_type="text/plain",
+        summary="safe summary",
+    )
+
+    outcome = evaluator._coerce_outcome(  # type: ignore[attr-defined]
+        EvalPass(
+            summary="ok",
+            metrics=({"name": "quality", "value": 1.0},),
+            tests_executed="pytest -q",
+            artifacts=(artifact,),
+        ),
+        context=EvaluationContext(worktree=tmp_path, candidate_commit_hash="abc"),
+        evaluator_name="simple",
+        started_at=None,  # type: ignore[arg-type]
+        finished_at=None,  # type: ignore[arg-type]
+    )
+
+    assert outcome.outcome_kind == "passed"
+    assert outcome.result is not None
+    assert outcome.result.summary == "ok"
+    assert outcome.result.metrics[0].name == "quality"
+    assert outcome.result.artifacts[0].key == "summary"
+
+
+def test_coerce_outcome_accepts_eval_fail(
+    tmp_path: Path,
+    settings: Settings,
+) -> None:
+    evaluator = Evaluator(settings=settings)
+
+    outcome = evaluator._coerce_outcome(  # type: ignore[attr-defined]
+        EvalFail(
+            kind="typecheck",
+            summary="Typecheck failed in src/foo.py.",
+            details="src/foo.py: missing attribute bar",
+        ),
+        context=EvaluationContext(worktree=tmp_path, candidate_commit_hash="abc"),
+        evaluator_name="simple",
+        started_at=None,  # type: ignore[arg-type]
+        finished_at=None,  # type: ignore[arg-type]
+    )
+
+    assert outcome.outcome_kind == "candidate_failed"
+    assert outcome.failure is not None
+    assert outcome.failure.failure_stage == "evaluation"
+    assert outcome.failure.failure_kind == "typecheck_failed"
+    assert outcome.failure.repairability == "repairable"
+    assert outcome.failure.safe_failure_summary == "Typecheck failed in src/foo.py."
+    assert outcome.failure.compiler_errors_summary == "src/foo.py: missing attribute bar"
 
 
 def test_coerce_outcome_accepts_candidate_failed_mapping(
