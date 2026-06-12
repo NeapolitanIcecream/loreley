@@ -573,7 +573,7 @@ class JobScheduler:
             self.console.log("[yellow]Sampler returned no job[/]")
 
         remaining_capacity = max(0, target - len(scheduled_ids))
-        repair_jobs = self._schedule_repair_jobs(capacity=remaining_capacity, accrue_tokens=False)
+        repair_jobs = self._schedule_repair_jobs(capacity=remaining_capacity)
         scheduled_ids.extend(repair_jobs)
         if len(repair_jobs) < repair_reservation and sampling_snapshot is not None:
             scheduled_ids.extend(
@@ -615,7 +615,7 @@ class JobScheduler:
             self._log_repair_pool_deprecated()
         return 0
 
-    def _schedule_repair_jobs(self, *, capacity: int, accrue_tokens: bool = True) -> list[UUID]:
+    def _schedule_repair_jobs(self, *, capacity: int) -> list[UUID]:
         if capacity > 0 and bool(self.settings.failed_candidate_repair_enabled):
             self._log_repair_pool_deprecated()
         return []

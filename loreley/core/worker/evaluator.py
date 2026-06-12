@@ -258,40 +258,43 @@ EvaluatorArtifactInput = EvaluationArtifact | Mapping[str, Any]
 
 
 def _coerce_public_metrics(metrics_payload: Any) -> tuple[EvaluationMetric, ...]:
+    return tuple(_coerce_public_metric(item) for item in _iter_public_metrics(metrics_payload))
+
+
+def _iter_public_metrics(metrics_payload: Any) -> tuple[Any, ...]:
     if metrics_payload is None:
         return tuple()
     if isinstance(metrics_payload, EvaluationMetric):
         return (metrics_payload,)
     if isinstance(metrics_payload, Mapping):
-        metrics_iterable: Sequence[Any] = (metrics_payload,)
-    else:
-        try:
-            metrics_iterable = tuple(metrics_payload)
-        except TypeError as exc:
-            raise ValueError("EvalPass metrics must be iterable.") from exc
-    metrics: list[EvaluationMetric] = []
-    for item in metrics_iterable:
-        if isinstance(item, EvaluationMetric):
-            metrics.append(item)
-            continue
-        if isinstance(item, Mapping):
-            name = str(item.get("name") or "").strip()
-            if not name:
-                raise ValueError("EvalPass metric entries must include a non-empty name.")
-            if "value" not in item:
-                raise ValueError("EvalPass metric entries must include a value.")
-            metrics.append(
-                EvaluationMetric(
-                    name=name,
-                    value=float(item["value"]),
-                    unit=str(item["unit"]).strip() if item.get("unit") is not None else None,
-                    higher_is_better=bool(item.get("higher_is_better", True)),
-                    details=dict(item.get("details") or {}),
-                )
-            )
-            continue
-        raise ValueError(f"Unsupported EvalPass metric entry type: {type(item)!r}")
-    return tuple(metrics)
+        return (metrics_payload,)
+    try:
+        return tuple(metrics_payload)
+    except TypeError as exc:
+        raise ValueError("EvalPass metrics must be iterable.") from exc
+
+
+def _coerce_public_metric(item: Any) -> EvaluationMetric:
+    if isinstance(item, EvaluationMetric):
+        return item
+    if isinstance(item, Mapping):
+        return _public_metric_from_mapping(item)
+    raise ValueError(f"Unsupported EvalPass metric entry type: {type(item)!r}")
+
+
+def _public_metric_from_mapping(item: Mapping[str, Any]) -> EvaluationMetric:
+    name = str(item.get("name") or "").strip()
+    if not name:
+        raise ValueError("EvalPass metric entries must include a non-empty name.")
+    if "value" not in item:
+        raise ValueError("EvalPass metric entries must include a value.")
+    return EvaluationMetric(
+        name=name,
+        value=float(item["value"]),
+        unit=str(item["unit"]).strip() if item.get("unit") is not None else None,
+        higher_is_better=bool(item.get("higher_is_better", True)),
+        details=dict(item.get("details") or {}),
+    )
 
 
 def _normalise_sequence_public(values: str | Sequence[str] | None) -> tuple[str, ...]:

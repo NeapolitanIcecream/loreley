@@ -512,7 +512,7 @@ def test_repair_scheduler_does_not_enter_repair_lock_after_deprecation(
     scheduler.repair_sampler = DummyRepairSampler()
     scheduler._repair_tokens = 1
 
-    scheduled = scheduler._schedule_repair_jobs(capacity=1, accrue_tokens=False)
+    scheduled = scheduler._schedule_repair_jobs(capacity=1)
 
     assert scheduled == []
     assert scheduler._repair_tokens == 1
@@ -550,7 +550,7 @@ def test_repair_scheduler_recomputes_persistent_token_budget_before_dispatch(
     scheduler.repair_sampler = DummyRepairSampler()
     scheduler._repair_tokens = 1
 
-    scheduled = scheduler._schedule_repair_jobs(capacity=1, accrue_tokens=False)
+    scheduled = scheduler._schedule_repair_jobs(capacity=1)
 
     assert scheduled == []
     assert scheduler._repair_tokens == 1
