@@ -11,7 +11,7 @@ import pytest
 import loreley.core.worker.evolution as evolution_module
 from loreley.config import Settings
 from loreley.core.campaign_program import parse_campaign_program
-from loreley.core.worker.coding import CodingAgentResponse, ExecutionReport
+from loreley.core.worker.coding import CodingAgentResponse, CodingError, ExecutionReport
 from loreley.core.worker.evaluator import (
     EvalFail,
     EvalPass,
@@ -75,6 +75,25 @@ class _FakeCodingAgent:
 
     def implement(self, request: Any, *, working_dir: Path) -> CodingAgentResponse:
         self.requests.append((request, working_dir))
+        return CodingAgentResponse(
+            report=ExecutionReport(
+                summary="implemented",
+                markdown="## Summary\n- implemented\n",
+            ),
+            raw_output="raw",
+            prompt="prompt",
+            command=("cmd",),
+            stderr="",
+            attempts=1,
+            duration_seconds=0.1,
+        )
+
+
+class _SecondPassFailingCodingAgent(_FakeCodingAgent):
+    def implement(self, request: Any, *, working_dir: Path) -> CodingAgentResponse:
+        self.requests.append((request, working_dir))
+        if len(self.requests) > 1:
+            raise CodingError("simulated retry coding crash")
         return CodingAgentResponse(
             report=ExecutionReport(
                 summary="implemented",
@@ -993,6 +1012,44 @@ def test_run_preserves_path_backed_evaluation_artifacts_before_cleanup(
     assert artifact.key == "eval_report"
     assert artifact.path is None
     assert artifact.inline_payload == b"diagnostic report\n"
+
+
+def test_run_preserves_rework_history_when_retry_coding_crashes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    job_id = uuid.uuid4()
+    events: list[str] = []
+    _patch_empty_planning_context_session(monkeypatch)
+    store = _FakeJobStoreForScopeGateFailure(job_id=job_id, events=events, campaign_program_hash="")
+    coding_agent = _SecondPassFailingCodingAgent()
+    evaluator = _SequenceEvaluator(
+        [_candidate_failed_outcome(summary="first evaluator failure")],
+        events,
+    )
+    worker = EvolutionWorker(
+        settings=settings,
+        repository=_FakeRepositoryForRun(worktree=tmp_path, events=events),  # type: ignore[arg-type]
+        planning_agent=_FakePlanningAgent(),  # type: ignore[arg-type]
+        coding_agent=coding_agent,  # type: ignore[arg-type]
+        evaluator=evaluator,  # type: ignore[arg-type]
+        summarizer=_FakeSummarizer(),  # type: ignore[arg-type]
+        job_store=store,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(evolution_module.EvolutionWorkerError, match="simulated retry coding crash"):
+        worker.run(job_id)
+
+    assert len(coding_agent.requests) == 2
+    assert "store.mark_job_failed" not in events
+    failure_call = store.persist_failure_calls[-1]
+    assert failure_call["candidate_commit_hash"] is None
+    outcome = failure_call["outcome"]
+    assert outcome.outcome_kind == "infrastructure_failed"
+    artifact = outcome.artifacts[-1]
+    assert artifact.key == "evaluator_rework_attempts"
+    assert artifact.inline_payload[0]["summary"] == "first evaluator failure"
 
 
 def test_run_exhausts_rework_without_publishing_failed_attempts(

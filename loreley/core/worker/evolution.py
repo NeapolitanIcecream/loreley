@@ -184,6 +184,7 @@ class _EvolutionRunState:
     coding_response: CodingAgentResponse | None = None
     evaluation_result: EvaluationResult | None = None
     evaluation_outcome: EvaluationOutcome | None = None
+    rework_attempts: tuple[_ReworkAttemptRecord, ...] = ()
     commit_message: str | None = None
     candidate_commit: str | None = None
     failure_persisted: bool = False
@@ -221,6 +222,7 @@ class _JobFailureContext:
     worktree: Any | None = None
     candidate_commit_hash: str | None = None
     evaluation_outcome: EvaluationOutcome | None = None
+    rework_attempts: tuple[_ReworkAttemptRecord, ...] = ()
 
 
 @dataclass(slots=True)
@@ -356,6 +358,7 @@ class EvolutionWorker:
                         worktree=state.checkout.worktree if state.checkout is not None else None,
                         candidate_commit_hash=state.candidate_commit,
                         evaluation_outcome=state.evaluation_outcome,
+                        rework_attempts=state.rework_attempts,
                     ),
                 )
             raise
@@ -457,7 +460,7 @@ class EvolutionWorker:
         state: _EvolutionRunState,
     ) -> None:
         started = monotonic()
-        rework_attempts: list[_ReworkAttemptRecord] = []
+        state.rework_attempts = ()
         rework_feedback: str | None = None
         max_extra_reworks = self._max_rework_attempts()
         attempt = 1
@@ -481,7 +484,7 @@ class EvolutionWorker:
                     checkout=checkout,
                     heartbeat=heartbeat,
                     state=state,
-                    rework_attempts=tuple(rework_attempts),
+                    rework_attempts=state.rework_attempts,
                 )
                 return
 
@@ -492,11 +495,11 @@ class EvolutionWorker:
                 outcome=outcome,
                 candidate_commit=_required(state.candidate_commit, "candidate_commit"),
             )
-            rework_attempts.append(record)
+            state.rework_attempts = (*state.rework_attempts, record)
             if not self._should_rework(
                 outcome=outcome,
                 record=record,
-                used_reworks=len(rework_attempts) - 1,
+                used_reworks=len(state.rework_attempts) - 1,
                 max_extra_reworks=max_extra_reworks,
                 started=started,
             ):
@@ -504,7 +507,7 @@ class EvolutionWorker:
                     job_ctx=job_ctx,
                     checkout=checkout,
                     state=state,
-                    rework_attempts=tuple(rework_attempts),
+                    rework_attempts=state.rework_attempts,
                 )
                 return
 
@@ -1293,13 +1296,12 @@ class EvolutionWorker:
         return "\n".join(lines)
 
     @staticmethod
-    def _attach_rework_history_artifact(
-        state: _EvolutionRunState,
+    def _rework_history_artifact(
         rework_attempts: tuple[_ReworkAttemptRecord, ...],
-    ) -> None:
-        if not rework_attempts or state.evaluation_outcome is None:
-            return
-        artifact = EvaluationArtifact(
+    ) -> EvaluationArtifact | None:
+        if not rework_attempts:
+            return None
+        return EvaluationArtifact(
             key="evaluator_rework_attempts",
             kind="rework_attempts",
             mime_type="application/json",
@@ -1310,9 +1312,35 @@ class EvolutionWorker:
             agent_projection="manifest",
             metadata={"attempt_count": len(rework_attempts)},
         )
-        state.evaluation_outcome.artifacts = (
-            *tuple(state.evaluation_outcome.artifacts or ()),
+
+    @staticmethod
+    def _attach_rework_history_to_outcome(
+        outcome: EvaluationOutcome,
+        rework_attempts: tuple[_ReworkAttemptRecord, ...],
+    ) -> EvaluationOutcome:
+        artifact = EvolutionWorker._rework_history_artifact(rework_attempts)
+        if artifact is None:
+            return outcome
+        outcome.artifacts = (
+            *tuple(
+                existing
+                for existing in (outcome.artifacts or ())
+                if existing.key != artifact.key
+            ),
             artifact,
+        )
+        return outcome
+
+    @staticmethod
+    def _attach_rework_history_artifact(
+        state: _EvolutionRunState,
+        rework_attempts: tuple[_ReworkAttemptRecord, ...],
+    ) -> None:
+        if state.evaluation_outcome is None:
+            return
+        state.evaluation_outcome = EvolutionWorker._attach_rework_history_to_outcome(
+            state.evaluation_outcome,
+            rework_attempts,
         )
 
     def _prune_job_branches(self) -> None:
@@ -1358,7 +1386,9 @@ class EvolutionWorker:
         message: str,
         context: _JobFailureContext | None,
     ) -> bool:
-        if context is None or run_token is None or not context.candidate_commit_hash:
+        if context is None or run_token is None:
+            return False
+        if not context.candidate_commit_hash and not context.rework_attempts:
             return False
         persist_failure = getattr(self.job_store, "persist_failure", None)
         if not callable(persist_failure):
@@ -1366,6 +1396,7 @@ class EvolutionWorker:
         outcome = context.evaluation_outcome
         if outcome is None or outcome.outcome_kind == "passed":
             outcome = _infrastructure_failure_outcome(message, context.candidate_commit_hash)
+        outcome = self._attach_rework_history_to_outcome(outcome, context.rework_attempts)
         return bool(
             persist_failure(
                 job_ctx=context.job_ctx,
@@ -1722,7 +1753,7 @@ def _required(value: Any, name: str) -> Any:
 
 def _infrastructure_failure_outcome(
     message: str,
-    candidate_commit_hash: str,
+    candidate_commit_hash: str | None,
 ) -> EvaluationOutcome:
     return EvaluationOutcome(
         evaluator_name=None,
