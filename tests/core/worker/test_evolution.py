@@ -11,8 +11,11 @@ import pytest
 import loreley.core.worker.evolution as evolution_module
 from loreley.config import Settings
 from loreley.core.campaign_program import parse_campaign_program
-from loreley.core.worker.coding import CodingAgentResponse, ExecutionReport
+from loreley.core.worker.coding import CodingAgentResponse, CodingError, ExecutionReport
 from loreley.core.worker.evaluator import (
+    EvalFail,
+    EvalPass,
+    EvaluationArtifact,
     EvaluationFailureResult,
     EvaluationOutcome,
     EvaluationResult,
@@ -20,6 +23,7 @@ from loreley.core.worker.evaluator import (
 from loreley.core.worker.evolution import EvolutionWorker, JobContext
 from loreley.core.worker.planning import PlanDocument, PlanningAgentResponse
 from loreley.core.worker.repository import CheckoutContext
+from loreley.core.worker.scope_gate import ScopeGateResult
 from loreley.db.models import CommitCard, EvaluationArtifactRecord, MapElitesArchiveCell, Metric
 
 
@@ -66,7 +70,30 @@ class _FakePlanningAgent:
 
 
 class _FakeCodingAgent:
+    def __init__(self) -> None:
+        self.requests: list[Any] = []
+
     def implement(self, request: Any, *, working_dir: Path) -> CodingAgentResponse:
+        self.requests.append((request, working_dir))
+        return CodingAgentResponse(
+            report=ExecutionReport(
+                summary="implemented",
+                markdown="## Summary\n- implemented\n",
+            ),
+            raw_output="raw",
+            prompt="prompt",
+            command=("cmd",),
+            stderr="",
+            attempts=1,
+            duration_seconds=0.1,
+        )
+
+
+class _SecondPassFailingCodingAgent(_FakeCodingAgent):
+    def implement(self, request: Any, *, working_dir: Path) -> CodingAgentResponse:
+        self.requests.append((request, working_dir))
+        if len(self.requests) > 1:
+            raise CodingError("simulated retry coding crash")
         return CodingAgentResponse(
             report=ExecutionReport(
                 summary="implemented",
@@ -121,6 +148,32 @@ class _EventCapturingEvaluator:
         )
 
 
+class _PathArtifactEvaluator:
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+
+    def evaluate_outcome(self, context: Any) -> EvaluationOutcome:
+        self._events.append("evaluator.evaluate")
+        report = context.worktree / "eval-report.txt"
+        report.write_text("diagnostic report\n", encoding="utf-8")
+        return EvaluationOutcome(
+            evaluator_name="fake",
+            candidate_commit_hash=context.candidate_commit_hash,
+            outcome_kind="passed",
+            result=EvaluationResult(
+                summary="ok",
+                artifacts=(
+                    EvaluationArtifact(
+                        key="eval_report",
+                        kind="report",
+                        mime_type="text/plain",
+                        path="eval-report.txt",
+                    ),
+                ),
+            ),
+        )
+
+
 class _CapturingOutcomeEvaluator:
     def __init__(self) -> None:
         self.contexts: list[Any] = []
@@ -150,9 +203,44 @@ class _FakeCandidateFailureEvaluator:
         )
 
 
+class _SequenceEvaluator:
+    def __init__(self, outcomes: list[Any], events: list[str]) -> None:
+        self.outcomes = list(outcomes)
+        self.events = events
+        self.contexts: list[Any] = []
+
+    def evaluate_outcome(self, context: Any) -> EvaluationOutcome | EvalPass | EvalFail:
+        self.events.append("evaluator.evaluate")
+        self.contexts.append(context)
+        if not self.outcomes:
+            raise AssertionError("No evaluator outcome configured.")
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, EvaluationOutcome):
+            outcome.candidate_commit_hash = outcome.candidate_commit_hash or context.candidate_commit_hash
+        return outcome
+
+
 class _FakeSummarizer:
     def generate(self, **_kwargs: Any) -> str:
         return "feat: publish candidate"
+
+
+def _candidate_failed_outcome(
+    *,
+    failure_kind: str = "typecheck_failed",
+    summary: str = "typecheck failed",
+) -> EvaluationOutcome:
+    return EvaluationOutcome(
+        evaluator_name="fake",
+        outcome_kind="candidate_failed",
+        failure=EvaluationFailureResult(
+            failure_stage="evaluation",
+            failure_kind=failure_kind,
+            repairability="repairable",
+            safe_failure_summary=summary,
+            compiler_errors_summary=summary,
+        ),
+    )
 
 
 def _extract_values(params: dict[str, Any], prefix: str) -> tuple[Any, ...]:
@@ -232,6 +320,8 @@ class _FakeRepositoryForRun:
     def __init__(self, *, worktree: Path, events: list[str]) -> None:
         self._worktree = worktree
         self._events = events
+        self._commit_count = 0
+        self._current_commit = "base123"
 
     @contextmanager
     def checkout_lease_for_job(
@@ -259,7 +349,9 @@ class _FakeRepositoryForRun:
 
     def commit(self, message: str, *, worktree: Path | None = None) -> str:
         self._events.append("repo.commit")
-        return "candidate123"
+        self._commit_count += 1
+        self._current_commit = "candidate123" if self._commit_count == 1 else f"candidate{self._commit_count}"
+        return self._current_commit
 
     def push_branch(
         self,
@@ -274,6 +366,34 @@ class _FakeRepositoryForRun:
     def prune_stale_job_branches(self) -> int:
         self._events.append("repo.prune")
         return 0
+
+    def clean_worktree(self, *, worktree: Path | None = None) -> None:
+        self._events.append("repo.clean_worktree")
+
+    def current_commit(self, *, worktree: Path | None = None) -> str:
+        self._events.append("repo.current_commit")
+        return self._current_commit
+
+    def reset_mixed_to_commit(self, commit_hash: str, *, worktree: Path | None = None) -> None:
+        self._events.append(f"repo.reset_mixed_to_commit[{commit_hash}]")
+        self._current_commit = commit_hash
+
+    def diff_summary_between_commits(
+        self,
+        *,
+        base_commit: str,
+        candidate_commit: str,
+        worktree: Path | None = None,
+    ) -> str:
+        self._events.append("repo.diff_summary")
+        return f"{base_commit}..{candidate_commit}"
+
+
+class _CleaningRepositoryForRun(_FakeRepositoryForRun):
+    def clean_worktree(self, *, worktree: Path | None = None) -> None:
+        super().clean_worktree(worktree=worktree)
+        target = (worktree or self._worktree) / "eval-report.txt"
+        target.unlink(missing_ok=True)
 
 
 class _FakeJobStoreForPublishFailure:
@@ -361,6 +481,27 @@ class _FakeJobStoreForPublishFailure:
                 "run_token": run_token,
             }
         )
+
+
+class _FakeJobStoreForSuccess(_FakeJobStoreForPublishFailure):
+    def __init__(
+        self,
+        *,
+        job_id: uuid.UUID,
+        events: list[str],
+        campaign_program_hash: str | None = None,
+    ) -> None:
+        super().__init__(
+            job_id=job_id,
+            events=events,
+            persist_error=evolution_module.EvolutionWorkerError("unused"),
+            campaign_program_hash=campaign_program_hash,
+        )
+        self.success_calls: list[dict[str, Any]] = []
+
+    def persist_success(self, **kwargs: Any) -> None:
+        self._events.append("store.persist_success")
+        self.success_calls.append(kwargs)
 
 
 class _FakeJobStoreForEvaluationFailureRetry(_FakeJobStoreForPublishFailure):
@@ -772,6 +913,211 @@ def test_run_keeps_candidate_metadata_when_post_push_persistence_fails_gh_candid
             "run_token": store.recorded_candidates[1]["run_token"],
         }
     ]
+
+
+def test_run_reworks_candidate_failure_and_publishes_only_final_pass(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    job_id = uuid.uuid4()
+    events: list[str] = []
+    _patch_empty_planning_context_session(monkeypatch)
+    program = parse_campaign_program(b"## Editable scope\n- src/**\n")
+    store = _FakeJobStoreForSuccess(
+        job_id=job_id,
+        events=events,
+        campaign_program_hash=program.raw_sha256,
+    )
+    coding_agent = _FakeCodingAgent()
+    evaluator = _SequenceEvaluator(
+        [
+            EvalFail(kind="typecheck", summary="typecheck failed in src/foo.py"),
+            EvaluationOutcome(
+                evaluator_name="fake",
+                outcome_kind="passed",
+                result=EvaluationResult(summary="ok"),
+            ),
+        ],
+        events,
+    )
+    worker = EvolutionWorker(
+        settings=settings,
+        repository=_FakeRepositoryForRun(worktree=tmp_path, events=events),  # type: ignore[arg-type]
+        planning_agent=_FakePlanningAgent(),  # type: ignore[arg-type]
+        coding_agent=coding_agent,  # type: ignore[arg-type]
+        evaluator=evaluator,  # type: ignore[arg-type]
+        summarizer=_FakeSummarizer(),  # type: ignore[arg-type]
+        job_store=store,  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(worker, "_load_campaign_program", lambda _program_hash: program)
+
+    def _scope_pass(**_kwargs: Any) -> ScopeGateResult:
+        events.append("scope_gate")
+        return ScopeGateResult(checked_paths=("src/foo.py",))
+
+    monkeypatch.setattr(evolution_module, "validate_campaign_scope", _scope_pass)
+
+    result = worker.run(job_id)
+
+    assert result.candidate_commit_hash == "candidate2"
+    assert [row["commit_hash"] for row in store.recorded_candidates] == [
+        "candidate2",
+        "candidate2",
+    ]
+    assert [row["published"] for row in store.recorded_candidates] == [False, True]
+    assert events.count("repo.push_branch") == 1
+    assert events.count("evaluator.evaluate") == 2
+    assert events.count("scope_gate") == 2
+    assert events.count("repo.clean_worktree") == 2
+    assert events.count("repo.current_commit") == 2
+    rework_reset_index = events.index("repo.reset_mixed_to_commit[base123]")
+    cleanup_indexes = [
+        index for index, event in enumerate(events) if event == "repo.clean_worktree"
+    ]
+    assert cleanup_indexes[0] < rework_reset_index
+    assert cleanup_indexes[-1] < events.index("store.record_candidate[published=False]")
+    assert len(coding_agent.requests) == 2
+    second_request, _worktree = coding_agent.requests[1]
+    assert "typecheck failed in src/foo.py" in str(second_request.rework_feedback)
+    success_outcome = store.success_calls[0]["evaluation_outcome"]
+    assert success_outcome.artifacts[-1].key == "evaluator_rework_attempts"
+
+
+def test_run_preserves_path_backed_evaluation_artifacts_before_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    job_id = uuid.uuid4()
+    events: list[str] = []
+    _patch_empty_planning_context_session(monkeypatch)
+    store = _FakeJobStoreForSuccess(job_id=job_id, events=events)
+    worker = EvolutionWorker(
+        settings=settings,
+        repository=_CleaningRepositoryForRun(worktree=tmp_path, events=events),  # type: ignore[arg-type]
+        planning_agent=_FakePlanningAgent(),  # type: ignore[arg-type]
+        coding_agent=_FakeCodingAgent(),  # type: ignore[arg-type]
+        evaluator=_PathArtifactEvaluator(events),  # type: ignore[arg-type]
+        summarizer=_FakeSummarizer(),  # type: ignore[arg-type]
+        job_store=store,  # type: ignore[arg-type]
+    )
+
+    worker.run(job_id)
+
+    assert events.index("repo.clean_worktree") < events.index("store.persist_success")
+    assert not (tmp_path / "eval-report.txt").exists()
+    outcome = store.success_calls[0]["evaluation_outcome"]
+    artifact = outcome.result.artifacts[0]
+    assert artifact.key == "eval_report"
+    assert artifact.path is None
+    assert artifact.inline_payload == b"diagnostic report\n"
+
+
+def test_run_preserves_rework_history_when_retry_coding_crashes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    job_id = uuid.uuid4()
+    events: list[str] = []
+    _patch_empty_planning_context_session(monkeypatch)
+    store = _FakeJobStoreForScopeGateFailure(job_id=job_id, events=events, campaign_program_hash="")
+    coding_agent = _SecondPassFailingCodingAgent()
+    evaluator = _SequenceEvaluator(
+        [_candidate_failed_outcome(summary="first evaluator failure")],
+        events,
+    )
+    worker = EvolutionWorker(
+        settings=settings,
+        repository=_FakeRepositoryForRun(worktree=tmp_path, events=events),  # type: ignore[arg-type]
+        planning_agent=_FakePlanningAgent(),  # type: ignore[arg-type]
+        coding_agent=coding_agent,  # type: ignore[arg-type]
+        evaluator=evaluator,  # type: ignore[arg-type]
+        summarizer=_FakeSummarizer(),  # type: ignore[arg-type]
+        job_store=store,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(evolution_module.EvolutionWorkerError, match="simulated retry coding crash"):
+        worker.run(job_id)
+
+    assert len(coding_agent.requests) == 2
+    assert "store.mark_job_failed" not in events
+    failure_call = store.persist_failure_calls[-1]
+    assert failure_call["candidate_commit_hash"] is None
+    outcome = failure_call["outcome"]
+    assert outcome.outcome_kind == "infrastructure_failed"
+    artifact = outcome.artifacts[-1]
+    assert artifact.key == "evaluator_rework_attempts"
+    assert artifact.inline_payload[0]["summary"] == "first evaluator failure"
+
+
+def test_run_exhausts_rework_without_publishing_failed_attempts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    job_id = uuid.uuid4()
+    events: list[str] = []
+    _patch_empty_planning_context_session(monkeypatch)
+    store = _FakeJobStoreForScopeGateFailure(job_id=job_id, events=events, campaign_program_hash="")
+    evaluator = _SequenceEvaluator(
+        [
+            _candidate_failed_outcome(summary="first failure"),
+            _candidate_failed_outcome(summary="second failure"),
+        ],
+        events,
+    )
+    worker = EvolutionWorker(
+        settings=settings,
+        repository=_FakeRepositoryForRun(worktree=tmp_path, events=events),  # type: ignore[arg-type]
+        planning_agent=_FakePlanningAgent(),  # type: ignore[arg-type]
+        coding_agent=_FakeCodingAgent(),  # type: ignore[arg-type]
+        evaluator=evaluator,  # type: ignore[arg-type]
+        summarizer=_FakeSummarizer(),  # type: ignore[arg-type]
+        job_store=store,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(evolution_module.EvolutionWorkerError, match="second failure"):
+        worker.run(job_id)
+
+    assert store.recorded_candidates == []
+    assert "repo.push_branch" not in events
+    assert events.count("repo.commit") == 2
+    failure_outcome = store.persist_failure_calls[-1]["outcome"]
+    assert failure_outcome.artifacts[-1].key == "evaluator_rework_attempts"
+
+
+def test_run_does_not_rework_non_allowlisted_evalfail_kind(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    job_id = uuid.uuid4()
+    events: list[str] = []
+    _patch_empty_planning_context_session(monkeypatch)
+    store = _FakeJobStoreForScopeGateFailure(job_id=job_id, events=events, campaign_program_hash="")
+    evaluator = _SequenceEvaluator(
+        [_candidate_failed_outcome(failure_kind="benchmark_failed", summary="benchmark regressed")],
+        events,
+    )
+    worker = EvolutionWorker(
+        settings=settings,
+        repository=_FakeRepositoryForRun(worktree=tmp_path, events=events),  # type: ignore[arg-type]
+        planning_agent=_FakePlanningAgent(),  # type: ignore[arg-type]
+        coding_agent=_FakeCodingAgent(),  # type: ignore[arg-type]
+        evaluator=evaluator,  # type: ignore[arg-type]
+        summarizer=_FakeSummarizer(),  # type: ignore[arg-type]
+        job_store=store,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(evolution_module.EvolutionWorkerError, match="benchmark regressed"):
+        worker.run(job_id)
+
+    assert events.count("evaluator.evaluate") == 1
+    assert events.count("repo.commit") == 1
+    assert "repo.push_branch" not in events
+    assert store.recorded_candidates == []
 
 
 def test_run_preserves_evaluator_failure_outcome_when_structured_retry_succeeds(

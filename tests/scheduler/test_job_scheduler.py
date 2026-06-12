@@ -341,7 +341,7 @@ def test_seed_jobs_can_reuse_baseline_checked_campaign_snapshot(
     ) == 0
 
 
-def test_repair_scheduler_consumes_token_for_scheduled_repair_job(
+def test_repair_scheduler_noops_when_repair_pool_deprecated(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,
 ) -> None:
@@ -355,16 +355,6 @@ def test_repair_scheduler_consumes_token_for_scheduled_repair_job(
         JobScheduler,
         "_count_completed_normal_jobs_best_effort",
         lambda _self: 0,
-    )
-    monkeypatch.setattr(
-        job_scheduler,
-        "with_repair_scheduling_lock",
-        lambda **kwargs: kwargs["callback"](object()),
-    )
-    monkeypatch.setattr(
-        job_scheduler,
-        "repair_tokens_available",
-        lambda **_kwargs: 1,
     )
     settings.failed_candidate_repair_enabled = True
     settings.failed_candidate_repair_normal_jobs_per_token = 9
@@ -404,12 +394,12 @@ def test_repair_scheduler_consumes_token_for_scheduled_repair_job(
 
     scheduled = scheduler._schedule_repair_jobs(capacity=1)
 
-    assert scheduled == [repair_job_id]
+    assert scheduled == []
     assert scheduler._repair_tokens == 0
-    assert scheduler.repair_sampler.scheduled == 1
+    assert scheduler.repair_sampler.scheduled == 0
 
 
-def test_repair_scheduler_uses_persistent_budget_after_restart(
+def test_repair_scheduler_ignores_persistent_budget_after_deprecation(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,
 ) -> None:
@@ -425,16 +415,6 @@ def test_repair_scheduler_uses_persistent_budget_after_restart(
         JobScheduler,
         "_count_completed_normal_jobs_best_effort",
         lambda _self: 9,
-    )
-    monkeypatch.setattr(
-        job_scheduler,
-        "with_repair_scheduling_lock",
-        lambda **kwargs: kwargs["callback"](object()),
-    )
-    monkeypatch.setattr(
-        job_scheduler,
-        "repair_tokens_available",
-        lambda **_kwargs: 1,
     )
     settings.failed_candidate_repair_enabled = True
     settings.failed_candidate_repair_normal_jobs_per_token = 9
@@ -469,12 +449,12 @@ def test_repair_scheduler_uses_persistent_budget_after_restart(
 
     scheduled = scheduler._schedule_repair_jobs(capacity=1)
 
-    assert scheduled == [repair_job_id]
+    assert scheduled == []
     assert scheduler._repair_tokens == 0
-    assert scheduler.repair_sampler.scheduled == 1
+    assert scheduler.repair_sampler.scheduled == 0
 
 
-def test_repair_scheduler_serializes_cap_check_and_schedule(
+def test_repair_scheduler_does_not_enter_repair_lock_after_deprecation(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,
 ) -> None:
@@ -524,8 +504,6 @@ def test_repair_scheduler_serializes_cap_check_and_schedule(
                 base_commit_hash="base",
             )
 
-    monkeypatch.setattr(job_scheduler, "with_repair_scheduling_lock", _lock)
-    monkeypatch.setattr(job_scheduler, "repair_tokens_available", _persistent_tokens)
     scheduler = cast(Any, JobScheduler)(
         settings=settings,
         console=Console(record=True),
@@ -534,17 +512,11 @@ def test_repair_scheduler_serializes_cap_check_and_schedule(
     scheduler.repair_sampler = DummyRepairSampler()
     scheduler._repair_tokens = 1
 
-    scheduled = scheduler._schedule_repair_jobs(capacity=1, accrue_tokens=False)
+    scheduled = scheduler._schedule_repair_jobs(capacity=1)
 
-    assert scheduled == [repair_job_id]
-    assert scheduler._repair_tokens == 0
-    assert events == [
-        "lock.enter",
-        "tokens.available",
-        "active.count",
-        "schedule.one",
-        "lock.exit",
-    ]
+    assert scheduled == []
+    assert scheduler._repair_tokens == 1
+    assert events == []
 
 
 def test_repair_scheduler_recomputes_persistent_token_budget_before_dispatch(
@@ -558,16 +530,6 @@ def test_repair_scheduler_recomputes_persistent_token_budget_before_dispatch(
         job_scheduler,
         "build_evolution_job_sender_actor",
         lambda **_kwargs: sender,
-    )
-    monkeypatch.setattr(
-        job_scheduler,
-        "with_repair_scheduling_lock",
-        lambda **kwargs: kwargs["callback"](object()),
-    )
-    monkeypatch.setattr(
-        job_scheduler,
-        "repair_tokens_available",
-        lambda **_kwargs: 0,
     )
     settings.failed_candidate_repair_enabled = True
     settings.failed_candidate_repair_max_active_jobs = 1
@@ -588,13 +550,13 @@ def test_repair_scheduler_recomputes_persistent_token_budget_before_dispatch(
     scheduler.repair_sampler = DummyRepairSampler()
     scheduler._repair_tokens = 1
 
-    scheduled = scheduler._schedule_repair_jobs(capacity=1, accrue_tokens=False)
+    scheduled = scheduler._schedule_repair_jobs(capacity=1)
 
     assert scheduled == []
-    assert scheduler._repair_tokens == 0
+    assert scheduler._repair_tokens == 1
 
 
-def test_repair_sampler_schedules_job_with_configured_supported_mode(
+def test_repair_sampler_schedule_one_noops_after_deprecation(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,
 ) -> None:
@@ -657,15 +619,11 @@ def test_repair_sampler_schedules_job_with_configured_supported_mode(
 
     scheduled = sampler.schedule_one()
 
-    assert scheduled == ScheduledRepairJob(
-        job_id=job_id,
-        repair_source_candidate_id=source_id,
-        base_commit_hash="base",
-    )
-    assert session.added_jobs[-1].repair_mode == settings.failed_candidate_repair_mode
-    assert candidate.repair_state == "scheduled"
-    assert candidate.repair_attempts == 1
-    assert candidate.last_repair_job_id == job_id
+    assert scheduled is None
+    assert session.added_jobs == []
+    assert candidate.repair_state == "eligible"
+    assert candidate.repair_attempts == 0
+    assert candidate.last_repair_job_id is None
 
 
 def test_settings_rejects_unsupported_failed_candidate_repair_mode() -> None:
@@ -690,7 +648,7 @@ def test_repair_sampler_rejects_mutated_unsupported_repair_mode(settings: Settin
         FailedCandidateRepairSampler(settings=settings)
 
 
-def test_schedule_jobs_reserves_repair_slot_when_normal_sampling_can_fill_batch(
+def test_schedule_jobs_does_not_reserve_repair_slot_after_deprecation(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,
 ) -> None:
@@ -769,16 +727,6 @@ def test_schedule_jobs_reserves_repair_slot_when_normal_sampling_can_fill_batch(
         "_count_completed_normal_jobs_best_effort",
         lambda _self: 1,
     )
-    monkeypatch.setattr(
-        job_scheduler,
-        "with_repair_scheduling_lock",
-        lambda **kwargs: kwargs["callback"](object()),
-    )
-    monkeypatch.setattr(
-        job_scheduler,
-        "repair_tokens_available",
-        lambda **_kwargs: 1,
-    )
     sampler = DummySampler()
     scheduler = cast(Any, JobScheduler)(
         settings=settings,
@@ -796,9 +744,9 @@ def test_schedule_jobs_reserves_repair_slot_when_normal_sampling_can_fill_batch(
     scheduled = scheduler.schedule_jobs(unfinished_jobs=0, total_jobs=0)
 
     assert scheduled == 2
-    assert sampler.normal_scheduled == 1
-    assert scheduler.repair_sampler.scheduled == 1
-    assert repair_job_id in enqueued
+    assert sampler.normal_scheduled == 2
+    assert scheduler.repair_sampler.scheduled == 0
+    assert repair_job_id not in enqueued
     assert len(enqueued) == 2
 
 

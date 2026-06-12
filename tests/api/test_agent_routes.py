@@ -134,7 +134,6 @@ def test_agent_capabilities_status_and_next_actions_serialize(monkeypatch) -> No
     assert action_types == [
         "retry_failed_stale_jobs",
         "baseline_ensure",
-        "repair_schedule_one",
     ]
     assert status.json()["safe_next_actions"] == next_actions.json()
 

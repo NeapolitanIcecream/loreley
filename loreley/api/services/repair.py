@@ -12,10 +12,6 @@ from sqlalchemy import and_, func, or_, select
 from loreley.api.pagination import PaginationCursorError, decode_cursor, encode_cursor, normalize_pagination
 from loreley.config import Settings, get_settings
 from loreley.core.contracts import clamp_text, normalize_single_line
-from loreley.core.repair_coordination import (
-    repair_tokens_available,
-    with_repair_scheduling_lock as _with_manual_repair_schedule_lock,
-)
 from loreley.db.base import session_scope
 from loreley.db.models import (
     CandidateCommit,
@@ -26,7 +22,7 @@ from loreley.db.models import (
     OperatorTaskKind,
     OperatorTaskStatus,
 )
-from loreley.scheduler.job_scheduler import FailedCandidateRepairSampler
+from loreley.scheduler.job_scheduler import REPAIR_POOL_DEPRECATION_MESSAGE
 
 log = logger.bind(module="api.repair")
 
@@ -118,62 +114,10 @@ def repair_pool_summary() -> dict[str, object]:
 
 
 def schedule_one_repair(*, settings: Settings | None = None) -> dict[str, object]:
-    """Schedule one repair job using the existing scheduler repair sampler."""
+    """Return the deprecated repair schedule-one no-op response."""
 
-    active_settings = settings or get_settings()
-    if not bool(active_settings.failed_candidate_repair_enabled):
-        return _repair_schedule_noop(
-            "Repair scheduling is disabled by FAILED_CANDIDATE_REPAIR_ENABLED.",
-        )
-    max_per_tick = max(0, int(active_settings.failed_candidate_repair_max_jobs_per_tick))
-    if max_per_tick <= 0:
-        return _repair_schedule_noop(
-            "Repair scheduling is disabled by FAILED_CANDIDATE_REPAIR_MAX_JOBS_PER_TICK.",
-        )
-    max_active = max(0, int(active_settings.failed_candidate_repair_max_active_jobs))
-    if max_active <= 0:
-        return _repair_schedule_noop(
-            "Repair scheduling is disabled by FAILED_CANDIDATE_REPAIR_MAX_ACTIVE_JOBS.",
-        )
-    max_tokens = max(0, int(active_settings.failed_candidate_repair_max_tokens))
-    if max_tokens <= 0:
-        return _repair_schedule_noop(
-            "Repair scheduling is disabled by FAILED_CANDIDATE_REPAIR_MAX_TOKENS.",
-        )
-    try:
-        sampler = FailedCandidateRepairSampler(settings=active_settings)
-
-        def _schedule_locked(session: object) -> dict[str, object]:
-            active_repair_jobs = sampler.count_active_repair_jobs(session=session)
-            if active_repair_jobs >= max_active:
-                return _repair_schedule_noop(
-                    "Active repair jobs are already at FAILED_CANDIDATE_REPAIR_MAX_ACTIVE_JOBS.",
-                )
-            if _manual_repair_tokens_available(settings=active_settings, session=session) <= 0:
-                return _repair_schedule_noop(
-                    "Repair scheduling is blocked by the failed-candidate repair token budget.",
-                )
-            result = sampler.schedule_one(session=session)
-            if result is None:
-                log.info("Repair schedule-one requested but no eligible candidate was scheduled")
-                return _repair_schedule_noop("No eligible repair candidate was scheduled.")
-            log.bind(
-                job_id=str(result.job_id),
-                repair_source_candidate_id=str(result.repair_source_candidate_id),
-            ).info("Repair schedule-one created job")
-            return {
-                "scheduled": True,
-                "job_id": result.job_id,
-                "repair_source_candidate_id": result.repair_source_candidate_id,
-                "base_commit_hash": result.base_commit_hash,
-                "message": "Repair job scheduled.",
-            }
-
-        return _with_manual_repair_schedule_lock(
-            callback=_schedule_locked,
-        )
-    except ValueError as exc:
-        raise RepairValidationError(str(exc)) from exc
+    _ = settings or get_settings()
+    return _repair_schedule_noop(REPAIR_POOL_DEPRECATION_MESSAGE)
 
 
 def update_candidate_operator_state(
@@ -287,10 +231,6 @@ def _repair_schedule_noop(message: str) -> dict[str, object]:
         "base_commit_hash": None,
         "message": message,
     }
-
-
-def _manual_repair_tokens_available(*, settings: Settings, session: object | None = None) -> int:
-    return repair_tokens_available(settings=settings, session=session)
 
 
 def _locked_repair_candidate(

@@ -32,6 +32,7 @@ from loreley.api.services.operator import (
     run_baseline_ensure_task,
 )
 from loreley.api.services.repair import (
+    REPAIR_POOL_DEPRECATION_MESSAGE,
     RepairConflictError,
     RepairNotFoundError,
     RepairValidationError,
@@ -111,7 +112,12 @@ def agent_capabilities(*, settings: Settings | None = None) -> dict[str, Any]:
                 "baseline_ensure",
                 expected_state_fields=["campaign_program_hash", "baseline_status"],
             ),
-            _capability_action("repair_schedule_one"),
+            _capability_action(
+                "repair_schedule_one",
+                deprecated=True,
+                disabled=True,
+                deprecation_message=REPAIR_POOL_DEPRECATION_MESSAGE,
+            ),
             _capability_action(
                 "repair_candidate_quarantine",
                 required_params=["candidate_id"],
@@ -211,12 +217,10 @@ def next_actions_from_operator_status(
     if blocking_issues:
         return []
 
-    active_settings = settings or get_settings()
     actions: list[dict[str, Any]] = []
     for action in (
         _failed_stale_next_action(status_payload),
         _baseline_next_action(status_payload),
-        _repair_next_action(status_payload, settings=active_settings),
     ):
         if action is not None:
             actions.append(action)
@@ -263,47 +267,6 @@ def _baseline_next_action(status_payload: dict[str, Any]) -> dict[str, Any] | No
         "expected_state": expected_state,
         "resource": {"type": "campaign_program", "id": active_hash},
     }
-
-
-def _repair_next_action(
-    status_payload: dict[str, Any],
-    *,
-    settings: Settings,
-) -> dict[str, Any] | None:
-    if not _repair_capacity_available(status_payload, settings=settings):
-        return None
-    return {
-        "action_type": "repair_schedule_one",
-        "reason": "Schedule one eligible failed-candidate repair while repair capacity is available.",
-        "risk": _ACTION_RISK["repair_schedule_one"],
-        "dry_run": True,
-        "params": {},
-        "expected_state": {},
-        "resource": {"type": "repair_pool", "id": "eligible"},
-    }
-
-
-def _repair_capacity_available(
-    status_payload: dict[str, Any],
-    *,
-    settings: Settings,
-) -> bool:
-    repair_pool = _nested_dict(status_payload, "repair_pool")
-    by_repair_state = repair_pool.get("by_repair_state")
-    eligible_count = (
-        _safe_int(by_repair_state.get("eligible"))
-        if isinstance(by_repair_state, dict)
-        else 0
-    )
-    max_active = max(0, int(settings.failed_candidate_repair_max_active_jobs))
-    return (
-        eligible_count > 0
-        and bool(settings.failed_candidate_repair_enabled)
-        and max_active > 0
-        and _safe_int(repair_pool.get("active_repair_jobs")) < max_active
-        and int(settings.failed_candidate_repair_max_jobs_per_tick) > 0
-        and int(settings.failed_candidate_repair_max_tokens) > 0
-    )
 
 
 def run_agent_action(
@@ -542,8 +505,11 @@ def _capability_action(
     *,
     required_params: list[str] | None = None,
     expected_state_fields: list[str] | None = None,
+    deprecated: bool = False,
+    disabled: bool = False,
+    deprecation_message: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "action_type": action_type,
         "risk": _ACTION_RISK[action_type],
         "dry_run_supported": True,
@@ -552,6 +518,13 @@ def _capability_action(
         "required_params": required_params or [],
         "expected_state_fields": expected_state_fields or [],
     }
+    if deprecated:
+        payload["deprecated"] = True
+    if disabled:
+        payload["disabled"] = True
+    if deprecation_message:
+        payload["deprecation_message"] = deprecation_message
+    return payload
 
 
 def _idempotent_action(
@@ -816,6 +789,9 @@ def _validate_baseline_ensure(
 def _validate_repair_schedule_one() -> tuple[list[dict[str, Any]], dict[str, Any]]:
     settings = get_settings()
     return [], {
+        "deprecated": True,
+        "disabled": True,
+        "message": REPAIR_POOL_DEPRECATION_MESSAGE,
         "repair_enabled": bool(settings.failed_candidate_repair_enabled),
         "max_active_jobs": int(settings.failed_candidate_repair_max_active_jobs),
         "max_jobs_per_tick": int(settings.failed_candidate_repair_max_jobs_per_tick),

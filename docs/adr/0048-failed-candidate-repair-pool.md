@@ -2,7 +2,12 @@
 
 Date: 2026-05-06
 
-Status: Draft
+Status: Superseded for new work
+
+Superseded by:
+[Evaluator-Guided In-Loop Rework](../proposals/evaluator-guided-in-loop-rework.md).
+The repair-pool schema and legacy handling remain for compatibility, but new
+failed-candidate repair scheduling is deprecated.
 
 Resolves: [ADR 0047](0047-defer-failed-candidate-lineage.md)
 

@@ -1,6 +1,41 @@
 # loreley.core.worker.evaluator
 
-Evaluation utilities for Loreley's autonomous worker, responsible for running user-defined evaluation plugins in an isolated subprocess and turning their outputs into structured metrics.
+Evaluation utilities for Loreley's autonomous worker, responsible for running
+user-defined evaluation plugins in an isolated subprocess and turning their
+outputs into structured pass/fail outcomes, metrics, and diagnostic artifacts.
+
+## Evaluator contract
+
+Evaluator authors should use the small public contract:
+
+- return `EvalPass(...)` when the candidate passes;
+- return `EvalFail(...)` when the candidate owns the failure;
+- raise an exception when the evaluator or its environment failed.
+
+Example:
+
+```python
+from loreley.core.worker.evaluator import EvalFail, EvalPass, EvaluationContext
+
+
+def plugin(context: EvaluationContext):
+    ok = run_fast_checks(context.worktree)
+    if not ok:
+        return EvalFail(
+            kind="typecheck",
+            summary="mypy failed",
+            details="src/app.py:42: incompatible return type",
+        )
+    return EvalPass(summary="typecheck passed")
+```
+
+Supported `EvalFail.kind` values are `compile`, `typecheck`, `lint`, `test`,
+`validation`, `benchmark`, and `other`.
+
+`EvalFail` means the candidate failed evaluation. The worker may feed a bounded,
+sanitized diagnostic back to the coding agent and retry inside the same job
+when the failure kind is allowlisted by worker settings. Evaluator exceptions
+are treated as evaluator/infrastructure failures and do not trigger rework.
 
 ## Domain types
 
@@ -8,21 +43,31 @@ Evaluation utilities for Loreley's autonomous worker, responsible for running us
 - **`EvaluationDiagnostic`**: bounded structured finding attached to an evaluator artifact (`kind`, `message`, `severity`, and optional `location`, `metric`, `value`, `unit`). Severity is normalized to `info`, `warning`, `error`, `regression`, or `improvement`.
 - **`EvaluationArtifact`**: evaluator-declared diagnostic artifact. It can point to a file inside the evaluation worktree with `path`, provide `inline_payload`, or provide metadata-only evidence through `summary` and `diagnostics`. Each artifact has a normalized `key`, `kind`, `mime_type`, `visibility` (`agent_visible`, `human_only`, or `hidden`), and `agent_projection` (`summary`, `manifest`, or `path`).
 - **`EvaluationContext`**: immutable-ish context object passed into plugins, including the git `worktree` path, optional `base_commit_hash` and `candidate_commit_hash`, optional `job_id` and high-level `goal`, an arbitrary `payload` dict (typically containing job and plan information), an optional `plan_summary`, and a free-form `metadata` dict. Paths and mappings are normalised and resolved in `__post_init__`.
-- **`EvaluationResult`**: structured passing result returned from evaluation, containing a mandatory `summary`, a tuple of `metrics`, a tuple of `tests_executed`, a tuple of textual `logs`, an `extra` dict for arbitrary details, and optional evaluator artifacts; its `__post_init__` enforces a non-empty summary and normalises all collections.
+- **`EvalPass`**: public passing result returned by an evaluator. It contains a
+  mandatory `summary`, optional metrics, tests executed, logs, extra data, and
+  artifacts.
+- **`EvalFail`**: public candidate-owned failure returned by an evaluator. It
+  contains `kind`, a bounded `summary`, optional bounded `details`, and optional
+  artifacts.
+- **`EvaluationResult`**: legacy/advanced structured passing result returned from evaluation, containing a mandatory `summary`, a tuple of `metrics`, a tuple of `tests_executed`, a tuple of textual `logs`, an `extra` dict for arbitrary details, and optional evaluator artifacts; its `__post_init__` enforces a non-empty summary and normalises all collections.
 - **`EvaluationFailureResult`**: bounded evaluator-owned failure evidence for non-passing candidates. It records failure stage/kind, repairability, a safe summary, and visibility-separated evidence refs.
-- **`EvaluationOutcome`**: first-class evaluator envelope for `passed`, `candidate_failed`, `evaluator_failed`, `infrastructure_failed`, or `inconclusive` outcomes. Passed outcomes contain an `EvaluationResult`; non-passing outcomes contain an `EvaluationFailureResult`.
+- **`EvaluationOutcome`**: internal/advanced compatibility envelope for
+  `passed`, `candidate_failed`, `evaluator_failed`, `infrastructure_failed`, or
+  `inconclusive` outcomes. Passed outcomes contain an `EvaluationResult`;
+  non-passing outcomes contain an `EvaluationFailureResult`.
 
 ## Exceptions and protocols
 
 - **`EvaluationError`**: custom runtime error raised when the evaluator cannot run the plugin successfully (import failures, bad configuration, timeouts, invalid payloads, etc.).
-- **`EvaluationPlugin`**: protocol type describing callables that accept an `EvaluationContext` and return either an `EvaluationResult` or a plain mapping compatible with `EvaluationResult` fields.
+- **`EvaluationPlugin`**: protocol type describing callables that accept an `EvaluationContext` and return `EvalPass`, `EvalFail`, an `EvaluationResult`, an `EvaluationOutcome`, or a compatible mapping.
 - **`EvaluationCallable`**: internal alias for the concrete callable signature used by the evaluator.
 
 ## Evaluator
 
-- **`Evaluator`**: adapter around user-defined evaluation plugins that handles import, isolation, timeouts, and coercion into `EvaluationResult`.
+- **`Evaluator`**: adapter around user-defined evaluation plugins that handles import, isolation, timeouts, and coercion into an internal evaluation outcome.
   - Configured via `loreley.config.Settings` worker evaluator options (`WORKER_EVALUATOR_PLUGIN`, `WORKER_EVALUATOR_PYTHON_PATHS`, `WORKER_EVALUATOR_TIMEOUT_SECONDS`, `WORKER_EVALUATOR_MAX_METRICS`).
   - **`evaluate(context)`**: validates that the `worktree` exists and is a directory, resolves or imports the plugin callable, logs the run via `loguru` and `rich`, executes the plugin in a separate process with a strict timeout, and converts the returned payload into an `EvaluationResult`, truncating the number of metrics to `max_metrics` when necessary.
+  - **`evaluate_outcome(context)`**: returns the full internal `EvaluationOutcome`. `EvalPass` coerces to `outcome_kind="passed"` and `EvalFail` coerces to `outcome_kind="candidate_failed"`.
   - Supports two configuration modes:
     - A dotted string reference such as `package.module:plugin` or `package.module.plugin` via `WORKER_EVALUATOR_PLUGIN`.
     - An inline callable passed at construction time (useful for tests or in-process usage), in which case no import is performed in the subprocess.

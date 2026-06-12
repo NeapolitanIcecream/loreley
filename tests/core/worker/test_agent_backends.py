@@ -1104,6 +1104,8 @@ def test_kilocode_backend_factory_falls_back_to_global_openai_aliases(
     monkeypatch.delenv("WORKER_KILOCODE_OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("WORKER_KILOCODE_OPENAI_BASE_URL", raising=False)
     monkeypatch.delenv("WORKER_KILOCODE_OPENAI_API_SPEC", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     monkeypatch.setenv("LORELEY_LLM_API_KEY", "sk-alias")
     monkeypatch.setenv("LORELEY_LLM_BASE_URL", "https://alias.example.com/v1")
     monkeypatch.setenv("OPENAI_API_SPEC", "chat_completions")

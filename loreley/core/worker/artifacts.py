@@ -7,7 +7,7 @@ persist only their paths in the database.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 import hashlib
 import json
@@ -42,6 +42,8 @@ __all__ = [
     "JobArtifactWriteResult",
     "JobArtifactWriteRequest",
     "MaterializedEvaluationArtifact",
+    "freeze_evaluation_outcome_artifact_paths",
+    "freeze_evaluation_result_artifact_paths",
     "resolve_worker_instance_id",
     "worker_runtime_metadata",
     "write_failure_job_artifacts",
@@ -232,6 +234,132 @@ def _materialize_evaluation_artifacts(
         if materialized is not None:
             artifacts.append(materialized)
     return tuple(artifacts), tuple(warnings)
+
+
+def freeze_evaluation_outcome_artifact_paths(
+    *,
+    outcome: EvaluationOutcome,
+    worktree: Path | None,
+    settings: Settings | None = None,
+) -> EvaluationOutcome:
+    if outcome.result is not None:
+        freeze_evaluation_result_artifact_paths(
+            evaluation=outcome.result,
+            worktree=worktree,
+            settings=settings,
+        )
+    frozen, warnings = _freeze_path_backed_artifacts(
+        artifacts=outcome.artifacts,
+        worktree=worktree,
+        settings=settings,
+    )
+    outcome.artifacts = frozen
+    if warnings:
+        outcome.artifact_validation_warnings = (
+            *tuple(outcome.artifact_validation_warnings or ()),
+            *warnings,
+        )
+    return outcome
+
+
+def freeze_evaluation_result_artifact_paths(
+    *,
+    evaluation: EvaluationResult,
+    worktree: Path | None,
+    settings: Settings | None = None,
+) -> EvaluationResult:
+    frozen, warnings = _freeze_path_backed_artifacts(
+        artifacts=evaluation.artifacts,
+        worktree=worktree,
+        settings=settings,
+    )
+    evaluation.artifacts = frozen
+    if warnings:
+        evaluation.artifact_validation_warnings = (
+            *tuple(evaluation.artifact_validation_warnings or ()),
+            *warnings,
+        )
+    return evaluation
+
+
+def _freeze_path_backed_artifacts(
+    *,
+    artifacts: Sequence[EvaluationArtifact],
+    worktree: Path | None,
+    settings: Settings | None,
+) -> tuple[tuple[EvaluationArtifact, ...], tuple[ArtifactValidationWarning, ...]]:
+    if not artifacts:
+        return tuple(), tuple()
+    effective_settings = settings or get_settings()
+    if not effective_settings.worker_evaluation_artifacts_enabled:
+        return tuple(artifacts), tuple()
+    allowed_mime_types = _normalized_mime_set(
+        effective_settings.worker_evaluation_artifact_allowed_mime_types
+    )
+    max_bytes = max(0, int(effective_settings.worker_evaluation_artifact_max_bytes))
+    resolved_worktree = Path(worktree).expanduser().resolve() if worktree is not None else Path.cwd().resolve()
+    frozen: list[EvaluationArtifact] = []
+    warnings: list[ArtifactValidationWarning] = []
+    for index, artifact in enumerate(artifacts):
+        frozen_artifact, warning = _freeze_one_path_backed_artifact(
+            artifact=artifact,
+            artifact_index=index,
+            worktree=resolved_worktree,
+            allowed_mime_types=allowed_mime_types,
+            max_bytes=max_bytes,
+        )
+        frozen.append(frozen_artifact)
+        if warning is not None:
+            warnings.append(warning)
+    return tuple(frozen), tuple(warnings)
+
+
+def _freeze_one_path_backed_artifact(
+    *,
+    artifact: EvaluationArtifact,
+    artifact_index: int,
+    worktree: Path,
+    allowed_mime_types: set[str],
+    max_bytes: int,
+) -> tuple[EvaluationArtifact, ArtifactValidationWarning | None]:
+    if artifact.path is None or artifact.inline_payload is not None:
+        return artifact, None
+    if artifact.mime_type not in allowed_mime_types:
+        return artifact, None
+    source, path_warning = _resolve_safe_source_path(
+        raw_path=artifact.path,
+        worktree=worktree,
+        artifact=artifact,
+        artifact_index=artifact_index,
+    )
+    if path_warning is not None:
+        return _artifact_without_path_payload(artifact), path_warning
+    assert source is not None
+    if source.stat().st_size > max_bytes:
+        return _artifact_without_path_payload(artifact), _warning(
+            artifact=artifact,
+            artifact_index=artifact_index,
+            code="artifact_too_large",
+            action="metadata_only" if _has_metadata_payload(artifact) else "skipped",
+            message="Artifact raw payload exceeds the configured size limit.",
+            input_ref=f"artifacts[{artifact_index}].path",
+        )
+    try:
+        payload = source.read_bytes()
+    except OSError:
+        return _artifact_without_path_payload(artifact), _warning(
+            artifact=artifact,
+            artifact_index=artifact_index,
+            code="artifact_read_failed",
+            action="metadata_only" if _has_metadata_payload(artifact) else "skipped",
+            message="Artifact raw payload could not be read before cleanup.",
+            input_ref=f"artifacts[{artifact_index}].path",
+        )
+    return replace(artifact, path=None, inline_payload=payload), None
+
+
+def _artifact_without_path_payload(artifact: EvaluationArtifact) -> EvaluationArtifact:
+    return replace(artifact, path=None, inline_payload=None)
 
 
 def _materialize_one_artifact(

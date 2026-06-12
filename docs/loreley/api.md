@@ -143,7 +143,7 @@ FastAPI also exposes OpenAPI docs by default:
 - `GET /operator/tasks`
 - `GET /operator/tasks/{task_id}`
 - `GET /repair/pool`
-- `POST /repair/schedule-one`
+- `POST /repair/schedule-one` (deprecated no-op)
 - `POST /repair/candidates/{candidate_id}/quarantine`
 - `POST /repair/candidates/{candidate_id}/discard`
 - `POST /repair/candidates/{candidate_id}/restore`
@@ -171,11 +171,10 @@ These routes mutate database state:
   task is already `pending` or `running`. A `pending` task older than 10 minutes
   or a `running` task older than 6 hours is treated as stale, marked `failed`,
   and replaced by the new request.
-- `POST /repair/schedule-one` calls the existing
-  `FailedCandidateRepairSampler.schedule_one()` path, so the same eligibility,
-  settings, repair-token budget, and campaign-baseline gates apply. Manual API
-  requests and scheduler repair dispatch serialize the active-job cap check,
-  token-budget check, and scheduling mutation on the instance metadata row.
+- `POST /repair/schedule-one` is retained as a deprecated compatibility route.
+  It returns `scheduled=false` with a deprecation message and does not create a
+  new repair job. New candidate-owned evaluator failures are handled by
+  evaluator-guided in-loop rework inside the worker job.
 - `POST /repair/candidates/{candidate_id}/quarantine|discard|restore` updates
   repair-pool operator state. These actions fail with `409` while an active
   repair job exists for the candidate. Restore sets
@@ -244,7 +243,7 @@ downloads use `GET /jobs/{job_id}/evaluation-artifacts/{artifact_key}`.
 - current `loreley.program.md` file state, sections, warnings, and hash;
 - scheduler active or persisted campaign hash;
 - current campaign baseline status, key, value, and failure summary;
-- repair-pool counts by repair state, lifecycle status, and failure kind;
+- legacy repair-pool counts by repair state, lifecycle status, and failure kind;
 - job health, including unfinished jobs, pending ingestion, lease health, and
   counts by status and job kind.
 
@@ -256,7 +255,7 @@ wraps only the existing operator writes:
 - `retry_job`
 - `retry_failed_stale_jobs`
 - `baseline_ensure`
-- `repair_schedule_one`
+- `repair_schedule_one` (deprecated no-op compatibility action)
 - `repair_candidate_quarantine`
 - `repair_candidate_discard`
 - `repair_candidate_restore`
