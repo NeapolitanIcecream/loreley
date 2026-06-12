@@ -15,6 +15,7 @@ from loreley.core.worker.coding import CodingAgentResponse, ExecutionReport
 from loreley.core.worker.evaluator import (
     EvalFail,
     EvalPass,
+    EvaluationArtifact,
     EvaluationFailureResult,
     EvaluationOutcome,
     EvaluationResult,
@@ -125,6 +126,32 @@ class _EventCapturingEvaluator:
             candidate_commit_hash=context.candidate_commit_hash,
             outcome_kind="passed",
             result=EvaluationResult(summary="ok"),
+        )
+
+
+class _PathArtifactEvaluator:
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+
+    def evaluate_outcome(self, context: Any) -> EvaluationOutcome:
+        self._events.append("evaluator.evaluate")
+        report = context.worktree / "eval-report.txt"
+        report.write_text("diagnostic report\n", encoding="utf-8")
+        return EvaluationOutcome(
+            evaluator_name="fake",
+            candidate_commit_hash=context.candidate_commit_hash,
+            outcome_kind="passed",
+            result=EvaluationResult(
+                summary="ok",
+                artifacts=(
+                    EvaluationArtifact(
+                        key="eval_report",
+                        kind="report",
+                        mime_type="text/plain",
+                        path="eval-report.txt",
+                    ),
+                ),
+            ),
         )
 
 
@@ -341,6 +368,13 @@ class _FakeRepositoryForRun:
     ) -> str:
         self._events.append("repo.diff_summary")
         return f"{base_commit}..{candidate_commit}"
+
+
+class _CleaningRepositoryForRun(_FakeRepositoryForRun):
+    def clean_worktree(self, *, worktree: Path | None = None) -> None:
+        super().clean_worktree(worktree=worktree)
+        target = (worktree or self._worktree) / "eval-report.txt"
+        target.unlink(missing_ok=True)
 
 
 class _FakeJobStoreForPublishFailure:
@@ -929,6 +963,36 @@ def test_run_reworks_candidate_failure_and_publishes_only_final_pass(
     assert "typecheck failed in src/foo.py" in str(second_request.rework_feedback)
     success_outcome = store.success_calls[0]["evaluation_outcome"]
     assert success_outcome.artifacts[-1].key == "evaluator_rework_attempts"
+
+
+def test_run_preserves_path_backed_evaluation_artifacts_before_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    job_id = uuid.uuid4()
+    events: list[str] = []
+    _patch_empty_planning_context_session(monkeypatch)
+    store = _FakeJobStoreForSuccess(job_id=job_id, events=events)
+    worker = EvolutionWorker(
+        settings=settings,
+        repository=_CleaningRepositoryForRun(worktree=tmp_path, events=events),  # type: ignore[arg-type]
+        planning_agent=_FakePlanningAgent(),  # type: ignore[arg-type]
+        coding_agent=_FakeCodingAgent(),  # type: ignore[arg-type]
+        evaluator=_PathArtifactEvaluator(events),  # type: ignore[arg-type]
+        summarizer=_FakeSummarizer(),  # type: ignore[arg-type]
+        job_store=store,  # type: ignore[arg-type]
+    )
+
+    worker.run(job_id)
+
+    assert events.index("repo.clean_worktree") < events.index("store.persist_success")
+    assert not (tmp_path / "eval-report.txt").exists()
+    outcome = store.success_calls[0]["evaluation_outcome"]
+    artifact = outcome.result.artifacts[0]
+    assert artifact.key == "eval_report"
+    assert artifact.path is None
+    assert artifact.inline_payload == b"diagnostic report\n"
 
 
 def test_run_exhausts_rework_without_publishing_failed_attempts(

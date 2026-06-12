@@ -36,6 +36,7 @@ from loreley.core.worker.evaluator import (
     EvaluationResult,
     eval_fail_kind_from_failure_kind,
 )
+from loreley.core.worker.artifacts import freeze_evaluation_outcome_artifact_paths
 from loreley.core.worker.planning import (
     CommitEvaluationArtifactFeedback,
     CommitMetric,
@@ -558,6 +559,11 @@ class EvolutionWorker:
         state: _EvolutionRunState,
         rework_attempts: tuple[_ReworkAttemptRecord, ...],
     ) -> None:
+        freeze_evaluation_outcome_artifact_paths(
+            outcome=_required(state.evaluation_outcome, "evaluation_outcome"),
+            worktree=checkout.worktree,
+            settings=self.settings,
+        )
         self.repository.clean_worktree(worktree=checkout.worktree)
         current = self.repository.current_commit(worktree=checkout.worktree)
         expected = _required(state.candidate_commit, "candidate_commit")
