@@ -170,6 +170,9 @@ def _cleanup_scope_gate_untracked_path(
     raw_path: str,
     patterns: Sequence[str],
 ) -> tuple[str | None, str | None]:
+    if "\\" in raw_path:
+        return None, raw_path
+
     path = _scope_cleanup_candidate_path(raw_path, patterns)
     if path is None:
         return None, None

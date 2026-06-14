@@ -206,6 +206,27 @@ def test_scope_gate_cleanup_does_not_remove_tracked_or_unconfigured_paths(
     }
 
 
+def test_scope_gate_cleanup_rejects_backslash_raw_untracked_paths(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    (tmp_path / "make").mkdir()
+    tracked_file = tmp_path / "make" / "server.log"
+    tracked_file.write_text("tracked\n", encoding="utf-8")
+    _git(tmp_path, "add", "make/server.log")
+    _git(tmp_path, "commit", "-m", "track server log")
+    backslash_file = tmp_path / "make\\server.log"
+    backslash_file.write_text("raw backslash path\n", encoding="utf-8")
+
+    cleanup = cleanup_scope_gate_untracked_paths(
+        worktree=tmp_path,
+        path_patterns=("make/server.log",),
+    )
+
+    assert cleanup.removed_paths == ()
+    assert cleanup.skipped_paths == ("make\\server.log",)
+    assert tracked_file.read_text(encoding="utf-8") == "tracked\n"
+    assert backslash_file.exists()
+
+
 def test_scope_gate_rejects_unsafe_scope_patterns(tmp_path: Path) -> None:
     _init_repo(tmp_path)
     program = parse_campaign_program(b"## Editable scope\n- ../outside\n")
