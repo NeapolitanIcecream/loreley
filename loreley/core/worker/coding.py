@@ -526,7 +526,7 @@ Output requirements:
         )
 
     def _normalize_repo_status_path(self, repo_path: str) -> str | None:
-        path = str(repo_path or "").strip()
+        path = str(repo_path or "")
         while path.startswith("./"):
             path = path[2:]
         path = path.rstrip("/")

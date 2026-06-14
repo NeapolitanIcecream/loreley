@@ -273,6 +273,37 @@ def test_coding_agent_snapshot_ignores_clean_excluded_untracked_paths(
     assert agent._snapshot_worktree_state(repo) == ()  # type: ignore[attr-defined]
 
 
+def test_coding_agent_snapshot_preserves_significant_status_path_whitespace(
+    tmp_path: Path,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo_with_file(repo)
+    spaced_cache_file = repo / " .venv" / "cache.py"
+    spaced_cache_file.parent.mkdir()
+    spaced_cache_file.write_text("real change with leading space\n", encoding="utf-8")
+    trailing_space_file = repo / ".python-version "
+    trailing_space_file.write_text("real change with trailing space\n", encoding="utf-8")
+    settings.worker_repo_clean_excludes = [".venv", ".python-version"]
+
+    agent = CodingAgent(settings=settings, backend=_DummyBackend("ok"))
+    fingerprinted_paths: list[str] = []
+
+    def record_fingerprint(_worktree: Path, repo_path: str) -> str:
+        fingerprinted_paths.append(repo_path)
+        return "fingerprinted"
+
+    monkeypatch.setattr(agent, "_fingerprint_worktree_path", record_fingerprint)
+
+    snapshot = agent._snapshot_worktree_state(repo)  # type: ignore[attr-defined]
+
+    assert " .venv/cache.py" in fingerprinted_paths
+    assert ".python-version " in fingerprinted_paths
+    assert any(entry == "status\0??\0 .venv/cache.py" for entry in snapshot)
+    assert any(entry == "status\0??\0.python-version " for entry in snapshot)
+
+
 def test_coding_agent_raises_when_no_changes_after_attempts(
     tmp_path: Path,
     settings: Settings,
