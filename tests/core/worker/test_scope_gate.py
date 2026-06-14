@@ -227,6 +227,24 @@ def test_scope_gate_cleanup_rejects_backslash_raw_untracked_paths(tmp_path: Path
     assert backslash_file.exists()
 
 
+def test_scope_gate_cleanup_skips_unsafe_unmatched_untracked_paths(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    unsafe_name = tmp_path / "C:notes.txt"
+    unsafe_name.write_text("must not be deleted\n", encoding="utf-8")
+    configured_name = tmp_path / "configured.log"
+    configured_name.write_text("configured cleanup\n", encoding="utf-8")
+
+    cleanup = cleanup_scope_gate_untracked_paths(
+        worktree=tmp_path,
+        path_patterns=("configured.log",),
+    )
+
+    assert cleanup.removed_paths == ("configured.log",)
+    assert cleanup.skipped_paths == ("C:notes.txt",)
+    assert unsafe_name.exists()
+    assert not configured_name.exists()
+
+
 def test_scope_gate_rejects_unsafe_scope_patterns(tmp_path: Path) -> None:
     _init_repo(tmp_path)
     program = parse_campaign_program(b"## Editable scope\n- ../outside\n")

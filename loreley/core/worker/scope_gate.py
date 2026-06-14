@@ -173,7 +173,9 @@ def _cleanup_scope_gate_untracked_path(
     if "\\" in raw_path:
         return None, raw_path
 
-    path = _scope_cleanup_candidate_path(raw_path, patterns)
+    path, skipped_path = _scope_cleanup_candidate_path(raw_path, patterns)
+    if skipped_path is not None:
+        return None, skipped_path
     if path is None:
         return None, None
 
@@ -190,15 +192,18 @@ def _cleanup_scope_gate_untracked_path(
     return None, None
 
 
-def _scope_cleanup_candidate_path(raw_path: str, patterns: Sequence[str]) -> str | None:
+def _scope_cleanup_candidate_path(
+    raw_path: str,
+    patterns: Sequence[str],
+) -> tuple[str | None, str | None]:
     path = _normalize_repo_path(raw_path)
     if path is None or _ignored_path(path):
-        return None
+        return None, None
     if _unsafe_repo_path_reason(path) is not None:
-        return path
+        return None, path
     if _first_matching_pattern(path, patterns) is None:
-        return None
-    return path
+        return None, None
+    return path, None
 
 
 def _is_safe_scope_cleanup_file(*, target: Path, candidate: Path) -> bool:
