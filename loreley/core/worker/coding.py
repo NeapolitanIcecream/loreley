@@ -7,6 +7,7 @@ import stat
 import textwrap
 from dataclasses import dataclass, field
 from datetime import datetime
+from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
 from typing import Any, Sequence
 from uuid import UUID
@@ -391,14 +392,22 @@ Output requirements:
         except Exception as exc:  # pragma: no cover - defensive
             raise CodingError("Failed to inspect worktree status during coding run.") from exc
 
-        status_entries, content_paths = self._parse_worktree_status(status_output)
+        status_entries, content_paths = self._parse_worktree_status(
+            status_output,
+            clean_exclude_patterns=self._snapshot_clean_exclude_patterns(),
+        )
         content_entries = [
             f"content\0{path}\0{self._fingerprint_worktree_path(worktree, path)}"
             for path in content_paths
         ]
         return tuple(sorted((*status_entries, *content_entries)))
 
-    def _parse_worktree_status(self, status_output: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    def _parse_worktree_status(
+        self,
+        status_output: str,
+        *,
+        clean_exclude_patterns: Sequence[str] = (),
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
         tokens = [token for token in status_output.split("\0") if token]
         status_entries: list[str] = []
         content_paths: list[str] = []
@@ -411,6 +420,12 @@ Output requirements:
             status = entry[:2]
             path = entry[3:]
             if path:
+                if status == "??" and self._matches_snapshot_clean_exclude(
+                    path,
+                    clean_exclude_patterns,
+                ):
+                    index += 1
+                    continue
                 status_entries.append(f"status\0{status}\0{path}")
                 content_paths.append(path)
             index += 1
@@ -458,7 +473,58 @@ Output requirements:
         file_type = stat.S_IFMT(path_stat.st_mode)
         if stat.S_ISDIR(path_stat.st_mode):
             return f"dir:{permissions:o}"
-        return f"special:{file_type:o}:{permissions:o}:{path_stat.st_size}"
+            return f"special:{file_type:o}:{permissions:o}:{path_stat.st_size}"
+
+    def _snapshot_clean_exclude_patterns(self) -> tuple[str, ...]:
+        patterns: list[str] = []
+        for raw_pattern in self.settings.worker_repo_clean_excludes:
+            pattern = self._normalize_snapshot_clean_exclude(raw_pattern)
+            if pattern is not None:
+                patterns.append(pattern)
+        return tuple(dict.fromkeys(patterns))
+
+    def _normalize_snapshot_clean_exclude(self, raw_pattern: str) -> str | None:
+        pattern = str(raw_pattern or "").strip()
+        if not pattern:
+            return None
+        while pattern.startswith("./"):
+            pattern = pattern[2:]
+        pattern = pattern.rstrip("/")
+        if not pattern or self._unsafe_status_path_reason(pattern) is not None:
+            return None
+        return pattern
+
+    def _matches_snapshot_clean_exclude(
+        self,
+        repo_path: str,
+        patterns: Sequence[str],
+    ) -> bool:
+        normalized_path = self._normalize_repo_status_path(repo_path)
+        if normalized_path is None:
+            return False
+        return any(
+            self._repo_path_matches_clean_exclude(normalized_path, pattern)
+            for pattern in patterns
+        )
+
+    def _normalize_repo_status_path(self, repo_path: str) -> str | None:
+        path = str(repo_path or "").strip()
+        while path.startswith("./"):
+            path = path[2:]
+        path = path.rstrip("/")
+        if not path or self._unsafe_status_path_reason(path) is not None:
+            return None
+        return path
+
+    def _repo_path_matches_clean_exclude(self, repo_path: str, pattern: str) -> bool:
+        if repo_path == pattern or repo_path.startswith(f"{pattern}/"):
+            return True
+        if fnmatchcase(repo_path, pattern):
+            return True
+        path_parts = PurePosixPath(repo_path).parts
+        if "/" not in pattern:
+            return any(part == pattern or fnmatchcase(part, pattern) for part in path_parts)
+        return False
 
     def _unsafe_status_path_reason(self, repo_path: str) -> str | None:
         if not repo_path:

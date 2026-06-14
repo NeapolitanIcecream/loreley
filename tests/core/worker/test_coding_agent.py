@@ -251,6 +251,28 @@ def test_coding_agent_detects_content_change_to_preexisting_untracked_file(
     assert untracked_file.read_text(encoding="utf-8") == "untracked after agent\n"
 
 
+def test_coding_agent_snapshot_ignores_clean_excluded_untracked_paths(
+    tmp_path: Path,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo_with_file(repo)
+    cache_file = repo / ".venv" / "lib" / "site-packages" / "cache.py"
+    cache_file.parent.mkdir(parents=True)
+    cache_file.write_text("expensive local cache\n", encoding="utf-8")
+    settings.worker_repo_clean_excludes = [".venv"]
+
+    agent = CodingAgent(settings=settings, backend=_DummyBackend("ok"))
+
+    def fail_on_fingerprint(_worktree: Path, repo_path: str) -> str:
+        raise AssertionError(f"clean-excluded path was fingerprinted: {repo_path}")
+
+    monkeypatch.setattr(agent, "_fingerprint_worktree_path", fail_on_fingerprint)
+
+    assert agent._snapshot_worktree_state(repo) == ()  # type: ignore[attr-defined]
+
+
 def test_coding_agent_raises_when_no_changes_after_attempts(
     tmp_path: Path,
     settings: Settings,
