@@ -148,34 +148,62 @@ def cleanup_scope_gate_untracked_paths(
     removed: list[str] = []
     skipped: list[str] = []
     for raw_path in _untracked_changed_paths(worktree=target, git_bin=git_bin):
-        path = _normalize_repo_path(raw_path)
-        if path is None or _ignored_path(path):
-            continue
-        if _unsafe_repo_path_reason(path) is not None:
-            skipped.append(path)
-            continue
-        if _first_matching_pattern(path, patterns) is None:
-            continue
-        candidate = target / path
-        try:
-            candidate.resolve(strict=False).relative_to(target)
-        except (OSError, ValueError):
-            skipped.append(path)
-            continue
-        if candidate.is_dir() and not candidate.is_symlink():
-            skipped.append(path)
-            continue
-        try:
-            if candidate.exists() or candidate.is_symlink():
-                candidate.unlink()
-                removed.append(path)
-        except OSError:
-            skipped.append(path)
+        removed_path, skipped_path = _cleanup_scope_gate_untracked_path(
+            target=target,
+            raw_path=raw_path,
+            patterns=patterns,
+        )
+        if removed_path is not None:
+            removed.append(removed_path)
+        if skipped_path is not None:
+            skipped.append(skipped_path)
 
     return ScopeCleanupResult(
         removed_paths=tuple(dict.fromkeys(removed)),
         skipped_paths=tuple(dict.fromkeys(skipped)),
     )
+
+
+def _cleanup_scope_gate_untracked_path(
+    *,
+    target: Path,
+    raw_path: str,
+    patterns: Sequence[str],
+) -> tuple[str | None, str | None]:
+    path = _scope_cleanup_candidate_path(raw_path, patterns)
+    if path is None:
+        return None, None
+
+    candidate = target / path
+    if not _is_safe_scope_cleanup_file(target=target, candidate=candidate):
+        return None, path
+
+    try:
+        if candidate.exists() or candidate.is_symlink():
+            candidate.unlink()
+            return path, None
+    except OSError:
+        return None, path
+    return None, None
+
+
+def _scope_cleanup_candidate_path(raw_path: str, patterns: Sequence[str]) -> str | None:
+    path = _normalize_repo_path(raw_path)
+    if path is None or _ignored_path(path):
+        return None
+    if _unsafe_repo_path_reason(path) is not None:
+        return path
+    if _first_matching_pattern(path, patterns) is None:
+        return None
+    return path
+
+
+def _is_safe_scope_cleanup_file(*, target: Path, candidate: Path) -> bool:
+    try:
+        candidate.resolve(strict=False).relative_to(target)
+    except (OSError, ValueError):
+        return False
+    return not (candidate.is_dir() and not candidate.is_symlink())
 
 
 def _validate_changed_paths(

@@ -255,20 +255,7 @@ class CodingAgent(TruncationMixin):
                 post_check=_post_check,
             )
         except CodingError as exc:
-            if isinstance(exc.__cause__, _NoEffectiveRepoChangeError):
-                output_detail = (
-                    "produced output but"
-                    if exc.__cause__.has_output
-                    else "produced no output and"
-                )
-                error = CodingError(
-                    f"Coding agent {output_detail} no effective repository changes "
-                    f"after {self.max_attempts} attempt(s)."
-                )
-                usage_events = getattr(exc, "usage_events", ())
-                if usage_events:
-                    setattr(error, "usage_events", usage_events)
-                raise error from exc.__cause__
+            self._raise_no_effective_change_error(exc)
             raise
 
         return CodingAgentResponse(
@@ -408,9 +395,37 @@ Output requirements:
         *,
         clean_exclude_patterns: Sequence[str] = (),
     ) -> tuple[tuple[str, ...], tuple[str, ...]]:
-        tokens = [token for token in status_output.split("\0") if token]
         status_entries: list[str] = []
         content_paths: list[str] = []
+        for status, path, old_path in self._iter_worktree_status_records(status_output):
+            if self._skip_snapshot_status_path(path, status, clean_exclude_patterns):
+                continue
+            status_entries.append(f"status\0{status}\0{path}")
+            content_paths.append(path)
+            if old_path:
+                status_entries.append(f"status-source\0{status}\0{old_path}")
+        return tuple(status_entries), tuple(dict.fromkeys(content_paths))
+
+    def _raise_no_effective_change_error(self, exc: CodingError) -> None:
+        cause = exc.__cause__
+        if not isinstance(cause, _NoEffectiveRepoChangeError):
+            return
+        output_detail = "produced output but" if cause.has_output else "produced no output and"
+        error = CodingError(
+            f"Coding agent {output_detail} no effective repository changes "
+            f"after {self.max_attempts} attempt(s)."
+        )
+        usage_events = getattr(exc, "usage_events", ())
+        if usage_events:
+            setattr(error, "usage_events", usage_events)
+        raise error from cause
+
+    def _iter_worktree_status_records(
+        self,
+        status_output: str,
+    ) -> tuple[tuple[str, str, str | None], ...]:
+        tokens = [token for token in status_output.split("\0") if token]
+        records: list[tuple[str, str, str | None]] = []
         index = 0
         while index < len(tokens):
             entry = tokens[index]
@@ -419,22 +434,25 @@ Output requirements:
                 continue
             status = entry[:2]
             path = entry[3:]
-            if path:
-                if status == "??" and self._matches_snapshot_clean_exclude(
-                    path,
-                    clean_exclude_patterns,
-                ):
-                    index += 1
-                    continue
-                status_entries.append(f"status\0{status}\0{path}")
-                content_paths.append(path)
             index += 1
+            old_path = None
             if ("R" in status or "C" in status) and index < len(tokens):
-                old_path = tokens[index]
-                if old_path:
-                    status_entries.append(f"status-source\0{status}\0{old_path}")
+                old_path = tokens[index] or None
                 index += 1
-        return tuple(status_entries), tuple(dict.fromkeys(content_paths))
+            if path:
+                records.append((status, path, old_path))
+        return tuple(records)
+
+    def _skip_snapshot_status_path(
+        self,
+        path: str,
+        status: str,
+        clean_exclude_patterns: Sequence[str],
+    ) -> bool:
+        return status == "??" and self._matches_snapshot_clean_exclude(
+            path,
+            clean_exclude_patterns,
+        )
 
     def _fingerprint_worktree_path(self, worktree: Path, repo_path: str) -> str:
         unsafe_reason = self._unsafe_status_path_reason(repo_path)
@@ -473,7 +491,7 @@ Output requirements:
         file_type = stat.S_IFMT(path_stat.st_mode)
         if stat.S_ISDIR(path_stat.st_mode):
             return f"dir:{permissions:o}"
-            return f"special:{file_type:o}:{permissions:o}:{path_stat.st_size}"
+        return f"special:{file_type:o}:{permissions:o}:{path_stat.st_size}"
 
     def _snapshot_clean_exclude_patterns(self) -> tuple[str, ...]:
         patterns: list[str] = []
