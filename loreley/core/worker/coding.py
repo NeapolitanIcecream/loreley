@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import stat
 import textwrap
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Sequence
 from uuid import UUID
 
@@ -38,6 +41,7 @@ from loreley.core.worker.planning import (
 
 console = Console()
 log = logger.bind(module="worker.coding")
+_HASH_CHUNK_SIZE = 1024 * 1024
 
 __all__ = [
     "CodingAgent",
@@ -50,6 +54,14 @@ __all__ = [
 
 class CodingError(RuntimeError):
     """Raised when the coding agent cannot implement a plan."""
+
+
+class _NoEffectiveRepoChangeError(CodingError):
+    """Raised when an attempt leaves no content-level repository delta."""
+
+    def __init__(self, message: str, *, has_output: bool) -> None:
+        super().__init__(message)
+        self.has_output = has_output
 
 
 @dataclass(slots=True)
@@ -151,7 +163,7 @@ class CodingAgent(TruncationMixin):
         """Execute the provided plan and return a Markdown execution report."""
         worktree = Path(working_dir).expanduser().resolve()
         prompt = self._render_prompt(request, worktree=worktree)
-        baseline_status = self._snapshot_worktree_state(worktree)
+        baseline_snapshot = self._snapshot_worktree_state(worktree)
 
         task = AgentTask(
             name="coding",
@@ -160,9 +172,6 @@ class CodingAgent(TruncationMixin):
             run_token=request.run_token,
             phase="coding",
         )
-
-        class _NoRepoChangeError(CodingError):
-            """Raised when a coding attempt does not produce repository changes."""
 
         def _debug_hook(
             attempt: int,
@@ -180,11 +189,14 @@ class CodingAgent(TruncationMixin):
                 error=error,
             )
 
-        def _post_check(_invocation: AgentInvocation, _report: ExecutionReport) -> Exception | None:
-            current_status = self._snapshot_worktree_state(worktree)
-            if current_status == baseline_status:
-                return _NoRepoChangeError(
-                    "Coding agent finished without producing repository changes.",
+        def _post_check(invocation: AgentInvocation, _report: ExecutionReport) -> Exception | None:
+            current_snapshot = self._snapshot_worktree_state(worktree)
+            if current_snapshot == baseline_snapshot:
+                has_output = bool((invocation.stdout or "").strip())
+                output_detail = "produced output but" if has_output else "produced no output and"
+                return _NoEffectiveRepoChangeError(
+                    f"Coding agent {output_detail} no effective repository changes.",
+                    has_output=has_output,
                 )
             return None
 
@@ -207,35 +219,56 @@ class CodingAgent(TruncationMixin):
             )
 
         def _on_attempt_retry(attempt: int, _total: int, exc: Exception) -> None:
-            if isinstance(exc, _NoRepoChangeError):
+            if isinstance(exc, _NoEffectiveRepoChangeError):
                 console.log(
-                    "[yellow]Coding agent[/] produced no repository changes; retrying…",
+                    "[yellow]Coding agent[/] produced no effective repository changes; retrying…",
                 )
-                log.warning("Coding attempt {} produced no repository changes", attempt)
+                log.warning(
+                    "Coding attempt {} produced no effective repository changes output_present={}",
+                    attempt,
+                    exc.has_output,
+                )
                 return
             log.warning("Coding attempt {} failed: {}", attempt, exc)
 
-        report, invocation, attempts = run_agent_task(
-            backend=self.backend,
-            task=task,
-            working_dir=worktree,
-            max_attempts=self.max_attempts,
-            coerce_result=lambda inv: self._coerce_report_from_invocation(
-                request=request,
-                invocation=inv,
-            ),
-            retryable_exceptions=(CodingError,),
-            error_cls=CodingError,
-            error_message=(
-                "Coding agent could not produce a report after "
-                f"{self.max_attempts} attempt(s)."
-            ),
-            debug_hook=_debug_hook,
-            on_attempt_start=_on_attempt_start,
-            on_attempt_success=_on_attempt_success,
-            on_attempt_retry=_on_attempt_retry,
-            post_check=_post_check,
-        )
+        try:
+            report, invocation, attempts = run_agent_task(
+                backend=self.backend,
+                task=task,
+                working_dir=worktree,
+                max_attempts=self.max_attempts,
+                coerce_result=lambda inv: self._coerce_report_from_invocation(
+                    request=request,
+                    invocation=inv,
+                ),
+                retryable_exceptions=(CodingError,),
+                error_cls=CodingError,
+                error_message=(
+                    "Coding agent could not produce a report after "
+                    f"{self.max_attempts} attempt(s)."
+                ),
+                debug_hook=_debug_hook,
+                on_attempt_start=_on_attempt_start,
+                on_attempt_success=_on_attempt_success,
+                on_attempt_retry=_on_attempt_retry,
+                post_check=_post_check,
+            )
+        except CodingError as exc:
+            if isinstance(exc.__cause__, _NoEffectiveRepoChangeError):
+                output_detail = (
+                    "produced output but"
+                    if exc.__cause__.has_output
+                    else "produced no output and"
+                )
+                error = CodingError(
+                    f"Coding agent {output_detail} no effective repository changes "
+                    f"after {self.max_attempts} attempt(s)."
+                )
+                usage_events = getattr(exc, "usage_events", ())
+                if usage_events:
+                    setattr(error, "usage_events", usage_events)
+                raise error from exc.__cause__
+            raise
 
         return CodingAgentResponse(
             report=report,
@@ -343,19 +376,100 @@ Output requirements:
         return extract_markdown_summary(markdown)
 
     def _snapshot_worktree_state(self, worktree: Path) -> tuple[str, ...]:
-        """Return a stable snapshot of the worktree status for change detection."""
+        """Return a content-aware snapshot of Git-visible worktree changes."""
         try:
             repo = Repo(worktree)
         except (InvalidGitRepositoryError, NoSuchPathError) as exc:  # pragma: no cover - defensive
             raise CodingError(f"Invalid git worktree for coding agent: {worktree}") from exc
 
         try:
-            status_output = repo.git.status("--porcelain", "--untracked-files=all")
+            status_output = repo.git.status(
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+            )
         except Exception as exc:  # pragma: no cover - defensive
             raise CodingError("Failed to inspect worktree status during coding run.") from exc
 
-        lines = [line.strip() for line in status_output.splitlines() if line.strip()]
-        return tuple(sorted(lines))
+        status_entries, content_paths = self._parse_worktree_status(status_output)
+        content_entries = [
+            f"content\0{path}\0{self._fingerprint_worktree_path(worktree, path)}"
+            for path in content_paths
+        ]
+        return tuple(sorted((*status_entries, *content_entries)))
+
+    def _parse_worktree_status(self, status_output: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        tokens = [token for token in status_output.split("\0") if token]
+        status_entries: list[str] = []
+        content_paths: list[str] = []
+        index = 0
+        while index < len(tokens):
+            entry = tokens[index]
+            if len(entry) < 4:
+                index += 1
+                continue
+            status = entry[:2]
+            path = entry[3:]
+            if path:
+                status_entries.append(f"status\0{status}\0{path}")
+                content_paths.append(path)
+            index += 1
+            if ("R" in status or "C" in status) and index < len(tokens):
+                old_path = tokens[index]
+                if old_path:
+                    status_entries.append(f"status-source\0{status}\0{old_path}")
+                index += 1
+        return tuple(status_entries), tuple(dict.fromkeys(content_paths))
+
+    def _fingerprint_worktree_path(self, worktree: Path, repo_path: str) -> str:
+        unsafe_reason = self._unsafe_status_path_reason(repo_path)
+        if unsafe_reason is not None:
+            return f"unsafe-path:{unsafe_reason}"
+
+        candidate = worktree / repo_path
+        try:
+            path_stat = os.lstat(candidate)
+        except FileNotFoundError:
+            return "missing"
+        except OSError as exc:
+            return f"unreadable:{type(exc).__name__}:{getattr(exc, 'errno', '')}"
+
+        permissions = stat.S_IMODE(path_stat.st_mode)
+        if stat.S_ISLNK(path_stat.st_mode):
+            try:
+                target = os.readlink(candidate)
+            except OSError as exc:
+                return f"symlink-unreadable:{permissions:o}:{type(exc).__name__}"
+            return f"symlink:{permissions:o}:{target}"
+
+        if stat.S_ISREG(path_stat.st_mode):
+            digest = hashlib.sha256()
+            try:
+                with candidate.open("rb") as file:
+                    for chunk in iter(lambda: file.read(_HASH_CHUNK_SIZE), b""):
+                        digest.update(chunk)
+            except OSError as exc:
+                return (
+                    f"file-unreadable:{permissions:o}:{path_stat.st_size}:"
+                    f"{type(exc).__name__}:{getattr(exc, 'errno', '')}"
+                )
+            return f"file:{permissions:o}:{path_stat.st_size}:{digest.hexdigest()}"
+
+        file_type = stat.S_IFMT(path_stat.st_mode)
+        if stat.S_ISDIR(path_stat.st_mode):
+            return f"dir:{permissions:o}"
+        return f"special:{file_type:o}:{permissions:o}:{path_stat.st_size}"
+
+    def _unsafe_status_path_reason(self, repo_path: str) -> str | None:
+        if not repo_path:
+            return "empty"
+        if "\0" in repo_path:
+            return "nul_byte"
+        if repo_path.startswith("/"):
+            return "absolute_path"
+        if any(part == ".." for part in PurePosixPath(repo_path).parts):
+            return "path_traversal"
+        return None
 
     def _dump_debug_artifact(
         self,

@@ -76,6 +76,14 @@ class ScopeGateResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ScopeCleanupResult:
+    """Result from removing configured, untracked workspace junk before scope gate."""
+
+    removed_paths: tuple[str, ...] = ()
+    skipped_paths: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class _PathScopeCheck:
     checked_path: str | None
     violations: tuple[ScopeViolation, ...] = field(default_factory=tuple)
@@ -112,6 +120,62 @@ def validate_campaign_scope(
     )
     _log_scope_gate_result(result)
     return result
+
+
+def cleanup_scope_gate_untracked_paths(
+    *,
+    worktree: Path,
+    path_patterns: Sequence[str],
+    git_bin: str = "git",
+) -> ScopeCleanupResult:
+    """Remove configured untracked files before campaign scope validation.
+
+    This is intentionally narrow: only Git-visible untracked files that match a
+    configured safe repo-relative path/pattern are removed. Tracked changes and
+    unconfigured paths still flow into the scope gate unchanged.
+    """
+
+    patterns = tuple(
+        pattern
+        for raw in path_patterns
+        if (pattern := normalize_single_line(raw))
+        and unsafe_scope_pattern_reason(pattern) is None
+    )
+    if not patterns:
+        return ScopeCleanupResult()
+
+    target = Path(worktree).expanduser().resolve()
+    removed: list[str] = []
+    skipped: list[str] = []
+    for raw_path in _untracked_changed_paths(worktree=target, git_bin=git_bin):
+        path = _normalize_repo_path(raw_path)
+        if path is None or _ignored_path(path):
+            continue
+        if _unsafe_repo_path_reason(path) is not None:
+            skipped.append(path)
+            continue
+        if _first_matching_pattern(path, patterns) is None:
+            continue
+        candidate = target / path
+        try:
+            candidate.resolve(strict=False).relative_to(target)
+        except (OSError, ValueError):
+            skipped.append(path)
+            continue
+        if candidate.is_dir() and not candidate.is_symlink():
+            skipped.append(path)
+            continue
+        try:
+            if candidate.exists() or candidate.is_symlink():
+                candidate.unlink()
+                removed.append(path)
+        except OSError:
+            skipped.append(path)
+
+    return ScopeCleanupResult(
+        removed_paths=tuple(dict.fromkeys(removed)),
+        skipped_paths=tuple(dict.fromkeys(skipped)),
+    )
 
 
 def _validate_changed_paths(
@@ -241,10 +305,16 @@ def _path_check_violations(path_checks: Sequence[_PathScopeCheck]) -> list[Scope
 
 def _log_scope_gate_result(result: ScopeGateResult) -> None:
     if result.violations:
+        violation_paths = tuple(
+            dict.fromkeys(
+                violation.path for violation in result.violations if violation.path is not None
+            )
+        )
         log.warning(
-            "Campaign scope gate failed checked_paths={} violations={}",
+            "Campaign scope gate failed checked_paths={} violations={} violation_paths={}",
             len(result.checked_paths),
             len(result.violations),
+            violation_paths,
         )
     else:
         log.info("Campaign scope gate passed checked_paths={}", len(result.checked_paths))
@@ -272,6 +342,30 @@ def _changed_paths(*, worktree: Path, git_bin: str) -> tuple[str, ...]:
     return _parse_porcelain_z(result.stdout.decode("utf-8", errors="surrogateescape"))
 
 
+def _untracked_changed_paths(*, worktree: Path, git_bin: str) -> tuple[str, ...]:
+    target = Path(worktree).expanduser().resolve()
+    try:
+        result = subprocess.run(
+            [
+                git_bin or "git",
+                "-C",
+                str(target),
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+            ],
+            check=True,
+            capture_output=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or b"").decode("utf-8", errors="replace")
+        raise RuntimeError(f"Failed to inspect untracked paths for scope cleanup: {stderr or exc}") from exc
+    return _parse_porcelain_z_untracked(
+        result.stdout.decode("utf-8", errors="surrogateescape")
+    )
+
+
 def _parse_porcelain_z(output: str) -> tuple[str, ...]:
     tokens = [token for token in output.split("\0") if token]
     paths: list[str] = []
@@ -290,6 +384,25 @@ def _parse_porcelain_z(output: str) -> tuple[str, ...]:
             old_path = tokens[index]
             if old_path:
                 paths.append(old_path)
+            index += 1
+    return tuple(dict.fromkeys(paths))
+
+
+def _parse_porcelain_z_untracked(output: str) -> tuple[str, ...]:
+    tokens = [token for token in output.split("\0") if token]
+    paths: list[str] = []
+    index = 0
+    while index < len(tokens):
+        entry = tokens[index]
+        if len(entry) < 4:
+            index += 1
+            continue
+        status = entry[:2]
+        path = entry[3:]
+        if status == "??" and path:
+            paths.append(path)
+        index += 1
+        if ("R" in status or "C" in status) and index < len(tokens):
             index += 1
     return tuple(dict.fromkeys(paths))
 

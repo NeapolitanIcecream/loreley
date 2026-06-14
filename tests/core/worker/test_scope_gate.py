@@ -4,7 +4,10 @@ import subprocess
 from pathlib import Path
 
 from loreley.core.campaign_program import parse_campaign_program
-from loreley.core.worker.scope_gate import validate_campaign_scope
+from loreley.core.worker.scope_gate import (
+    cleanup_scope_gate_untracked_paths,
+    validate_campaign_scope,
+)
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -152,6 +155,55 @@ def test_scope_gate_checks_untracked_files_and_rejects_unsafe_symlink(tmp_path: 
     codes = {violation.code for violation in result.violations}
     assert "unsafe_symlink_target" in codes
     assert "src/new.py" in result.checked_paths
+
+
+def test_scope_gate_cleanup_removes_configured_untracked_junk(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    program = parse_campaign_program(b"## Editable scope\n- src/**\n")
+    (tmp_path / "src" / "app.py").write_text("print('changed')\n", encoding="utf-8")
+    (tmp_path / "make").mkdir()
+    (tmp_path / "make" / "server.log").write_text("temporary build log\n", encoding="utf-8")
+
+    cleanup = cleanup_scope_gate_untracked_paths(
+        worktree=tmp_path,
+        path_patterns=("make/server.log",),
+    )
+    result = validate_campaign_scope(worktree=tmp_path, program=program)
+
+    assert cleanup.removed_paths == ("make/server.log",)
+    assert cleanup.skipped_paths == ()
+    assert not (tmp_path / "make" / "server.log").exists()
+    assert result.passed is True
+    assert result.checked_paths == ("src/app.py",)
+
+
+def test_scope_gate_cleanup_does_not_remove_tracked_or_unconfigured_paths(
+    tmp_path: Path,
+) -> None:
+    _init_repo(tmp_path)
+    program = parse_campaign_program(b"## Editable scope\n- src/**\n")
+    (tmp_path / "make").mkdir()
+    (tmp_path / "make" / "server.log").write_text("tracked\n", encoding="utf-8")
+    _git(tmp_path, "add", "make/server.log")
+    _git(tmp_path, "commit", "-m", "track server log")
+    (tmp_path / "make" / "server.log").write_text("changed tracked\n", encoding="utf-8")
+    (tmp_path / "tmp.log").write_text("unconfigured\n", encoding="utf-8")
+
+    cleanup = cleanup_scope_gate_untracked_paths(
+        worktree=tmp_path,
+        path_patterns=("make/server.log",),
+    )
+    result = validate_campaign_scope(worktree=tmp_path, program=program)
+
+    assert cleanup.removed_paths == ()
+    assert cleanup.skipped_paths == ()
+    assert (tmp_path / "make" / "server.log").exists()
+    assert (tmp_path / "tmp.log").exists()
+    assert result.passed is False
+    assert {violation.path for violation in result.violations} == {
+        "make/server.log",
+        "tmp.log",
+    }
 
 
 def test_scope_gate_rejects_unsafe_scope_patterns(tmp_path: Path) -> None:

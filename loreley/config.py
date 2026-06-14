@@ -359,6 +359,10 @@ class Settings(BaseSettings):
         default_factory=lambda: [".venv", ".uv", ".python-version"],
         alias="WORKER_REPO_CLEAN_EXCLUDES",
     )
+    worker_scope_gate_cleanup_paths: str = Field(
+        default="",
+        alias="WORKER_SCOPE_GATE_CLEANUP_PATHS",
+    )
     worker_repo_enable_lfs: bool = Field(
         default=True,
         alias="WORKER_REPO_ENABLE_LFS",
@@ -1042,6 +1046,7 @@ def _build_safe_export_payload(settings: Settings, *, mask_secrets: bool) -> dic
         ),
         "worker_repo_branch": settings.worker_repo_branch,
         "worker_repo_fetch_depth": settings.worker_repo_fetch_depth,
+        "worker_scope_gate_cleanup_paths": settings.worker_scope_gate_cleanup_paths,
         "worker_repo_enable_lfs": settings.worker_repo_enable_lfs,
         "worker_repo_job_branch_ttl_hours": settings.worker_repo_job_branch_ttl_hours,
         "worker_job_lease_ttl_seconds": settings.worker_job_lease_ttl_seconds,

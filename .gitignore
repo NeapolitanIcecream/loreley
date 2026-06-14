@@ -211,4 +211,6 @@ __marimo__/
 logs/
 output/refactor-audit/
 .cursor
+.playwright-mcp/
+.wrangler/
 .codex-workflows/

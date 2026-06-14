@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import pytest
 
@@ -20,12 +21,15 @@ from loreley.core.worker.planning import (
 
 
 class _DummyBackend:
-    def __init__(self, stdout: str) -> None:
+    def __init__(self, stdout: str, on_run: Callable[[Path], None] | None = None) -> None:
         self.stdout = stdout
+        self.on_run = on_run
         self.calls: list[tuple[object, Path]] = []
 
     def run(self, task, *, working_dir: Path) -> AgentInvocation:  # noqa: ANN001
         self.calls.append((task, working_dir))
+        if self.on_run is not None:
+            self.on_run(working_dir)
         return AgentInvocation(
             command=("dummy",),
             stdout=self.stdout,
@@ -91,6 +95,20 @@ def _make_request() -> CodingAgentRequest:
             facts=("radius_used: 3",),
         ),
     )
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+
+
+def _init_repo_with_file(repo: Path, path: str = "solver.py") -> None:
+    repo.mkdir()
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test User")
+    (repo / path).write_text("clean\n", encoding="utf-8")
+    _git(repo, "add", path)
+    _git(repo, "commit", "-m", "initial")
 
 
 def test_coding_agent_returns_report_and_extracts_summary(
@@ -181,6 +199,58 @@ def test_coding_agent_unwraps_jsonl_stdout_and_preserves_markdown(
     assert response.raw_output.strip().startswith('{"event"')
 
 
+def test_coding_agent_detects_content_change_to_preexisting_dirty_tracked_file(
+    tmp_path: Path,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo_with_file(repo)
+    dirty_file = repo / "solver.py"
+    dirty_file.write_text("dirty before agent\n", encoding="utf-8")
+
+    backend = _DummyBackend(
+        "## Summary\n- Updated the dirty tracked file.\n",
+        on_run=lambda worktree: (worktree / "solver.py").write_text(
+            "dirty after agent\n",
+            encoding="utf-8",
+        ),
+    )
+    agent = CodingAgent(settings=settings, backend=backend)
+    monkeypatch.setattr(agent, "_dump_debug_artifact", lambda **_kwargs: None)
+
+    response = agent.implement(_make_request(), working_dir=repo)
+
+    assert response.attempts == 1
+    assert dirty_file.read_text(encoding="utf-8") == "dirty after agent\n"
+
+
+def test_coding_agent_detects_content_change_to_preexisting_untracked_file(
+    tmp_path: Path,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo_with_file(repo)
+    untracked_file = repo / "notes.txt"
+    untracked_file.write_text("untracked before agent\n", encoding="utf-8")
+
+    backend = _DummyBackend(
+        "## Summary\n- Updated the dirty untracked file.\n",
+        on_run=lambda worktree: (worktree / "notes.txt").write_text(
+            "untracked after agent\n",
+            encoding="utf-8",
+        ),
+    )
+    agent = CodingAgent(settings=settings, backend=backend)
+    monkeypatch.setattr(agent, "_dump_debug_artifact", lambda **_kwargs: None)
+
+    response = agent.implement(_make_request(), working_dir=repo)
+
+    assert response.attempts == 1
+    assert untracked_file.read_text(encoding="utf-8") == "untracked after agent\n"
+
+
 def test_coding_agent_raises_when_no_changes_after_attempts(
     tmp_path: Path,
     settings: Settings,
@@ -195,8 +265,9 @@ def test_coding_agent_raises_when_no_changes_after_attempts(
 
     request = _make_request()
 
-    with pytest.raises(CodingError):
+    with pytest.raises(CodingError, match="no effective repository changes") as exc_info:
         agent.implement(request, working_dir=tmp_path)
+    assert "report" not in str(exc_info.value).lower()
 
 
 def test_coding_prompt_includes_markdown_contract(tmp_path: Path, settings: Settings) -> None:
@@ -312,7 +383,10 @@ def test_coding_agent_logs_warning_when_no_changes_produced(
         for r in captured_logs
         if r["level"] == "WARNING" and r["module"] == "worker.coding"
     ]
-    assert any("no repository changes" in str(r["message"]).lower() for r in warn_logs)
+    assert any(
+        "no effective repository changes" in str(r["message"]).lower()
+        for r in warn_logs
+    )
 
 
 def test_coding_agent_creates_debug_artifact_on_attempt(
