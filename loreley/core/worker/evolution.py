@@ -67,7 +67,12 @@ from loreley.core.worker.repair import (
     REPAIR_MODE_REBASE_FROM_NEAREST_VIABLE,
     build_diagnostic_capsule,
 )
-from loreley.core.worker.scope_gate import ScopeGateResult, validate_campaign_scope
+from loreley.core.worker.scope_gate import (
+    ScopeCleanupResult,
+    ScopeGateResult,
+    cleanup_scope_gate_untracked_paths,
+    validate_campaign_scope,
+)
 from loreley.db.base import session_scope
 from loreley.db.models import (
     CandidateCommit,
@@ -652,6 +657,19 @@ class EvolutionWorker:
     ) -> None:
         if job_ctx.campaign_program is None:
             return
+        cleanup = self._cleanup_scope_gate_junk(job_ctx=job_ctx, checkout=checkout)
+        if cleanup.removed_paths:
+            log.info(
+                "Campaign scope pre-cleanup removed untracked paths job={} paths={}",
+                job_ctx.job_id,
+                cleanup.removed_paths,
+            )
+        if cleanup.skipped_paths:
+            log.warning(
+                "Campaign scope pre-cleanup skipped paths job={} paths={}",
+                job_ctx.job_id,
+                cleanup.skipped_paths,
+            )
         result = validate_campaign_scope(
             worktree=checkout.worktree,
             program=job_ctx.campaign_program,
@@ -672,6 +690,21 @@ class EvolutionWorker:
             candidate_commit_hash=None,
         )
         raise EvolutionWorkerError(message)
+
+    def _cleanup_scope_gate_junk(
+        self,
+        *,
+        job_ctx: JobContext,
+        checkout: CheckoutContext,
+    ) -> ScopeCleanupResult:
+        patterns = _scope_cleanup_patterns(self.settings.worker_scope_gate_cleanup_paths)
+        if not patterns:
+            return ScopeCleanupResult()
+        return cleanup_scope_gate_untracked_paths(
+            worktree=checkout.worktree,
+            path_patterns=patterns,
+            git_bin=self.settings.worker_repo_git_bin,
+        )
 
     def _persist_evaluation_outcome(
         self,
@@ -1804,6 +1837,17 @@ def _campaign_scope_failure_outcome(result: ScopeGateResult) -> EvaluationOutcom
             ),
         ),
     )
+
+
+def _scope_cleanup_patterns(raw: str | None) -> tuple[str, ...]:
+    if not raw:
+        return ()
+    parts: list[str] = []
+    for chunk in str(raw).replace("\n", ",").split(","):
+        value = chunk.strip()
+        if value:
+            parts.append(value)
+    return tuple(parts)
 
 
 def _valid_repair_source(candidate: Any, source_candidate_id: UUID) -> CandidateCommit:

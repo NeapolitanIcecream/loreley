@@ -76,6 +76,14 @@ class ScopeGateResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ScopeCleanupResult:
+    """Result from removing configured, untracked workspace junk before scope gate."""
+
+    removed_paths: tuple[str, ...] = ()
+    skipped_paths: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class _PathScopeCheck:
     checked_path: str | None
     violations: tuple[ScopeViolation, ...] = field(default_factory=tuple)
@@ -112,6 +120,98 @@ def validate_campaign_scope(
     )
     _log_scope_gate_result(result)
     return result
+
+
+def cleanup_scope_gate_untracked_paths(
+    *,
+    worktree: Path,
+    path_patterns: Sequence[str],
+    git_bin: str = "git",
+) -> ScopeCleanupResult:
+    """Remove configured untracked files before campaign scope validation.
+
+    This is intentionally narrow: only Git-visible untracked files that match a
+    configured safe repo-relative path/pattern are removed. Tracked changes and
+    unconfigured paths still flow into the scope gate unchanged.
+    """
+
+    patterns = tuple(
+        pattern
+        for raw in path_patterns
+        if (pattern := normalize_single_line(raw))
+        and unsafe_scope_pattern_reason(pattern) is None
+    )
+    if not patterns:
+        return ScopeCleanupResult()
+
+    target = Path(worktree).expanduser().resolve()
+    removed: list[str] = []
+    skipped: list[str] = []
+    for raw_path in _untracked_changed_paths(worktree=target, git_bin=git_bin):
+        removed_path, skipped_path = _cleanup_scope_gate_untracked_path(
+            target=target,
+            raw_path=raw_path,
+            patterns=patterns,
+        )
+        if removed_path is not None:
+            removed.append(removed_path)
+        if skipped_path is not None:
+            skipped.append(skipped_path)
+
+    return ScopeCleanupResult(
+        removed_paths=tuple(dict.fromkeys(removed)),
+        skipped_paths=tuple(dict.fromkeys(skipped)),
+    )
+
+
+def _cleanup_scope_gate_untracked_path(
+    *,
+    target: Path,
+    raw_path: str,
+    patterns: Sequence[str],
+) -> tuple[str | None, str | None]:
+    if "\\" in raw_path:
+        return None, raw_path
+
+    path, skipped_path = _scope_cleanup_candidate_path(raw_path, patterns)
+    if skipped_path is not None:
+        return None, skipped_path
+    if path is None:
+        return None, None
+
+    candidate = target / path
+    if not _is_safe_scope_cleanup_file(target=target, candidate=candidate):
+        return None, path
+
+    try:
+        if candidate.exists() or candidate.is_symlink():
+            candidate.unlink()
+            return path, None
+    except OSError:
+        return None, path
+    return None, None
+
+
+def _scope_cleanup_candidate_path(
+    raw_path: str,
+    patterns: Sequence[str],
+) -> tuple[str | None, str | None]:
+    path = _normalize_repo_path(raw_path)
+    if path is None or _ignored_path(path):
+        return None, None
+    if _unsafe_repo_path_reason(path) is not None:
+        return None, path
+    if _first_matching_pattern(path, patterns) is None:
+        return None, None
+    return path, None
+
+
+def _is_safe_scope_cleanup_file(*, target: Path, candidate: Path) -> bool:
+    try:
+        candidate.resolve(strict=False).relative_to(target)
+    except (OSError, ValueError):
+        return False
+    return not (candidate.is_dir() and not candidate.is_symlink())
 
 
 def _validate_changed_paths(
@@ -241,10 +341,16 @@ def _path_check_violations(path_checks: Sequence[_PathScopeCheck]) -> list[Scope
 
 def _log_scope_gate_result(result: ScopeGateResult) -> None:
     if result.violations:
+        violation_paths = tuple(
+            dict.fromkeys(
+                violation.path for violation in result.violations if violation.path is not None
+            )
+        )
         log.warning(
-            "Campaign scope gate failed checked_paths={} violations={}",
+            "Campaign scope gate failed checked_paths={} violations={} violation_paths={}",
             len(result.checked_paths),
             len(result.violations),
+            violation_paths,
         )
     else:
         log.info("Campaign scope gate passed checked_paths={}", len(result.checked_paths))
@@ -272,6 +378,30 @@ def _changed_paths(*, worktree: Path, git_bin: str) -> tuple[str, ...]:
     return _parse_porcelain_z(result.stdout.decode("utf-8", errors="surrogateescape"))
 
 
+def _untracked_changed_paths(*, worktree: Path, git_bin: str) -> tuple[str, ...]:
+    target = Path(worktree).expanduser().resolve()
+    try:
+        result = subprocess.run(
+            [
+                git_bin or "git",
+                "-C",
+                str(target),
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+            ],
+            check=True,
+            capture_output=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or b"").decode("utf-8", errors="replace")
+        raise RuntimeError(f"Failed to inspect untracked paths for scope cleanup: {stderr or exc}") from exc
+    return _parse_porcelain_z_untracked(
+        result.stdout.decode("utf-8", errors="surrogateescape")
+    )
+
+
 def _parse_porcelain_z(output: str) -> tuple[str, ...]:
     tokens = [token for token in output.split("\0") if token]
     paths: list[str] = []
@@ -290,6 +420,25 @@ def _parse_porcelain_z(output: str) -> tuple[str, ...]:
             old_path = tokens[index]
             if old_path:
                 paths.append(old_path)
+            index += 1
+    return tuple(dict.fromkeys(paths))
+
+
+def _parse_porcelain_z_untracked(output: str) -> tuple[str, ...]:
+    tokens = [token for token in output.split("\0") if token]
+    paths: list[str] = []
+    index = 0
+    while index < len(tokens):
+        entry = tokens[index]
+        if len(entry) < 4:
+            index += 1
+            continue
+        status = entry[:2]
+        path = entry[3:]
+        if status == "??" and path:
+            paths.append(path)
+        index += 1
+        if ("R" in status or "C" in status) and index < len(tokens):
             index += 1
     return tuple(dict.fromkeys(paths))
 

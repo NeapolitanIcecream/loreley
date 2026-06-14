@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import stat
 import textwrap
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
+from fnmatch import fnmatchcase
+from pathlib import Path, PurePosixPath
 from typing import Any, Sequence
 from uuid import UUID
 
@@ -38,6 +42,7 @@ from loreley.core.worker.planning import (
 
 console = Console()
 log = logger.bind(module="worker.coding")
+_HASH_CHUNK_SIZE = 1024 * 1024
 
 __all__ = [
     "CodingAgent",
@@ -50,6 +55,14 @@ __all__ = [
 
 class CodingError(RuntimeError):
     """Raised when the coding agent cannot implement a plan."""
+
+
+class _NoEffectiveRepoChangeError(CodingError):
+    """Raised when an attempt leaves no content-level repository delta."""
+
+    def __init__(self, message: str, *, has_output: bool) -> None:
+        super().__init__(message)
+        self.has_output = has_output
 
 
 @dataclass(slots=True)
@@ -151,7 +164,7 @@ class CodingAgent(TruncationMixin):
         """Execute the provided plan and return a Markdown execution report."""
         worktree = Path(working_dir).expanduser().resolve()
         prompt = self._render_prompt(request, worktree=worktree)
-        baseline_status = self._snapshot_worktree_state(worktree)
+        baseline_snapshot = self._snapshot_worktree_state(worktree)
 
         task = AgentTask(
             name="coding",
@@ -160,9 +173,6 @@ class CodingAgent(TruncationMixin):
             run_token=request.run_token,
             phase="coding",
         )
-
-        class _NoRepoChangeError(CodingError):
-            """Raised when a coding attempt does not produce repository changes."""
 
         def _debug_hook(
             attempt: int,
@@ -180,11 +190,14 @@ class CodingAgent(TruncationMixin):
                 error=error,
             )
 
-        def _post_check(_invocation: AgentInvocation, _report: ExecutionReport) -> Exception | None:
-            current_status = self._snapshot_worktree_state(worktree)
-            if current_status == baseline_status:
-                return _NoRepoChangeError(
-                    "Coding agent finished without producing repository changes.",
+        def _post_check(invocation: AgentInvocation, _report: ExecutionReport) -> Exception | None:
+            current_snapshot = self._snapshot_worktree_state(worktree)
+            if current_snapshot == baseline_snapshot:
+                has_output = bool((invocation.stdout or "").strip())
+                output_detail = "produced output but" if has_output else "produced no output and"
+                return _NoEffectiveRepoChangeError(
+                    f"Coding agent {output_detail} no effective repository changes.",
+                    has_output=has_output,
                 )
             return None
 
@@ -207,35 +220,43 @@ class CodingAgent(TruncationMixin):
             )
 
         def _on_attempt_retry(attempt: int, _total: int, exc: Exception) -> None:
-            if isinstance(exc, _NoRepoChangeError):
+            if isinstance(exc, _NoEffectiveRepoChangeError):
                 console.log(
-                    "[yellow]Coding agent[/] produced no repository changes; retrying…",
+                    "[yellow]Coding agent[/] produced no effective repository changes; retrying…",
                 )
-                log.warning("Coding attempt {} produced no repository changes", attempt)
+                log.warning(
+                    "Coding attempt {} produced no effective repository changes output_present={}",
+                    attempt,
+                    exc.has_output,
+                )
                 return
             log.warning("Coding attempt {} failed: {}", attempt, exc)
 
-        report, invocation, attempts = run_agent_task(
-            backend=self.backend,
-            task=task,
-            working_dir=worktree,
-            max_attempts=self.max_attempts,
-            coerce_result=lambda inv: self._coerce_report_from_invocation(
-                request=request,
-                invocation=inv,
-            ),
-            retryable_exceptions=(CodingError,),
-            error_cls=CodingError,
-            error_message=(
-                "Coding agent could not produce a report after "
-                f"{self.max_attempts} attempt(s)."
-            ),
-            debug_hook=_debug_hook,
-            on_attempt_start=_on_attempt_start,
-            on_attempt_success=_on_attempt_success,
-            on_attempt_retry=_on_attempt_retry,
-            post_check=_post_check,
-        )
+        try:
+            report, invocation, attempts = run_agent_task(
+                backend=self.backend,
+                task=task,
+                working_dir=worktree,
+                max_attempts=self.max_attempts,
+                coerce_result=lambda inv: self._coerce_report_from_invocation(
+                    request=request,
+                    invocation=inv,
+                ),
+                retryable_exceptions=(CodingError,),
+                error_cls=CodingError,
+                error_message=(
+                    "Coding agent could not produce a report after "
+                    f"{self.max_attempts} attempt(s)."
+                ),
+                debug_hook=_debug_hook,
+                on_attempt_start=_on_attempt_start,
+                on_attempt_success=_on_attempt_success,
+                on_attempt_retry=_on_attempt_retry,
+                post_check=_post_check,
+            )
+        except CodingError as exc:
+            self._raise_no_effective_change_error(exc)
+            raise
 
         return CodingAgentResponse(
             report=report,
@@ -343,19 +364,196 @@ Output requirements:
         return extract_markdown_summary(markdown)
 
     def _snapshot_worktree_state(self, worktree: Path) -> tuple[str, ...]:
-        """Return a stable snapshot of the worktree status for change detection."""
+        """Return a content-aware snapshot of Git-visible worktree changes."""
         try:
             repo = Repo(worktree)
         except (InvalidGitRepositoryError, NoSuchPathError) as exc:  # pragma: no cover - defensive
             raise CodingError(f"Invalid git worktree for coding agent: {worktree}") from exc
 
         try:
-            status_output = repo.git.status("--porcelain", "--untracked-files=all")
+            status_output = repo.git.status(
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+            )
         except Exception as exc:  # pragma: no cover - defensive
             raise CodingError("Failed to inspect worktree status during coding run.") from exc
 
-        lines = [line.strip() for line in status_output.splitlines() if line.strip()]
-        return tuple(sorted(lines))
+        status_entries, content_paths = self._parse_worktree_status(
+            status_output,
+            clean_exclude_patterns=self._snapshot_clean_exclude_patterns(),
+        )
+        content_entries = [
+            f"content\0{path}\0{self._fingerprint_worktree_path(worktree, path)}"
+            for path in content_paths
+        ]
+        return tuple(sorted((*status_entries, *content_entries)))
+
+    def _parse_worktree_status(
+        self,
+        status_output: str,
+        *,
+        clean_exclude_patterns: Sequence[str] = (),
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        status_entries: list[str] = []
+        content_paths: list[str] = []
+        for status, path, old_path in self._iter_worktree_status_records(status_output):
+            if self._skip_snapshot_status_path(path, status, clean_exclude_patterns):
+                continue
+            status_entries.append(f"status\0{status}\0{path}")
+            content_paths.append(path)
+            if old_path:
+                status_entries.append(f"status-source\0{status}\0{old_path}")
+        return tuple(status_entries), tuple(dict.fromkeys(content_paths))
+
+    def _raise_no_effective_change_error(self, exc: CodingError) -> None:
+        cause = exc.__cause__
+        if not isinstance(cause, _NoEffectiveRepoChangeError):
+            return
+        output_detail = "produced output but" if cause.has_output else "produced no output and"
+        error = CodingError(
+            f"Coding agent {output_detail} no effective repository changes "
+            f"after {self.max_attempts} attempt(s)."
+        )
+        usage_events = getattr(exc, "usage_events", ())
+        if usage_events:
+            setattr(error, "usage_events", usage_events)
+        raise error from cause
+
+    def _iter_worktree_status_records(
+        self,
+        status_output: str,
+    ) -> tuple[tuple[str, str, str | None], ...]:
+        tokens = [token for token in status_output.split("\0") if token]
+        records: list[tuple[str, str, str | None]] = []
+        index = 0
+        while index < len(tokens):
+            entry = tokens[index]
+            if len(entry) < 4:
+                index += 1
+                continue
+            status = entry[:2]
+            path = entry[3:]
+            index += 1
+            old_path = None
+            if ("R" in status or "C" in status) and index < len(tokens):
+                old_path = tokens[index] or None
+                index += 1
+            if path:
+                records.append((status, path, old_path))
+        return tuple(records)
+
+    def _skip_snapshot_status_path(
+        self,
+        path: str,
+        status: str,
+        clean_exclude_patterns: Sequence[str],
+    ) -> bool:
+        return status == "??" and self._matches_snapshot_clean_exclude(
+            path,
+            clean_exclude_patterns,
+        )
+
+    def _fingerprint_worktree_path(self, worktree: Path, repo_path: str) -> str:
+        unsafe_reason = self._unsafe_status_path_reason(repo_path)
+        if unsafe_reason is not None:
+            return f"unsafe-path:{unsafe_reason}"
+
+        candidate = worktree / repo_path
+        try:
+            path_stat = os.lstat(candidate)
+        except FileNotFoundError:
+            return "missing"
+        except OSError as exc:
+            return f"unreadable:{type(exc).__name__}:{getattr(exc, 'errno', '')}"
+
+        permissions = stat.S_IMODE(path_stat.st_mode)
+        if stat.S_ISLNK(path_stat.st_mode):
+            try:
+                target = os.readlink(candidate)
+            except OSError as exc:
+                return f"symlink-unreadable:{permissions:o}:{type(exc).__name__}"
+            return f"symlink:{permissions:o}:{target}"
+
+        if stat.S_ISREG(path_stat.st_mode):
+            digest = hashlib.sha256()
+            try:
+                with candidate.open("rb") as file:
+                    for chunk in iter(lambda: file.read(_HASH_CHUNK_SIZE), b""):
+                        digest.update(chunk)
+            except OSError as exc:
+                return (
+                    f"file-unreadable:{permissions:o}:{path_stat.st_size}:"
+                    f"{type(exc).__name__}:{getattr(exc, 'errno', '')}"
+                )
+            return f"file:{permissions:o}:{path_stat.st_size}:{digest.hexdigest()}"
+
+        file_type = stat.S_IFMT(path_stat.st_mode)
+        if stat.S_ISDIR(path_stat.st_mode):
+            return f"dir:{permissions:o}"
+        return f"special:{file_type:o}:{permissions:o}:{path_stat.st_size}"
+
+    def _snapshot_clean_exclude_patterns(self) -> tuple[str, ...]:
+        patterns: list[str] = []
+        for raw_pattern in self.settings.worker_repo_clean_excludes:
+            pattern = self._normalize_snapshot_clean_exclude(raw_pattern)
+            if pattern is not None:
+                patterns.append(pattern)
+        return tuple(dict.fromkeys(patterns))
+
+    def _normalize_snapshot_clean_exclude(self, raw_pattern: str) -> str | None:
+        pattern = str(raw_pattern or "").strip()
+        if not pattern:
+            return None
+        while pattern.startswith("./"):
+            pattern = pattern[2:]
+        pattern = pattern.rstrip("/")
+        if not pattern or self._unsafe_status_path_reason(pattern) is not None:
+            return None
+        return pattern
+
+    def _matches_snapshot_clean_exclude(
+        self,
+        repo_path: str,
+        patterns: Sequence[str],
+    ) -> bool:
+        normalized_path = self._normalize_repo_status_path(repo_path)
+        if normalized_path is None:
+            return False
+        return any(
+            self._repo_path_matches_clean_exclude(normalized_path, pattern)
+            for pattern in patterns
+        )
+
+    def _normalize_repo_status_path(self, repo_path: str) -> str | None:
+        path = str(repo_path or "")
+        while path.startswith("./"):
+            path = path[2:]
+        path = path.rstrip("/")
+        if not path or self._unsafe_status_path_reason(path) is not None:
+            return None
+        return path
+
+    def _repo_path_matches_clean_exclude(self, repo_path: str, pattern: str) -> bool:
+        if repo_path == pattern or repo_path.startswith(f"{pattern}/"):
+            return True
+        if fnmatchcase(repo_path, pattern):
+            return True
+        path_parts = PurePosixPath(repo_path).parts
+        if "/" not in pattern:
+            return any(part == pattern or fnmatchcase(part, pattern) for part in path_parts)
+        return False
+
+    def _unsafe_status_path_reason(self, repo_path: str) -> str | None:
+        if not repo_path:
+            return "empty"
+        if "\0" in repo_path:
+            return "nul_byte"
+        if repo_path.startswith("/"):
+            return "absolute_path"
+        if any(part == ".." for part in PurePosixPath(repo_path).parts):
+            return "path_traversal"
+        return None
 
     def _dump_debug_artifact(
         self,
