@@ -42,6 +42,7 @@ _LORELEY_TABLES = (
     "operator_tasks",
     "agent_actions",
     "llm_usage_events",
+    "embedding_cache_manifests",
 )
 _CURRENT_SCHEMA_TABLES = (*_LORELEY_TABLES, _AUDIT_TABLE)
 _CURRENT_SCHEMA_INDEXES = (
@@ -64,6 +65,7 @@ _CURRENT_SCHEMA_CONSTRAINTS = (
     ("evaluation_artifacts", "uq_evaluation_artifacts_job_key"),
     ("candidate_commits", "uq_candidate_commits_commit_hash"),
     ("campaign_baselines", "uq_campaign_baselines_key_hash"),
+    ("embedding_cache_manifests", "uq_embedding_cache_manifests_cache_kind"),
 )
 
 log = logger.bind(module="db.migrations")

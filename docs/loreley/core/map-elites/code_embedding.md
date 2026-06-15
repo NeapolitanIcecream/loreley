@@ -13,6 +13,8 @@ Commit-level code embedding utilities that consume chunked code artifacts and ta
 - **`CodeEmbedder`**: orchestrates calls to the OpenAI embeddings API and aggregation logic.
   - Configured via `Settings` map-elites code embedding options (`MAPELITES_CODE_EMBEDDING_*`) controlling model name, output dimensions, batch size, retry count, and retry backoff.
   - `run(chunked_files)` filters out empty inputs, flattens chunks into a payload, embeds them in batches with a `rich` progress spinner, and turns raw vectors into `ChunkEmbedding`, `FileEmbedding`, and `CommitCodeEmbedding` objects using weighted averaging.
+  - Retries OpenAI SDK errors, transient dynamic-key lookup failures, and explicit empty embedding-data responses using the configured embedding retry budget. It does not retry unrelated `ValueError` failures.
+  - Records usage only after embedding response validation succeeds, so malformed or empty responses do not create usage events.
   - Logs detailed progress and warnings with `loguru`, including mismatched response sizes, missing owners for chunks, and empty aggregation results.
 
 ## Convenience API

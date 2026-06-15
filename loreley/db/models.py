@@ -1007,6 +1007,36 @@ class MapElitesRepoStateAggregate(TimestampMixin, Base):
         )
 
 
+class EmbeddingCacheManifest(TimestampMixin, Base):
+    """Compatibility manifest for portable embedding cache rows."""
+
+    __tablename__ = "embedding_cache_manifests"
+    __table_args__ = (
+        UniqueConstraint("cache_kind", name="uq_embedding_cache_manifests_cache_kind"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    cache_kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JSONB),
+        default=dict,
+        nullable=False,
+    )
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return (
+            "<EmbeddingCacheManifest "
+            f"cache_kind={self.cache_kind!r} fingerprint={self.fingerprint[:12]!r} "
+            f"source={self.source!r}>"
+        )
+
+
 Index(
     "ix_evolution_jobs_ingestion_sort_expr",
     EvolutionJob.status,

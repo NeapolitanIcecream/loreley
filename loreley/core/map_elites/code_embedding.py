@@ -28,10 +28,15 @@ __all__ = [
     "FileEmbedding",
     "CommitCodeEmbedding",
     "CodeEmbedder",
+    "RetryableEmbeddingResponseError",
     "embed_chunked_files",
 ]
 
 Vector = tuple[float, ...]
+
+
+class RetryableEmbeddingResponseError(RuntimeError):
+    """Recoverable embedding response failure caused by missing vector data."""
 
 
 @dataclass(slots=True, frozen=True)
@@ -203,7 +208,11 @@ class CodeEmbedder:
         retryer = openai_retrying(
             max_attempts=self._max_retries,
             backoff_seconds=self._retry_backoff,
-            retry_on=(OpenAIError, DynamicOpenAIKeyUnavailableError),
+            retry_on=(
+                OpenAIError,
+                DynamicOpenAIKeyUnavailableError,
+                RetryableEmbeddingResponseError,
+            ),
             log=log,
             operation="Embedding batch",
         )
@@ -211,13 +220,21 @@ class CodeEmbedder:
             for attempt in retryer:
                 with attempt:
                     client = self._get_client()
-                    response = client.embeddings.create(
-                        model=self._model,
-                        input=payload,
-                        dimensions=self._dimensions,
-                    )
+                    try:
+                        response = client.embeddings.create(
+                            model=self._model,
+                            input=payload,
+                            dimensions=self._dimensions,
+                        )
+                    except ValueError as exc:
+                        if self._is_no_embedding_data_error(exc):
+                            raise RetryableEmbeddingResponseError(
+                                "Embedding API returned no embedding data."
+                            ) from exc
+                        raise
+                    data = self._embedding_response_data(response)
                     vectors: list[Vector | None] = [None] * len(payload)
-                    for item in response.data:
+                    for item in data:
                         index = getattr(item, "index", None)
                         if index is None:
                             raise RuntimeError("Embedding response item is missing 'index'.")
@@ -232,7 +249,17 @@ class CodeEmbedder:
                             )
                         if vectors[index] is not None:
                             raise RuntimeError(f"Duplicate embedding index returned: {index}.")
-                        vectors[index] = tuple(item.embedding)
+                        embedding = getattr(item, "embedding", None)
+                        if embedding is None:
+                            raise RetryableEmbeddingResponseError(
+                                f"Embedding API returned missing embedding data for index {index}."
+                            )
+                        vector = tuple(embedding)
+                        if not vector:
+                            raise RetryableEmbeddingResponseError(
+                                f"Embedding API returned empty embedding data for index {index}."
+                            )
+                        vectors[index] = vector
 
                     missing = [idx for idx, vector in enumerate(vectors) if vector is None]
                     if missing:
@@ -372,6 +399,21 @@ class CodeEmbedder:
             settings=self.settings,
         )
         record_usage_event(event, settings=self.settings)
+
+    @staticmethod
+    def _embedding_response_data(response: object) -> list[object]:
+        data = getattr(response, "data", None)
+        if data is None:
+            raise RetryableEmbeddingResponseError("Embedding API returned no embedding data.")
+        items = list(data)
+        if not items:
+            raise RetryableEmbeddingResponseError("Embedding API returned no embedding data.")
+        return items
+
+    @staticmethod
+    def _is_no_embedding_data_error(exc: ValueError) -> bool:
+        message = str(exc).strip().lower()
+        return "no embedding data received" in message
 
 
 def embed_chunked_files(

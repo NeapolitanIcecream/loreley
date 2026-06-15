@@ -78,6 +78,11 @@ class _RootRepoStateBootstrapReport:
     eligible_files: int
     files_aggregated: int
     dimensions: int
+    unique_blobs: int
+    cache_hits: int
+    cache_misses: int
+    files_embedded: int
+    fingerprint: str
 
 
 @dataclass(slots=True)
@@ -1097,6 +1102,7 @@ class MapElitesIngestion:
         self._log_root_repo_state_bootstrap(report)
 
     def _bootstrap_root_repo_state_aggregate(self, commit_hash: str) -> _RootRepoStateBootstrapReport:
+        manifest_fingerprint = self._ensure_repo_state_file_embedding_manifest()
         from loreley.core.map_elites.repository_state_embedding import (
             bootstrap_repository_state_aggregate,
         )
@@ -1120,7 +1126,20 @@ class MapElitesIngestion:
             eligible_files=int(stats.eligible_files),
             files_aggregated=int(stats.files_aggregated),
             dimensions=int(embedding.dimensions),
+            unique_blobs=int(stats.unique_blobs),
+            cache_hits=int(stats.cache_hits),
+            cache_misses=int(stats.cache_misses),
+            files_embedded=int(stats.files_embedded),
+            fingerprint=manifest_fingerprint,
         )
+
+    def _ensure_repo_state_file_embedding_manifest(self) -> str:
+        from loreley.core.map_elites.embedding_cache_manifest import (
+            ensure_current_repo_state_file_embedding_manifest,
+        )
+
+        manifest = ensure_current_repo_state_file_embedding_manifest(settings=self.settings)
+        return str(manifest.fingerprint)
 
     def _log_root_repo_state_bootstrap(self, report: _RootRepoStateBootstrapReport) -> None:
         self.console.log(
@@ -1137,6 +1156,17 @@ class MapElitesIngestion:
             report.eligible_files,
             report.files_aggregated,
             report.dimensions,
+        )
+        log.info(
+            "Repo-state root bootstrap cache summary commit={} eligible_files={} unique_blobs={} "
+            "hits={} misses={} embedded={} fingerprint={}",
+            report.canonical_commit_hash,
+            report.eligible_files,
+            report.unique_blobs,
+            report.cache_hits,
+            report.cache_misses,
+            report.files_embedded,
+            report.fingerprint,
         )
 
     def _ensure_root_commit_metadata(self, commit_hash: str) -> None:

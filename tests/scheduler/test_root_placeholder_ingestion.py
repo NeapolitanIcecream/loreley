@@ -166,6 +166,11 @@ def test_root_repo_state_bootstrap_fails_when_no_embedding_is_created(
         "bootstrap_repository_state_aggregate",
         lambda **_kwargs: (None, stats),
     )
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_ensure_repo_state_file_embedding_manifest",
+        lambda _self: "fingerprint",
+    )
 
     with pytest.raises(IngestionError, match="Repo-state bootstrap produced no embedding"):
         ingestion._ensure_root_commit_repo_state_bootstrap("root123")
