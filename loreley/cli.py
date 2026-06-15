@@ -7,7 +7,7 @@ This CLI is designed to:
 - run preflight checks before starting long-running processes
 """
 
-from contextlib import redirect_stdout
+from contextlib import nullcontext, redirect_stdout
 from datetime import datetime
 import os
 import sys
@@ -54,6 +54,8 @@ app.add_typer(db_app, name="db")
 app.add_typer(jobs_app, name="jobs")
 archive_app = typer.Typer(help="Inspect MAP-Elites archives.")
 app.add_typer(archive_app, name="archive")
+embedding_cache_app = typer.Typer(help="Manage repo-state embedding cache manifests and imports.")
+app.add_typer(embedding_cache_app, name="embedding-cache")
 
 
 class DoctorRole(str, Enum):
@@ -857,6 +859,15 @@ def _print_db_error_and_exit(exc: Exception) -> None:
     raise typer.Exit(code=1) from exc
 
 
+def _embedding_cache_error_and_exit(exc: Exception) -> None:
+    console.print(f"[bold red]Embedding cache error[/] {exc}")
+    raise typer.Exit(code=1) from exc
+
+
+def _redirect_stdout_for_json(json_output: bool):
+    return redirect_stdout(sys.stderr) if json_output else nullcontext()
+
+
 @db_app.command("current")
 def db_current(
     ctx: typer.Context,
@@ -949,6 +960,120 @@ def db_validate(ctx: typer.Context) -> None:
     except Exception as exc:
         _print_db_error_and_exit(exc)
     typer.echo(f"valid schema_version={status.schema_version} target={status.target_version}")
+
+
+@embedding_cache_app.command("attest")
+def embedding_cache_attest(
+    ctx: typer.Context,
+    database_url: str | None = typer.Option(
+        None,
+        "--database-url",
+        help="Database URL to attest; defaults to the current DATABASE_URL.",
+        show_default=False,
+    ),
+    from_current_settings: bool = typer.Option(
+        False,
+        "--from-current-settings",
+        help="Use current MAPELITES_* and OpenAI-compatible settings as the cache semantics.",
+        show_default=True,
+    ),
+    fingerprint: str | None = typer.Option(
+        None,
+        "--fingerprint",
+        help="Expected current-settings fingerprint; attestation fails if it differs.",
+        show_default=False,
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Print the attestation result as JSON.",
+        show_default=True,
+    ),
+) -> None:
+    """Attach a manifest to a legacy repo-state file embedding cache."""
+
+    with _redirect_stdout_for_json(json_output):
+        settings = _load_settings_or_exit()
+        _configure_logging_or_exit(
+            settings=settings,
+            role="embedding-cache",
+            override_level=_get_log_level(ctx),
+        )
+        if not from_current_settings and not str(fingerprint or "").strip():
+            console.print("[bold red]Provide --from-current-settings or --fingerprint[/]")
+            raise typer.Exit(code=1)
+
+        try:
+            from loreley.core.map_elites.embedding_cache_manifest import (
+                attest_repo_state_file_embedding_cache,
+            )
+
+            result = attest_repo_state_file_embedding_cache(
+                settings=settings,
+                dsn=str(database_url or settings.database_dsn),
+                expected_fingerprint=fingerprint,
+            )
+        except Exception as exc:
+            _embedding_cache_error_and_exit(exc)
+
+    payload = result.as_dict()
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return
+    typer.echo(
+        "attested fingerprint={fingerprint} source={manifest_source} rows={cache_rows} "
+        "model={embedding_model} dimensions={dimensions} dsn={dsn}".format(**payload)
+    )
+
+
+@embedding_cache_app.command("import")
+def embedding_cache_import(
+    ctx: typer.Context,
+    source_dsn: str = typer.Option(
+        ...,
+        "--source-dsn",
+        help="Source database URL containing a compatible attested/generated embedding cache manifest.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Print the import result as JSON.",
+        show_default=True,
+    ),
+) -> None:
+    """Import compatible repo-state file embedding cache rows into the current DB."""
+
+    with _redirect_stdout_for_json(json_output):
+        settings = _load_settings_or_exit()
+        _configure_logging_or_exit(
+            settings=settings,
+            role="embedding-cache",
+            override_level=_get_log_level(ctx),
+        )
+        try:
+            from loreley.core.map_elites.embedding_cache_manifest import (
+                import_repo_state_file_embedding_cache_from_dsn,
+            )
+            from loreley.db.base import ensure_database_schema
+
+            ensure_database_schema(settings=settings, validate_marker=False)
+            result = import_repo_state_file_embedding_cache_from_dsn(
+                settings=settings,
+                source_dsn=str(source_dsn),
+            )
+        except Exception as exc:
+            _embedding_cache_error_and_exit(exc)
+
+    payload = result.as_dict()
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return
+    typer.echo(
+        "imported source_rows={source_rows} inserted_rows={inserted_rows} "
+        "already_present_rows={already_present_rows} skipped_rows={skipped_rows} "
+        "fingerprint={fingerprint} source_manifest={source_manifest} "
+        "target_manifest={target_manifest}".format(**payload)
+    )
 
 
 @app.command("reset-db")

@@ -321,6 +321,89 @@ def test_embed_batch_retries_when_runtime_api_key_lookup_transiently_fails(
     assert seen_api_keys == ["dyn-2"]
 
 
+def test_embed_batch_retries_sdk_no_embedding_data_error_then_returns_embedding(
+    settings: Settings,
+) -> None:
+    settings.mapelites_code_embedding_max_retries = 2
+    settings.mapelites_code_embedding_retry_backoff_seconds = 0
+    dims = int(settings.mapelites_code_embedding_dimensions or 0)
+    calls = {"count": 0}
+
+    class _FakeEmbeddings:
+        def create(self, *, model, input, dimensions):  # type: ignore[no-untyped-def]
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise ValueError("No embedding data received")
+            return SimpleNamespace(data=[SimpleNamespace(index=0, embedding=[1.0] * dims)])
+
+    class _FakeClient:
+        embeddings = _FakeEmbeddings()
+
+    embedder = CodeEmbedder(settings=settings, client=_FakeClient())  # type: ignore[arg-type]
+
+    vectors = embedder._embed_batch(["chunk-a"])
+
+    assert vectors == [(1.0,) * dims]
+    assert calls["count"] == 2
+
+
+def test_embed_batch_retries_empty_embedding_data_until_exhausted_without_usage(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings.mapelites_code_embedding_max_retries = 3
+    settings.mapelites_code_embedding_retry_backoff_seconds = 0
+    calls = {"count": 0}
+    recorded: list[object] = []
+
+    class _FakeEmbeddings:
+        def create(self, *, model, input, dimensions):  # type: ignore[no-untyped-def]
+            calls["count"] += 1
+            return SimpleNamespace(
+                model=settings.mapelites_code_embedding_model,
+                usage=SimpleNamespace(prompt_tokens=11, total_tokens=11),
+                data=[],
+            )
+
+    class _FakeClient:
+        embeddings = _FakeEmbeddings()
+
+    def _record(event: object, **_kwargs: object) -> int:
+        recorded.append(event)
+        return 1
+
+    monkeypatch.setattr(code_embedding_module, "record_usage_event", _record)
+
+    embedder = CodeEmbedder(settings=settings, client=_FakeClient())  # type: ignore[arg-type]
+
+    with pytest.raises(RuntimeError, match="no embedding data"):
+        embedder._embed_batch(["chunk-a"])
+
+    assert calls["count"] == 3
+    assert recorded == []
+
+
+def test_embed_batch_does_not_retry_unrelated_value_error(settings: Settings) -> None:
+    settings.mapelites_code_embedding_max_retries = 3
+    settings.mapelites_code_embedding_retry_backoff_seconds = 0
+    calls = {"count": 0}
+
+    class _FakeEmbeddings:
+        def create(self, *, model, input, dimensions):  # type: ignore[no-untyped-def]
+            calls["count"] += 1
+            raise ValueError("client-side input invariant failed")
+
+    class _FakeClient:
+        embeddings = _FakeEmbeddings()
+
+    embedder = CodeEmbedder(settings=settings, client=_FakeClient())  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="client-side input invariant failed"):
+        embedder._embed_batch(["chunk-a"])
+
+    assert calls["count"] == 1
+
+
 # ---------------------------------------------------------------------------
 # Observability: failure signal tests
 # ---------------------------------------------------------------------------

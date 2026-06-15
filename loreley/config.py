@@ -74,17 +74,15 @@ def _sanitize_url(raw: str) -> str:
 
 
 def _sanitize_sqlalchemy_dsn(raw: str) -> str:
-    """Hide passwords in SQLAlchemy DSNs."""
+    """Strip credential-bearing DSN fields for logs and masked exports."""
     try:
         from sqlalchemy.engine.url import make_url
     except Exception:
         return _sanitize_url(raw)
 
     try:
-        url = make_url(raw)
-        if url.password:
-            url = url.set(password="***")
-        return str(url)
+        make_url(raw)
+        return _sanitize_url(raw)
     except Exception:
         return _sanitize_url(raw)
 

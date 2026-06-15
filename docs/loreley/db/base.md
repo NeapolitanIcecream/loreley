@@ -4,7 +4,7 @@ Database engine and session management for Loreley.
 
 ## Engine and session factory
 
-- **`_sanitize_dsn(raw_dsn)`**: masks the password portion of a database DSN so it can be safely logged.
+- **`_sanitize_dsn(raw_dsn)`**: strips userinfo and query parameters from a database DSN so it can be safely logged.
 - **`get_engine()`**: cached factory that returns the global SQLAlchemy engine created from `Settings.database_dsn`, configured with `pool_pre_ping`, connection pool sizing, timeouts, and optional SQL echoing. The engine is initialised lazily on first use.
 
 ## Declarative base and context manager

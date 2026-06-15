@@ -402,7 +402,7 @@ def test_v5_fixture_migrates_to_current_preserves_rows_and_backfills_candidates(
     )
 
     assert result.from_version == 5
-    assert result.applied_versions == (6, 7, 8, 9, 10, 11, 12, 13)
+    assert result.applied_versions == (6, 7, 8, 9, 10, 11, 12, 13, 14)
     validate_database_schema(
         engine=postgres_engine,
         settings=migration_settings,
@@ -463,7 +463,7 @@ def test_v5_fixture_migrates_to_current_preserves_rows_and_backfills_candidates(
     assert candidates["commit-b"]["repair_state"] == "audit_only"
     assert candidates["commit-b"]["repair_source_candidate_id"] is None
     assert candidates["commit-b"]["campaign_program_hash"] is None
-    assert audit_versions == [6, 7, 8, 9, 10, 11, 12, 13]
+    assert audit_versions == [6, 7, 8, 9, 10, 11, 12, 13, 14]
 
 
 def test_migration_is_idempotent_after_v5_upgrade(
