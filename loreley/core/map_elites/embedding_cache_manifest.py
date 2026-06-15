@@ -89,19 +89,8 @@ class EmbeddingCacheAttestationResult:
 def build_repo_state_file_embedding_manifest_payload(settings: Settings) -> dict[str, Any]:
     """Return the canonical payload used to fingerprint repo-state file embeddings."""
 
-    dimensions = int(getattr(settings, "mapelites_code_embedding_dimensions", 0) or 0)
-    if dimensions <= 0:
-        raise EmbeddingCacheManifestError(
-            "MAPELITES_CODE_EMBEDDING_DIMENSIONS must be configured before "
-            "embedding cache manifests can be created."
-        )
-
-    requested_model = str(getattr(settings, "mapelites_code_embedding_model", "") or "").strip()
-    if not requested_model:
-        raise EmbeddingCacheManifestError(
-            "MAPELITES_CODE_EMBEDDING_MODEL must be configured before "
-            "embedding cache manifests can be created."
-        )
+    dimensions = _current_embedding_dimensions(settings)
+    requested_model = _current_embedding_model(settings)
 
     return {
         "kind": REPO_STATE_FILE_EMBEDDING_CACHE_KIND,
@@ -109,38 +98,70 @@ def build_repo_state_file_embedding_manifest_payload(settings: Settings) -> dict
         "embedding_model": requested_model,
         "embedding_provider": _embedding_provider_payload(settings, requested_model=requested_model),
         "embedding_dimensions": dimensions,
-        "preprocess": {
-            "allowed_extensions": _normalize_extensions(
-                getattr(settings, "mapelites_preprocess_allowed_extensions", ()) or ()
-            ),
-            "allowed_filenames": _sorted_clean_strings(
-                getattr(settings, "mapelites_preprocess_allowed_filenames", ()) or ()
-            ),
-            "excluded_globs": _normalize_excluded_globs(
-                getattr(settings, "mapelites_preprocess_excluded_globs", ()) or ()
-            ),
-            "max_file_size_kb": int(getattr(settings, "mapelites_preprocess_max_file_size_kb", 0) or 0),
-            "strip_comments": bool(getattr(settings, "mapelites_preprocess_strip_comments", False)),
-            "strip_block_comments": bool(
-                getattr(settings, "mapelites_preprocess_strip_block_comments", False)
-            ),
-            "max_blank_lines": int(getattr(settings, "mapelites_preprocess_max_blank_lines", 0) or 0),
-            "tab_width": int(getattr(settings, "mapelites_preprocess_tab_width", 0) or 0),
-        },
-        "chunk": {
-            "target_lines": int(getattr(settings, "mapelites_chunk_target_lines", 0) or 0),
-            "min_lines": int(getattr(settings, "mapelites_chunk_min_lines", 0) or 0),
-            "overlap_lines": int(getattr(settings, "mapelites_chunk_overlap_lines", 0) or 0),
-            "max_chunks_per_file": int(getattr(settings, "mapelites_chunk_max_chunks_per_file", 0) or 0),
-            "boundary_keywords": _sorted_clean_strings(
-                getattr(settings, "mapelites_chunk_boundary_keywords", ()) or (),
-                lower=True,
-            ),
-        },
-        "algorithm": {
-            "repo_state_file_embedding": REPO_STATE_FILE_EMBEDDING_ALGORITHM_VERSION,
-            "file_chunk_aggregation": FILE_CHUNK_AGGREGATION_ALGORITHM_VERSION,
-        },
+        "preprocess": _preprocess_fingerprint_payload(settings),
+        "chunk": _chunk_fingerprint_payload(settings),
+        "algorithm": _algorithm_fingerprint_payload(),
+    }
+
+
+def _current_embedding_dimensions(settings: Settings) -> int:
+    dimensions = int(getattr(settings, "mapelites_code_embedding_dimensions", 0) or 0)
+    if dimensions > 0:
+        return dimensions
+    raise EmbeddingCacheManifestError(
+        "MAPELITES_CODE_EMBEDDING_DIMENSIONS must be configured before "
+        "embedding cache manifests can be created."
+    )
+
+
+def _current_embedding_model(settings: Settings) -> str:
+    requested_model = str(getattr(settings, "mapelites_code_embedding_model", "") or "").strip()
+    if requested_model:
+        return requested_model
+    raise EmbeddingCacheManifestError(
+        "MAPELITES_CODE_EMBEDDING_MODEL must be configured before "
+        "embedding cache manifests can be created."
+    )
+
+
+def _preprocess_fingerprint_payload(settings: Settings) -> dict[str, object]:
+    return {
+        "allowed_extensions": _normalize_extensions(
+            getattr(settings, "mapelites_preprocess_allowed_extensions", ()) or ()
+        ),
+        "allowed_filenames": _sorted_clean_strings(
+            getattr(settings, "mapelites_preprocess_allowed_filenames", ()) or ()
+        ),
+        "excluded_globs": _normalize_excluded_globs(
+            getattr(settings, "mapelites_preprocess_excluded_globs", ()) or ()
+        ),
+        "max_file_size_kb": int(getattr(settings, "mapelites_preprocess_max_file_size_kb", 0) or 0),
+        "strip_comments": bool(getattr(settings, "mapelites_preprocess_strip_comments", False)),
+        "strip_block_comments": bool(
+            getattr(settings, "mapelites_preprocess_strip_block_comments", False)
+        ),
+        "max_blank_lines": int(getattr(settings, "mapelites_preprocess_max_blank_lines", 0) or 0),
+        "tab_width": int(getattr(settings, "mapelites_preprocess_tab_width", 0) or 0),
+    }
+
+
+def _chunk_fingerprint_payload(settings: Settings) -> dict[str, object]:
+    return {
+        "target_lines": int(getattr(settings, "mapelites_chunk_target_lines", 0) or 0),
+        "min_lines": int(getattr(settings, "mapelites_chunk_min_lines", 0) or 0),
+        "overlap_lines": int(getattr(settings, "mapelites_chunk_overlap_lines", 0) or 0),
+        "max_chunks_per_file": int(getattr(settings, "mapelites_chunk_max_chunks_per_file", 0) or 0),
+        "boundary_keywords": _sorted_clean_strings(
+            getattr(settings, "mapelites_chunk_boundary_keywords", ()) or (),
+            lower=True,
+        ),
+    }
+
+
+def _algorithm_fingerprint_payload() -> dict[str, str]:
+    return {
+        "repo_state_file_embedding": REPO_STATE_FILE_EMBEDDING_ALGORITHM_VERSION,
+        "file_chunk_aggregation": FILE_CHUNK_AGGREGATION_ALGORITHM_VERSION,
     }
 
 
@@ -319,12 +340,22 @@ def sanitize_dsn(raw_dsn: str) -> str:
     """Return a log-safe DSN string."""
 
     try:
-        url = make_url(str(raw_dsn))
+        make_url(str(raw_dsn))
+        parts = urlsplit(str(raw_dsn))
     except Exception:
         return "<invalid-dsn>"
-    if url.password:
-        url = url.set(password="***")
-    return str(url)
+    if not parts.scheme:
+        return "<invalid-dsn>"
+
+    host = parts.hostname
+    netloc = ""
+    if host:
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"
+        netloc = host
+        if parts.port is not None:
+            netloc = f"{netloc}:{parts.port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
 
 
 def _ensure_current_manifest_in_session(

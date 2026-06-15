@@ -49,6 +49,18 @@ def test_fingerprint_includes_sanitized_provider_identity() -> None:
     assert "secret" not in ecm.fingerprint_payload(payload)
 
 
+def test_sanitize_dsn_strips_userinfo_and_query_secrets() -> None:
+    raw = "postgresql+psycopg://alice:secret@db.internal:5432/loreley?sslpassword=token"
+
+    safe = ecm.sanitize_dsn(raw)
+
+    assert safe == "postgresql+psycopg://db.internal:5432/loreley"
+    assert "alice" not in safe
+    assert "secret" not in safe
+    assert "sslpassword" not in safe
+    assert "token" not in safe
+
+
 def test_ensure_manifest_generates_only_when_target_cache_empty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

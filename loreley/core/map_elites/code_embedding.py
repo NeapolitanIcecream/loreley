@@ -219,53 +219,11 @@ class CodeEmbedder:
         try:
             for attempt in retryer:
                 with attempt:
-                    client = self._get_client()
-                    try:
-                        response = client.embeddings.create(
-                            model=self._model,
-                            input=payload,
-                            dimensions=self._dimensions,
-                        )
-                    except ValueError as exc:
-                        if self._is_no_embedding_data_error(exc):
-                            raise RetryableEmbeddingResponseError(
-                                "Embedding API returned no embedding data."
-                            ) from exc
-                        raise
-                    data = self._embedding_response_data(response)
-                    vectors: list[Vector | None] = [None] * len(payload)
-                    for item in data:
-                        index = getattr(item, "index", None)
-                        if index is None:
-                            raise RuntimeError("Embedding response item is missing 'index'.")
-                        if not isinstance(index, int):
-                            raise RuntimeError(
-                                f"Embedding response 'index' must be int, got {type(index)!r}."
-                            )
-                        if index < 0 or index >= len(payload):
-                            raise RuntimeError(
-                                "Embedding response 'index' out of range: "
-                                f"{index} for payload size {len(payload)}."
-                            )
-                        if vectors[index] is not None:
-                            raise RuntimeError(f"Duplicate embedding index returned: {index}.")
-                        embedding = getattr(item, "embedding", None)
-                        if embedding is None:
-                            raise RetryableEmbeddingResponseError(
-                                f"Embedding API returned missing embedding data for index {index}."
-                            )
-                        vector = tuple(embedding)
-                        if not vector:
-                            raise RetryableEmbeddingResponseError(
-                                f"Embedding API returned empty embedding data for index {index}."
-                            )
-                        vectors[index] = vector
-
-                    missing = [idx for idx, vector in enumerate(vectors) if vector is None]
-                    if missing:
-                        raise RuntimeError(f"Embedding response missing indices: {missing}.")
-
-                    ordered_vectors = [vector for vector in vectors if vector is not None]
+                    response = self._create_embedding_response(payload)
+                    ordered_vectors = self._ordered_vectors_from_response(
+                        response,
+                        payload_size=len(payload),
+                    )
                     self._record_usage(response)
                     return ordered_vectors
         except RetryError as exc:
@@ -400,6 +358,30 @@ class CodeEmbedder:
         )
         record_usage_event(event, settings=self.settings)
 
+    def _create_embedding_response(self, payload: Sequence[str]) -> object:
+        client = self._get_client()
+        try:
+            return client.embeddings.create(
+                model=self._model,
+                input=list(payload),
+                dimensions=self._dimensions,
+            )
+        except ValueError as exc:
+            if self._is_no_embedding_data_error(exc):
+                raise RetryableEmbeddingResponseError(
+                    "Embedding API returned no embedding data."
+                ) from exc
+            raise
+
+    def _ordered_vectors_from_response(self, response: object, *, payload_size: int) -> list[Vector]:
+        vectors: list[Vector | None] = [None] * payload_size
+        for item in self._embedding_response_data(response):
+            index = self._embedding_item_index(item, payload_size=payload_size)
+            if vectors[index] is not None:
+                raise RuntimeError(f"Duplicate embedding index returned: {index}.")
+            vectors[index] = self._embedding_item_vector(item, index=index)
+        return self._complete_ordered_vectors(vectors)
+
     @staticmethod
     def _embedding_response_data(response: object) -> list[object]:
         data = getattr(response, "data", None)
@@ -414,6 +396,41 @@ class CodeEmbedder:
     def _is_no_embedding_data_error(exc: ValueError) -> bool:
         message = str(exc).strip().lower()
         return "no embedding data received" in message
+
+    @staticmethod
+    def _embedding_item_index(item: object, *, payload_size: int) -> int:
+        index = getattr(item, "index", None)
+        if index is None:
+            raise RuntimeError("Embedding response item is missing 'index'.")
+        if not isinstance(index, int):
+            raise RuntimeError(f"Embedding response 'index' must be int, got {type(index)!r}.")
+        if index < 0 or index >= payload_size:
+            raise RuntimeError(
+                "Embedding response 'index' out of range: "
+                f"{index} for payload size {payload_size}."
+            )
+        return index
+
+    @staticmethod
+    def _embedding_item_vector(item: object, *, index: int) -> Vector:
+        embedding = getattr(item, "embedding", None)
+        if embedding is None:
+            raise RetryableEmbeddingResponseError(
+                f"Embedding API returned missing embedding data for index {index}."
+            )
+        vector = tuple(embedding)
+        if not vector:
+            raise RetryableEmbeddingResponseError(
+                f"Embedding API returned empty embedding data for index {index}."
+            )
+        return vector
+
+    @staticmethod
+    def _complete_ordered_vectors(vectors: Sequence[Vector | None]) -> list[Vector]:
+        missing = [idx for idx, vector in enumerate(vectors) if vector is None]
+        if missing:
+            raise RuntimeError(f"Embedding response missing indices: {missing}.")
+        return [vector for vector in vectors if vector is not None]
 
 
 def embed_chunked_files(
