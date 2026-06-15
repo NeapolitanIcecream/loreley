@@ -151,9 +151,8 @@ def _chunk_fingerprint_payload(settings: Settings) -> dict[str, object]:
         "min_lines": int(getattr(settings, "mapelites_chunk_min_lines", 0) or 0),
         "overlap_lines": int(getattr(settings, "mapelites_chunk_overlap_lines", 0) or 0),
         "max_chunks_per_file": int(getattr(settings, "mapelites_chunk_max_chunks_per_file", 0) or 0),
-        "boundary_keywords": _sorted_clean_strings(
+        "boundary_keywords": _normalize_chunk_boundary_keywords(
             getattr(settings, "mapelites_chunk_boundary_keywords", ()) or (),
-            lower=True,
         ),
     }
 
@@ -712,6 +711,10 @@ def _sorted_clean_strings(values: Sequence[object], *, lower: bool = False) -> l
             text_value = text_value.lower()
         cleaned.append(text_value)
     return sorted(set(cleaned))
+
+
+def _normalize_chunk_boundary_keywords(values: Sequence[object]) -> list[str]:
+    return sorted({str(value).lower() for value in values if value})
 
 
 def _create_external_engine(dsn: str) -> Engine:

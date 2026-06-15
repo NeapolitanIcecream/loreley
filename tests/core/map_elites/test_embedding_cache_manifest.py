@@ -49,6 +49,18 @@ def test_fingerprint_includes_sanitized_provider_identity() -> None:
     assert "secret" not in ecm.fingerprint_payload(payload)
 
 
+def test_fingerprint_preserves_chunk_boundary_keyword_whitespace() -> None:
+    source_settings = _settings(MAPELITES_CHUNK_BOUNDARY_KEYWORDS=["def"])
+    target_settings = _settings(MAPELITES_CHUNK_BOUNDARY_KEYWORDS=["def "])
+
+    source_payload = ecm.build_repo_state_file_embedding_manifest_payload(source_settings)
+    target_payload = ecm.build_repo_state_file_embedding_manifest_payload(target_settings)
+
+    assert source_payload["chunk"]["boundary_keywords"] == ["def"]
+    assert target_payload["chunk"]["boundary_keywords"] == ["def "]
+    assert ecm.fingerprint_payload(source_payload) != ecm.fingerprint_payload(target_payload)
+
+
 def test_sanitize_dsn_strips_userinfo_and_query_secrets() -> None:
     raw = "postgresql+psycopg://alice:secret@db.internal:5432/loreley?sslpassword=token"
 
