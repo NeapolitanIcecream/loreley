@@ -44,7 +44,7 @@ def test_config_dump_json_masks_secrets_by_default(monkeypatch: pytest.MonkeyPat
     assert payload["tasks_redis_password"] == "***"
     assert payload["loreley_agent_api_token"] == "***"
     assert payload["loreley_api_write_token"] == "***"
-    assert payload["database_dsn"].startswith("postgresql+psycopg://loreley:***@")
+    assert payload["database_dsn"] == "postgresql+psycopg://db.internal:5433/loreley_dev"
     assert payload["worker_repo_remote_url"] == "https://example.com/repo.git"
 
 
@@ -154,7 +154,7 @@ def test_export_safe_masks_sensitive_fields_snapshot() -> None:
     assert snapshot == {
         "openai_api_key": "***",
         "openai_base_url": "https://gateway.example.com/v1",
-        "database_dsn": "postgresql+psycopg://loreley:***@db.internal:5433/loreley_dev",
+        "database_dsn": "postgresql+psycopg://db.internal:5433/loreley_dev",
         "db_password": "***",
         "tasks_redis_url": "redis://redis.internal:6380/2",
         "tasks_redis_password": "***",

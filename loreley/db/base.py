@@ -3,13 +3,13 @@ from __future__ import annotations
 from contextlib import contextmanager
 from functools import lru_cache
 from typing import Iterator
+from urllib.parse import urlsplit, urlunsplit
 
 from loguru import logger
 from rich.console import Console
 from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
-from sqlalchemy.engine import URL
 from sqlalchemy.engine.url import make_url
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -82,10 +82,17 @@ log = logger.bind(module="db.base")
 
 def _sanitize_dsn(raw_dsn: str) -> str:
     """Hide sensitive parts of the DSN when logging."""
-    url: URL = make_url(raw_dsn)
-    if url.password:
-        url = url.set(password="***")
-    return str(url)
+    make_url(raw_dsn)
+    parts = urlsplit(raw_dsn)
+    host = parts.hostname
+    netloc = ""
+    if host:
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"
+        netloc = host
+        if parts.port is not None:
+            netloc = f"{netloc}:{parts.port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
 
 
 @lru_cache

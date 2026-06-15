@@ -7,7 +7,7 @@ This CLI is designed to:
 - run preflight checks before starting long-running processes
 """
 
-from contextlib import redirect_stdout
+from contextlib import nullcontext, redirect_stdout
 from datetime import datetime
 import os
 import sys
@@ -864,6 +864,10 @@ def _embedding_cache_error_and_exit(exc: Exception) -> None:
     raise typer.Exit(code=1) from exc
 
 
+def _redirect_stdout_for_json(json_output: bool):
+    return redirect_stdout(sys.stderr) if json_output else nullcontext()
+
+
 @db_app.command("current")
 def db_current(
     ctx: typer.Context,
@@ -988,28 +992,29 @@ def embedding_cache_attest(
 ) -> None:
     """Attach a manifest to a legacy repo-state file embedding cache."""
 
-    settings = _load_settings_or_exit()
-    _configure_logging_or_exit(
-        settings=settings,
-        role="embedding-cache",
-        override_level=_get_log_level(ctx),
-    )
-    if not from_current_settings and not str(fingerprint or "").strip():
-        console.print("[bold red]Provide --from-current-settings or --fingerprint[/]")
-        raise typer.Exit(code=1)
-
-    try:
-        from loreley.core.map_elites.embedding_cache_manifest import (
-            attest_repo_state_file_embedding_cache,
-        )
-
-        result = attest_repo_state_file_embedding_cache(
+    with _redirect_stdout_for_json(json_output):
+        settings = _load_settings_or_exit()
+        _configure_logging_or_exit(
             settings=settings,
-            dsn=str(database_url or settings.database_dsn),
-            expected_fingerprint=fingerprint,
+            role="embedding-cache",
+            override_level=_get_log_level(ctx),
         )
-    except Exception as exc:
-        _embedding_cache_error_and_exit(exc)
+        if not from_current_settings and not str(fingerprint or "").strip():
+            console.print("[bold red]Provide --from-current-settings or --fingerprint[/]")
+            raise typer.Exit(code=1)
+
+        try:
+            from loreley.core.map_elites.embedding_cache_manifest import (
+                attest_repo_state_file_embedding_cache,
+            )
+
+            result = attest_repo_state_file_embedding_cache(
+                settings=settings,
+                dsn=str(database_url or settings.database_dsn),
+                expected_fingerprint=fingerprint,
+            )
+        except Exception as exc:
+            _embedding_cache_error_and_exit(exc)
 
     payload = result.as_dict()
     if json_output:
@@ -1038,25 +1043,26 @@ def embedding_cache_import(
 ) -> None:
     """Import compatible repo-state file embedding cache rows into the current DB."""
 
-    settings = _load_settings_or_exit()
-    _configure_logging_or_exit(
-        settings=settings,
-        role="embedding-cache",
-        override_level=_get_log_level(ctx),
-    )
-    try:
-        from loreley.core.map_elites.embedding_cache_manifest import (
-            import_repo_state_file_embedding_cache_from_dsn,
-        )
-        from loreley.db.base import ensure_database_schema
-
-        ensure_database_schema(settings=settings)
-        result = import_repo_state_file_embedding_cache_from_dsn(
+    with _redirect_stdout_for_json(json_output):
+        settings = _load_settings_or_exit()
+        _configure_logging_or_exit(
             settings=settings,
-            source_dsn=str(source_dsn),
+            role="embedding-cache",
+            override_level=_get_log_level(ctx),
         )
-    except Exception as exc:
-        _embedding_cache_error_and_exit(exc)
+        try:
+            from loreley.core.map_elites.embedding_cache_manifest import (
+                import_repo_state_file_embedding_cache_from_dsn,
+            )
+            from loreley.db.base import ensure_database_schema
+
+            ensure_database_schema(settings=settings, validate_marker=False)
+            result = import_repo_state_file_embedding_cache_from_dsn(
+                settings=settings,
+                source_dsn=str(source_dsn),
+            )
+        except Exception as exc:
+            _embedding_cache_error_and_exit(exc)
 
     payload = result.as_dict()
     if json_output:

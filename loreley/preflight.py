@@ -62,22 +62,20 @@ def _sanitize_url(raw: str) -> str:
     netloc = parsed.hostname or ""
     if parsed.port is not None:
         netloc = f"{netloc}:{parsed.port}"
-    safe = parsed._replace(netloc=netloc)
+    safe = parsed._replace(netloc=netloc, query="", fragment="")
     return urlunparse(safe)
 
 
 def _sanitize_sqlalchemy_dsn(raw: str) -> str:
-    """Hide passwords in SQLAlchemy DSNs when logging."""
+    """Strip credential-bearing DSN fields when logging."""
     try:
         from sqlalchemy.engine.url import make_url
     except Exception:
         return _sanitize_url(raw)
 
     try:
-        url = make_url(raw)
-        if url.password:
-            url = url.set(password="***")
-        return str(url)
+        make_url(raw)
+        return _sanitize_url(raw)
     except Exception:
         return _sanitize_url(raw)
 

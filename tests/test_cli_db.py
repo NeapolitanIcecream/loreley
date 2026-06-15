@@ -121,6 +121,66 @@ def test_db_current_json_stdout_stays_json_with_real_setup_side_effects(
     assert "SQLAlchemy engine ready" in captured.err
 
 
+def test_embedding_cache_import_json_stdout_stays_json_and_schema_logs_strip_dsn_secrets(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    """Regression: JSON import output must not be prefixed by setup logs."""
+
+    from loreley.config import get_settings as cached_get_settings
+    from loreley.db.base import get_engine as cached_get_engine
+
+    cached_get_settings.cache_clear()
+    cached_get_engine.cache_clear()
+    request.addfinalizer(cached_get_settings.cache_clear)
+    request.addfinalizer(cached_get_engine.cache_clear)
+    monkeypatch.setenv("EXPERIMENT_ID", "embedding-cache-cli")
+    monkeypatch.setenv("MAPELITES_EXPERIMENT_ROOT_COMMIT", "deadbeef")
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql+psycopg://alice:target-secret@target.internal:5432/loreley_cli"
+        "?sslpassword=target-token",
+    )
+    monkeypatch.setenv("LOGS_BASE_DIR", str(tmp_path))
+    monkeypatch.setenv("LOG_LEVEL", "ERROR")
+    monkeypatch.setattr("loreley.db.base.create_engine", lambda *_args, **_kwargs: SimpleNamespace(name="engine"))
+    monkeypatch.setattr("loreley.db.migrations.runner.ensure_schema_current", lambda **_kwargs: None)
+    monkeypatch.setattr("loreley.db.base._run_managed_post_schema_ddl", lambda _engine: None)
+    monkeypatch.setattr(
+        "loreley.core.map_elites.embedding_cache_manifest.import_repo_state_file_embedding_cache_from_dsn",
+        lambda **_kwargs: SimpleNamespace(
+            as_dict=lambda: {
+                "already_present_rows": 0,
+                "fingerprint": "fp",
+                "inserted_rows": 2,
+                "skipped_rows": 0,
+                "source_dsn": "postgresql://source.internal/source",
+                "source_manifest": "generated",
+                "source_rows": 2,
+                "target_dsn": "postgresql://target.internal/loreley_cli",
+                "target_manifest": "generated",
+            }
+        ),
+    )
+
+    code = main(["embedding-cache", "import", "--source-dsn", "postgresql://source/source", "--json"])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert code == 0
+    assert payload["inserted_rows"] == 2
+    assert payload["source_rows"] == 2
+    assert captured.out.startswith("{")
+    assert "Loaded settings" in captured.err
+    assert "SQLAlchemy engine ready" in captured.err
+    assert "alice" not in captured.err
+    assert "target-secret" not in captured.err
+    assert "sslpassword" not in captured.err
+    assert "target-token" not in captured.err
+
+
 def test_db_migrate_runs_explicit_migration_even_when_auto_disabled(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
