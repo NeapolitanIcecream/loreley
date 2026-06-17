@@ -44,6 +44,22 @@ For each eligible file we keep:
 - `blob_sha` (content fingerprint)
 - `size_bytes`
 
+## Repo-state embedding payload filters
+
+After an eligible cache-miss file is loaded and preprocessed, repo-state embedding
+applies two API-payload guards before calling the embedding provider:
+
+- `MAPELITES_REPO_STATE_EMBEDDING_MAX_LINE_CHARS`: skip the whole file when any
+  cleaned line exceeds the threshold.
+- `MAPELITES_REPO_STATE_EMBEDDING_MAX_CHUNK_CHARS`: skip the whole file when
+  chunking would produce an oversized chunk.
+
+These guards are intentionally local to repo-state file embeddings. They do not
+affect evaluator execution, scope gate cleanup, compilation, tests, or files
+that agents may edit. Skip counts are reported separately from
+`skipped_empty_after_preprocess` and provider failures, and the thresholds are
+part of the file embedding cache manifest fingerprint.
+
 ## File embedding cache
 
 Implemented by:
@@ -103,5 +119,4 @@ v_{commit} = \frac{1}{N}\sum_{i=1}^{N} v_i
 
 If multiple paths point at the same blob SHA, the corresponding \(v_i\) is the
 same vector but still contributes once per file path (uniform per-file weighting).
-
 

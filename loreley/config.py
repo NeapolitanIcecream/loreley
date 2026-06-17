@@ -736,6 +736,14 @@ class Settings(BaseSettings):
         ],
         alias="MAPELITES_CHUNK_BOUNDARY_KEYWORDS",
     )
+    mapelites_repo_state_embedding_max_line_chars: int = Field(
+        default=16000,
+        alias="MAPELITES_REPO_STATE_EMBEDDING_MAX_LINE_CHARS",
+    )
+    mapelites_repo_state_embedding_max_chunk_chars: int = Field(
+        default=65536,
+        alias="MAPELITES_REPO_STATE_EMBEDDING_MAX_CHUNK_CHARS",
+    )
 
     mapelites_code_embedding_model: str = Field(
         default="text-embedding-3-small",
@@ -1088,6 +1096,12 @@ def _build_safe_export_payload(settings: Settings, *, mask_secrets: bool) -> dic
         **_safe_export_worker_payload(settings, mask_secrets=mask_secrets),
         "mapelites_code_embedding_model": settings.mapelites_code_embedding_model,
         "mapelites_code_embedding_dimensions": settings.mapelites_code_embedding_dimensions,
+        "mapelites_repo_state_embedding_max_line_chars": (
+            settings.mapelites_repo_state_embedding_max_line_chars
+        ),
+        "mapelites_repo_state_embedding_max_chunk_chars": (
+            settings.mapelites_repo_state_embedding_max_chunk_chars
+        ),
         "mapelites_dimensionality_target_dims": settings.mapelites_dimensionality_target_dims,
         "mapelites_archive_cells_per_dim": settings.mapelites_archive_cells_per_dim,
         "mapelites_fitness_metric": settings.mapelites_fitness_metric,

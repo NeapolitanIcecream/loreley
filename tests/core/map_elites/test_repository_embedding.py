@@ -435,7 +435,7 @@ def test_repository_state_embedder_embeds_all_cache_misses_without_truncation(
     repo_files = list_repository_files(repo_root=tmp_path, commit_hash=commit, settings=settings, repo=repo)
     missing_blob_shas = [f.blob_sha for f in repo_files]
 
-    vectors, embedded_count, skipped_empty = embedder._embed_cache_misses(
+    result = embedder._embed_cache_misses(
         root=tmp_path,
         commit_hash=commit,
         repo_files=repo_files,
@@ -443,9 +443,11 @@ def test_repository_state_embedder_embeds_all_cache_misses_without_truncation(
     )
 
     expected_unique = set(missing_blob_shas)
-    assert skipped_empty == 0
-    assert embedded_count == len(expected_unique)
-    assert set(vectors) == expected_unique
+    assert result.skipped_empty == 0
+    assert result.skipped_long_line == 0
+    assert result.skipped_oversized_chunk == 0
+    assert result.embedded_count == len(expected_unique)
+    assert set(result.vectors) == expected_unique
     assert sum(calls["file_counts"]) == len(expected_unique)
     assert all(count <= 64 for count in calls["file_counts"])
 
@@ -478,16 +480,217 @@ def test_repository_state_embedder_counts_comment_only_cache_miss_as_empty(
     repo_files = list_repository_files(repo_root=tmp_path, commit_hash=commit, settings=settings, repo=repo)
     missing_blob_shas = [f.blob_sha for f in repo_files]
 
-    vectors, embedded_count, skipped_empty = embedder._embed_cache_misses(
+    result = embedder._embed_cache_misses(
         root=tmp_path,
         commit_hash=commit,
         repo_files=repo_files,
         missing_blob_shas=missing_blob_shas,
     )
 
-    assert vectors == {}
-    assert embedded_count == 0
-    assert skipped_empty == 1
+    assert result.vectors == {}
+    assert result.embedded_count == 0
+    assert result.skipped_empty == 1
+    assert result.skipped_long_line == 0
+    assert result.skipped_oversized_chunk == 0
+
+
+def test_repository_state_embedder_skips_cache_miss_with_long_cleaned_line(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    settings: Settings,
+    captured_logs: list[dict[str, Any]],
+) -> None:
+    repo = _init_repo(tmp_path)
+    settings.mapelites_preprocess_allowed_extensions = [".js"]
+    settings.mapelites_preprocess_allowed_filenames = []
+    settings.mapelites_preprocess_excluded_globs = []
+    settings.mapelites_preprocess_max_file_size_kb = 64
+    settings.mapelites_repo_state_embedding_max_line_chars = 80
+
+    (tmp_path / "vendor.min.js").write_text(
+        "const payload = '" + ("x" * 120) + "';\n",
+        encoding="utf-8",
+    )
+    commit = _commit_all(repo, "init")
+
+    def _unexpected_embed(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("long-line cache misses should not reach the embedding API")
+
+    monkeypatch.setattr(rse, "embed_chunked_files", _unexpected_embed)
+
+    cache = _StubFileEmbeddingCache(
+        embedding_model="stub",
+        requested_dimensions=int(getattr(settings, "mapelites_code_embedding_dimensions", 2) or 2),
+    )
+    embedder = RepositoryStateEmbedder(settings=settings, cache=cache, repo=repo)
+    repo_files = list_repository_files(
+        repo_root=tmp_path,
+        commit_hash=commit,
+        settings=settings,
+        repo=repo,
+    )
+
+    result = embedder._embed_cache_misses(
+        root=tmp_path,
+        commit_hash=commit,
+        repo_files=repo_files,
+        missing_blob_shas=[f.blob_sha for f in repo_files],
+    )
+
+    assert result.vectors == {}
+    assert result.embedded_count == 0
+    assert result.skipped_empty == 0
+    assert result.skipped_long_line == 1
+    assert result.skipped_oversized_chunk == 0
+    info_logs = [
+        record
+        for record in captured_logs
+        if record["module"] == "map_elites.repository_state_embedding"
+        and record["level"] == "INFO"
+    ]
+    assert any(
+        "empty=0 long_line=1 oversized_chunk=0" in str(record["message"])
+        for record in info_logs
+    )
+
+
+def test_repository_state_bootstrap_counts_long_line_skip_separately_from_provider_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    settings: Settings,
+) -> None:
+    repo = _init_repo(tmp_path)
+    settings.mapelites_preprocess_allowed_extensions = [".js"]
+    settings.mapelites_preprocess_allowed_filenames = []
+    settings.mapelites_preprocess_excluded_globs = []
+    settings.mapelites_preprocess_max_file_size_kb = 64
+    settings.mapelites_repo_state_embedding_max_line_chars = 80
+
+    (tmp_path / "vendor.min.js").write_text(
+        "const payload = '" + ("x" * 120) + "';\n",
+        encoding="utf-8",
+    )
+    commit = _commit_all(repo, "init")
+
+    def _unexpected_embed(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("long-line cache misses should not reach the embedding API")
+
+    monkeypatch.setattr(rse, "embed_chunked_files", _unexpected_embed)
+
+    cache = _StubFileEmbeddingCache(
+        embedding_model="stub",
+        requested_dimensions=int(getattr(settings, "mapelites_code_embedding_dimensions", 2) or 2),
+    )
+    embedder = RepositoryStateEmbedder(settings=settings, cache=cache, repo=repo)
+    monkeypatch.setattr(embedder, "_load_aggregate", lambda **_kwargs: None)
+
+    embedding, stats = embedder.bootstrap_aggregate(commit_hash=commit, repo_root=tmp_path)
+
+    assert embedding is None
+    assert stats.eligible_files == 1
+    assert stats.cache_misses == 1
+    assert stats.files_embedded == 0
+    assert stats.files_aggregated == 0
+    assert stats.skipped_empty_after_preprocess == 0
+    assert stats.skipped_long_line == 1
+    assert stats.skipped_oversized_chunk == 0
+    assert stats.skipped_failed_embedding == 0
+
+
+def test_repository_state_embedder_embeds_ordinary_long_file_with_short_lines(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    settings: Settings,
+) -> None:
+    repo = _init_repo(tmp_path)
+    settings.mapelites_preprocess_allowed_extensions = [".py"]
+    settings.mapelites_preprocess_allowed_filenames = []
+    settings.mapelites_preprocess_excluded_globs = []
+    settings.mapelites_preprocess_max_file_size_kb = 64
+    settings.mapelites_repo_state_embedding_max_line_chars = 40
+
+    (tmp_path / "ordinary.py").write_text(
+        "\n".join(f"value_{idx} = {idx}" for idx in range(200)),
+        encoding="utf-8",
+    )
+    commit = _commit_all(repo, "init")
+
+    calls = _stub_embed_chunked_files(monkeypatch)
+    cache = _StubFileEmbeddingCache(
+        embedding_model="stub",
+        requested_dimensions=int(getattr(settings, "mapelites_code_embedding_dimensions", 2) or 2),
+    )
+    embedder = RepositoryStateEmbedder(settings=settings, cache=cache, repo=repo)
+    repo_files = list_repository_files(
+        repo_root=tmp_path,
+        commit_hash=commit,
+        settings=settings,
+        repo=repo,
+    )
+
+    result = embedder._embed_cache_misses(
+        root=tmp_path,
+        commit_hash=commit,
+        repo_files=repo_files,
+        missing_blob_shas=[f.blob_sha for f in repo_files],
+    )
+
+    assert result.embedded_count == 1
+    assert set(result.vectors) == {repo_files[0].blob_sha}
+    assert result.skipped_empty == 0
+    assert result.skipped_long_line == 0
+    assert result.skipped_oversized_chunk == 0
+    assert calls["count"] == 1
+
+
+def test_repository_state_embedder_skips_cache_miss_with_oversized_chunk(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    settings: Settings,
+) -> None:
+    repo = _init_repo(tmp_path)
+    settings.mapelites_preprocess_allowed_extensions = [".py"]
+    settings.mapelites_preprocess_allowed_filenames = []
+    settings.mapelites_preprocess_excluded_globs = []
+    settings.mapelites_preprocess_max_file_size_kb = 64
+    settings.mapelites_chunk_target_lines = 4
+    settings.mapelites_chunk_min_lines = 4
+    settings.mapelites_repo_state_embedding_max_line_chars = 1000
+    settings.mapelites_repo_state_embedding_max_chunk_chars = 30
+
+    lines = [f"value_{idx} = {idx:04d}" for idx in range(8)]
+    (tmp_path / "wide.py").write_text("\n".join(lines), encoding="utf-8")
+    commit = _commit_all(repo, "init")
+
+    def _unexpected_embed(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("oversized chunks should not reach the embedding API")
+
+    monkeypatch.setattr(rse, "embed_chunked_files", _unexpected_embed)
+
+    cache = _StubFileEmbeddingCache(
+        embedding_model="stub",
+        requested_dimensions=int(getattr(settings, "mapelites_code_embedding_dimensions", 2) or 2),
+    )
+    embedder = RepositoryStateEmbedder(settings=settings, cache=cache, repo=repo)
+    repo_files = list_repository_files(
+        repo_root=tmp_path,
+        commit_hash=commit,
+        settings=settings,
+        repo=repo,
+    )
+
+    result = embedder._embed_cache_misses(
+        root=tmp_path,
+        commit_hash=commit,
+        repo_files=repo_files,
+        missing_blob_shas=[f.blob_sha for f in repo_files],
+    )
+
+    assert result.vectors == {}
+    assert result.embedded_count == 0
+    assert result.skipped_empty == 0
+    assert result.skipped_long_line == 0
+    assert result.skipped_oversized_chunk == 1
 
 
 def test_repository_state_embedder_deduplicates_duplicate_blobs(

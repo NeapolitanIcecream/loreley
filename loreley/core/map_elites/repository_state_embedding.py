@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session
 from loreley.config import Settings, get_settings
 from loreley.db.base import session_scope
 from loreley.db.models import MapElitesFileEmbeddingCache, MapElitesRepoStateAggregate
-from .chunk import PreprocessedArtifact, chunk_preprocessed_files
+from .chunk import ChunkedFile, PreprocessedArtifact, chunk_preprocessed_files
 from .code_embedding import CommitCodeEmbedding, embed_chunked_files
 from .file_embedding_cache import FileEmbeddingCache, build_file_embedding_cache
 from .preprocess import CodePreprocessor, PreprocessedFile
@@ -74,6 +74,8 @@ class RepoStateEmbeddingStats:
     cache_misses: int
     skipped_empty_after_preprocess: int
     skipped_failed_embedding: int
+    skipped_long_line: int = 0
+    skipped_oversized_chunk: int = 0
     source: str = "unknown"
 
 
@@ -87,6 +89,8 @@ class _IncrementalAggregateResult:
     files_embedded: int
     skipped_empty_after_preprocess: int
     skipped_failed_embedding: int
+    skipped_long_line: int
+    skipped_oversized_chunk: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +131,8 @@ class _IncrementalCacheMissResult:
     files_embedded: int
     skipped_empty_after_preprocess: int
     skipped_failed_embedding: int
+    skipped_long_line: int
+    skipped_oversized_chunk: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,6 +154,26 @@ class _PreprocessedCacheMissBatch:
     files: tuple[PreprocessedFile, ...]
     blob_for_path: dict[Path, str]
     skipped_empty: int
+    skipped_long_line: int
+
+
+@dataclass(frozen=True, slots=True)
+class _CacheMissEmbeddingResult:
+    vectors: dict[str, Vector]
+    embedded_count: int
+    skipped_empty: int
+    skipped_long_line: int
+    skipped_oversized_chunk: int
+
+    @classmethod
+    def empty(cls) -> "_CacheMissEmbeddingResult":
+        return cls(
+            vectors={},
+            embedded_count=0,
+            skipped_empty=0,
+            skipped_long_line=0,
+            skipped_oversized_chunk=0,
+        )
 
 
 @dataclass(slots=True)
@@ -257,6 +283,8 @@ class RepositoryStateEmbedder:
             cache_misses=int(incremental.cache_misses),
             skipped_empty_after_preprocess=int(incremental.skipped_empty_after_preprocess),
             skipped_failed_embedding=int(incremental.skipped_failed_embedding),
+            skipped_long_line=int(incremental.skipped_long_line),
+            skipped_oversized_chunk=int(incremental.skipped_oversized_chunk),
             source="incremental",
         )
         if not vector:
@@ -411,12 +439,15 @@ class RepositoryStateEmbedder:
         misses = [sha for sha in unique_blob_shas if sha not in cached]
         cache_hits = len(unique_blob_shas) - len(misses)
 
-        vectors_for_misses, embedded_count, skipped_empty = self._embed_cache_misses(
-            root=repo_root,
-            commit_hash=commit_hash,
-            repo_files=repo_files,
-            missing_blob_shas=misses,
+        miss_result = _coerce_cache_miss_embedding_result(
+            self._embed_cache_misses(
+                root=repo_root,
+                commit_hash=commit_hash,
+                repo_files=repo_files,
+                missing_blob_shas=misses,
+            )
         )
+        vectors_for_misses = miss_result.vectors
         if vectors_for_misses:
             self.cache.put_many(vectors_for_misses)
             cached.update(vectors_for_misses)
@@ -429,13 +460,21 @@ class RepositoryStateEmbedder:
         stats = RepoStateEmbeddingStats(
             commit_hash=commit_hash,
             eligible_files=len(repo_files),
-            files_embedded=embedded_count,
+            files_embedded=miss_result.embedded_count,
             files_aggregated=aggregation.files_aggregated,
             unique_blobs=len(unique_blob_shas),
             cache_hits=cache_hits,
             cache_misses=len(misses),
-            skipped_empty_after_preprocess=skipped_empty,
-            skipped_failed_embedding=aggregation.skipped_failed_embedding,
+            skipped_empty_after_preprocess=miss_result.skipped_empty,
+            skipped_failed_embedding=_provider_failure_count(
+                cache_misses=len(misses),
+                embedded_count=miss_result.embedded_count,
+                skipped_empty=miss_result.skipped_empty,
+                skipped_long_line=miss_result.skipped_long_line,
+                skipped_oversized_chunk=miss_result.skipped_oversized_chunk,
+            ),
+            skipped_long_line=miss_result.skipped_long_line,
+            skipped_oversized_chunk=miss_result.skipped_oversized_chunk,
             source="full_recompute",
         )
 
@@ -449,7 +488,9 @@ class RepositoryStateEmbedder:
             dimensions=len(aggregation.commit_vector),
         )
         log.info(
-            "Repo-state embedding for commit {}: files={} blobs={} hits={} misses={} agg_files={} dims={}",
+            "Repo-state embedding for commit {}: files={} blobs={} hits={} misses={} "
+            "agg_files={} dims={} skipped_empty={} skipped_long_line={} "
+            "skipped_oversized_chunk={} provider_failures={}",
             commit_hash,
             stats.eligible_files,
             stats.unique_blobs,
@@ -457,6 +498,10 @@ class RepositoryStateEmbedder:
             stats.cache_misses,
             stats.files_aggregated,
             embedding.dimensions,
+            stats.skipped_empty_after_preprocess,
+            stats.skipped_long_line,
+            stats.skipped_oversized_chunk,
+            stats.skipped_failed_embedding,
         )
 
         self._persist_aggregate(
@@ -754,6 +799,8 @@ class RepositoryStateEmbedder:
                 files_embedded=0,
                 skipped_empty_after_preprocess=0,
                 skipped_failed_embedding=0,
+                skipped_long_line=0,
+                skipped_oversized_chunk=0,
             )
 
         diff_selection = self._select_incremental_diff_candidates(
@@ -791,6 +838,8 @@ class RepositoryStateEmbedder:
             files_embedded=miss_result.files_embedded,
             skipped_empty_after_preprocess=miss_result.skipped_empty_after_preprocess,
             skipped_failed_embedding=miss_result.skipped_failed_embedding,
+            skipped_long_line=miss_result.skipped_long_line,
+            skipped_oversized_chunk=miss_result.skipped_oversized_chunk,
         )
 
     def _resolve_incremental_parent(
@@ -954,15 +1003,22 @@ class RepositoryStateEmbedder:
         missing_new = [sha for sha in unique_new_shas if sha not in metadata]
         files_embedded = 0
         skipped_empty_after_preprocess = 0
+        skipped_long_line = 0
+        skipped_oversized_chunk = 0
         if missing_new:
-            vectors_for_misses, embedded_count, skipped_empty = self._embed_cache_misses(
-                root=repo_root,
-                commit_hash=commit_hash,
-                repo_files=diff_selection.repo_files_for_new_misses,
-                missing_blob_shas=missing_new,
+            miss_result = _coerce_cache_miss_embedding_result(
+                self._embed_cache_misses(
+                    root=repo_root,
+                    commit_hash=commit_hash,
+                    repo_files=diff_selection.repo_files_for_new_misses,
+                    missing_blob_shas=missing_new,
+                )
             )
-            files_embedded = int(embedded_count)
-            skipped_empty_after_preprocess = int(skipped_empty)
+            vectors_for_misses = miss_result.vectors
+            files_embedded = int(miss_result.embedded_count)
+            skipped_empty_after_preprocess = int(miss_result.skipped_empty)
+            skipped_long_line = int(miss_result.skipped_long_line)
+            skipped_oversized_chunk = int(miss_result.skipped_oversized_chunk)
             if vectors_for_misses:
                 self.cache.put_many(vectors_for_misses)
                 for sha, vec in vectors_for_misses.items():
@@ -973,9 +1029,12 @@ class RepositoryStateEmbedder:
 
         cache_misses = len(missing_new)
         cache_hits = max(len(unique_new_shas) - cache_misses, 0)
-        skipped_failed_embedding = max(
-            cache_misses - files_embedded - skipped_empty_after_preprocess,
-            0,
+        skipped_failed_embedding = _provider_failure_count(
+            cache_misses=cache_misses,
+            embedded_count=files_embedded,
+            skipped_empty=skipped_empty_after_preprocess,
+            skipped_long_line=skipped_long_line,
+            skipped_oversized_chunk=skipped_oversized_chunk,
         )
         return _IncrementalCacheMissResult(
             unique_new_shas=unique_new_shas,
@@ -984,6 +1043,8 @@ class RepositoryStateEmbedder:
             files_embedded=files_embedded,
             skipped_empty_after_preprocess=skipped_empty_after_preprocess,
             skipped_failed_embedding=skipped_failed_embedding,
+            skipped_long_line=skipped_long_line,
+            skipped_oversized_chunk=skipped_oversized_chunk,
         )
 
     @staticmethod
@@ -1039,6 +1100,8 @@ class RepositoryStateEmbedder:
         files_embedded: int,
         skipped_empty_after_preprocess: int,
         skipped_failed_embedding: int,
+        skipped_long_line: int,
+        skipped_oversized_chunk: int,
     ) -> _IncrementalAggregateResult:
         immutable_sum = tuple(float(v) for v in sum_vector.tolist())
         if file_count < 0:
@@ -1062,6 +1125,8 @@ class RepositoryStateEmbedder:
             files_embedded=files_embedded,
             skipped_empty_after_preprocess=skipped_empty_after_preprocess,
             skipped_failed_embedding=skipped_failed_embedding,
+            skipped_long_line=skipped_long_line,
+            skipped_oversized_chunk=skipped_oversized_chunk,
         )
 
     def _validate_aggregate_row(
@@ -1206,18 +1271,18 @@ class RepositoryStateEmbedder:
         commit_hash: str,
         repo_files: Sequence[RepositoryFile],
         missing_blob_shas: Sequence[str],
-    ) -> tuple[dict[str, Vector], int, int]:
-        """Embed missing blobs and return (blob_sha->vector, embedded_count, skipped_empty)."""
+    ) -> _CacheMissEmbeddingResult:
+        """Embed missing blobs and return vectors plus deterministic skip counts."""
 
         if not missing_blob_shas:
-            return {}, 0, 0
+            return _CacheMissEmbeddingResult.empty()
 
         work_items = _cache_miss_work_items(
             repo_files=repo_files,
             missing_blob_shas=missing_blob_shas,
         )
         if not work_items:
-            return {}, 0, 0
+            return _CacheMissEmbeddingResult.empty()
 
         preprocessor = CodePreprocessor(
             repo_root=root,
@@ -1228,6 +1293,8 @@ class RepositoryStateEmbedder:
 
         vectors: dict[str, Vector] = {}
         skipped_empty_total = 0
+        skipped_long_line_total = 0
+        skipped_oversized_chunk_total = 0
 
         # Embed in batches to keep memory and request payloads bounded.
         batch_size = 64
@@ -1239,14 +1306,31 @@ class RepositoryStateEmbedder:
                 blob_texts=blob_texts,
             )
             skipped_empty_total += preprocessed_batch.skipped_empty
-            vectors.update(
-                self._embed_preprocessed_cache_miss_batch(
-                    preprocessed_batch,
-                    commit_hash=commit_hash,
-                )
+            skipped_long_line_total += preprocessed_batch.skipped_long_line
+            embedded_vectors, skipped_oversized_chunk = self._embed_preprocessed_cache_miss_batch(
+                preprocessed_batch,
+                commit_hash=commit_hash,
+            )
+            skipped_oversized_chunk_total += skipped_oversized_chunk
+            vectors.update(embedded_vectors)
+
+        if skipped_empty_total or skipped_long_line_total or skipped_oversized_chunk_total:
+            log.info(
+                "Skipped repo-state cache-miss files before embedding commit={} "
+                "empty={} long_line={} oversized_chunk={}",
+                commit_hash,
+                skipped_empty_total,
+                skipped_long_line_total,
+                skipped_oversized_chunk_total,
             )
 
-        return vectors, len(vectors), skipped_empty_total
+        return _CacheMissEmbeddingResult(
+            vectors=vectors,
+            embedded_count=len(vectors),
+            skipped_empty=skipped_empty_total,
+            skipped_long_line=skipped_long_line_total,
+            skipped_oversized_chunk=skipped_oversized_chunk_total,
+        )
 
     def _load_cache_miss_blob_texts(
         self,
@@ -1269,6 +1353,8 @@ class RepositoryStateEmbedder:
         preprocessed: list[PreprocessedFile] = []
         blob_for_path: dict[Path, str] = {}
         skipped_empty = 0
+        skipped_long_line = 0
+        max_line_chars = _repo_state_embedding_max_line_chars(self.settings)
 
         for item in batch:
             raw = blob_texts.get(item.blob_sha)
@@ -1279,6 +1365,17 @@ class RepositoryStateEmbedder:
             cleaned = preprocessor.cleanup_text(raw)
             if not cleaned.strip():
                 skipped_empty += 1
+                continue
+            max_cleaned_line_chars = _max_line_chars(cleaned)
+            if max_line_chars > 0 and max_cleaned_line_chars > max_line_chars:
+                skipped_long_line += 1
+                log.debug(
+                    "Skipping repo-state cache-miss file with long line path={} "
+                    "max_line_chars={} threshold={}",
+                    item.file.path,
+                    max_cleaned_line_chars,
+                    max_line_chars,
+                )
                 continue
             preprocessed.append(
                 PreprocessedFile(
@@ -1293,6 +1390,7 @@ class RepositoryStateEmbedder:
             files=tuple(preprocessed),
             blob_for_path=blob_for_path,
             skipped_empty=skipped_empty,
+            skipped_long_line=skipped_long_line,
         )
 
     def _embed_preprocessed_cache_miss_batch(
@@ -1300,14 +1398,21 @@ class RepositoryStateEmbedder:
         batch: _PreprocessedCacheMissBatch,
         *,
         commit_hash: str,
-    ) -> dict[str, Vector]:
+    ) -> tuple[dict[str, Vector], int]:
         if not batch.files:
-            return {}
+            return {}, 0
 
         chunked = chunk_preprocessed_files(
             cast(Sequence[PreprocessedArtifact], batch.files),
             settings=self.settings,
         )
+        chunked, skipped_oversized_chunk = self._filter_oversized_chunked_files(
+            chunked,
+            commit_hash=commit_hash,
+        )
+        if not chunked:
+            return {}, skipped_oversized_chunk
+
         log.debug(
             "Embedding {} cache-miss files for commit {}",
             len(chunked),
@@ -1315,7 +1420,7 @@ class RepositoryStateEmbedder:
         )
         commit_embedding = embed_chunked_files(chunked, settings=self.settings)
         if not commit_embedding:
-            return {}
+            return {}, skipped_oversized_chunk
 
         vectors: dict[str, Vector] = {}
         for file_embedding in commit_embedding.files:
@@ -1325,7 +1430,38 @@ class RepositoryStateEmbedder:
             vec = tuple(float(v) for v in file_embedding.vector)
             if vec:
                 vectors[blob_sha] = vec
-        return vectors
+        return vectors, skipped_oversized_chunk
+
+    def _filter_oversized_chunked_files(
+        self,
+        chunked: Sequence[ChunkedFile],
+        *,
+        commit_hash: str,
+    ) -> tuple[list[ChunkedFile], int]:
+        max_chunk_chars = _repo_state_embedding_max_chunk_chars(self.settings)
+        if max_chunk_chars <= 0:
+            return list(chunked), 0
+
+        kept: list[ChunkedFile] = []
+        skipped = 0
+        for file in chunked:
+            largest_chunk_chars = max(
+                (len(chunk.content or "") for chunk in file.chunks),
+                default=0,
+            )
+            if largest_chunk_chars > max_chunk_chars:
+                skipped += 1
+                log.debug(
+                    "Skipping repo-state cache-miss file with oversized chunk path={} "
+                    "max_chunk_chars={} threshold={} commit={}",
+                    file.path,
+                    largest_chunk_chars,
+                    max_chunk_chars,
+                    commit_hash,
+                )
+                continue
+            kept.append(file)
+        return kept, skipped
 
 
 def _blob_weights_for_files(repo_files: Sequence[RepositoryFile]) -> tuple[Counter[str], list[str]]:
@@ -1390,6 +1526,75 @@ def _aggregation_vector_array(vector: Sequence[float] | None) -> np.ndarray | No
     if vector_array.size <= 0:
         return None
     return vector_array
+
+
+def _provider_failure_count(
+    *,
+    cache_misses: int,
+    embedded_count: int,
+    skipped_empty: int,
+    skipped_long_line: int,
+    skipped_oversized_chunk: int,
+) -> int:
+    return max(
+        int(cache_misses)
+        - int(embedded_count)
+        - int(skipped_empty)
+        - int(skipped_long_line)
+        - int(skipped_oversized_chunk),
+        0,
+    )
+
+
+def _coerce_cache_miss_embedding_result(value: object) -> _CacheMissEmbeddingResult:
+    if isinstance(value, _CacheMissEmbeddingResult):
+        return value
+    if isinstance(value, tuple):
+        if len(value) == 3:
+            vectors, embedded_count, skipped_empty = value
+            return _CacheMissEmbeddingResult(
+                vectors=dict(cast(Mapping[str, Vector], vectors)),
+                embedded_count=int(embedded_count),
+                skipped_empty=int(skipped_empty),
+                skipped_long_line=0,
+                skipped_oversized_chunk=0,
+            )
+        if len(value) == 5:
+            (
+                vectors,
+                embedded_count,
+                skipped_empty,
+                skipped_long_line,
+                skipped_oversized_chunk,
+            ) = value
+            return _CacheMissEmbeddingResult(
+                vectors=dict(cast(Mapping[str, Vector], vectors)),
+                embedded_count=int(embedded_count),
+                skipped_empty=int(skipped_empty),
+                skipped_long_line=int(skipped_long_line),
+                skipped_oversized_chunk=int(skipped_oversized_chunk),
+            )
+    raise TypeError("Unexpected cache-miss embedding result shape.")
+
+
+def _repo_state_embedding_max_line_chars(settings: Settings) -> int:
+    return max(
+        int(getattr(settings, "mapelites_repo_state_embedding_max_line_chars", 0) or 0),
+        0,
+    )
+
+
+def _repo_state_embedding_max_chunk_chars(settings: Settings) -> int:
+    return max(
+        int(getattr(settings, "mapelites_repo_state_embedding_max_chunk_chars", 0) or 0),
+        0,
+    )
+
+
+def _max_line_chars(content: str) -> int:
+    if not content:
+        return 0
+    return max((len(line) for line in content.splitlines()), default=0)
 
 
 def _cache_miss_work_items(

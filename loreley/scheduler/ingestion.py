@@ -82,6 +82,10 @@ class _RootRepoStateBootstrapReport:
     cache_hits: int
     cache_misses: int
     files_embedded: int
+    skipped_empty_after_preprocess: int
+    skipped_long_line: int
+    skipped_oversized_chunk: int
+    skipped_failed_embedding: int
     fingerprint: str
 
 
@@ -1113,12 +1117,21 @@ class MapElitesIngestion:
             settings=self.settings,
             repo=self.repo,
         )
+        skipped_empty_after_preprocess = int(
+            getattr(stats, "skipped_empty_after_preprocess", 0) or 0
+        )
+        skipped_long_line = int(getattr(stats, "skipped_long_line", 0) or 0)
+        skipped_oversized_chunk = int(getattr(stats, "skipped_oversized_chunk", 0) or 0)
+        skipped_failed_embedding = int(getattr(stats, "skipped_failed_embedding", 0) or 0)
 
         if not embedding or not embedding.vector or stats.files_aggregated <= 0:
             raise IngestionError(
                 "Repo-state bootstrap produced no embedding; "
                 f"eligible_files={stats.eligible_files} files_aggregated={stats.files_aggregated} "
-                f"skipped_failed_embedding={stats.skipped_failed_embedding} commit={commit_hash}."
+                f"skipped_empty_after_preprocess={skipped_empty_after_preprocess} "
+                f"skipped_long_line={skipped_long_line} "
+                f"skipped_oversized_chunk={skipped_oversized_chunk} "
+                f"provider_failures={skipped_failed_embedding} commit={commit_hash}."
             )
         canonical = str(getattr(self.repo.commit(commit_hash), "hexsha", "") or "").strip()
         return _RootRepoStateBootstrapReport(
@@ -1130,6 +1143,10 @@ class MapElitesIngestion:
             cache_hits=int(stats.cache_hits),
             cache_misses=int(stats.cache_misses),
             files_embedded=int(stats.files_embedded),
+            skipped_empty_after_preprocess=skipped_empty_after_preprocess,
+            skipped_long_line=skipped_long_line,
+            skipped_oversized_chunk=skipped_oversized_chunk,
+            skipped_failed_embedding=skipped_failed_embedding,
             fingerprint=manifest_fingerprint,
         )
 
@@ -1159,13 +1176,18 @@ class MapElitesIngestion:
         )
         log.info(
             "Repo-state root bootstrap cache summary commit={} eligible_files={} unique_blobs={} "
-            "hits={} misses={} embedded={} fingerprint={}",
+            "hits={} misses={} embedded={} skipped_empty={} skipped_long_line={} "
+            "skipped_oversized_chunk={} provider_failures={} fingerprint={}",
             report.canonical_commit_hash,
             report.eligible_files,
             report.unique_blobs,
             report.cache_hits,
             report.cache_misses,
             report.files_embedded,
+            report.skipped_empty_after_preprocess,
+            report.skipped_long_line,
+            report.skipped_oversized_chunk,
+            report.skipped_failed_embedding,
             report.fingerprint,
         )
 
