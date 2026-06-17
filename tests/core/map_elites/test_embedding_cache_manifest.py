@@ -61,6 +61,30 @@ def test_fingerprint_preserves_chunk_boundary_keyword_whitespace() -> None:
     assert ecm.fingerprint_payload(source_payload) != ecm.fingerprint_payload(target_payload)
 
 
+def test_fingerprint_includes_repo_state_embedding_filter_thresholds() -> None:
+    source_settings = _settings(
+        MAPELITES_REPO_STATE_EMBEDDING_MAX_LINE_CHARS=16000,
+        MAPELITES_REPO_STATE_EMBEDDING_MAX_CHUNK_CHARS=65536,
+    )
+    target_settings = _settings(
+        MAPELITES_REPO_STATE_EMBEDDING_MAX_LINE_CHARS=32000,
+        MAPELITES_REPO_STATE_EMBEDDING_MAX_CHUNK_CHARS=65536,
+    )
+
+    source_payload = ecm.build_repo_state_file_embedding_manifest_payload(source_settings)
+    target_payload = ecm.build_repo_state_file_embedding_manifest_payload(target_settings)
+
+    assert source_payload["repo_state_embedding_filter"] == {
+        "max_line_chars": 16000,
+        "max_chunk_chars": 65536,
+    }
+    assert target_payload["repo_state_embedding_filter"] == {
+        "max_line_chars": 32000,
+        "max_chunk_chars": 65536,
+    }
+    assert ecm.fingerprint_payload(source_payload) != ecm.fingerprint_payload(target_payload)
+
+
 def test_sanitize_dsn_strips_userinfo_and_query_secrets() -> None:
     raw = "postgresql+psycopg://alice:secret@db.internal:5432/loreley?sslpassword=token"
 

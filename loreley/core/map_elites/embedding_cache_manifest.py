@@ -100,6 +100,7 @@ def build_repo_state_file_embedding_manifest_payload(settings: Settings) -> dict
         "embedding_dimensions": dimensions,
         "preprocess": _preprocess_fingerprint_payload(settings),
         "chunk": _chunk_fingerprint_payload(settings),
+        "repo_state_embedding_filter": _repo_state_embedding_filter_payload(settings),
         "algorithm": _algorithm_fingerprint_payload(),
     }
 
@@ -153,6 +154,17 @@ def _chunk_fingerprint_payload(settings: Settings) -> dict[str, object]:
         "max_chunks_per_file": int(getattr(settings, "mapelites_chunk_max_chunks_per_file", 0) or 0),
         "boundary_keywords": _normalize_chunk_boundary_keywords(
             getattr(settings, "mapelites_chunk_boundary_keywords", ()) or (),
+        ),
+    }
+
+
+def _repo_state_embedding_filter_payload(settings: Settings) -> dict[str, object]:
+    return {
+        "max_line_chars": int(
+            getattr(settings, "mapelites_repo_state_embedding_max_line_chars", 0) or 0
+        ),
+        "max_chunk_chars": int(
+            getattr(settings, "mapelites_repo_state_embedding_max_chunk_chars", 0) or 0
         ),
     }
 
