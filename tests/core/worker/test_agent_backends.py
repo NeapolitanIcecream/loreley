@@ -671,6 +671,7 @@ def test_kilocode_cli_backend_builds_run_command_with_passthrough_flags(
     command_list = list(invocation.command)
     assert command_list[:3] == ["kilo", "run", "--auto"]
     assert "--auto" in command_list
+    assert command_list[command_list.index("--dir") + 1] == str(repo_dir.resolve())
     assert "--format" in command_list and "json" in command_list
     assert "--agent" in command_list and "architect" in command_list
     assert "--model" in command_list and "openai/gpt-5.4" in command_list
@@ -679,6 +680,7 @@ def test_kilocode_cli_backend_builds_run_command_with_passthrough_flags(
     assert captured["cwd"] == str(repo_dir.resolve())
     assert captured["env"] and captured["env"]["KEY"] == "val"
     assert invocation.stdout == "done"
+    assert invocation.working_directory == str(repo_dir.resolve())
 
 
 def test_kilocode_cli_backend_omits_optional_flags_when_disabled(
@@ -706,6 +708,7 @@ def test_kilocode_cli_backend_omits_optional_flags_when_disabled(
 
     command_list = list(invocation.command)
     assert command_list[:3] == ["kilo", "run", "--auto"]
+    assert command_list[command_list.index("--dir") + 1] == str(repo_dir.resolve())
     assert "--format" not in command_list
     assert "--agent" not in command_list
     assert "--model" not in command_list
@@ -720,6 +723,7 @@ def test_kilocode_capability_parser_recognizes_current_run_flags() -> None:
       --format      format: default or json
       --title       title for the session
       --variant     model variant
+      --dir         directory to run in
       --agent       agent to use
       -m, --model   model to use
       --auto        auto-approve all permissions
@@ -727,13 +731,15 @@ def test_kilocode_capability_parser_recognizes_current_run_flags() -> None:
 
     flags = kilocode_cli.parse_kilo_run_flags(help_output)
 
-    assert {"--auto", "--agent", "--model", "--format", "--title", "--variant"} <= flags
+    assert {"--auto", "--agent", "--model", "--format", "--title", "--variant", "--dir"} <= flags
 
 
 def test_kilocode_capabilities_expose_supported_features() -> None:
     capabilities = kilocode_cli.KiloCliCapabilities(
         version="7.3.16",
-        run_flags=frozenset({"--auto", "--agent", "--model", "--format", "--title", "--variant"}),
+        run_flags=frozenset(
+            {"--auto", "--agent", "--model", "--format", "--title", "--variant", "--dir"}
+        ),
         supports_db_path=True,
     )
 
@@ -743,6 +749,7 @@ def test_kilocode_capabilities_expose_supported_features() -> None:
     assert capabilities.supports_format_json is True
     assert capabilities.supports_title is True
     assert capabilities.supports_variant is True
+    assert capabilities.supports_dir is True
     assert capabilities.supports_db_path is True
 
 
@@ -903,6 +910,74 @@ def test_kilocode_cli_backend_titles_session_and_reads_usage_db(
     assert event.cost_source == "provider_reported"
     assert str(event.cost_usd) == "0.025"
     assert event.external_usage_id == f"kilo:{job_id}:{run_token}:coding:attempt:4"
+
+
+def test_kilocode_cli_backend_rejects_mismatched_usage_session_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+    usage_db = tmp_path / "kilo.db"
+    with sqlite3.connect(usage_db) as conn:
+        conn.execute(
+            """
+            CREATE TABLE session (
+                id TEXT PRIMARY KEY,
+                title TEXT,
+                directory TEXT,
+                time_created INTEGER,
+                time_updated INTEGER
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE message (
+                id TEXT PRIMARY KEY,
+                session_id TEXT,
+                time_created INTEGER,
+                data TEXT
+            )
+            """
+        )
+
+    def fake_run(command, **_kwargs):  # noqa: ANN001
+        title = command[command.index("--title") + 1]
+        with sqlite3.connect(usage_db) as conn:
+            conn.execute(
+                "INSERT INTO session (id, title, directory, time_created, time_updated) VALUES (?, ?, ?, ?, ?)",
+                ("sess-wrong-dir", title, str(tmp_path), 1, 2),
+            )
+        return types.SimpleNamespace(stdout="done", stderr="", returncode=0)
+
+    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    job_id = uuid4()
+    run_token = uuid4()
+    backend = KilocodeCliBackend(
+        bin="kilo",
+        timeout_seconds=30,
+        extra_env={},
+        error_cls=RuntimeError,
+        usage_db_path=str(usage_db),
+    )
+
+    with pytest.raises(RuntimeError, match="Kilo workspace isolation failed") as exc_info:
+        backend.run(
+            AgentTask(
+                name="coding",
+                prompt="do it",
+                job_id=job_id,
+                run_token=run_token,
+                phase="coding",
+            ),
+            working_dir=repo_dir,
+        )
+
+    message = str(exc_info.value)
+    assert f"expected={repo_dir.resolve()}" in message
+    assert f"actual={tmp_path.resolve()}" in message
+    assert "parent of the job worktree" in message
 
 
 def test_kilocode_usage_db_resolution_prefers_kilo_db_path(

@@ -17,6 +17,7 @@ class AgentInvocation:
     stderr: str
     duration_seconds: float
     usage_events: tuple[LLMUsageEventPayload, ...] = ()
+    working_directory: str | None = None
 
 
 @dataclass(slots=True)

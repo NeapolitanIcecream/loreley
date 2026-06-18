@@ -47,6 +47,7 @@ def test_write_job_artifacts_includes_worker_metadata(settings, tmp_path: Path, 
         stderr="",
         attempts=1,
         duration_seconds=1.5,
+        working_directory="/tmp/loreley-job-worktree",
         usage_events=(
             _usage_event(
                 input_tokens=100,
@@ -74,6 +75,7 @@ def test_write_job_artifacts_includes_worker_metadata(settings, tmp_path: Path, 
         stderr="",
         attempts=2,
         duration_seconds=3.0,
+        working_directory="/tmp/loreley-job-worktree",
         usage_events=(
             _usage_event(
                 input_tokens=0,
@@ -115,6 +117,8 @@ def test_write_job_artifacts_includes_worker_metadata(settings, tmp_path: Path, 
     assert planning_payload["worker"]["pid"] == os.getpid()
     assert coding_payload["worker"]["pid"] == os.getpid()
     assert evaluation_payload["worker"]["pid"] == os.getpid()
+    assert planning_payload["backend"]["working_directory"] == "/tmp/loreley-job-worktree"
+    assert coding_payload["backend"]["working_directory"] == "/tmp/loreley-job-worktree"
     assert str(run_token) in paths["planning_plan_json_path"]
     assert planning_payload["backend"]["usage_summary"] == {
         "event_count": 2,

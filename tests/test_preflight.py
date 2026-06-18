@@ -173,6 +173,7 @@ def test_kilocode_preflight_fails_when_required_run_flags_are_missing(monkeypatc
     cli_result = next(item for item in results if item.name == "planning_kilocode_cli")
     assert cli_result.status == "fail"
     assert "--auto" in cli_result.details
+    assert "--dir" in cli_result.details
 
 
 def test_kilocode_preflight_uses_default_backend_settings_when_ref_is_blank(monkeypatch) -> None:
@@ -206,6 +207,7 @@ def test_kilocode_preflight_uses_default_backend_settings_when_ref_is_blank(monk
     assert "--agent" in cli_result.details
     assert "--model" in cli_result.details
     assert "--variant" in cli_result.details
+    assert "--dir" in cli_result.details
 
 
 def test_kilocode_preflight_fails_when_usage_tracking_requires_unsupported_title(
@@ -246,7 +248,9 @@ def test_kilocode_preflight_fails_config_mode_when_provider_probe_fails(monkeypa
     def fake_discover(*_args, **_kwargs):  # noqa: ANN002
         return kilocode_cli.KiloCliCapabilities(
             version="7.3.16",
-            run_flags=frozenset({"--auto", "--agent", "--model", "--format", "--title", "--variant"}),
+            run_flags=frozenset(
+                {"--auto", "--agent", "--model", "--format", "--title", "--variant", "--dir"}
+            ),
             supports_db_path=True,
         )
 

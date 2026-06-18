@@ -39,6 +39,10 @@ class KiloUsageUnavailableError(RuntimeError):
     """Usage data is unavailable after a successful Kilo invocation."""
 
 
+class KiloWorkspaceIsolationError(RuntimeError):
+    """Kilo bound a session to a directory outside the requested job worktree."""
+
+
 @dataclass(frozen=True, slots=True)
 class KiloCliCapabilities:
     """Best-effort view of the installed Kilo CLI command surface."""
@@ -67,6 +71,10 @@ class KiloCliCapabilities:
     @property
     def supports_title(self) -> bool:
         return "--title" in self.run_flags
+
+    @property
+    def supports_dir(self) -> bool:
+        return "--dir" in self.run_flags
 
     @property
     def supports_format_json(self) -> bool:
@@ -206,7 +214,7 @@ class KilocodeCliBackend:
         )
 
         usage_title = self._usage_title(task)
-        command = self._build_command(task.prompt, title=usage_title)
+        command = self._build_command(task.prompt, title=usage_title, worktree=worktree)
         command_for_log = command[:-1] + [f"<prompt:{len(task.prompt)} chars>"]
 
         env = self._build_env()
@@ -252,6 +260,7 @@ class KilocodeCliBackend:
             stderr=stderr,
             duration_seconds=duration,
             usage_events=usage_events,
+            working_directory=str(worktree),
         )
 
     def _build_env(self) -> dict[str, str]:
@@ -339,8 +348,17 @@ class KilocodeCliBackend:
         settings = self.settings or get_settings()
         return get_agent_openai_api_key(settings)
 
-    def _build_command(self, prompt: str, *, title: str | None = None) -> list[str]:
+    def _build_command(
+        self,
+        prompt: str,
+        *,
+        title: str | None = None,
+        worktree: Path | None = None,
+    ) -> list[str]:
         command: list[str] = [self.bin, "run", "--auto"]
+
+        if worktree is not None:
+            command.extend(["--dir", str(worktree)])
 
         if self.json_output:
             command.extend(["--format", "json"])
@@ -392,6 +410,8 @@ class KilocodeCliBackend:
                 task=task,
                 external_usage_id=external_id,
             )
+        except KiloWorkspaceIsolationError as exc:
+            raise self.error_cls(str(exc)) from exc
         except Exception as exc:  # pragma: no cover - filesystem/SQLite dependent
             log.warning("Failed to read Kilocode usage for title={}: {}", title, exc)
             event = unavailable_usage_event(
@@ -434,29 +454,22 @@ class KilocodeCliBackend:
                 raise KiloUsageUnavailableError(missing_schema)
             session_row = conn.execute(
                 """
-                SELECT id
+                SELECT id, directory
                 FROM session
                 WHERE title = ?
-                  AND (directory = ? OR ? = '')
                 ORDER BY time_updated DESC, time_created DESC
                 LIMIT 1
                 """,
-                (title, str(worktree), str(worktree)),
+                (title,),
             ).fetchone()
-            if session_row is None:
-                session_row = conn.execute(
-                    """
-                    SELECT id
-                    FROM session
-                    WHERE title = ?
-                    ORDER BY time_updated DESC, time_created DESC
-                    LIMIT 1
-                    """,
-                    (title,),
-                ).fetchone()
             if session_row is None:
                 return None
             session_id = str(session_row["id"])
+            assert_kilo_session_directory(
+                expected_worktree=worktree,
+                actual_directory=str(session_row["directory"] or ""),
+                settings=self.settings or get_settings(),
+            )
             rows = conn.execute(
                 """
                 SELECT data
@@ -706,6 +719,70 @@ def kilo_usage_schema_missing_reason(conn: sqlite3.Connection) -> str | None:
     return None
 
 
+def assert_kilo_session_directory(
+    *,
+    expected_worktree: Path,
+    actual_directory: str,
+    settings: Settings,
+) -> None:
+    """Fail closed if Kilo recorded a session outside the job worktree."""
+
+    expected = expected_worktree.expanduser().resolve()
+    raw_actual = str(actual_directory or "").strip()
+    if not raw_actual:
+        raise KiloWorkspaceIsolationError(
+            "Kilo workspace isolation failed: usage session did not record a "
+            f"workspace directory (expected={expected})."
+        )
+
+    actual = Path(raw_actual).expanduser().resolve()
+    if actual == expected:
+        return
+
+    danger = _kilo_session_directory_danger_reason(
+        actual=actual,
+        expected=expected,
+        settings=settings,
+    )
+    danger_suffix = f" ({danger})" if danger else ""
+    raise KiloWorkspaceIsolationError(
+        "Kilo workspace isolation failed: usage session directory did not match "
+        f"the requested job worktree{danger_suffix}; expected={expected}; "
+        f"actual={actual}. Refusing to continue after kilo run."
+    )
+
+
+def _kilo_session_directory_danger_reason(
+    *,
+    actual: Path,
+    expected: Path,
+    settings: Settings,
+) -> str:
+    if actual in expected.parents:
+        return "actual directory is a parent of the job worktree"
+
+    dangerous_roots: list[tuple[str, Path]] = []
+    scheduler_root = str(getattr(settings, "scheduler_repo_root", "") or "").strip()
+    if scheduler_root:
+        dangerous_roots.append(("scheduler repo root", Path(scheduler_root)))
+
+    worker_base = str(getattr(settings, "worker_repo_worktree", "") or "").strip()
+    if worker_base:
+        dangerous_roots.append(("worker base worktree", Path(worker_base)))
+
+    dangerous_roots.extend(
+        [
+            ("Loreley source checkout", Path(__file__).resolve().parents[5]),
+            ("process current working directory", Path.cwd()),
+        ]
+    )
+    for label, raw_root in dangerous_roots:
+        root = raw_root.expanduser().resolve()
+        if actual == root:
+            return f"actual directory is the {label}"
+    return ""
+
+
 def kilocode_backend() -> KilocodeCliBackend:
     """Factory to build a Kilocode backend using env-only settings."""
 
@@ -798,6 +875,8 @@ def kilocode_coding_backend() -> KilocodeCliBackend:
 __all__ = [
     "KilocodeCliBackend",
     "KiloCliCapabilities",
+    "KiloWorkspaceIsolationError",
+    "assert_kilo_session_directory",
     "discover_kilo_cli_capabilities",
     "kilocode_backend",
     "kilocode_coding_backend",

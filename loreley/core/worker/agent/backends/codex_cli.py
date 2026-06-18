@@ -149,6 +149,7 @@ class CodexCliBackend:
             stderr=stderr,
             duration_seconds=duration,
             usage_events=usage_events,
+            working_directory=str(worktree),
         )
 
     def _build_command(
