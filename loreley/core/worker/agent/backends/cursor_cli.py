@@ -122,6 +122,7 @@ class CursorCliBackend:
             stdout=stdout,
             stderr=stderr,
             duration_seconds=duration,
+            working_directory=str(worktree),
         )
 
 
@@ -182,4 +183,3 @@ __all__ = [
     "cursor_coding_backend",
     "cursor_planning_backend",
 ]
-

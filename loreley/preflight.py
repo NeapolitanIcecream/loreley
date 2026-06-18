@@ -776,7 +776,7 @@ def _required_kilocode_run_flags(
     settings: Settings,
 ) -> set[str]:
     del kind
-    flags = {"--auto"}
+    flags = {"--auto", "--dir"}
     if bool(getattr(backend, "json_output", settings.worker_kilocode_json_output)):
         flags.add("--format")
     selected_agent = (

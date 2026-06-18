@@ -119,6 +119,7 @@ class CodingAgentResponse:
     attempts: int
     duration_seconds: float
     usage_events: tuple[LLMUsageEventPayload, ...] = field(default_factory=tuple)
+    working_directory: str | None = None
 
 
 class CodingAgent(TruncationMixin):
@@ -267,6 +268,7 @@ class CodingAgent(TruncationMixin):
             attempts=attempts,
             duration_seconds=invocation.duration_seconds,
             usage_events=tuple(invocation.usage_events or ()),
+            working_directory=invocation.working_directory,
         )
 
     # Internal helpers --------------------------------------------------

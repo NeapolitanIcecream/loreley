@@ -564,6 +564,7 @@ class PlanningAgentResponse:
     attempts: int
     duration_seconds: float
     usage_events: tuple[LLMUsageEventPayload, ...] = field(default_factory=tuple)
+    working_directory: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1001,6 +1002,7 @@ class PlanningAgent(TruncationMixin):
             attempts=attempts,
             duration_seconds=invocation.duration_seconds,
             usage_events=tuple(invocation.usage_events or ()),
+            working_directory=invocation.working_directory,
         )
 
     def _render_prompt(self, request: PlanningAgentRequest) -> str:

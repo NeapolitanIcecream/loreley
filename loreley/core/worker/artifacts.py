@@ -757,6 +757,7 @@ def _write_failure_fixed_job_artifacts(
                 "plan": request.plan.plan.as_dict(),
                 "backend": {
                     "command": list(request.plan.command),
+                    "working_directory": request.plan.working_directory,
                     "stderr": request.plan.stderr,
                     "attempts": request.plan.attempts,
                     "duration_seconds": request.plan.duration_seconds,
@@ -786,6 +787,7 @@ def _write_failure_fixed_job_artifacts(
                 "report": request.coding.report.as_dict(),
                 "backend": {
                     "command": list(request.coding.command),
+                    "working_directory": request.coding.working_directory,
                     "stderr": request.coding.stderr,
                     "attempts": request.coding.attempts,
                     "duration_seconds": request.coding.duration_seconds,
@@ -874,6 +876,7 @@ def _write_fixed_job_artifacts(
             "plan": request.plan.plan.as_dict(),
             "backend": {
                 "command": list(request.plan.command),
+                "working_directory": request.plan.working_directory,
                 "stderr": request.plan.stderr,
                 "attempts": request.plan.attempts,
                 "duration_seconds": request.plan.duration_seconds,
@@ -900,6 +903,7 @@ def _write_fixed_job_artifacts(
             "report": request.coding.report.as_dict(),
             "backend": {
                 "command": list(request.coding.command),
+                "working_directory": request.coding.working_directory,
                 "stderr": request.coding.stderr,
                 "attempts": request.coding.attempts,
                 "duration_seconds": request.coding.duration_seconds,
