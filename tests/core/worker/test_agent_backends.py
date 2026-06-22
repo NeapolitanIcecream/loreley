@@ -1169,6 +1169,79 @@ def test_kilocode_backend_factory_uses_env_settings(monkeypatch: pytest.MonkeyPa
     get_settings.cache_clear()
 
 
+def test_kilocode_phase_backend_factories_use_worker_timeout_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from loreley.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("WORKER_KILOCODE_PROVIDER_CONFIG_MODE", "none")
+    monkeypatch.setenv("WORKER_PLANNING_TIMEOUT_SECONDS", "1234")
+    monkeypatch.setenv("WORKER_CODING_TIMEOUT_SECONDS", "5678")
+    get_settings.cache_clear()
+
+    planning_backend = kilocode_planning_backend()
+    coding_backend = kilocode_coding_backend()
+
+    assert planning_backend.timeout_seconds == 1234
+    assert coding_backend.timeout_seconds == 5678
+
+    get_settings.cache_clear()
+
+
+def test_kilocode_phase_backend_factories_use_default_worker_timeouts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from loreley.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("LORELEY_PROFILE", "default")
+    monkeypatch.setenv("WORKER_KILOCODE_PROVIDER_CONFIG_MODE", "none")
+    monkeypatch.delenv("WORKER_PLANNING_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("WORKER_CODING_TIMEOUT_SECONDS", raising=False)
+    get_settings.cache_clear()
+
+    generic_backend = kilocode_backend()
+    planning_backend = kilocode_planning_backend()
+    coding_backend = kilocode_coding_backend()
+
+    assert generic_backend.timeout_seconds == 1800
+    assert planning_backend.timeout_seconds == 900
+    assert coding_backend.timeout_seconds == 1800
+
+    get_settings.cache_clear()
+
+
+def test_kilocode_coding_backend_timeout_error_uses_configured_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from loreley.config import get_settings
+
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+    captured_timeouts: list[int] = []
+
+    def fake_run(command, **kwargs):  # noqa: ANN001, ANN003
+        captured_timeouts.append(kwargs["timeout"])
+        raise subprocess.TimeoutExpired(cmd=command, timeout=kwargs["timeout"])
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("WORKER_KILOCODE_PROVIDER_CONFIG_MODE", "none")
+    monkeypatch.setenv("WORKER_CODING_TIMEOUT_SECONDS", "4321")
+    get_settings.cache_clear()
+    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+
+    backend = kilocode_coding_backend()
+
+    with pytest.raises(RuntimeError, match="timed out after 4321s"):
+        backend.run(AgentTask(name="coding", prompt="slow task"), working_dir=repo_dir)
+
+    assert captured_timeouts == [4321]
+
+    get_settings.cache_clear()
+
+
 def test_kilocode_backend_factory_falls_back_to_global_openai_aliases(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

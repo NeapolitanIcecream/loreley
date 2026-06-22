@@ -25,6 +25,7 @@ LORELEY_KILO_OPENAI_API_KEY_ENV = "LORELEY_KILO_OPENAI_API_KEY"
 LORELEY_KILO_OPENAI_BASE_URL_ENV = "LORELEY_KILO_OPENAI_BASE_URL"
 KILO_CONFIG_SCHEMA_URL = "https://app.kilo.ai/config.json"
 KILO_PROVIDER_CONFIG_MODES = ("auto", "config", "legacy_env", "none")
+DEFAULT_KILOCODE_TIMEOUT_SECONDS = 1800
 KiloProviderConfigMode = Literal["auto", "config", "legacy_env", "none"]
 
 _KILO_RUN_FLAG_PATTERN = re.compile(r"(?<![\w-])--[A-Za-z0-9][A-Za-z0-9-]*")
@@ -193,7 +194,7 @@ class KilocodeCliBackend:
     agent: str | None = None
     model: str | None = None
     variant: str | None = None
-    timeout_seconds: int = 1800
+    timeout_seconds: int = DEFAULT_KILOCODE_TIMEOUT_SECONDS
     extra_env: dict[str, str] = field(default_factory=dict)
     json_output: bool = False
     error_cls: type[RuntimeError] = RuntimeError
@@ -800,6 +801,7 @@ def kilocode_backend() -> KilocodeCliBackend:
         agent=str(agent_value) if agent_value else None,
         model=str(model_value) if model_value else None,
         variant=str(variant_value) if variant_value else None,
+        timeout_seconds=DEFAULT_KILOCODE_TIMEOUT_SECONDS,
         json_output=bool(json_output_value),
         extra_env=extra_env,
         settings=settings,
@@ -831,6 +833,7 @@ def kilocode_planning_backend() -> KilocodeCliBackend:
         agent=str(agent_value) if agent_value else None,
         model=str(model_value) if model_value else None,
         variant=str(variant_value) if variant_value else None,
+        timeout_seconds=settings.worker_planning_timeout_seconds,
         json_output=bool(json_output_value),
         extra_env=extra_env,
         error_cls=PlanningError,
@@ -863,6 +866,7 @@ def kilocode_coding_backend() -> KilocodeCliBackend:
         agent=str(agent_value) if agent_value else None,
         model=str(model_value) if model_value else None,
         variant=str(variant_value) if variant_value else None,
+        timeout_seconds=settings.worker_coding_timeout_seconds,
         json_output=bool(json_output_value),
         extra_env=extra_env,
         error_cls=CodingError,
