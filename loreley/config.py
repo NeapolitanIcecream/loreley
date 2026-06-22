@@ -568,6 +568,27 @@ class Settings(BaseSettings):
         ),
         alias="WORKER_EVOLUTION_GLOBAL_GOAL",
     )
+    worker_evolution_commit_provider_mode: Literal[
+        "inherit_worker",
+        "global_openai",
+        "custom",
+        "disabled",
+    ] = Field(
+        default="inherit_worker",
+        alias="WORKER_EVOLUTION_COMMIT_PROVIDER_MODE",
+    )
+    worker_evolution_commit_api_key: str | None = Field(
+        default=None,
+        alias="WORKER_EVOLUTION_COMMIT_API_KEY",
+    )
+    worker_evolution_commit_base_url: str | None = Field(
+        default=None,
+        alias="WORKER_EVOLUTION_COMMIT_BASE_URL",
+    )
+    worker_evolution_commit_api_spec: Literal["responses", "chat_completions"] = Field(
+        default="responses",
+        alias="WORKER_EVOLUTION_COMMIT_API_SPEC",
+    )
     worker_evolution_commit_model: str = Field(
         default="gpt-4.1-mini",
         alias="WORKER_EVOLUTION_COMMIT_MODEL",
@@ -1034,6 +1055,19 @@ def _safe_export_worker_payload(settings: Settings, *, mask_secrets: bool) -> di
         "worker_evaluator_timeout_seconds": settings.worker_evaluator_timeout_seconds,
         "worker_evaluator_max_metrics": settings.worker_evaluator_max_metrics,
         "worker_evolution_global_goal": settings.worker_evolution_global_goal,
+        "worker_evolution_commit_provider_mode": (
+            settings.worker_evolution_commit_provider_mode
+        ),
+        "worker_evolution_commit_api_key": _safe_export_secret(
+            settings.worker_evolution_commit_api_key,
+            mask_secrets=mask_secrets,
+        ),
+        "worker_evolution_commit_base_url": _safe_export_url(
+            settings.worker_evolution_commit_base_url,
+            mask_secrets=mask_secrets,
+        ),
+        "worker_evolution_commit_api_spec": settings.worker_evolution_commit_api_spec,
+        "worker_evolution_commit_model": settings.worker_evolution_commit_model,
     }
 
 
