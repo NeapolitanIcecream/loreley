@@ -8,14 +8,14 @@ from openai import OpenAIError
 
 from loreley.config import Settings
 import loreley.core.worker.commit_summary as commit_summary_module
-from loreley.core.worker.coding import ExecutionReport
+from loreley.core.worker.coding import CodingAgentResponse, ExecutionReport
 from loreley.core.worker.commit_summary import (
     CommitSummarizer,
     CommitSummaryError,
     CommitSummaryUnavailableError,
 )
-from loreley.core.worker.evolution import JobContext
-from loreley.core.worker.planning import PlanDocument
+from loreley.core.worker.evolution import EvolutionWorker, JobContext
+from loreley.core.worker.planning import PlanDocument, PlanningAgentResponse
 
 
 def _make_plan() -> PlanDocument:
@@ -52,6 +52,30 @@ def _make_job_context() -> JobContext:
         sampling_initial_radius=None,
         sampling_radius_used=None,
         sampling_fallback_inspirations=None,
+    )
+
+
+def _make_planning_response() -> PlanningAgentResponse:
+    return PlanningAgentResponse(
+        plan=_make_plan(),
+        raw_output="raw plan",
+        prompt="prompt",
+        command=("planner",),
+        stderr="",
+        attempts=1,
+        duration_seconds=0.1,
+    )
+
+
+def _make_coding_response() -> CodingAgentResponse:
+    return CodingAgentResponse(
+        report=_make_coding_execution(),
+        raw_output="raw coding",
+        prompt="prompt",
+        command=("coder",),
+        stderr="",
+        attempts=1,
+        duration_seconds=0.1,
     )
 
 
@@ -115,6 +139,168 @@ def test_generate_subject_truncates_for_chat_api(settings: Settings) -> None:
     assert len(subject) <= summarizer._subject_limit  # type: ignore[attr-defined]
 
 
+def test_default_provider_inherits_kilocode_openai_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings.model_validate(
+        {
+            "WORKER_KILOCODE_OPENAI_API_KEY": "sk-worker",
+            "WORKER_KILOCODE_OPENAI_BASE_URL": "https://worker.example.com/v1",
+            "WORKER_KILOCODE_OPENAI_MODEL": "worker-summary-model",
+            "WORKER_KILOCODE_OPENAI_API_SPEC": "chat_completions",
+            "OPENAI_API_KEY": "sk-global",
+            "OPENAI_BASE_URL": "https://global.example.com/v1",
+            "OPENAI_API_SPEC": "responses",
+        }
+    )
+    client_kwargs: list[dict[str, object]] = []
+    chat_calls: list[dict[str, object]] = []
+
+    class FakeChatCompletions:
+        def create(self, **kwargs):
+            chat_calls.append(kwargs)
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="Inherit worker"))]
+            )
+
+    class FakeChat:
+        def __init__(self) -> None:
+            self.completions = FakeChatCompletions()
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.chat = FakeChat()
+
+    monkeypatch.setattr(
+        commit_summary_module,
+        "OpenAI",
+        lambda **kwargs: client_kwargs.append(kwargs) or FakeClient(),
+    )
+
+    summarizer = CommitSummarizer(settings=settings)
+    subject = summarizer.generate(
+        job=_make_job_context(),
+        plan=_make_plan(),
+        coding=_make_coding_execution(),
+    )
+
+    assert subject == "Inherit worker"
+    assert client_kwargs == [
+        {
+            "api_key": "sk-worker",
+            "base_url": "https://worker.example.com/v1",
+        }
+    ]
+    assert chat_calls[0]["model"] == "worker-summary-model"
+
+
+def test_custom_provider_overrides_worker_and_global_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings.model_validate(
+        {
+            "WORKER_EVOLUTION_COMMIT_PROVIDER_MODE": "custom",
+            "WORKER_EVOLUTION_COMMIT_API_KEY": "sk-commit",
+            "WORKER_EVOLUTION_COMMIT_BASE_URL": "https://commit.example.com/v1",
+            "WORKER_EVOLUTION_COMMIT_API_SPEC": "chat_completions",
+            "WORKER_EVOLUTION_COMMIT_MODEL": "commit-model",
+            "WORKER_KILOCODE_OPENAI_API_KEY": "sk-worker",
+            "WORKER_KILOCODE_OPENAI_BASE_URL": "https://worker.example.com/v1",
+            "WORKER_KILOCODE_OPENAI_MODEL": "worker-model",
+            "OPENAI_API_KEY": "sk-global",
+            "OPENAI_BASE_URL": "https://global.example.com/v1",
+        }
+    )
+    client_kwargs: list[dict[str, object]] = []
+    chat_calls: list[dict[str, object]] = []
+
+    class FakeChatCompletions:
+        def create(self, **kwargs):
+            chat_calls.append(kwargs)
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="Use commit provider"))]
+            )
+
+    class FakeChat:
+        def __init__(self) -> None:
+            self.completions = FakeChatCompletions()
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.chat = FakeChat()
+
+    monkeypatch.setattr(
+        commit_summary_module,
+        "OpenAI",
+        lambda **kwargs: client_kwargs.append(kwargs) or FakeClient(),
+    )
+
+    summarizer = CommitSummarizer(settings=settings)
+    subject = summarizer.generate(
+        job=_make_job_context(),
+        plan=_make_plan(),
+        coding=_make_coding_execution(),
+    )
+
+    assert subject == "Use commit provider"
+    assert client_kwargs == [
+        {
+            "api_key": "sk-commit",
+            "base_url": "https://commit.example.com/v1",
+        }
+    ]
+    assert chat_calls[0]["model"] == "commit-model"
+
+
+def test_disabled_provider_mode_does_not_call_llm(settings: Settings) -> None:
+    settings.worker_evolution_commit_provider_mode = "disabled"
+    calls = {"count": 0}
+
+    class FakeResponses:
+        def create(self, **kwargs):
+            calls["count"] += 1
+            return SimpleNamespace(output_text="should not happen")
+
+    summarizer = CommitSummarizer(
+        settings=settings,
+        client=SimpleNamespace(responses=FakeResponses()),
+    )
+
+    with pytest.raises(CommitSummaryUnavailableError, match="disabled"):
+        summarizer.generate(
+            job=_make_job_context(),
+            plan=_make_plan(),
+            coding=_make_coding_execution(),
+        )
+
+    assert calls["count"] == 0
+
+
+def test_custom_provider_without_api_key_does_not_call_llm(settings: Settings) -> None:
+    settings.worker_evolution_commit_provider_mode = "custom"
+    settings.worker_evolution_commit_api_key = None
+    calls = {"count": 0}
+
+    class FakeResponses:
+        def create(self, **kwargs):
+            calls["count"] += 1
+            return SimpleNamespace(output_text="should not happen")
+
+    summarizer = CommitSummarizer(
+        settings=settings,
+        client=SimpleNamespace(responses=FakeResponses()),
+    )
+
+    with pytest.raises(CommitSummaryUnavailableError, match="API_KEY"):
+        summarizer.generate(
+            job=_make_job_context(),
+            plan=_make_plan(),
+            coding=_make_coding_execution(),
+        )
+
+    assert calls["count"] == 0
+
+
 def test_generate_retries_and_raises_after_failures(settings: Settings, monkeypatch) -> None:
     settings.worker_evolution_commit_max_retries = 2
     settings.worker_evolution_commit_retry_backoff_seconds = 0
@@ -143,6 +329,37 @@ def test_generate_retries_and_raises_after_failures(settings: Settings, monkeypa
         )
 
     assert "2 attempt" in str(excinfo.value)
+
+
+def test_generate_does_not_retry_non_retryable_4xx(settings: Settings) -> None:
+    settings.worker_evolution_commit_max_retries = 3
+    settings.worker_evolution_commit_retry_backoff_seconds = 0
+
+    class PermissionDenied(OpenAIError):
+        status_code = 403
+
+    class FailingResponses:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def create(self, **kwargs):
+            self.calls += 1
+            raise PermissionDenied("model unavailable")
+
+    responses = FailingResponses()
+    summarizer = CommitSummarizer(
+        settings=settings,
+        client=SimpleNamespace(responses=responses),
+    )
+
+    with pytest.raises(CommitSummaryUnavailableError, match="status=403"):
+        summarizer.generate(
+            job=_make_job_context(),
+            plan=_make_plan(),
+            coding=_make_coding_execution(),
+        )
+
+    assert responses.calls == 1
 
 
 def test_coerce_subject_trims_and_defaults(settings: Settings) -> None:
@@ -189,6 +406,7 @@ def test_generate_rebuilds_client_with_current_runtime_api_key_for_each_retry(
     settings: Settings,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    settings.worker_evolution_commit_provider_mode = "global_openai"
     settings.worker_evolution_commit_max_retries = 2
     settings.worker_evolution_commit_retry_backoff_seconds = 0
 
@@ -232,3 +450,17 @@ def test_generate_rebuilds_client_with_current_runtime_api_key_for_each_retry(
 
     assert subject == "Fix dynamic auth"
     assert seen_api_keys == ["dyn-1", "dyn-2"]
+
+
+def test_worker_commit_message_falls_back_when_summarizer_disabled(settings: Settings) -> None:
+    settings.worker_evolution_commit_provider_mode = "disabled"
+    worker = object.__new__(EvolutionWorker)
+    worker.summarizer = CommitSummarizer(settings=settings)
+
+    subject = worker._prepare_commit_message(  # noqa: SLF001
+        job_ctx=_make_job_context(),
+        plan=_make_planning_response(),
+        coding=_make_coding_response(),
+    )
+
+    assert subject == "implemented feature"

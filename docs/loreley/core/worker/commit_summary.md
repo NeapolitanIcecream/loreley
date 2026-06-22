@@ -11,6 +11,10 @@ Commit summarisation utilities used by the evolution worker to derive concise gi
 
 - **`CommitSummarizer`**: LLM-backed helper responsible for generating short, imperative git subjects.
   - Configured via `loreley.config.Settings` worker evolution commit options:
+    - `WORKER_EVOLUTION_COMMIT_PROVIDER_MODE`: provider selection. `inherit_worker` (default) follows the worker's Kilocode OpenAI-compatible provider when Loreley can resolve it; `global_openai` uses global `OPENAI_*` settings; `custom` uses the commit summarizer provider fields; `disabled` skips LLM calls and lets the worker use its fallback subject.
+    - `WORKER_EVOLUTION_COMMIT_API_KEY`: API key for `custom` provider mode.
+    - `WORKER_EVOLUTION_COMMIT_BASE_URL`: base URL for `custom` provider mode.
+    - `WORKER_EVOLUTION_COMMIT_API_SPEC`: API surface for `custom` provider mode.
     - `WORKER_EVOLUTION_COMMIT_MODEL`: model identifier used with the `OpenAI` client.
     - `WORKER_EVOLUTION_COMMIT_TEMPERATURE`: sampling temperature.
     - `WORKER_EVOLUTION_COMMIT_MAX_OUTPUT_TOKENS`: upper bound on model output tokens (clamped to at least 32).
@@ -18,9 +22,10 @@ Commit summarisation utilities used by the evolution worker to derive concise gi
     - `WORKER_EVOLUTION_COMMIT_RETRY_BACKOFF_SECONDS`: linear backoff applied between retries.
     - `WORKER_EVOLUTION_COMMIT_SUBJECT_MAX_CHARS`: hard character limit for subject lines (minimum 32).
   - Lazily initialises an `OpenAI` client and applies a local `_truncate_limit` when building prompts to keep context sizes reasonable.
-  - Respects the global OpenAI API surface setting `OPENAI_API_SPEC`:
+  - Selects the OpenAI API surface from the active provider:
     - `"responses"` (default) uses the unified Responses API (`client.responses.create`) with an `instructions` string and full prompt as `input`.
     - `"chat_completions"` uses the Chat Completions API (`client.chat.completions.create`), mapping the same instruction text to a `system` message and the prompt to a `user` message, extracting the assistant's reply from the first choice.
+  - In `inherit_worker` mode, Kilocode provider values come from `WORKER_KILOCODE_OPENAI_API_KEY`, `WORKER_KILOCODE_OPENAI_BASE_URL`, `WORKER_KILOCODE_OPENAI_MODEL`, and `WORKER_KILOCODE_OPENAI_API_SPEC`, with the same global `OPENAI_*` fallback used by the Kilocode backend. If `WORKER_EVOLUTION_COMMIT_MODEL` is not explicitly set and `WORKER_KILOCODE_OPENAI_MODEL` is set, the summarizer uses the worker model.
 
 ### Subject generation
 
@@ -31,7 +36,7 @@ Commit summarisation utilities used by the evolution worker to derive concise gi
     - The coding execution summary.
     - A truncated excerpt of the coding report Markdown.
   - Calls the configured OpenAI API surface (`responses` or `chat_completions`) with the configured model, temperature, and token limit, plus an `instructions` string that asks for a single imperative git subject bounded by `WORKER_EVOLUTION_COMMIT_SUBJECT_MAX_CHARS` (minimum 32; enforced both in the prompt and when normalising the final subject).
-  - Retries up to `_max_retries` times on `OpenAIError` or `CommitSummaryError`, waiting for `retry_backoff * attempt` seconds between attempts, regardless of whether Responses or Chat Completions is selected.
+  - Retries up to `_max_retries` times on retryable `OpenAIError` or `CommitSummaryError`, waiting for `retry_backoff * attempt` seconds between attempts, regardless of whether Responses or Chat Completions is selected. Deterministic 4xx provider errors such as 403 permission/model availability failures fail fast without retry.
   - On success, strips and normalises whitespace, then enforces the subject character limit via `_normalise_subject()`, logging the attempt count via `loguru`.
   - Raises `CommitSummaryUnavailableError` if the OpenAI client cannot be initialised, and `CommitSummaryError` if request attempts are exhausted.
 
@@ -45,4 +50,3 @@ Commit summarisation utilities used by the evolution worker to derive concise gi
   - If the cleaned subject exceeds `_subject_limit`, truncates it and appends an ellipsis to signal truncation.
 - **`_build_prompt(job, plan, coding)`** / **`_truncate(text, limit=None)`**:
   - Internal helpers which format the compact prompt while bounding long summaries and coding-report excerpts, ensuring the most relevant context is preserved for the LLM.
-
