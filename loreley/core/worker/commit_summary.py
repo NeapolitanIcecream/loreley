@@ -86,6 +86,7 @@ class CommitSummarizer:
                 or "Commit summarizer is disabled by configuration.",
             )
         prompt = self._build_prompt(job=job, plan=plan, coding=coding)
+        instructions = self._instructions()
         retryer = openai_retrying(
             max_attempts=self._max_retries,
             backoff_seconds=self._retry_backoff,
@@ -97,44 +98,11 @@ class CommitSummarizer:
             for attempt in retryer:
                 with attempt:
                     attempt_number = int(getattr(attempt.retry_state, "attempt_number", 0) or 0)
-                    client = self._get_client()
-                    instructions = (
-                        "Respond with a single concise git commit subject line "
-                        f"in imperative mood (<= {self._subject_limit} characters), "
-                        "without surrounding quotes."
+                    subject = self._generate_attempt(
+                        prompt=prompt,
+                        instructions=instructions,
+                        job=job,
                     )
-                    if self._api_spec == "responses":
-                        try:
-                            response = client.responses.create(
-                                model=self._model,
-                                input=prompt,
-                                temperature=self._temperature,
-                                max_output_tokens=self._max_tokens,
-                                instructions=instructions,
-                            )
-                        except OpenAIError as exc:
-                            self._raise_if_non_retryable_provider_error(exc)
-                            raise
-                        self._record_usage(response, job=job, api_surface="responses")
-                        subject = (response.output_text or "").strip()
-                    else:
-                        try:
-                            response = client.chat.completions.create(
-                                model=self._model,
-                                messages=[
-                                    {"role": "system", "content": instructions},
-                                    {"role": "user", "content": prompt},
-                                ],
-                                temperature=self._temperature,
-                                max_tokens=self._max_tokens,
-                            )
-                        except OpenAIError as exc:
-                            self._raise_if_non_retryable_provider_error(exc)
-                            raise
-                        self._record_usage(response, job=job, api_surface="chat_completions")
-                        subject = self._extract_chat_completion_text(response).strip()
-                    if not subject:
-                        raise CommitSummaryError("Commit summarizer returned empty output.")
                     cleaned = self._normalise_subject(subject)
                     log.info("Commit summarizer produced subject after attempt {}", attempt_number)
                     return cleaned
@@ -144,6 +112,98 @@ class CommitSummarizer:
             raise CommitSummaryError(
                 f"Commit summarizer failed after {attempts} attempt(s): {last_exc}",
             ) from last_exc
+
+    def _instructions(self) -> str:
+        return (
+            "Respond with a single concise git commit subject line "
+            f"in imperative mood (<= {self._subject_limit} characters), "
+            "without surrounding quotes."
+        )
+
+    def _generate_attempt(
+        self,
+        *,
+        prompt: str,
+        instructions: str,
+        job: JobContext,
+    ) -> str:
+        subject = self._request_subject(
+            client=self._get_client(),
+            prompt=prompt,
+            instructions=instructions,
+            job=job,
+        ).strip()
+        if not subject:
+            raise CommitSummaryError("Commit summarizer returned empty output.")
+        return subject
+
+    def _request_subject(
+        self,
+        *,
+        client: Any,
+        prompt: str,
+        instructions: str,
+        job: JobContext,
+    ) -> str:
+        if self._api_spec == "responses":
+            return self._request_responses_subject(
+                client=client,
+                prompt=prompt,
+                instructions=instructions,
+                job=job,
+            )
+        return self._request_chat_subject(
+            client=client,
+            prompt=prompt,
+            instructions=instructions,
+            job=job,
+        )
+
+    def _request_responses_subject(
+        self,
+        *,
+        client: Any,
+        prompt: str,
+        instructions: str,
+        job: JobContext,
+    ) -> str:
+        try:
+            response = client.responses.create(
+                model=self._model,
+                input=prompt,
+                temperature=self._temperature,
+                max_output_tokens=self._max_tokens,
+                instructions=instructions,
+            )
+        except OpenAIError as exc:
+            self._raise_if_non_retryable_provider_error(exc)
+            raise
+        self._record_usage(response, job=job, api_surface="responses")
+        return str(getattr(response, "output_text", "") or "")
+
+    def _request_chat_subject(
+        self,
+        *,
+        client: Any,
+        prompt: str,
+        instructions: str,
+        job: JobContext,
+    ) -> str:
+        try:
+            response = client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {"role": "system", "content": instructions},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=self._temperature,
+                max_tokens=self._max_tokens,
+            )
+        except OpenAIError as exc:
+            self._raise_if_non_retryable_provider_error(exc)
+            raise
+        self._record_usage(response, job=job, api_surface="chat_completions")
+        return self._extract_chat_completion_text(response)
 
     def _get_client(self) -> Any:
         if self._provider.mode == "custom" and self._provider.unavailable_reason:
