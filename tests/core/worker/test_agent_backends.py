@@ -1222,9 +1222,9 @@ def test_kilocode_coding_backend_timeout_error_uses_configured_timeout(
     (repo_dir / ".git").mkdir(parents=True)
     captured_timeouts: list[int] = []
 
-    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
-        captured_timeouts.append(timeout)
-        raise subprocess.TimeoutExpired(cmd=command, timeout=timeout)
+    def fake_run(command, **kwargs):  # noqa: ANN001, ANN003
+        captured_timeouts.append(kwargs["timeout"])
+        raise subprocess.TimeoutExpired(cmd=command, timeout=kwargs["timeout"])
 
     get_settings.cache_clear()
     monkeypatch.setenv("WORKER_KILOCODE_PROVIDER_CONFIG_MODE", "none")
