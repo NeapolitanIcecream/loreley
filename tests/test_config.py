@@ -42,11 +42,18 @@ def test_multi_island_and_objective_contract_load_from_environment(
         [],
         [""],
         ["main", " main "],
+        ["x" * 65],
     ],
 )
 def test_island_contract_requires_nonempty_unique_names(islands: list[str]) -> None:
     with pytest.raises(ValidationError, match="island"):
         TestSettings(MAPELITES_ISLANDS=islands)
+
+
+def test_island_contract_accepts_database_length_boundary() -> None:
+    settings = TestSettings(MAPELITES_ISLANDS=[" " + "x" * 64 + " "])
+
+    assert settings.mapelites_islands == ("x" * 64,)
 
 
 def test_objective_contract_requires_unique_names() -> None:

@@ -289,14 +289,14 @@ one-shot migration command documented in the architecture work.
 
 ## Final verification and structural-debt gate
 
-The final suite ran with the PostgreSQL migration tests enabled: **848 passed,
-0 failed, 0 skipped** in 43.55 seconds. Coverage.py measured 82.57% statement
-coverage and 57.20% branch coverage (78.61% combined).
+The final suite ran with the PostgreSQL migration tests enabled: **850 passed,
+0 failed, 0 skipped** in 41.47 seconds. Coverage.py measured 82.59% statement
+coverage and 57.23% branch coverage (78.64% combined).
 
 Cremona then scanned 278 Python files against the committed refactor baseline
 using that coverage report and git history. Signal health was `full`; the
 branch introduced **0 new** and **0 worsened** structural-debt signals while
-resolving **17** baseline signals. The baseline was not rewritten. Nine
+resolving **22** baseline signals. The baseline was not rewritten. Eight
 `refactor_now` and eighteen `refactor_soon` findings remain as pre-existing
 repository debt, so the verdict is `strained`, not debt-free. The compact
 machine-readable record is
@@ -360,7 +360,7 @@ uv run python tools/run_v15_system_experiment.py \
 - Selected Kilo/Mini end-to-end path: supported, with observed timeout risk.
 - Migration quality benefit: bounded inconclusive.
 - Algorithm, debt, and parallelism audits reported no blocker or major finding.
-- Final verification: 848 tests passed; structural audit found no regression
-  and resolved 17 baseline signals.
+- Final verification: 850 tests passed; structural audit found no regression
+  and resolved 22 baseline signals.
 - All failed and superseded experiments remain in the incident ledger.
 - No credential was written to an artifact.

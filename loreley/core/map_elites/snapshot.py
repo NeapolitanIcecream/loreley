@@ -178,38 +178,27 @@ class DatabaseSnapshotStore:
             if update.history_seen_at is not None
             else time.time()
         )
-        if session is not None:
-            if bool(getattr(session, "in_nested_transaction", lambda: False)()):
-                try:
-                    self._apply_update_in_session(
-                        session,
-                        island_id=island_id,
-                        update=update,
-                        now=now,
-                    )
-                except ValueError:
-                    raise
-                except SQLAlchemyError as exc:
-                    self._raise_store_error(
-                        action="persist",
-                        island_id=island_id,
-                        exc=exc,
-                    )
-                return
-            try:
-                with session.begin_nested():
-                    self._apply_update_in_session(
-                        session,
-                        island_id=island_id,
-                        update=update,
-                        now=now,
-                    )
-            except ValueError:
-                raise
-            except SQLAlchemyError as exc:
-                self._raise_store_error(action="persist", island_id=island_id, exc=exc)
+        if session is None:
+            self._apply_update_with_owned_session(
+                island_id=island_id,
+                update=update,
+                now=now,
+            )
             return
+        self._apply_update_with_caller_session(
+            session,
+            island_id=island_id,
+            update=update,
+            now=now,
+        )
 
+    def _apply_update_with_owned_session(
+        self,
+        *,
+        island_id: str,
+        update: SnapshotUpdate,
+        now: float,
+    ) -> None:
         try:
             with session_scope() as owned_session:
                 self._apply_update_in_session(
@@ -224,6 +213,35 @@ class DatabaseSnapshotStore:
             self._raise_store_error(action="persist", island_id=island_id, exc=exc)
         except Exception as exc:  # pragma: no cover - defensive
             self._raise_store_error(action="persisting", island_id=island_id, exc=exc)
+
+    def _apply_update_with_caller_session(
+        self,
+        session: Session,
+        *,
+        island_id: str,
+        update: SnapshotUpdate,
+        now: float,
+    ) -> None:
+        try:
+            if bool(getattr(session, "in_nested_transaction", lambda: False)()):
+                self._apply_update_in_session(
+                    session,
+                    island_id=island_id,
+                    update=update,
+                    now=now,
+                )
+                return
+            with session.begin_nested():
+                self._apply_update_in_session(
+                    session,
+                    island_id=island_id,
+                    update=update,
+                    now=now,
+                )
+        except ValueError:
+            raise
+        except SQLAlchemyError as exc:
+            self._raise_store_error(action="persist", island_id=island_id, exc=exc)
 
     def _apply_update_in_session(
         self,

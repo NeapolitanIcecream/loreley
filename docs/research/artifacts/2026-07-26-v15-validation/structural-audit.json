@@ -1,26 +1,26 @@
 {
-  "generated_at": "2026-07-26T02:16:26+08:00",
+  "generated_at": "2026-07-26T02:35:46+08:00",
   "test_suite": {
     "command": "LORELEY_TEST_DATABASE_URL=postgresql+psycopg://loreley:loreley@localhost:5432/loreley uv run coverage run -m pytest -q",
-    "passed": 848,
+    "passed": 850,
     "failed": 0,
     "skipped": 0,
-    "duration_seconds": 43.55,
+    "duration_seconds": 41.47,
     "postgresql_tests_enabled": true
   },
   "coverage": {
     "coverage_py_version": "7.13.5",
     "statements": {
-      "covered": 31968,
-      "total": 38718,
-      "percent": 82.56624825662483
+      "covered": 31985,
+      "total": 38726,
+      "percent": 82.59308991375303
     },
     "branches": {
-      "covered": 4091,
-      "total": 7152,
-      "percent": 57.200782997762865
+      "covered": 4094,
+      "total": 7154,
+      "percent": 57.22672630696114
     },
-    "combined_percent": 78.61129278395465
+    "combined_percent": 78.63775065387969
   },
   "cremona": {
     "signal_health": "full",
@@ -30,8 +30,8 @@
     "baseline_updated": false,
     "new_regressions": 0,
     "worsened_signals": 0,
-    "resolved_signals": 17,
-    "existing_refactor_now": 9,
+    "resolved_signals": 22,
+    "existing_refactor_now": 8,
     "existing_refactor_soon": 18,
     "interpretation": "Existing baseline debt remains, but this branch adds or worsens no structural-debt signal."
   }

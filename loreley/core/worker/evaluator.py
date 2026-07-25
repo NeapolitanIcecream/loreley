@@ -972,15 +972,19 @@ def _bound_metadata_value(value: Any) -> Any:
     if isinstance(value, str):
         return clamp_text(normalize_single_line(value), 512)
     if isinstance(value, Mapping):
-        nested: dict[str, Any] = {}
-        for raw_key, raw_value in list(value.items())[:16]:
-            key = clamp_text(normalize_single_line(str(raw_key)), 64)
-            if key:
-                nested[key] = _bound_metadata_value(raw_value)
-        return nested
+        return _bound_metadata_mapping(value)
     if isinstance(value, Sequence) and not isinstance(value, bytes | bytearray):
         return [_bound_metadata_value(item) for item in list(value)[:16]]
     return clamp_text(normalize_single_line(str(value)), 512)
+
+
+def _bound_metadata_mapping(value: Mapping[Any, Any]) -> dict[str, Any]:
+    nested: dict[str, Any] = {}
+    for raw_key, raw_value in list(value.items())[:16]:
+        key = clamp_text(normalize_single_line(str(raw_key)), 64)
+        if key:
+            nested[key] = _bound_metadata_value(raw_value)
+    return nested
 
 
 def _artifact_warning(

@@ -76,10 +76,10 @@
     "resource_ledger": "resource-ledger.json",
     "structural_audit": {
       "evidence": "structural-audit.json",
-      "tests_passed": 848,
+      "tests_passed": 850,
       "new_debt_signals": 0,
       "worsened_debt_signals": 0,
-      "resolved_debt_signals": 17
+      "resolved_debt_signals": 22
     }
   }
 }

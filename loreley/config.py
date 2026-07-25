@@ -20,6 +20,7 @@ console = Console()
 log = logger.bind(module="config")
 
 _LARGE_REPO_PROFILE_ALIASES = {"large-repo-1m-30k", "large_repo_1m_30k"}
+_MAX_ISLAND_ID_LENGTH = 64
 _LARGE_REPO_PROFILE_DEFAULTS: dict[str, object] = {
     "scheduler_poll_interval_seconds": 15.0,
     "tasks_worker_time_limit_seconds": 0,
@@ -937,6 +938,11 @@ def _validate_map_elites_contract(settings: Settings) -> None:
     )
     if not island_ids or any(not island_id for island_id in island_ids):
         raise ValueError("MAPELITES_ISLANDS must contain at least one non-empty island ID.")
+    if any(len(island_id) > _MAX_ISLAND_ID_LENGTH for island_id in island_ids):
+        raise ValueError(
+            "MAPELITES_ISLANDS island IDs cannot exceed "
+            f"{_MAX_ISLAND_ID_LENGTH} characters."
+        )
     if len(set(island_ids)) != len(island_ids):
         raise ValueError("MAPELITES_ISLANDS island IDs must be unique.")
     object.__setattr__(settings, "mapelites_islands", island_ids)
