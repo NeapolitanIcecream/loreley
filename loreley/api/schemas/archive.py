@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
 
 from pydantic import Field
 
@@ -13,31 +12,30 @@ from loreley.api.schemas import OrmOutModel
 class IslandStatsOut(OrmOutModel):
     island_id: str
     occupied: int
+    elites: int
     cells: int
     coverage: float
-    qd_score: float
-    norm_qd_score: float
-    best_fitness: float
-    best_objective: float
-    metric_name: str | None = None
-    higher_is_better: bool
+    objective_count: int
+    front_max_size: int
+    best_primary_value: float | None = None
+    primary_metric_name: str
+    primary_metric_higher_is_better: bool
 
 
 class ArchiveRecordOut(OrmOutModel):
     commit_hash: str
     island_id: str
     cell_index: int
-    fitness: float
-    objective: float | None = None
-    metric_value: float | None = None
-    metric_name: str | None = None
-    higher_is_better: bool | None = None
+    objective_values: list[float] = Field(default_factory=list)
+    objective_scores: list[float] = Field(default_factory=list)
+    primary_metric_value: float | None = None
+    primary_metric_name: str | None = None
+    primary_metric_higher_is_better: bool | None = None
     campaign_baseline_id: str | None = None
     baseline_key_hash: str | None = None
     baseline_status: str | None = None
     delta_from_root_baseline: float | None = None
     measures: list[float] = Field(default_factory=list)
-    solution: list[float] = Field(default_factory=list)
     timestamp: float
     has_evaluation_evidence: bool = False
     agent_visible_evidence_count: int = 0

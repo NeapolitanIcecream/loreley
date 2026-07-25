@@ -706,7 +706,7 @@ def test_run_planning_batches_context_queries_for_base_and_inspirations_gh_n_plu
     prompt_context = worker._build_prompt_context(job_ctx)
     worker._run_planning(job_ctx, checkout, prompt_context)
 
-    assert fake_session.query_count == 4
+    assert fake_session.query_count == 3
     assert len(planning_agent.requests) == 1
     request, _working_dir = planning_agent.requests[0]
     assert request.base.commit_hash == "base"

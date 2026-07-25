@@ -65,6 +65,90 @@ def test_apply_dramatiq_prefetch_settings_preserves_explicit_zero(
     assert dramatiq_worker.DELAY_QUEUE_PREFETCH == 0
 
 
+def test_worker_pool_uses_spawned_single_threaded_dramatiq_processes(
+    monkeypatch,
+) -> None:
+    captured: list[object] = []
+    child_environment: list[str | None] = []
+
+    def fake_main(args: object) -> int:
+        captured.append(args)
+        child_environment.append(
+            entrypoints.os.environ.get("WORKER_REPO_WORKTREE_RANDOMIZE")
+        )
+        return 7
+
+    monkeypatch.setattr("dramatiq.cli.main", fake_main)
+    monkeypatch.setenv("WORKER_REPO_WORKTREE_RANDOMIZE", "false")
+
+    rc = entrypoints._run_dramatiq_worker_pool(  # noqa: SLF001 - process contract
+        processes=3,
+        console=Console(record=True),
+    )
+
+    assert rc == 7
+    assert len(captured) == 1
+    args = captured[0]
+    assert getattr(args, "processes") == 3
+    assert getattr(args, "threads") == 1
+    assert getattr(args, "use_spawn") is True
+    assert getattr(args, "broker") == "loreley.tasks.worker_runtime:broker"
+    assert child_environment == ["true"]
+    assert entrypoints.os.environ["WORKER_REPO_WORKTREE_RANDOMIZE"] == "false"
+
+
+def test_run_worker_delegates_multi_process_lifecycle_to_dramatiq(
+    monkeypatch,
+    settings,
+) -> None:
+    schema_calls: list[object] = []
+    pool_calls: list[int] = []
+    monkeypatch.setattr(
+        "loreley.db.base.ensure_database_schema",
+        lambda *, settings: schema_calls.append(settings),
+    )
+    monkeypatch.setattr(
+        entrypoints,
+        "_run_dramatiq_worker_pool",
+        lambda *, processes, console: pool_calls.append(processes) or 0,
+    )
+
+    rc = entrypoints.run_worker(
+        settings=settings,
+        console=Console(record=True),
+        processes=4,
+        preflight=False,
+    )
+
+    assert rc == 0
+    assert schema_calls == [settings]
+    assert pool_calls == [4]
+
+
+def test_process_log_paths_are_unique_within_the_same_second(
+    monkeypatch,
+    tmp_path,
+    settings,
+) -> None:
+    settings.logs_base_dir = str(tmp_path)
+    monkeypatch.setattr(entrypoints.os, "getpid", lambda: 101)
+    first = entrypoints.configure_process_logging(
+        settings=settings,
+        console=Console(record=True),
+        role="worker",
+    )
+    monkeypatch.setattr(entrypoints.os, "getpid", lambda: 202)
+    second = entrypoints.configure_process_logging(
+        settings=settings,
+        console=Console(record=True),
+        role="worker",
+    )
+
+    assert first != second
+    assert "pid-101" in first.name
+    assert "pid-202" in second.name
+
+
 def test_run_ui_starts_streamlit_with_api_environment_when_api_is_reachable(
     monkeypatch,
     settings,

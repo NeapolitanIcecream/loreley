@@ -12,6 +12,7 @@ import loreley.api.services.commits as commits_service
 import loreley.api.services.jobs as jobs_service
 from loreley.api.pagination import decode_cursor
 from loreley.config import Settings
+from loreley.core.map_elites.objectives import ObjectiveSpec
 from loreley.db.models import JobStatus
 
 
@@ -264,25 +265,24 @@ def test_list_records_page_returns_cursor_and_metric_value(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,
 ) -> None:
-    settings.mapelites_fitness_metric = "latency_ms"
-    settings.mapelites_fitness_higher_is_better = False
+    settings.mapelites_objectives = (
+        ObjectiveSpec(name="latency_ms", direction="min"),
+    )
     rows = [
         SimpleNamespace(
             commit_hash="c1",
             island_id="main",
             cell_index=1,
-            objective=-12.5,
+            objective_values=[12.5],
             measures=[0.1, 0.2],
-            solution=[],
             timestamp=10.0,
         ),
         SimpleNamespace(
             commit_hash="c2",
             island_id="main",
             cell_index=2,
-            objective=-10.0,
+            objective_values=[10.0],
             measures=[0.3, 0.4],
-            solution=[],
             timestamp=11.0,
         ),
     ]
@@ -295,9 +295,7 @@ def test_list_records_page_returns_cursor_and_metric_value(
         def execute(self, stmt):
             self.statements.append(stmt)
             self.calls += 1
-            if self.calls == 1:
-                return _ExecResult(rows)
-            return _ExecResult([("c1", 12.5)])
+            return _ExecResult(rows)
 
     session = _Session()
 
@@ -306,6 +304,11 @@ def test_list_records_page_returns_cursor_and_metric_value(
         yield session
 
     monkeypatch.setattr(archive_service, "session_scope", _fake_scope)
+    monkeypatch.setattr(
+        archive_service,
+        "_validate_persisted_objective_contract",
+        lambda **_kwargs: None,
+    )
 
     page = archive_service.list_records_page(
         island_id="main",
@@ -314,8 +317,9 @@ def test_list_records_page_returns_cursor_and_metric_value(
     )
 
     assert len(page.items) == 1
-    assert page.items[0].fitness == pytest.approx(12.5)
-    assert page.items[0].objective == pytest.approx(-12.5)
+    assert page.items[0].primary_metric_value == pytest.approx(12.5)
+    assert page.items[0].objective_scores == pytest.approx((-12.5,))
     assert page.next_cursor is not None
     assert decode_cursor(page.next_cursor)["cell_index"] == 1
+    assert decode_cursor(page.next_cursor)["commit_hash"] == "c1"
     assert getattr(session.statements[0], "_offset_clause", None) is None

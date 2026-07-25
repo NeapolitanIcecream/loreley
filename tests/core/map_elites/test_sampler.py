@@ -9,25 +9,30 @@ from types import SimpleNamespace
 
 from loreley.config import Settings
 from loreley.core.map_elites import sampler as sampler_module
-from loreley.core.map_elites.sampler import MapElitesSampler
+from loreley.core.map_elites.sampler import MapElitesSampler, ScheduleJobRequest
 
 
 @dataclass(slots=True)
 class FakeRecord:
     commit_hash: str
     cell_index: int
-    objective: float = 0.0
 
 
 class FakeManager:
     def __init__(self, records: Sequence[FakeRecord]) -> None:
         self._records = tuple(records)
 
-    def get_cell_commits(self, island_id: str | None = None) -> Mapping[int, str]:  # noqa: ARG002
-        return {record.cell_index: record.commit_hash for record in self._records}
-
-    def get_cell_objectives(self, island_id: str | None = None) -> Mapping[int, float]:  # noqa: ARG002
-        return {record.cell_index: record.objective for record in self._records}
+    def get_cell_fronts(
+        self,
+        island_id: str | None = None,  # noqa: ARG002
+    ) -> Mapping[int, tuple[str, ...]]:
+        fronts: dict[int, list[str]] = {}
+        for record in self._records:
+            fronts.setdefault(record.cell_index, []).append(record.commit_hash)
+        return {
+            cell_index: tuple(commits)
+            for cell_index, commits in fronts.items()
+        }
 
 
 def make_sampler(settings: Settings, records: Sequence[FakeRecord]) -> MapElitesSampler:
@@ -68,12 +73,15 @@ def test_select_inspirations_respects_inspiration_count(settings: Settings) -> N
     records = [FakeRecord(commit_hash=f"c{i}", cell_index=i) for i in range(9)]
     sampler = make_sampler(settings, records=records)
     base = records[4]
-    cell_commits = {record.cell_index: record.commit_hash for record in records}
+    cell_fronts = {
+        record.cell_index: (record.commit_hash,)
+        for record in records
+    }
 
     inspirations, stats = sampler._select_inspirations(  # type: ignore[attr-defined]
         base_cell_index=base.cell_index,
         base_commit_hash=base.commit_hash,
-        cell_commits=cell_commits,
+        cell_fronts=cell_fronts,
     )
 
     assert len(inspirations) <= settings.mapelites_sampler_inspiration_count
@@ -115,7 +123,10 @@ def test_select_inspirations_does_not_call_neighbor_indices(monkeypatch, setting
         settings=settings,
         rng=random.Random(1234),
     )
-    cell_commits = {record.cell_index: record.commit_hash for record in records}
+    cell_fronts = {
+        record.cell_index: (record.commit_hash,)
+        for record in records
+    }
 
     def explode(self, center_index: int, radius: int) -> list[int]:  # noqa: ARG001
         raise RuntimeError("_neighbor_indices should not be used by _select_inspirations")
@@ -125,7 +136,7 @@ def test_select_inspirations_does_not_call_neighbor_indices(monkeypatch, setting
     inspirations, stats = sampler._select_inspirations(  # type: ignore[attr-defined]
         base_cell_index=base_index,
         base_commit_hash="base",
-        cell_commits=cell_commits,
+        cell_fronts=cell_fronts,
     )
     assert len(inspirations) == 2
     assert set(inspirations) == {"n1", "n2"}
@@ -154,11 +165,11 @@ def test_neighbor_candidate_positions_keep_initial_radius_shell_semantics() -> N
 def test_fallback_inspiration_candidates_exclude_base_and_selected_commits() -> None:
     candidates = sampler_module._fallback_inspiration_candidates(  # noqa: SLF001
         base_cell_index=1,
-        cell_commits={
-            1: "base",
-            2: "already-selected",
-            3: "candidate",
-            4: "",
+        cell_fronts={
+            1: ("base",),
+            2: ("already-selected",),
+            3: ("candidate",),
+            4: (),
         },
         selected_commits={"base", "already-selected"},
     )
@@ -174,69 +185,79 @@ def test_schedule_job_with_and_without_records(monkeypatch, settings: Settings) 
     records = [FakeRecord(commit_hash=f"c{i}", cell_index=i) for i in range(4)]
     sampler = MapElitesSampler(manager=FakeManager(records), settings=settings)
 
-    captured_calls: list[dict[str, Any]] = []
+    captured_calls: list[Any] = []
 
-    def fake_persist_job(  # type: ignore[unused-argument]
-        self,
-        *,
-        island_id,
-        base_commit_hash,
-        inspiration_commit_hashes,
-        selection_stats,
-        iteration_hint,
-        priority,
-    ):
-        captured_calls.append(
-            {
-                "island_id": island_id,
-                "base_commit_hash": base_commit_hash,
-                "inspiration_commit_hashes": inspiration_commit_hashes,
-                "selection_stats": selection_stats,
-                "iteration_hint": iteration_hint,
-                "priority": priority,
-            }
-        )
+    def fake_persist_job(self: MapElitesSampler, request: Any) -> SimpleNamespace:  # noqa: ARG001
+        captured_calls.append(request)
         return SimpleNamespace(id=uuid4())
 
     monkeypatch.setattr(MapElitesSampler, "_persist_job", fake_persist_job)
 
     # Jobs are still scheduled for non-empty archives.
-    job = sampler.schedule_job()
+    job = sampler.schedule_job(
+        ScheduleJobRequest(
+            migration_source_island_id="source",
+            migration_commit_hash="migration",
+        )
+    )
     assert job is not None
     assert job.job_id is not None
     assert job.base_commit_hash in {record.commit_hash for record in records}
-    assert captured_calls
+    assert job.migration_source_island_id == "source"
+    assert job.migration_commit_hash == "migration"
+    assert "migration" in job.inspiration_commit_hashes
+    assert len(captured_calls) == 1
+    assert captured_calls[0].migration_source_island_id == "source"
+    assert captured_calls[0].migration_commit_hash == "migration"
 
 
-def test_schedule_job_prefers_higher_objective_cells_when_available(
+def test_zero_inspiration_capacity_disables_migration(
+    monkeypatch,
+    settings: Settings,
+) -> None:
+    settings.mapelites_sampler_inspiration_count = 0
+    sampler = MapElitesSampler(
+        manager=FakeManager([FakeRecord(commit_hash="base", cell_index=0)]),
+        settings=settings,
+    )
+    captured_calls: list[Any] = []
+
+    def fake_persist_job(self: MapElitesSampler, request: Any) -> SimpleNamespace:  # noqa: ARG001
+        captured_calls.append(request)
+        return SimpleNamespace(id=uuid4())
+
+    monkeypatch.setattr(MapElitesSampler, "_persist_job", fake_persist_job)
+
+    job = sampler.schedule_job(
+        ScheduleJobRequest(
+            migration_source_island_id="source",
+            migration_commit_hash="migration",
+        )
+    )
+
+    assert job is not None
+    assert job.inspiration_commit_hashes == ()
+    assert job.migration_source_island_id is None
+    assert job.migration_commit_hash is None
+    assert captured_calls[0].migration_source_island_id is None
+    assert captured_calls[0].migration_commit_hash is None
+
+
+def test_schedule_job_chooses_cells_without_front_size_bias(
     monkeypatch,
     settings: Settings,
 ) -> None:
     records = [
-        FakeRecord(commit_hash="low", cell_index=0, objective=0.5),
-        FakeRecord(commit_hash="high", cell_index=1, objective=5.0),
+        FakeRecord(commit_hash="a", cell_index=0),
+        FakeRecord(commit_hash="b", cell_index=0),
+        FakeRecord(commit_hash="c", cell_index=0),
+        FakeRecord(commit_hash="solo", cell_index=1),
     ]
-
-    class RecordingRng:
-        def __init__(self) -> None:
-            self.random_values = [0.99]
-            self.choice_calls = 0
-            self.shuffle_calls = 0
-
-        def choice(self, items: Sequence[tuple[int, str]]) -> tuple[int, str]:
-            self.choice_calls += 1
-            return items[0]
-
-        def random(self) -> float:
-            return self.random_values.pop(0)
-
-        def shuffle(self, items: list[int]) -> None:
-            self.shuffle_calls += 1
-
+    import random
     sampler = MapElitesSampler(
         manager=FakeManager(records),
         settings=settings,
-        rng=RecordingRng(),
+        rng=random.Random(77),
     )
 
     monkeypatch.setattr(
@@ -245,10 +266,18 @@ def test_schedule_job_prefers_higher_objective_cells_when_available(
         lambda *_args, **_kwargs: SimpleNamespace(id=uuid4()),
     )
 
-    job = sampler.schedule_job()
-
-    assert job is not None
-    assert job.base_commit_hash == "high"
+    counts = {"front": 0, "solo": 0}
+    snapshot = sampler.get_sampling_snapshot()
+    assert snapshot is not None
+    for _ in range(1000):
+        job = sampler.schedule_job(ScheduleJobRequest(sampling_snapshot=snapshot))
+        assert job is not None
+        if job.base_commit_hash == "solo":
+            counts["solo"] += 1
+        else:
+            counts["front"] += 1
+    assert 400 <= counts["front"] <= 600
+    assert 400 <= counts["solo"] <= 600
 
 
 def test_schedule_job_excludes_base_commits_selected_earlier_in_batch(
@@ -256,9 +285,9 @@ def test_schedule_job_excludes_base_commits_selected_earlier_in_batch(
     settings: Settings,
 ) -> None:
     records = [
-        FakeRecord(commit_hash="c0", cell_index=0, objective=0.5),
-        FakeRecord(commit_hash="c1", cell_index=1, objective=0.6),
-        FakeRecord(commit_hash="c2", cell_index=2, objective=0.7),
+        FakeRecord(commit_hash="c0", cell_index=0),
+        FakeRecord(commit_hash="c1", cell_index=1),
+        FakeRecord(commit_hash="c2", cell_index=2),
     ]
     sampler = make_sampler(settings, records=records)
 
@@ -272,14 +301,18 @@ def test_schedule_job_excludes_base_commits_selected_earlier_in_batch(
     assert snapshot is not None
 
     first = sampler.schedule_job(
-        sampling_snapshot=snapshot,
-        excluded_base_commits=set(),
+        ScheduleJobRequest(
+            sampling_snapshot=snapshot,
+            excluded_base_commits=set(),
+        )
     )
     assert first is not None
 
     second = sampler.schedule_job(
-        sampling_snapshot=snapshot,
-        excluded_base_commits={first.base_commit_hash},
+        ScheduleJobRequest(
+            sampling_snapshot=snapshot,
+            excluded_base_commits={first.base_commit_hash},
+        )
     )
     assert second is not None
     assert second.base_commit_hash != first.base_commit_hash

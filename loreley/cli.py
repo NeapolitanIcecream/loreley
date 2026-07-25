@@ -20,7 +20,12 @@ import click
 import typer
 from rich.console import Console
 
-from loreley.config import Settings, get_settings, resolve_default_island_id
+from loreley.config import (
+    Settings,
+    get_settings,
+    resolve_default_island_id,
+    resolve_objective_contract,
+)
 from loreley.core.candidate_fate import CandidateFate, derive_candidate_fate
 from loreley.core.job_retry import (
     db_utc_now,
@@ -99,7 +104,7 @@ def _resolve_effective_island(*, settings: Settings, island_id: str | None) -> s
 
 def _load_archive_stats_or_exit(*, settings: Settings, island_id: str) -> dict[str, object]:
     try:
-        from loreley.core.map_elites.map_elites import MapElitesManager
+        from loreley.core.map_elites.manager import MapElitesManager
 
         manager = MapElitesManager(settings=settings)
         return dict(manager.describe_island(island_id))
@@ -216,13 +221,13 @@ def _lease_status_payload(
 
 
 def _best_commit_status_payload(*, row: Any, metric_name: str) -> dict[str, object]:
-    commit_hash, subject, best_island, fitness_value, created_at = row
+    commit_hash, subject, best_island, primary_value, created_at = row
     return {
         "commit_hash": str(commit_hash),
         "subject": str(subject),
         "island_id": str(best_island) if best_island is not None else None,
-        "metric": metric_name,
-        "fitness": float(fitness_value) if fitness_value is not None else None,
+        "primary_metric": metric_name,
+        "primary_value": float(primary_value) if primary_value is not None else None,
         "created_at": created_at.isoformat() if created_at is not None else None,
     }
 
@@ -497,17 +502,17 @@ def _load_best_commit_status_payload(
     settings: Settings,
     instance: Any,
     CommitCard: Any,
+    MapElitesArchiveCell: Any,
     Metric: Any,
 ) -> dict[str, object] | None:
     from sqlalchemy import select
 
-    metric_name = str(settings.mapelites_fitness_metric or "").strip()
-    if not metric_name:
-        return None
+    primary = resolve_objective_contract(settings).primary
+    metric_name = primary.name
 
     order_column = (
         Metric.value.desc()
-        if bool(settings.mapelites_fitness_higher_is_better)
+        if primary.higher_is_better
         else Metric.value.asc()
     )
     conditions = [Metric.name == metric_name]
@@ -523,8 +528,12 @@ def _load_best_commit_status_payload(
             CommitCard.created_at,
         )
         .join(Metric, Metric.commit_card_id == CommitCard.id)
+        .join(
+            MapElitesArchiveCell,
+            MapElitesArchiveCell.commit_hash == CommitCard.commit_hash,
+        )
         .where(*conditions)
-        .order_by(order_column)
+        .order_by(order_column, CommitCard.commit_hash.asc())
         .limit(1)
     )
     row = session.execute(stmt_best).first()
@@ -755,6 +764,14 @@ def scheduler(
 @app.command()
 def worker(
     ctx: typer.Context,
+    processes: int = typer.Option(
+        1,
+        "--processes",
+        "-p",
+        min=1,
+        help="Number of isolated worker processes (one thread each).",
+        show_default=True,
+    ),
     no_preflight: bool = typer.Option(False, "--no-preflight", help="Skip preflight validation."),
     preflight_timeout_seconds: float = typer.Option(
         2.0,
@@ -769,6 +786,7 @@ def worker(
     code = run_worker(
         settings=settings,
         console=console,
+        processes=int(processes),
         preflight=not bool(no_preflight),
         preflight_timeout_seconds=float(preflight_timeout_seconds),
     )
@@ -1122,7 +1140,12 @@ def status(
 
     try:
         from loreley.db.base import session_scope
-        from loreley.db.models import CommitCard, InstanceMetadata, Metric
+        from loreley.db.models import (
+            CommitCard,
+            InstanceMetadata,
+            MapElitesArchiveCell,
+            Metric,
+        )
 
         with session_scope() as session:
             instance = session.get(InstanceMetadata, 1)
@@ -1143,6 +1166,7 @@ def status(
                 settings=settings,
                 instance=instance,
                 CommitCard=CommitCard,
+                MapElitesArchiveCell=MapElitesArchiveCell,
                 Metric=Metric,
             )
             baseline = _load_status_baseline_payload(
@@ -1212,26 +1236,25 @@ def status(
         table.add_row("coverage", f"{float(coverage) * 100.0:.2f}%")
     else:
         table.add_row("coverage", "n/a")
-    qd_score = archive_stats.get("qd_score")
-    if isinstance(qd_score, (int, float)):
-        table.add_row("qd_score", f"{float(qd_score):.6f}")
-    else:
-        table.add_row("qd_score", "n/a")
-    norm_qd_score = archive_stats.get("norm_qd_score")
-    if isinstance(norm_qd_score, (int, float)):
-        table.add_row("norm_qd_score", f"{float(norm_qd_score):.6f}")
-    else:
-        table.add_row("norm_qd_score", "n/a")
+    elites = archive_stats.get("elites")
+    table.add_row("elites", str(int(elites)) if isinstance(elites, (int, float)) else "n/a")
+    table.add_row(
+        "objectives",
+        str(archive_stats.get("objective_count") or "n/a"),
+    )
 
     table.add_section()
     if best_commit:
         table.add_row("best_commit", _short_hash(str(best_commit.get("commit_hash") or "")))
-        table.add_row("best_metric", str(best_commit.get("metric") or "n/a"))
-        fitness = best_commit.get("fitness")
-        if isinstance(fitness, (int, float)):
-            table.add_row("best_fitness", f"{float(fitness):.6f}")
+        table.add_row(
+            "primary_metric",
+            str(best_commit.get("primary_metric") or "n/a"),
+        )
+        primary_value = best_commit.get("primary_value")
+        if isinstance(primary_value, (int, float)):
+            table.add_row("best_primary_value", f"{float(primary_value):.6f}")
         else:
-            table.add_row("best_fitness", "n/a")
+            table.add_row("best_primary_value", "n/a")
         best_island = best_commit.get("island_id")
         if best_island:
             table.add_row("best_island", str(best_island))
@@ -1317,7 +1340,7 @@ def retry_job(
 
     try:
         from loreley.db.base import session_scope
-        from loreley.db.models import EvolutionJob, JobStatus
+        from loreley.db.models import EvolutionJob
 
         with session_scope() as session:
             if raw_job_id:
@@ -1586,11 +1609,13 @@ def archive_stats(
     for key in (
         "island_id",
         "occupied",
+        "elites",
         "cells",
         "coverage",
-        "qd_score",
-        "norm_qd_score",
-        "best_fitness",
+        "objective_count",
+        "front_max_size",
+        "best_primary_value",
+        "primary_metric_name",
     ):
         if key not in stats:
             continue

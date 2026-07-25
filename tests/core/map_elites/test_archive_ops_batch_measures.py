@@ -27,21 +27,18 @@ def test_add_batch_accepts_ndarray_measures(settings: Settings) -> None:
         upper_bounds=upper.copy(),
     )
 
-    commit_to_island: dict[str, str] = {}
     measures = np.asarray([[0.1, 0.1], [0.9, 0.9]], dtype=np.float64)
     statuses, values = add_batch(
         state=state,
         island_id="main",
         commit_hashes=("c1", "c2"),
-        objectives=(1.0, 2.0),
+        objective_values=((1.0,), (2.0,)),
+        objective_scores=((1.0,), (2.0,)),
         measures=measures,
         timestamps=(1.0, 2.0),
-        commit_to_island=commit_to_island,
     )
 
     assert statuses.shape == (2,)
     assert values.shape == (2,)
     assert int(np.count_nonzero(statuses > 0)) == 2
-    assert "c1" in commit_to_island
-    assert "c2" in commit_to_island
-
+    assert state.commit_to_index.keys() == {"c1", "c2"}

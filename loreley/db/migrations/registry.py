@@ -33,6 +33,7 @@ def _load_migrations() -> tuple[SchemaMigration, ...]:
         v0012_agent_actions_and_cleanup,
         v0013_llm_usage_events,
         v0014_embedding_cache_manifests,
+        v0015_multiobjective_islands,
     )
 
     return (
@@ -45,6 +46,7 @@ def _load_migrations() -> tuple[SchemaMigration, ...]:
         v0012_agent_actions_and_cleanup.MIGRATION,
         v0013_llm_usage_events.MIGRATION,
         v0014_embedding_cache_manifests.MIGRATION,
+        v0015_multiobjective_islands.MIGRATION,
     )
 
 

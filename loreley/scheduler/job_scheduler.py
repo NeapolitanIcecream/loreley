@@ -27,7 +27,12 @@ from loreley.core.campaign_program import (
     load_campaign_program_snapshot_by_hash,
     persist_campaign_program,
 )
-from loreley.core.map_elites.sampler import MapElitesSampler, SamplingSnapshot, ScheduledSamplerJob
+from loreley.core.map_elites.sampler import (
+    MapElitesSampler,
+    SamplingSnapshot,
+    ScheduleJobRequest,
+    ScheduledSamplerJob,
+)
 from loreley.core.worker.repair import (
     REPAIR_MODE_REBASE_FROM_NEAREST_VIABLE,
     repair_failure_kind_allowlist,
@@ -557,30 +562,35 @@ class JobScheduler:
             target = min(target, remaining_total)
 
         scheduled_ids: list[UUID] = []
-        sampling_snapshot = self.sampler.get_sampling_snapshot()
+        sampling_snapshots = self._load_sampling_snapshots(total_jobs=total_jobs)
         repair_reservation = self._available_repair_slots(capacity=target)
         normal_target = max(0, target - repair_reservation)
-        selected_base_commits: set[str] = set()
-        if sampling_snapshot is not None:
+        selected_base_commits: dict[str, set[str]] = {
+            snapshot.island_id: set()
+            for snapshot in sampling_snapshots
+        }
+        if sampling_snapshots:
             scheduled_ids.extend(
                 self._schedule_normal_jobs(
                     capacity=normal_target,
-                    sampling_snapshot=sampling_snapshot,
+                    sampling_snapshots=sampling_snapshots,
                     selected_base_commits=selected_base_commits,
+                    total_jobs=total_jobs,
                 )
             )
         else:
-            self.console.log("[yellow]Sampler returned no job[/]")
+            self.console.log("[yellow]No configured island has an archive ready for sampling[/]")
 
         remaining_capacity = max(0, target - len(scheduled_ids))
         repair_jobs = self._schedule_repair_jobs(capacity=remaining_capacity)
         scheduled_ids.extend(repair_jobs)
-        if len(repair_jobs) < repair_reservation and sampling_snapshot is not None:
+        if len(repair_jobs) < repair_reservation and sampling_snapshots:
             scheduled_ids.extend(
                 self._schedule_normal_jobs(
                     capacity=max(0, target - len(scheduled_ids)),
-                    sampling_snapshot=sampling_snapshot,
+                    sampling_snapshots=sampling_snapshots,
                     selected_base_commits=selected_base_commits,
+                    total_jobs=total_jobs + len(scheduled_ids),
                 )
             )
         if scheduled_ids:
@@ -591,24 +601,88 @@ class JobScheduler:
         self,
         *,
         capacity: int,
-        sampling_snapshot: SamplingSnapshot,
-        selected_base_commits: set[str],
+        sampling_snapshots: Sequence[SamplingSnapshot],
+        selected_base_commits: dict[str, set[str]],
+        total_jobs: int,
     ) -> list[UUID]:
-        if capacity <= 0:
+        if capacity <= 0 or not sampling_snapshots:
             return []
+
         scheduled_ids: list[UUID] = []
-        effective_island = sampling_snapshot.island_id
-        for _ in range(capacity):
-            job = self._schedule_single_job(
-                island_id=effective_island,
-                sampling_snapshot=sampling_snapshot,
-                excluded_base_commits=selected_base_commits,
+        active_snapshots = list(sampling_snapshots)
+        cursor = 0
+        while active_snapshots and len(scheduled_ids) < capacity:
+            snapshot = active_snapshots[cursor]
+            migration_source, migration_commit = self._migration_for_job(
+                target_snapshot=snapshot,
+                sampling_snapshots=sampling_snapshots,
+                global_job_number=total_jobs + len(scheduled_ids) + 1,
             )
-            if not job:
-                break
+            island_bases = selected_base_commits.setdefault(snapshot.island_id, set())
+            job = self._schedule_single_job(
+                island_id=snapshot.island_id,
+                sampling_snapshot=snapshot,
+                excluded_base_commits=island_bases,
+                migration_source_island_id=migration_source,
+                migration_commit_hash=migration_commit,
+            )
+            if job is None:
+                active_snapshots.pop(cursor)
+                if active_snapshots:
+                    cursor %= len(active_snapshots)
+                continue
             scheduled_ids.append(job.job_id)
-            selected_base_commits.add(str(job.base_commit_hash))
+            island_bases.add(str(job.base_commit_hash))
+            cursor = (cursor + 1) % len(active_snapshots)
         return scheduled_ids
+
+    def _load_sampling_snapshots(self, *, total_jobs: int) -> tuple[SamplingSnapshot, ...]:
+        islands = tuple(self.settings.mapelites_islands)
+        if not islands:
+            return ()
+        start = int(total_jobs) % len(islands)
+        ordered_islands = (*islands[start:], *islands[:start])
+        snapshots: list[SamplingSnapshot] = []
+        for island_id in ordered_islands:
+            snapshot = self.sampler.get_sampling_snapshot(island_id)
+            if snapshot is not None and snapshot.cell_fronts:
+                snapshots.append(snapshot)
+        return tuple(snapshots)
+
+    def _migration_for_job(
+        self,
+        *,
+        target_snapshot: SamplingSnapshot,
+        sampling_snapshots: Sequence[SamplingSnapshot],
+        global_job_number: int,
+    ) -> tuple[str | None, str | None]:
+        interval = max(0, int(self.settings.mapelites_migration_interval_jobs))
+        if (
+            interval <= 0
+            or global_job_number % interval != 0
+            or len(sampling_snapshots) < 2
+        ):
+            return None, None
+
+        target_position = next(
+            index
+            for index, snapshot in enumerate(sampling_snapshots)
+            if snapshot.island_id == target_snapshot.island_id
+        )
+        donors = (
+            *sampling_snapshots[target_position + 1 :],
+            *sampling_snapshots[:target_position],
+        )
+        donor = donors[(global_job_number // interval - 1) % len(donors)]
+        cell_indices = sorted(donor.cell_fronts)
+        if not cell_indices:
+            return None, None
+        cell_index = cell_indices[global_job_number % len(cell_indices)]
+        members = tuple(sorted(donor.cell_fronts[cell_index]))
+        if not members:
+            return None, None
+        commit_hash = members[(global_job_number // interval - 1) % len(members)]
+        return donor.island_id, commit_hash
 
     def _available_repair_slots(self, *, capacity: int) -> int:
         if capacity > 0 and bool(self.settings.failed_candidate_repair_enabled):
@@ -764,13 +838,19 @@ class JobScheduler:
         island_id: str | None = None,
         sampling_snapshot: SamplingSnapshot | None = None,
         excluded_base_commits: Sequence[str] | None = None,
+        migration_source_island_id: str | None = None,
+        migration_commit_hash: str | None = None,
     ) -> ScheduledSamplerJob | None:
         try:
             scheduled = self.sampler.schedule_job(
-                island_id=island_id,
-                sampling_snapshot=sampling_snapshot,
-                excluded_base_commits=excluded_base_commits,
-                campaign_program=self._campaign_program_snapshot,
+                ScheduleJobRequest(
+                    island_id=island_id,
+                    sampling_snapshot=sampling_snapshot,
+                    excluded_base_commits=excluded_base_commits,
+                    campaign_program=self._campaign_program_snapshot,
+                    migration_source_island_id=migration_source_island_id,
+                    migration_commit_hash=migration_commit_hash,
+                )
             )
         except Exception as exc:  # pragma: no cover - defensive
             self.console.log(f"[bold red]Sampler failed[/] reason={exc}")

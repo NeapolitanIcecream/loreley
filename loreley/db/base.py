@@ -16,7 +16,7 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from loreley.config import Settings, get_settings
 from loreley.db.instance import ensure_instance_marker
 
-INSTANCE_SCHEMA_VERSION = 14
+INSTANCE_SCHEMA_VERSION = 15
 _REDUNDANT_INDEX_NAMES = (
     "ix_commit_cards_commit_hash",
     "ix_map_elites_archive_cells_island",
@@ -50,13 +50,6 @@ _MANAGED_INDEX_DDL = (
     ON evolution_jobs (
         COALESCE(completed_at, created_at) DESC,
         id DESC
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS "ix_map_elites_archive_cells_island_commit"
-    ON map_elites_archive_cells (
-        island_id,
-        commit_hash
     )
     """,
     """

@@ -127,7 +127,7 @@ def test_seed_scheduling_skips_when_archive_has_records(monkeypatch: pytest.Monk
     assert created == 0
 
 
-def test_seed_scheduling_is_noop_when_non_seed_jobs_exist(
+def test_seed_scheduling_is_not_blocked_by_unrelated_non_seed_jobs(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,
 ) -> None:
@@ -141,6 +141,7 @@ def test_seed_scheduling_is_noop_when_non_seed_jobs_exist(
     )
     scheduler = _make_scheduler(settings=settings, records=[])
     scheduler._total_jobs_count = 3
+    cast(Any, scheduler.job_scheduler).created_return = 4
     executed: list[object] = []
     fake_session = _FakeSession(total_jobs=3, seed_count=2, executed=executed)
 
@@ -154,8 +155,15 @@ def test_seed_scheduling_is_noop_when_non_seed_jobs_exist(
     created = scheduler._maybe_schedule_seed_jobs(unfinished_jobs=0)
 
     # Assert
-    assert created == 0
-    assert cast(Any, scheduler.job_scheduler).created_calls == []
+    assert created == 4
+    assert cast(Any, scheduler.job_scheduler).created_calls == [
+        {
+            "base_commit_hash": "deadbeef",
+            "count": 4,
+            "island_id": "main",
+            "refresh_campaign_program": False,
+        }
+    ]
     assert len(executed) >= 1
 
 
@@ -339,6 +347,71 @@ def test_seed_scheduling_counts_uningested_succeeded_seed_jobs_as_warmup_candida
     assert len(executed) == 1
 
 
+def test_seed_scheduling_distributes_capacity_across_empty_islands(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    settings = settings.model_copy(
+        update={
+            "mapelites_experiment_root_commit": "deadbeef",
+            "mapelites_islands": ("alpha", "beta", "gamma"),
+            "mapelites_seed_population_size": 10,
+            "scheduler_max_unfinished_jobs": 5,
+        }
+    )
+    scheduler = _make_scheduler(settings=settings, records=[])
+    scheduler._max_total_jobs = 20
+    scheduler._total_jobs_count = 0
+
+    class _CreatingJobScheduler(_DummyJobScheduler):
+        def create_seed_jobs(
+            self,
+            *,
+            base_commit_hash: str,
+            count: int,
+            island_id: str | None = None,
+            refresh_campaign_program: bool = True,
+        ) -> int:
+            super().create_seed_jobs(
+                base_commit_hash=base_commit_hash,
+                count=count,
+                island_id=island_id,
+                refresh_campaign_program=refresh_campaign_program,
+            )
+            return count
+
+    scheduler.job_scheduler = _CreatingJobScheduler(created_calls=[])
+    monkeypatch.setattr(
+        scheduler,
+        "_count_seed_warmup_job_counts",
+        lambda *, island_id: scheduler_main._SeedWarmupJobCounts(0, 0, 0),
+    )
+
+    created = scheduler._maybe_schedule_seed_jobs(unfinished_jobs=0)
+
+    assert created == 5
+    assert cast(Any, scheduler.job_scheduler).created_calls == [
+        {
+            "base_commit_hash": "deadbeef",
+            "count": 2,
+            "island_id": "alpha",
+            "refresh_campaign_program": False,
+        },
+        {
+            "base_commit_hash": "deadbeef",
+            "count": 2,
+            "island_id": "beta",
+            "refresh_campaign_program": False,
+        },
+        {
+            "base_commit_hash": "deadbeef",
+            "count": 1,
+            "island_id": "gamma",
+            "refresh_campaign_program": False,
+        },
+    ]
+
+
 def test_tick_reuses_cached_total_job_count(settings: Settings) -> None:
     scheduler = cast(Any, EvolutionScheduler.__new__(EvolutionScheduler))
     scheduler.settings = settings
@@ -376,7 +449,7 @@ def test_tick_reuses_cached_total_job_count(settings: Settings) -> None:
     scheduler.ingestion = _DummyIngestion()
     scheduler.job_scheduler = _DummyJobScheduler()
     scheduler._maybe_schedule_seed_jobs = lambda unfinished_jobs: 0
-    scheduler._create_best_fitness_branch_if_possible = lambda: None
+    scheduler._create_primary_objective_branch_if_possible = lambda: None
     scheduler.stop = lambda: None
 
     stats = EvolutionScheduler.tick(cast(EvolutionScheduler, scheduler))
@@ -422,7 +495,7 @@ def test_tick_accounts_for_seed_jobs_before_sampler_scheduling(settings: Setting
     scheduler.ingestion = _DummyIngestion()
     scheduler.job_scheduler = _DummyJobScheduler()
     scheduler._maybe_schedule_seed_jobs = lambda unfinished_jobs: 2
-    scheduler._create_best_fitness_branch_if_possible = lambda: None
+    scheduler._create_primary_objective_branch_if_possible = lambda: None
     scheduler.stop = lambda: None
 
     stats = EvolutionScheduler.tick(cast(EvolutionScheduler, scheduler))

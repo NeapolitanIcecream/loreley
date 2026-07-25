@@ -27,11 +27,11 @@ def render() -> None:
 
     nodes = graph.get("nodes") if isinstance(graph, dict) else []
     edges = graph.get("edges") if isinstance(graph, dict) else []
-    metric_name = graph.get("metric_name") if isinstance(graph, dict) else None
+    metric_name = graph.get("primary_metric_name") if isinstance(graph, dict) else None
 
     st.caption(f"nodes={len(nodes) if isinstance(nodes, list) else 0} edges={len(edges) if isinstance(edges, list) else 0}")
 
-    # Simple plot: fitness vs time.
+    # Simple plot: primary objective vs time.
     try:
         import pandas as pd
         import plotly.express as px
@@ -42,7 +42,7 @@ def render() -> None:
 
     if isinstance(nodes, list) and nodes:
         df = pd.DataFrame([n for n in nodes if isinstance(n, dict)])
-        value_column = "metric_value" if "metric_value" in df.columns else "fitness"
+        value_column = "primary_metric_value"
         if not df.empty and {"created_at", value_column} <= set(df.columns):
             df = df.copy()
             df["created_at"] = pd.to_datetime(df["created_at"], errors="coerce", utc=True)
@@ -93,16 +93,13 @@ def render() -> None:
                     continue
                 short = commit_hash[:8]
                 island = str(n.get("island_id") or "")
-                fitness = n.get("fitness")
-                objective = n.get("objective")
-                raw_metric = n.get("metric_value")
+                raw_metric = n.get("primary_metric_value")
                 author = n.get("author")
                 message = (n.get("message") or "")
                 title = (
                     f"commit: {commit_hash}<br/>"
                     f"island: {island}<br/>"
-                    f"{metric_name or 'metric'}: {raw_metric if raw_metric is not None else fitness}<br/>"
-                    f"objective: {objective}<br/>"
+                    f"{metric_name or 'metric'}: {raw_metric}<br/>"
                     f"fate: {n.get('candidate_fate_label') or 'n/a'}<br/>"
                     f"agent-visible evidence: {n.get('agent_visible_evidence_count') or 0}<br/>"
                     f"author: {author}<br/>"

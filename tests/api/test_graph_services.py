@@ -9,6 +9,7 @@ import pytest
 
 import loreley.api.services.graphs as graph_service
 from loreley.config import Settings
+from loreley.core.map_elites.objectives import ObjectiveSpec
 
 
 class _ExecResult:
@@ -27,12 +28,13 @@ def _patch_no_graph_enrichment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(graph_service, "load_candidate_fates_for_commits", lambda _commits: {})
 
 
-def test_build_commit_lineage_graph_exposes_raw_metric_and_objective(
+def test_build_commit_lineage_graph_exposes_primary_metric(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,
 ) -> None:
-    settings.mapelites_fitness_metric = "latency_ms"
-    settings.mapelites_fitness_higher_is_better = False
+    settings.mapelites_objectives = (
+        ObjectiveSpec(name="latency_ms", direction="min"),
+    )
     created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     commit = SimpleNamespace(
         id=uuid4(),
@@ -65,13 +67,11 @@ def test_build_commit_lineage_graph_exposes_raw_metric_and_objective(
 
     graph = graph_service.build_commit_lineage_graph(max_nodes=1, settings=settings)
 
-    assert graph.metric_name == "latency_ms"
-    assert graph.higher_is_better is False
+    assert graph.primary_metric_name == "latency_ms"
+    assert graph.primary_metric_higher_is_better is False
     assert graph.truncated is False
     assert len(graph.nodes) == 1
-    assert graph.nodes[0].metric_value == pytest.approx(12.5)
-    assert graph.nodes[0].fitness == pytest.approx(12.5)
-    assert graph.nodes[0].objective == pytest.approx(-12.5)
+    assert graph.nodes[0].primary_metric_value == pytest.approx(12.5)
     assert graph.nodes[0].agent_visible_evidence_count == 0
 
 

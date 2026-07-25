@@ -12,7 +12,6 @@ from uuid import UUID
 from loguru import logger
 from rich.console import Console
 from sqlalchemy import select
-from sqlalchemy.exc import MultipleResultsFound
 
 from loreley.config import Settings, get_settings
 from loreley.core.campaign_program import (
@@ -79,7 +78,6 @@ from loreley.db.models import (
     CommitCard,
     DiagnosticCapsule,
     EvaluationArtifactRecord,
-    MapElitesArchiveCell,
     Metric,
 )
 
@@ -234,7 +232,6 @@ class _JobFailureContext:
 class _CommitPlanningRows:
     cards_by_hash: dict[str, CommitCard]
     metrics_by_card_id: dict[UUID, list[Metric]]
-    cells_by_hash: dict[str, MapElitesArchiveCell]
     artifacts_by_hash: dict[str, list[EvaluationArtifactRecord]]
 
 
@@ -831,7 +828,6 @@ class EvolutionWorker:
     ) -> WorkerPromptContext:
         planning_contexts = self._load_commit_planning_contexts(
             commit_hashes=(job_ctx.base_commit_hash, *job_ctx.inspiration_commit_hashes),
-            island_id=job_ctx.island_id,
         )
         if not planning_contexts:
             raise EvolutionWorkerError("Planning context loading returned no commit contexts.")
@@ -875,9 +871,6 @@ class EvolutionWorker:
                 highlights=(),
                 evaluation_summary=None,
                 metrics=(),
-                map_elites_cell_index=base_context.map_elites_cell_index,
-                map_elites_objective=base_context.map_elites_objective,
-                map_elites_measures=base_context.map_elites_measures,
             )
             inspirations = ()
 
@@ -1490,30 +1483,10 @@ class EvolutionWorker:
 
     # Data extraction utilities -------------------------------------------
 
-    def _load_commit_planning_context(
-        self,
-        *,
-        commit_hash: str,
-        island_id: str | None,
-    ) -> CommitPlanningContext:
-        contexts = self._load_commit_planning_contexts(
-            commit_hashes=(commit_hash,),
-            island_id=island_id,
-        )
-        if contexts:
-            return contexts[0]
-        return self._build_commit_planning_context(
-            commit_hash=commit_hash,
-            card=None,
-            metric_rows=(),
-            cell=None,
-        )
-
     def _load_commit_planning_contexts(
         self,
         *,
         commit_hashes: Sequence[str],
-        island_id: str | None,
     ) -> tuple[CommitPlanningContext, ...]:
         ordered_hashes = tuple(commit_hash for commit_hash in commit_hashes if commit_hash)
         if not ordered_hashes:
@@ -1524,7 +1497,6 @@ class EvolutionWorker:
             rows = self._load_commit_planning_rows(
                 session=session,
                 commit_hashes=unique_hashes,
-                island_id=island_id,
             )
         return self._planning_contexts_from_rows(ordered_hashes=ordered_hashes, rows=rows)
 
@@ -1533,7 +1505,6 @@ class EvolutionWorker:
         *,
         session: Any,
         commit_hashes: Sequence[str],
-        island_id: str | None,
     ) -> _CommitPlanningRows:
         cards = session.scalars(
             select(CommitCard).where(CommitCard.commit_hash.in_(commit_hashes))
@@ -1542,11 +1513,6 @@ class EvolutionWorker:
         return _CommitPlanningRows(
             cards_by_hash=cards_by_hash,
             metrics_by_card_id=self._load_metrics_by_card_id(session=session, cards=cards),
-            cells_by_hash=self._load_cells_by_hash(
-                session=session,
-                commit_hashes=commit_hashes,
-                island_id=island_id,
-            ),
             artifacts_by_hash=self._load_artifacts_by_hash(
                 session=session,
                 commit_hashes=commit_hashes,
@@ -1569,31 +1535,6 @@ class EvolutionWorker:
         for row in metric_rows:
             metrics_by_card_id.setdefault(row.commit_card_id, []).append(row)
         return metrics_by_card_id
-
-    @staticmethod
-    def _load_cells_by_hash(
-        *,
-        session: Any,
-        commit_hashes: Sequence[str],
-        island_id: str | None,
-    ) -> dict[str, MapElitesArchiveCell]:
-        cells_by_hash: dict[str, MapElitesArchiveCell] = {}
-        if not island_id:
-            return cells_by_hash
-        cells = session.scalars(
-            select(MapElitesArchiveCell).where(
-                MapElitesArchiveCell.island_id == island_id,
-                MapElitesArchiveCell.commit_hash.in_(commit_hashes),
-            )
-        ).all()
-        for cell in cells:
-            if cell.commit_hash in cells_by_hash:
-                raise MultipleResultsFound(
-                    "Multiple map-elites archive cells found for one commit hash "
-                    f"(island={island_id}, commit={cell.commit_hash})."
-                )
-            cells_by_hash[cell.commit_hash] = cell
-        return cells_by_hash
 
     def _load_artifacts_by_hash(
         self,
@@ -1631,7 +1572,6 @@ class EvolutionWorker:
                 card=card,
                 metric_rows=tuple(rows.metrics_by_card_id.get(card.id, ())) if card else (),
                 artifact_rows=tuple(rows.artifacts_by_hash.get(commit_hash, ())),
-                cell=rows.cells_by_hash.get(commit_hash),
             )
             for commit_hash in ordered_hashes
             for card in (rows.cards_by_hash.get(commit_hash),)
@@ -1643,7 +1583,6 @@ class EvolutionWorker:
         commit_hash: str,
         card: CommitCard | None,
         metric_rows: Sequence[Metric],
-        cell: MapElitesArchiveCell | None,
         artifact_rows: Sequence[EvaluationArtifactRecord] = (),
     ) -> CommitPlanningContext:
         subject = (getattr(card, "subject", None) or "").strip() or f"Commit {commit_hash}"
@@ -1665,9 +1604,6 @@ class EvolutionWorker:
             evaluation_summary=evaluation_summary,
             metrics=metrics,
             evaluation_artifacts=evaluation_artifacts,
-            map_elites_cell_index=int(cell.cell_index) if cell is not None else None,
-            map_elites_objective=float(cell.objective) if cell is not None else None,
-            map_elites_measures=tuple(float(v) for v in (cell.measures or ())) if cell is not None else (),
         )
 
     def _metric_from_row(self, row: Metric) -> CommitMetric:

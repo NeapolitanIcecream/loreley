@@ -1,38 +1,34 @@
-"""Archive-centric MAP-Elites operations."""
+"""Pareto behavior-archive operations and manager-facing record adapters."""
 
 from __future__ import annotations
 
 import time
-from typing import Any, Mapping, Sequence, cast
+from typing import Sequence
 
 import numpy as np
-from ribs.archives import GridArchive
 
-from loreley.config import Settings
+from loreley.config import Settings, resolve_objective_contract
 
-from .snapshot import SnapshotCellUpsert, to_list
-from .types import IslandState, MapElitesRecord, Vector, compact_solution, materialize_solution
+from .pareto_archive import ParetoCandidate, ParetoGridArchive
+from .snapshot import SnapshotElite
+from .types import IslandState, MapElitesRecord
 
 __all__ = [
-    "build_feature_bounds",
-    "build_archive",
-    "clip_vector",
-    "compact_solution",
-    "materialize_solution",
-    "to_vector",
-    "record_from_scalar_row",
-    "records_from_store_data",
-    "add_single",
     "add_batch",
+    "add_single",
+    "build_archive",
     "build_archive_replace_payload",
+    "build_feature_bounds",
+    "clip_vector",
+    "record_from_candidate",
+    "records_from_archive",
+    "sync_archive_indexes",
 ]
 
 
 def build_feature_bounds(*, target_dims: int) -> tuple[np.ndarray, np.ndarray]:
     dims = int(target_dims)
-    lower = np.zeros(dims, dtype=np.float64)
-    upper = np.ones(dims, dtype=np.float64)
-    return lower, upper
+    return np.zeros(dims, dtype=np.float64), np.ones(dims, dtype=np.float64)
 
 
 def build_archive(
@@ -44,27 +40,24 @@ def build_archive(
     upper_template: np.ndarray,
     lower_bounds: np.ndarray | None = None,
     upper_bounds: np.ndarray | None = None,
-) -> GridArchive:
+) -> ParetoGridArchive:
     dims = int(target_dims)
-    lower = np.asarray(lower_bounds if lower_bounds is not None else lower_template, dtype=np.float64)
-    upper = np.asarray(upper_bounds if upper_bounds is not None else upper_template, dtype=np.float64)
-    if lower.shape[0] != dims or upper.shape[0] != dims:
+    lower = np.asarray(
+        lower_bounds if lower_bounds is not None else lower_template,
+        dtype=np.float64,
+    )
+    upper = np.asarray(
+        upper_bounds if upper_bounds is not None else upper_template,
+        dtype=np.float64,
+    )
+    if lower.shape != (dims,) or upper.shape != (dims,):
         lower, upper = build_feature_bounds(target_dims=dims)
-
-    ranges = tuple(zip(lower.tolist(), upper.tolist()))
-    extra_fields = {
-        "commit_hash": ((), object),
-        "timestamp": ((), np.float64),
-    }
-    return GridArchive(
-        solution_dim=dims,
+    return ParetoGridArchive(
         dims=tuple(int(cells_per_dim) for _ in range(dims)),
-        ranges=ranges,
-        learning_rate=settings.mapelites_archive_learning_rate,
-        threshold_min=settings.mapelites_archive_threshold_min,
-        epsilon=settings.mapelites_archive_epsilon,
-        qd_score_offset=settings.mapelites_archive_qd_score_offset,
-        extra_fields=extra_fields,
+        ranges=tuple(zip(lower.tolist(), upper.tolist())),
+        objective_count=len(resolve_objective_contract(settings).specs),
+        max_front_size=int(settings.mapelites_pareto_front_max_size),
+        epsilon=float(settings.mapelites_pareto_epsilon),
     )
 
 
@@ -79,71 +72,41 @@ def clip_vector(
     effective_radius = float(clip_radius)
     if effective_radius <= 0.0:
         effective_radius = 1.0
-
-    # When clipping is enabled, keep descriptors within [-k, k] before mapping.
     if settings.mapelites_feature_clip:
         arr = np.clip(arr, -effective_radius, effective_radius)
-
-    normalised = (arr + effective_radius) / (2.0 * effective_radius)
-
-    # Only clamp to archive bounds when defensive clipping is on; otherwise
-    # allow values outside [0, 1] to surface as archive insert failures.
+    normalized = (arr + effective_radius) / (2.0 * effective_radius)
     if settings.mapelites_feature_clip:
-        return np.clip(normalised, state.lower_bounds, state.upper_bounds)
-    return normalised
+        return np.clip(normalized, state.lower_bounds, state.upper_bounds)
+    return normalized
+
+
 def add_single(
     *,
     state: IslandState,
     island_id: str,
     commit_hash: str,
-    fitness: float,
+    objective_values: Sequence[float],
+    objective_scores: Sequence[float],
     measures: np.ndarray,
-    commit_to_island: dict[str, str],
     timestamp: float | None = None,
 ) -> tuple[int, float, MapElitesRecord | None]:
-    archive = state.archive
-    measures_batch = measures.reshape(1, -1)
-    solution = measures_batch  # Store embedding itself as the solution payload.
-    objective = np.asarray([fitness], dtype=np.float64)
-    ts_value = time.time() if timestamp is None else float(timestamp)
-    timestamp_batch = np.asarray([ts_value], dtype=np.float64)
-    commit_field = np.asarray([commit_hash], dtype=object)
-
-    cell_index = int(np.asarray(archive.index_of(measures_batch)).item())
-    previous_commit = state.index_to_commit.get(cell_index)
-
-    add_info = archive.add(
-        solution,
-        objective,
-        measures_batch,
-        commit_hash=commit_field,
-        timestamp=timestamp_batch,
+    candidate = ParetoCandidate(
+        commit_hash=commit_hash,
+        objective_values=tuple(float(value) for value in objective_values),
+        objective_scores=tuple(float(value) for value in objective_scores),
+        measures=tuple(float(value) for value in np.asarray(measures).reshape(-1)),
+        timestamp=time.time() if timestamp is None else float(timestamp),
     )
-    status = int(add_info["status"][0])
-    delta = float(add_info["value"][0])
-
-    if status <= 0:
-        return status, delta, None
-
-    vector = to_vector(measures)
-    record = MapElitesRecord(
-        commit_hash=str(commit_hash),
+    outcome = state.archive.add(candidate)
+    sync_archive_indexes(state)
+    if not outcome.retained:
+        return 0, 0.0, None
+    record = record_from_candidate(
+        candidate=candidate,
         island_id=island_id,
-        cell_index=int(cell_index),
-        fitness=float(fitness),
-        measures=vector,
-        solution=vector,
-        timestamp=float(ts_value),
+        cell_index=outcome.cell_index,
     )
-
-    state.index_to_commit[cell_index] = commit_hash
-    state.commit_to_index[commit_hash] = cell_index
-    commit_to_island[commit_hash] = island_id
-    if previous_commit and previous_commit != commit_hash:
-        state.commit_to_index.pop(previous_commit, None)
-        commit_to_island.pop(previous_commit, None)
-
-    return status, delta, record
+    return 1, float(len(outcome.removed_commit_hashes)), record
 
 
 def add_batch(
@@ -151,181 +114,126 @@ def add_batch(
     state: IslandState,
     island_id: str,
     commit_hashes: Sequence[str],
-    objectives: Sequence[float],
+    objective_values: Sequence[Sequence[float]] | np.ndarray,
+    objective_scores: Sequence[Sequence[float]] | np.ndarray,
     measures: Sequence[np.ndarray] | np.ndarray,
     timestamps: Sequence[float],
-    commit_to_island: dict[str, str],
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Insert a batch of elites and update commit mappings from add feedback."""
-
     batch_size = len(commit_hashes)
-    if batch_size == 0:
-        return (
-            np.asarray([], dtype=np.int64),
-            np.asarray([], dtype=np.float64),
-        )
-    if len(objectives) != batch_size or len(measures) != batch_size or len(timestamps) != batch_size:
+    values_matrix = np.asarray(objective_values, dtype=np.float64)
+    scores_matrix = np.asarray(objective_scores, dtype=np.float64)
+    measures_matrix = np.asarray(measures, dtype=np.float64)
+    timestamp_vector = np.asarray(timestamps, dtype=np.float64).reshape(-1)
+    expected_objectives = state.archive.objective_count
+    expected_measures = len(state.archive.dims)
+    if values_matrix.shape != (batch_size, expected_objectives):
         raise ValueError(
-            "Batch archive insertion payload length mismatch "
-            f"(commits={batch_size} objectives={len(objectives)} "
-            f"measures={len(measures)} timestamps={len(timestamps)})."
+            "Raw objective batch shape mismatch "
+            f"(expected={(batch_size, expected_objectives)} got={values_matrix.shape})."
+        )
+    if scores_matrix.shape != values_matrix.shape:
+        raise ValueError(
+            "Dominance score batch shape mismatch "
+            f"(expected={values_matrix.shape} got={scores_matrix.shape})."
+        )
+    if measures_matrix.shape != (batch_size, expected_measures):
+        raise ValueError(
+            "Behavior measures batch shape mismatch "
+            f"(expected={(batch_size, expected_measures)} got={measures_matrix.shape})."
+        )
+    if timestamp_vector.shape != (batch_size,):
+        raise ValueError(
+            "Timestamp batch shape mismatch "
+            f"(expected={(batch_size,)} got={timestamp_vector.shape})."
         )
 
-    archive = state.archive
-    measures_batch = np.asarray(measures, dtype=np.float64)
-    if measures_batch.ndim != 2 or measures_batch.shape[0] != batch_size:
-        raise ValueError(
-            "Batch archive insertion measures shape mismatch "
-            f"(expected=({batch_size}, dims) got={measures_batch.shape})."
+    candidates = tuple(
+        ParetoCandidate(
+            commit_hash=str(commit_hash),
+            objective_values=tuple(values_matrix[index]),
+            objective_scores=tuple(scores_matrix[index]),
+            measures=tuple(measures_matrix[index]),
+            timestamp=float(timestamp_vector[index]),
         )
-    objective_batch = np.asarray(objectives, dtype=np.float64).reshape(-1)
-    timestamp_batch = np.asarray(timestamps, dtype=np.float64).reshape(-1)
-    if objective_batch.shape[0] != batch_size or timestamp_batch.shape[0] != batch_size:
-        raise ValueError(
-            "Batch archive insertion objective/timestamp shape mismatch "
-            f"(expected={batch_size} got_objective={objective_batch.shape[0]} "
-            f"got_timestamp={timestamp_batch.shape[0]})."
-        )
-
-    commit_batch = np.asarray([str(commit or "").strip() for commit in commit_hashes], dtype=object)
-    cell_indices = np.asarray(archive.index_of(measures_batch), dtype=np.int64).reshape(-1)
-    if cell_indices.shape[0] != batch_size:
-        raise RuntimeError(
-            "GridArchive.index_of() returned unexpected index shape "
-            f"(expected={batch_size} got={cell_indices.shape[0]})."
-        )
-
-    add_info = archive.add(
-        measures_batch,
-        objective_batch,
-        measures_batch,
-        commit_hash=commit_batch,
-        timestamp=timestamp_batch,
+        for index, commit_hash in enumerate(commit_hashes)
     )
-    statuses = np.asarray(add_info.get("status", ()), dtype=np.int64).reshape(-1)
-    values = np.asarray(add_info.get("value", ()), dtype=np.float64).reshape(-1)
-    if statuses.shape[0] != batch_size or values.shape[0] != batch_size:
-        raise RuntimeError(
-            "GridArchive.add() returned unexpected add_info shape "
-            f"(expected={batch_size} got_status={statuses.shape[0]} got_value={values.shape[0]})."
-        )
-
-    winners_by_cell: dict[int, tuple[int, float, int]] = {}
-    for idx, status_raw in enumerate(statuses):
-        status = int(status_raw)
-        if status <= 0:
-            continue
-        cell_index = int(cell_indices[idx])
-        rank = (status, float(values[idx]), idx)
-        previous = winners_by_cell.get(cell_index)
-        if previous is None or (rank[0], rank[1]) > (previous[0], previous[1]):
-            winners_by_cell[cell_index] = rank
-
-    for cell_index, (_status, _value, idx) in winners_by_cell.items():
-        commit_hash = str(commit_batch[idx] or "").strip()
-        previous_commit = state.index_to_commit.get(cell_index)
-        state.index_to_commit[cell_index] = commit_hash
-        if commit_hash:
-            state.commit_to_index[commit_hash] = cell_index
-            commit_to_island[commit_hash] = island_id
-        if previous_commit and previous_commit != commit_hash:
-            state.commit_to_index.pop(previous_commit, None)
-            commit_to_island.pop(previous_commit, None)
-
+    outcomes = state.archive.add_many(candidates)
+    sync_archive_indexes(state)
+    statuses = np.asarray([outcome.status for outcome in outcomes], dtype=np.int64)
+    values = np.asarray(
+        [1.0 if outcome.retained else 0.0 for outcome in outcomes],
+        dtype=np.float64,
+    )
     return statuses, values
+
+
+def sync_archive_indexes(state: IslandState) -> None:
+    commit_to_index: dict[str, int] = {}
+    index_to_commits: dict[int, tuple[str, ...]] = {}
+    for cell_index in sorted(
+        {int(value) for value in state.archive.data().get("index", ())}
+    ):
+        commits = tuple(
+            candidate.commit_hash
+            for candidate in state.archive.front(cell_index)
+        )
+        if not commits:
+            continue
+        index_to_commits[cell_index] = commits
+        for commit_hash in commits:
+            commit_to_index[commit_hash] = cell_index
+    state.commit_to_index = commit_to_index
+    state.index_to_commits = index_to_commits
+
+
+def record_from_candidate(
+    *,
+    candidate: ParetoCandidate,
+    island_id: str,
+    cell_index: int,
+) -> MapElitesRecord:
+    return MapElitesRecord(
+        commit_hash=candidate.commit_hash,
+        island_id=island_id,
+        cell_index=int(cell_index),
+        objective_values=candidate.objective_values,
+        objective_scores=candidate.objective_scores,
+        measures=candidate.measures,
+        timestamp=candidate.timestamp,
+    )
+
+
+def records_from_archive(
+    archive: ParetoGridArchive,
+    island_id: str,
+) -> tuple[MapElitesRecord, ...]:
+    index_by_commit = {
+        candidate.commit_hash: cell_index
+        for cell_index in sorted({int(value) for value in archive.data().get("index", ())})
+        for candidate in archive.front(cell_index)
+    }
+    return tuple(
+        record_from_candidate(
+            candidate=candidate,
+            island_id=island_id,
+            cell_index=index_by_commit[candidate.commit_hash],
+        )
+        for candidate in archive.records()
+    )
 
 
 def build_archive_replace_payload(
     *,
     state: IslandState,
     island_id: str,
-) -> tuple[SnapshotCellUpsert, ...]:
-    if state.archive.empty:
-        return tuple()
-    data = state.archive.data()
-    records = records_from_store_data(
-        cast(Mapping[str, Any], data),
-        island_id,
+) -> tuple[SnapshotElite, ...]:
+    return tuple(
+        SnapshotElite(
+            cell_index=record.cell_index,
+            commit_hash=record.commit_hash,
+            objective_values=record.objective_values,
+            measures=record.measures,
+            timestamp=record.timestamp,
+        )
+        for record in records_from_archive(state.archive, island_id)
     )
-    payload = [
-        SnapshotCellUpsert(
-            cell_index=int(record.cell_index),
-            objective=float(record.fitness),
-            measures=tuple(float(v) for v in record.measures),
-            solution=compact_solution(
-                measures=record.measures,
-                solution=record.solution,
-            ),
-            commit_hash=str(record.commit_hash),
-            timestamp=float(record.timestamp),
-        )
-        for record in records
-        if record.commit_hash
-    ]
-    payload.sort(key=lambda item: int(item.cell_index))
-    return tuple(payload)
-
-
-def records_from_store_data(
-    data: Mapping[str, Any],
-    island_id: str,
-) -> tuple[MapElitesRecord, ...]:
-    if not data:
-        return ()
-    indices = to_list(data.get("index"))
-    if not indices:
-        return ()
-    objectives = to_list(data.get("objective"))
-    measures = to_list(data.get("measures"))
-    solutions = to_list(data.get("solution"))
-    commit_hashes = to_list(data.get("commit_hash"))
-    timestamps = to_list(data.get("timestamp"))
-    records: list[MapElitesRecord] = []
-    for idx, cell_index in enumerate(indices):
-        commit_hash = str(commit_hashes[idx]) if idx < len(commit_hashes) else ""
-        fitness = float(objectives[idx]) if idx < len(objectives) else 0.0
-        timestamp_value = (
-            float(timestamps[idx]) if idx < len(timestamps) else time.time()
-        )
-        record = MapElitesRecord(
-            commit_hash=commit_hash,
-            island_id=island_id,
-            cell_index=int(cell_index),
-            fitness=fitness,
-            measures=to_vector(measures[idx]) if idx < len(measures) else (),
-            solution=materialize_solution(
-                measures=measures[idx] if idx < len(measures) else (),
-                solution=solutions[idx] if idx < len(solutions) else (),
-            ),
-            timestamp=timestamp_value,
-        )
-        records.append(record)
-    return tuple(records)
-
-
-def record_from_scalar_row(data: Mapping[str, Any], island_id: str) -> MapElitesRecord:
-    commit_raw = data.get("commit_hash")
-    if isinstance(commit_raw, np.ndarray):
-        commit_hash = str(commit_raw.item()) if commit_raw.size else ""
-    elif isinstance(commit_raw, (list, tuple)):
-        commit_hash = str(commit_raw[0]) if commit_raw else ""
-    else:
-        commit_hash = str(commit_raw or "")
-    return MapElitesRecord(
-        commit_hash=commit_hash,
-        island_id=island_id,
-        cell_index=int(data.get("index", -1)),
-        fitness=float(data.get("objective", 0.0)),
-        measures=to_vector(data.get("measures", ())),
-        solution=materialize_solution(
-            measures=data.get("measures", ()),
-            solution=data.get("solution", ()),
-        ),
-        timestamp=float(data.get("timestamp", time.time())),
-    )
-
-
-def to_vector(values: Any) -> Vector:
-    if values is None:
-        return ()
-    return tuple(float(v) for v in np.asarray(values).ravel())

@@ -15,13 +15,13 @@ from uuid import UUID
 from git import Repo
 from loguru import logger
 from rich.console import Console
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from loreley.config import Settings, resolve_default_island_id
 from loreley.core.contracts import clamp_text, normalize_single_line
 from loreley.core.git import RepositoryError as GitRepositoryError, require_commit
-from loreley.core.map_elites.map_elites import MapElitesManager
+from loreley.core.map_elites.manager import MapElitesManager
 from loreley.core.repo_lock import repo_lock
 from loreley.core.worker.evaluator import EvaluationContext, EvaluationError, EvaluationResult, Evaluator
 from loreley.core.worker.repository import RepositoryError, WorkerRepository

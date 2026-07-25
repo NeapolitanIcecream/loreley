@@ -17,10 +17,8 @@ class CommitGraphNodeOut(OrmOutModel):
     created_at: datetime | None = None
     author: str | None = None
     message: str | None = None
-    metric_name: str | None = None
-    metric_value: float | None = None
-    fitness: float | None = None
-    objective: float | None = None
+    primary_metric_name: str | None = None
+    primary_metric_value: float | None = None
     is_elite: bool = False
     has_evaluation_evidence: bool = False
     agent_visible_evidence_count: int = 0
@@ -44,8 +42,8 @@ class CommitGraphEdgeOut(OrmOutModel):
 
 
 class CommitGraphOut(OrmOutModel):
-    metric_name: str | None
-    higher_is_better: bool
+    primary_metric_name: str
+    primary_metric_higher_is_better: bool
     mode: str
     max_nodes: int
     truncated: bool

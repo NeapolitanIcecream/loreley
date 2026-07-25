@@ -664,6 +664,8 @@ class EvolutionJob(TimestampMixin, Base):
         default=list,
         nullable=False,
     )
+    migration_source_island_id: Mapped[str | None] = mapped_column(String(64))
+    migration_commit_hash: Mapped[str | None] = mapped_column(String(64))
     plan_summary: Mapped[str | None] = mapped_column(Text)
     goal: Mapped[str | None] = mapped_column(String(512))
     constraints: Mapped[list[str]] = mapped_column(
@@ -877,14 +879,15 @@ class MapElitesState(TimestampMixin, Base):
 
 
 class MapElitesArchiveCell(TimestampMixin, Base):
-    """Single occupied MAP-Elites archive cell stored incrementally.
-
-    This table replaces embedding the full archive inside `MapElitesState.snapshot`.
-    Each occupied cell is stored as one row so inserts can be persisted via upserts.
-    """
+    """One retained member of a behavior cell's bounded Pareto front."""
 
     __tablename__ = "map_elites_archive_cells"
     __table_args__ = (
+        UniqueConstraint(
+            "island_id",
+            "commit_hash",
+            name="uq_map_elites_archive_island_commit",
+        ),
         Index(
             "ix_map_elites_archive_cells_commit_hash",
             "commit_hash",
@@ -893,20 +896,17 @@ class MapElitesArchiveCell(TimestampMixin, Base):
 
     island_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     cell_index: Mapped[int] = mapped_column(Integer, primary_key=True)
-
-    commit_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    objective: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    commit_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    objective_values: Mapped[list[float]] = mapped_column(
+        MutableList.as_mutable(ARRAY(Float)),
+        default=list,
+        nullable=False,
+    )
     measures: Mapped[list[float]] = mapped_column(
         MutableList.as_mutable(ARRAY(Float)),
         default=list,
         nullable=False,
     )
-    solution: Mapped[list[float]] = mapped_column(
-        MutableList.as_mutable(ARRAY(Float)),
-        default=list,
-        nullable=False,
-    )
-    # Epoch seconds used by the archive extra field.
     timestamp: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
@@ -1052,9 +1052,4 @@ Index(
     "ix_evolution_jobs_ui_sort_expr",
     func.coalesce(EvolutionJob.completed_at, EvolutionJob.created_at).desc(),
     EvolutionJob.id.desc(),
-)
-Index(
-    "ix_map_elites_archive_cells_island_commit",
-    MapElitesArchiveCell.island_id,
-    MapElitesArchiveCell.commit_hash,
 )

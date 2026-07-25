@@ -7,7 +7,13 @@ import uuid
 import pytest
 
 import loreley.api.services.archive as archive_service
-from loreley.config import Settings
+from loreley.config import Settings, resolve_objective_contract
+from loreley.core.map_elites.objectives import ObjectiveContract, ObjectiveSpec
+
+
+_VALIDATE_PERSISTED_OBJECTIVE_CONTRACT = (
+    archive_service._validate_persisted_objective_contract
+)
 
 
 class _ScalarRows:
@@ -51,6 +57,41 @@ class _FakeSession:
         return self._result
 
 
+@pytest.fixture(autouse=True)
+def _stub_persisted_objective_contract_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        archive_service,
+        "_validate_persisted_objective_contract",
+        lambda **_kwargs: None,
+    )
+
+
+def test_archive_reads_reject_a_persisted_objective_contract_mismatch(
+    settings: Settings,
+) -> None:
+    configured = resolve_objective_contract(settings)
+    stored = ObjectiveContract(
+        (ObjectiveSpec(name="other", direction="max"),)
+    )
+    session = _FakeSession(
+        _ExecResult(
+            row={
+                "objective_contract": stored.as_payload(),
+                "objective_contract_fingerprint": stored.fingerprint,
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="fingerprint mismatch"):
+        _VALIDATE_PERSISTED_OBJECTIVE_CONTRACT(
+            session=session,
+            island_id="main",
+            objective_contract=configured,
+        )
+
+
 def test_describe_island_reads_stats_from_archive_rows(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,
@@ -65,9 +106,7 @@ def test_describe_island_reads_stats_from_archive_rows(
         def execute(self, _stmt):
             self.calls += 1
             if self.calls == 1:
-                return _ExecResult(row=(3, 5.5, 3.0))
-            if self.calls == 2:
-                return _ExecResult(row=(3.0,))
+                return _ExecResult(row=(3, 5, 3.0))
             raise AssertionError("unexpected extra query")
 
     @contextmanager
@@ -81,39 +120,47 @@ def test_describe_island_reads_stats_from_archive_rows(
     assert stats == {
         "island_id": "main",
         "occupied": 3,
+        "elites": 5,
         "cells": 16,
         "coverage": pytest.approx(3 / 16),
-        "qd_score": pytest.approx(5.5),
-        "norm_qd_score": pytest.approx(5.5 / 16),
-        "best_fitness": pytest.approx(3.0),
-        "best_objective": pytest.approx(3.0),
-        "metric_name": settings.mapelites_fitness_metric,
-        "higher_is_better": settings.mapelites_fitness_higher_is_better,
+        "objective_count": 1,
+        "front_max_size": settings.mapelites_pareto_front_max_size,
+        "best_primary_value": pytest.approx(3.0),
+        "primary_metric_name": "composite_score",
+        "primary_metric_higher_is_better": True,
     }
+
+
+def test_list_islands_returns_configured_empty_islands(
+    settings: Settings,
+) -> None:
+    settings.mapelites_islands = ("alpha", "beta")
+
+    assert archive_service.list_islands(settings=settings) == [
+        "alpha",
+        "beta",
+    ]
 
 
 def test_list_records_reads_archive_cells_without_manager(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,
 ) -> None:
-    settings.mapelites_fitness_metric = ""
     rows = [
         SimpleNamespace(
             commit_hash="c1",
             island_id="main",
             cell_index=1,
-            objective=1.2,
+            objective_values=[1.2],
             measures=[0.1, 0.2],
-            solution=[],
             timestamp=10.0,
         ),
         SimpleNamespace(
             commit_hash="c2",
             island_id="main",
             cell_index=2,
-            objective=2.4,
+            objective_values=[2.4],
             measures=[0.5, 0.6],
-            solution=[0.7, 0.8],
             timestamp=11.0,
         ),
     ]
@@ -134,23 +181,63 @@ def test_list_records_reads_archive_cells_without_manager(
 
     assert [record.commit_hash for record in records] == ["c1", "c2"]
     assert records[0].measures == pytest.approx((0.1, 0.2))
-    assert records[0].solution == pytest.approx((0.1, 0.2))
+    assert records[0].objective_values == pytest.approx((1.2,))
+    assert records[0].objective_scores == pytest.approx((1.2,))
     assert records[0].candidate_fate_label == "elite_retained"
     assert records[0].candidate_fate_reason == "Candidate is a current archive elite. cell=1."
-    assert records[1].solution == pytest.approx((0.7, 0.8))
+    assert records[1].objective_values == pytest.approx((2.4,))
     stmt = session.statements[0]
     assert int(stmt._limit_clause.value) == 1
     assert int(stmt._offset_clause.value) == 1
 
 
-def test_describe_island_uses_raw_metric_value_for_best_fitness_when_lower_is_better(
+def test_records_cursor_continues_within_the_same_pareto_front(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    rows = [
+        SimpleNamespace(
+            commit_hash="c2",
+            island_id="main",
+            cell_index=1,
+            objective_values=[2.0],
+            measures=[0.2],
+            timestamp=11.0,
+        )
+    ]
+    session = _FakeSession(_ExecResult(rows=rows))
+
+    @contextmanager
+    def _fake_scope():
+        yield session
+
+    monkeypatch.setattr(archive_service, "session_scope", _fake_scope)
+    cursor = archive_service.encode_cursor(
+        {"cell_index": 1, "commit_hash": "c1"}
+    )
+
+    page = archive_service.list_records_page(
+        island_id="main",
+        settings=settings,
+        limit=1,
+        cursor=cursor,
+    )
+
+    assert [record.commit_hash for record in page.items] == ["c2"]
+    compiled = session.statements[0].compile()
+    assert "map_elites_archive_cells.commit_hash >" in str(compiled)
+    assert "c1" in compiled.params.values()
+
+
+def test_describe_island_uses_raw_primary_value_when_lower_is_better(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,
 ) -> None:
     settings.mapelites_dimensionality_target_dims = 2
     settings.mapelites_archive_cells_per_dim = 4
-    settings.mapelites_fitness_metric = "latency_ms"
-    settings.mapelites_fitness_higher_is_better = False
+    settings.mapelites_objectives = (
+        ObjectiveSpec(name="latency_ms", direction="min"),
+    )
 
     class _SequencedSession:
         def __init__(self) -> None:
@@ -159,9 +246,7 @@ def test_describe_island_uses_raw_metric_value_for_best_fitness_when_lower_is_be
         def execute(self, _stmt):
             self.calls += 1
             if self.calls == 1:
-                return _ExecResult(row=(3, -5.5, -1.0))
-            if self.calls == 2:
-                return _ExecResult(row=(12.5,))
+                return _ExecResult(row=(3, 5, 12.5))
             raise AssertionError("unexpected extra query")
 
     @contextmanager
@@ -172,26 +257,25 @@ def test_describe_island_uses_raw_metric_value_for_best_fitness_when_lower_is_be
 
     stats = archive_service.describe_island(island_id="main", settings=settings)
 
-    assert stats["best_fitness"] == pytest.approx(12.5)
-    assert stats["best_objective"] == pytest.approx(-1.0)
-    assert stats["metric_name"] == "latency_ms"
-    assert stats["higher_is_better"] is False
+    assert stats["best_primary_value"] == pytest.approx(12.5)
+    assert stats["primary_metric_name"] == "latency_ms"
+    assert stats["primary_metric_higher_is_better"] is False
 
 
-def test_list_records_exposes_metric_value_separately_from_objective(
+def test_list_records_exposes_raw_values_and_normalized_scores(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,
 ) -> None:
-    settings.mapelites_fitness_metric = "latency_ms"
-    settings.mapelites_fitness_higher_is_better = False
+    settings.mapelites_objectives = (
+        ObjectiveSpec(name="latency_ms", direction="min"),
+    )
     rows = [
         SimpleNamespace(
             commit_hash="c1",
             island_id="main",
             cell_index=1,
-            objective=-12.5,
+            objective_values=[12.5],
             measures=[0.1, 0.2],
-            solution=[],
             timestamp=10.0,
         ),
     ]
@@ -204,8 +288,6 @@ def test_list_records_exposes_metric_value_separately_from_objective(
             self.calls += 1
             if self.calls == 1:
                 return _ExecResult(rows=rows)
-            if self.calls == 2:
-                return _ExecResult(rows=[("c1", 12.5)])
             raise AssertionError("unexpected extra query")
 
     @contextmanager
@@ -222,9 +304,9 @@ def test_list_records_exposes_metric_value_separately_from_objective(
     )
 
     assert len(records) == 1
-    assert records[0].fitness == pytest.approx(12.5)
-    assert records[0].metric_value == pytest.approx(12.5)
-    assert records[0].objective == pytest.approx(-12.5)
+    assert records[0].objective_values == pytest.approx((12.5,))
+    assert records[0].objective_scores == pytest.approx((-12.5,))
+    assert records[0].primary_metric_value == pytest.approx(12.5)
 
 
 def test_list_records_scopes_baseline_to_each_candidate_campaign_program(
@@ -234,25 +316,22 @@ def test_list_records_scopes_baseline_to_each_candidate_campaign_program(
     """Regression: archive deltas must not reuse the latest baseline from another campaign."""
 
     settings.mapelites_experiment_root_commit = "root123"
-    settings.mapelites_fitness_metric = "score"
-    settings.mapelites_fitness_higher_is_better = True
+    settings.mapelites_objectives = (ObjectiveSpec(name="score", direction="max"),)
     rows = [
         SimpleNamespace(
             commit_hash="commit-a",
             island_id="main",
             cell_index=1,
-            objective=20.0,
+            objective_values=[20.0],
             measures=[0.1],
-            solution=[],
             timestamp=10.0,
         ),
         SimpleNamespace(
             commit_hash="commit-b",
             island_id="main",
             cell_index=2,
-            objective=7.0,
+            objective_values=[7.0],
             measures=[0.2],
-            solution=[],
             timestamp=11.0,
         ),
     ]
@@ -293,8 +372,6 @@ def test_list_records_scopes_baseline_to_each_candidate_campaign_program(
             if self.calls == 1:
                 return _ExecResult(rows=rows)
             if self.calls == 2:
-                return _ExecResult(rows=[("commit-a", 20.0), ("commit-b", 7.0)])
-            if self.calls == 3:
                 return _ExecResult(rows=[("commit-a", "program-a"), ("commit-b", "program-b")])
             raise AssertionError("unexpected extra query")
 
@@ -327,16 +404,14 @@ def test_list_records_surfaces_degraded_baseline_without_delta(
     """Regression: warn-policy degraded baselines stay visible while deltas remain unavailable."""
 
     settings.mapelites_experiment_root_commit = "root123"
-    settings.mapelites_fitness_metric = "score"
-    settings.mapelites_fitness_higher_is_better = True
+    settings.mapelites_objectives = (ObjectiveSpec(name="score", direction="max"),)
     rows = [
         SimpleNamespace(
             commit_hash="commit-a",
             island_id="main",
             cell_index=1,
-            objective=20.0,
+            objective_values=[20.0],
             measures=[0.1],
-            solution=[],
             timestamp=10.0,
         ),
     ]
@@ -365,8 +440,6 @@ def test_list_records_surfaces_degraded_baseline_without_delta(
             if self.calls == 1:
                 return _ExecResult(rows=rows)
             if self.calls == 2:
-                return _ExecResult(rows=[("commit-a", 20.0)])
-            if self.calls == 3:
                 return _ExecResult(rows=[("commit-a", "program-a")])
             raise AssertionError("unexpected extra query")
 

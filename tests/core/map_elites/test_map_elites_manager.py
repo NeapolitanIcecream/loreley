@@ -2,18 +2,18 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Mapping
 
 import numpy as np
 import pytest
 
-import loreley.core.map_elites.archive_ops as map_elites_archive_ops
 import loreley.core.map_elites.db_ops as map_elites_db_ops
 import loreley.core.map_elites.manager as map_elites_module
-from loreley.config import Settings
+from loreley.config import Settings, resolve_objective_contract
 from loreley.core.map_elites.code_embedding import CommitCodeEmbedding
 from loreley.core.map_elites.dimension_reduction import FinalEmbedding, PCAProjection, PcaHistoryEntry
-from loreley.core.map_elites.map_elites import MapElitesManager, MapElitesRecord
+from loreley.core.map_elites.manager import MapElitesManager
+from loreley.core.map_elites.types import MapElitesRecord
+from loreley.core.map_elites.objectives import ObjectiveSpec, ResolvedObjectives
 from loreley.core.map_elites.repository_state_embedding import RepoStateEmbeddingStats, RepositoryStateEmbedder
 
 
@@ -88,11 +88,41 @@ def _identity_projection(*, dims: int = 2, epoch: int = 0) -> PCAProjection:
     )
 
 
+def _configure_score_objective(settings: Settings) -> None:
+    settings.mapelites_islands = ("main",)
+    settings.mapelites_objectives = (
+        ObjectiveSpec(name="score", direction="max"),
+    )
+
+
+def _score_metrics(value: float) -> tuple[dict[str, object], ...]:
+    return (
+        {
+            "name": "score",
+            "value": value,
+            "higher_is_better": True,
+        },
+    )
+
+
+def _with_contract(
+    settings: Settings,
+    snapshot: dict[str, object],
+) -> dict[str, object]:
+    contract = resolve_objective_contract(settings)
+    return {
+        **snapshot,
+        "objective_contract": contract.as_payload(),
+        "objective_contract_fingerprint": contract.fingerprint,
+    }
+
+
 def test_manager_lazy_loads_persisted_snapshot_for_stats_and_records(settings: Settings) -> None:
+    _configure_score_objective(settings)
     settings.mapelites_dimensionality_target_dims = 2
     settings.mapelites_archive_cells_per_dim = 4
 
-    snapshot = {
+    snapshot = _with_contract(settings, {
         "island_id": "main",
         "lower_bounds": [0.0, 0.0],
         "upper_bounds": [1.0, 1.0],
@@ -101,14 +131,13 @@ def test_manager_lazy_loads_persisted_snapshot_for_stats_and_records(settings: S
         "archive": [
             {
                 "index": 0,
-                "objective": 1.23,
+                "objective_values": [1.23],
                 "measures": [0.1, 0.1],
-                "solution": [0.1, 0.1],
                 "commit_hash": "c1",
                 "timestamp": 42.0,
             }
         ],
-    }
+    })
 
     class DummySnapshotBackend:
         def __init__(self, payload: dict[str, object]) -> None:
@@ -125,21 +154,50 @@ def test_manager_lazy_loads_persisted_snapshot_for_stats_and_records(settings: S
     stats = manager.describe_island("main")
     assert stats["cells"] == 16
     assert stats["occupied"] == 1
+    assert stats["elites"] == 1
     assert stats["coverage"] == pytest.approx(1 / 16)
-    assert stats["norm_qd_score"] == pytest.approx(float(stats["qd_score"]) / float(stats["cells"]))
-    assert stats["best_fitness"] == pytest.approx(1.23)
+    assert stats["objective_count"] == 1
+    assert stats["front_max_size"] == settings.mapelites_pareto_front_max_size
+    assert stats["primary_metric_name"] == "score"
+    assert stats["primary_metric_direction"] == "max"
+    assert stats["best_primary_value"] == pytest.approx(1.23)
 
     records = manager.get_records("main")
     assert len(records) == 1
     assert records[0].commit_hash == "c1"
-    assert manager.get_cell_commits("main") == {0: "c1"}
+    assert records[0].objective_values == pytest.approx((1.23,))
+    assert manager.get_cell_fronts("main") == {0: ("c1",)}
+
+
+def test_manager_validates_every_configured_island_eagerly(settings: Settings) -> None:
+    settings.mapelites_islands = ("alpha", "beta")
+    manager = MapElitesManager(settings=settings, repo_root=Path("."))
+    loaded: list[str] = []
+
+    class DummySnapshotBackend:
+        def load(
+            self,
+            island_id: str,
+            *,
+            history_limit: int | None = None,
+        ) -> None:
+            loaded.append(island_id)
+            return None
+
+    manager._snapshot_store = DummySnapshotBackend()  # type: ignore[assignment]
+
+    manager.validate_configured_islands()
+
+    assert loaded == ["alpha", "beta"]
+    assert set(manager._archives) == {"alpha", "beta"}
 
 
 def test_count_pca_history_samples_counts_non_empty_snapshot_entries(settings: Settings) -> None:
+    _configure_score_objective(settings)
     settings.mapelites_dimensionality_target_dims = 2
     settings.mapelites_archive_cells_per_dim = 4
 
-    snapshot = {
+    snapshot = _with_contract(settings, {
         "island_id": "main",
         "lower_bounds": [0.0, 0.0],
         "upper_bounds": [1.0, 1.0],
@@ -162,7 +220,7 @@ def test_count_pca_history_samples_counts_non_empty_snapshot_entries(settings: S
         ],
         "projection": None,
         "archive": [],
-    }
+    })
 
     class DummySnapshotBackend:
         def __init__(self, payload: dict[str, object]) -> None:
@@ -179,11 +237,12 @@ def test_count_pca_history_samples_counts_non_empty_snapshot_entries(settings: S
     assert manager.count_pca_history_samples("main") == 2
 
 
-def test_get_cell_commits_fails_when_bookkeeping_is_incomplete(settings: Settings) -> None:
+def test_get_cell_fronts_fails_when_bookkeeping_is_incomplete(settings: Settings) -> None:
+    _configure_score_objective(settings)
     settings.mapelites_dimensionality_target_dims = 2
     settings.mapelites_archive_cells_per_dim = 4
 
-    snapshot = {
+    snapshot = _with_contract(settings, {
         "island_id": "main",
         "lower_bounds": [0.0, 0.0],
         "upper_bounds": [1.0, 1.0],
@@ -192,22 +251,13 @@ def test_get_cell_commits_fails_when_bookkeeping_is_incomplete(settings: Setting
         "archive": [
             {
                 "index": 0,
-                "objective": 1.23,
+                "objective_values": [1.23],
                 "measures": [0.1, 0.1],
-                "solution": [0.1, 0.1],
                 "commit_hash": "c1",
                 "timestamp": 42.0,
             },
-            {
-                "index": 1,
-                "objective": 0.5,
-                "measures": [0.1, 0.3],
-                "solution": [0.1, 0.3],
-                "commit_hash": "",
-                "timestamp": 43.0,
-            },
         ],
-    }
+    })
 
     class DummySnapshotBackend:
         def __init__(self, payload: dict[str, object]) -> None:
@@ -221,15 +271,18 @@ def test_get_cell_commits_fails_when_bookkeeping_is_incomplete(settings: Setting
     manager = MapElitesManager(settings=settings, repo_root=Path("."))
     manager._snapshot_store = DummySnapshotBackend(snapshot)  # type: ignore[attr-defined]
 
+    state = manager._ensure_island("main")  # noqa: SLF001
+    state.index_to_commits.clear()
     with pytest.raises(RuntimeError, match="bookkeeping mismatch"):
-        _ = manager.get_cell_commits("main")
+        _ = manager.get_cell_fronts("main")
 
 
 def test_manager_rejects_snapshot_dimensionality_when_settings_mismatch(settings: Settings) -> None:
+    _configure_score_objective(settings)
     settings.mapelites_dimensionality_target_dims = 4
     settings.mapelites_archive_cells_per_dim = 4
 
-    snapshot = {
+    snapshot = _with_contract(settings, {
         "island_id": "main",
         "lower_bounds": [0.0, 0.0],
         "upper_bounds": [1.0, 1.0],
@@ -238,14 +291,13 @@ def test_manager_rejects_snapshot_dimensionality_when_settings_mismatch(settings
         "archive": [
             {
                 "index": 0,
-                "objective": 1.23,
+                "objective_values": [1.23],
                 "measures": [0.1, 0.1],
-                "solution": [0.1, 0.1],
                 "commit_hash": "c1",
                 "timestamp": 42.0,
             }
         ],
-    }
+    })
 
     class DummySnapshotBackend:
         def __init__(self, payload: dict[str, object]) -> None:
@@ -486,9 +538,8 @@ def test_ingest_stage_metrics_count_repo_state_sources(
     expected_aggregate: int,
     expected_incremental: int,
 ) -> None:
-    settings.mapelites_default_island_id = "main"
+    _configure_score_objective(settings)
     settings.mapelites_dimensionality_target_dims = 2
-    settings.mapelites_fitness_metric = "score"
     settings.mapelites_ingest_info_log_every = 1
 
     projection = _identity_projection()
@@ -517,7 +568,7 @@ def test_ingest_stage_metrics_count_repo_state_sources(
     manager._ensure_island("main").projection = projection  # type: ignore[attr-defined]
     monkeypatch.setattr(manager, "_add_to_archive", lambda **kwargs: (0, 0.0, None))
 
-    result = manager.ingest(commit_hash="abc", metrics={"score": 1.0})
+    result = manager.ingest(commit_hash="abc", metrics=_score_metrics(1.0))
 
     assert result.status == 0
     stage_logs = [
@@ -538,9 +589,8 @@ def test_ingest_warmup_persists_history_without_archive_update(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,
 ) -> None:
-    settings.mapelites_default_island_id = "main"
+    _configure_score_objective(settings)
     settings.mapelites_dimensionality_target_dims = 2
-    settings.mapelites_fitness_metric = "score"
     settings.mapelites_ingest_info_log_every = 1
 
     entry = _history_entry(commit_hash="warm")
@@ -574,7 +624,7 @@ def test_ingest_warmup_persists_history_without_archive_update(
 
     monkeypatch.setattr(manager, "_add_to_archive", _fail_add_to_archive)
 
-    result = manager.ingest(commit_hash="warm", metrics={"score": 1.0})
+    result = manager.ingest(commit_hash="warm", metrics=_score_metrics(1.0))
 
     assert result.status == 0
     assert result.record is None
@@ -586,7 +636,7 @@ def test_ingest_warmup_persists_history_without_archive_update(
     assert isinstance(update, map_elites_module.SnapshotUpdate)
     assert update.history_upsert is entry
     assert update.projection is None
-    assert update.cell_upsert is None
+    assert update.front_replace is None
     assert update.archive_replace is None
 
 
@@ -594,9 +644,8 @@ def test_ingest_skips_archive_when_fitness_is_not_finite(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,
 ) -> None:
-    settings.mapelites_default_island_id = "main"
+    _configure_score_objective(settings)
     settings.mapelites_dimensionality_target_dims = 2
-    settings.mapelites_fitness_metric = "score"
 
     projection = _identity_projection()
     entry = _history_entry()
@@ -628,24 +677,27 @@ def test_ingest_skips_archive_when_fitness_is_not_finite(
 
     monkeypatch.setattr(manager, "_add_to_archive", _fail_add_to_archive)
 
-    result = manager.ingest(commit_hash="abc", metrics={"score": float("nan")})
+    result = manager.ingest(
+        commit_hash="abc",
+        metrics=_score_metrics(float("nan")),
+    )
 
     assert result.status == 0
     assert result.record is None
-    assert result.message == "Fitness value is undefined; skipping archive update."
+    assert "finite" in (result.message or "")
     assert recorder.updates
     update = recorder.updates[-1][1]
     assert isinstance(update, map_elites_module.SnapshotUpdate)
-    assert update.cell_upsert is None
+    assert update.front_replace is None
 
 
 def test_ingest_builds_record_with_stubbed_dependencies(
     monkeypatch: pytest.MonkeyPatch, settings: Settings
 ) -> None:
+    _configure_score_objective(settings)
     settings.mapelites_dimensionality_target_dims = 2
     settings.mapelites_feature_clip = True
     settings.mapelites_feature_truncation_k = 1.0
-    settings.mapelites_fitness_metric = "score"
 
     code_embedding = CommitCodeEmbedding(
         files=(),
@@ -721,18 +773,20 @@ def test_ingest_builds_record_with_stubbed_dependencies(
         state: object,
         island_id: str,
         commit_hash: str,
-        fitness: float,
+        objective_values: tuple[float, ...],
+        objective_scores: tuple[float, ...],
         measures: np.ndarray,
     ) -> tuple[int, float, MapElitesRecord]:
         captured["measures"] = measures
-        captured["fitness"] = fitness
+        captured["objective_values"] = objective_values
+        captured["objective_scores"] = objective_scores
         record = MapElitesRecord(
             commit_hash=commit_hash,
             island_id=island_id,
             cell_index=0,
-            fitness=fitness,
+            objective_values=objective_values,
+            objective_scores=objective_scores,
             measures=tuple(measures.tolist()),
-            solution=tuple(measures.tolist()),
             timestamp=123.0,
         )
         return 1, 0.1, record
@@ -741,11 +795,12 @@ def test_ingest_builds_record_with_stubbed_dependencies(
 
     result = manager.ingest(
         commit_hash="abc",
-        metrics={"score": 1.2},
+        metrics=_score_metrics(1.2),
     )
 
     assert result.inserted
-    assert captured["fitness"] == 1.2
+    assert captured["objective_values"] == (1.2,)
+    assert captured["objective_scores"] == (1.2,)
     assert captured["measures"] is not None
     assert tuple(captured["measures"].tolist()) == pytest.approx((0.6, 0.9))  # type: ignore[index]
     assert result.record is not None
@@ -757,10 +812,10 @@ def test_ingest_builds_record_with_stubbed_dependencies(
 def test_ingest_sets_message_when_archive_rejects_commit(
     monkeypatch: pytest.MonkeyPatch, settings: Settings
 ) -> None:
+    _configure_score_objective(settings)
     settings.mapelites_dimensionality_target_dims = 2
     settings.mapelites_feature_clip = True
     settings.mapelites_feature_truncation_k = 1.0
-    settings.mapelites_fitness_metric = "score"
 
     code_embedding = CommitCodeEmbedding(
         files=(),
@@ -835,20 +890,89 @@ def test_ingest_sets_message_when_archive_rejects_commit(
     monkeypatch.setattr(manager, "_persist_island_state", lambda *args, **kwargs: None)
     monkeypatch.setattr(manager, "_add_to_archive", lambda **kwargs: (-1, -0.2, None))
 
-    result = manager.ingest(commit_hash="abc", metrics={"score": 1.2})
+    result = manager.ingest(commit_hash="abc", metrics=_score_metrics(1.2))
 
     assert result.inserted is False
     assert result.status == -1
     assert result.record is None
     assert result.message is not None
-    assert "status=-1" in result.message
+    assert "not retained" in result.message
+
+
+def test_reingesting_an_existing_commit_persists_the_complete_archive(
+    settings: Settings,
+) -> None:
+    settings.mapelites_objectives = (
+        ObjectiveSpec(name="quality", direction="max"),
+        ObjectiveSpec(name="novelty", direction="max"),
+    )
+    settings.mapelites_dimensionality_target_dims = 2
+    manager = MapElitesManager(settings=settings, repo_root=Path("."))
+    lower, upper = manager._build_feature_bounds()  # noqa: SLF001
+    state = map_elites_module.IslandState(
+        archive=manager._build_archive(),  # noqa: SLF001
+        lower_bounds=lower,
+        upper_bounds=upper,
+    )
+    measures = np.asarray([0.2, 0.2], dtype=np.float64)
+    manager._add_to_archive(  # noqa: SLF001
+        state=state,
+        island_id="main",
+        commit_hash="repeat",
+        objective_values=(5.0, 1.0),
+        objective_scores=(5.0, 1.0),
+        measures=measures,
+    )
+    manager._add_to_archive(  # noqa: SLF001
+        state=state,
+        island_id="main",
+        commit_hash="other",
+        objective_values=(1.0, 5.0),
+        objective_scores=(1.0, 5.0),
+        measures=measures,
+    )
+    assert "repeat" in state.commit_to_index
+    update = map_elites_module.SnapshotUpdate(
+        objective_contract=resolve_objective_contract(settings)
+    )
+
+    result = manager._insert_archive_candidate_for_ingest(  # noqa: SLF001
+        state=state,
+        island_id="main",
+        commit_hash="repeat",
+        candidate=map_elites_module._ArchiveCandidate(  # noqa: SLF001
+            objectives=ResolvedObjectives(
+                values=(0.0, 0.0),
+                scores=(0.0, 0.0),
+            ),
+            vector=measures,
+        ),
+        update=update,
+        archive_replace_needed=False,
+        artifacts=map_elites_module.CommitEmbeddingArtifacts(
+            repo_state_stats=None,
+            preprocessed_files=(),
+            code_embedding=None,
+            final_embedding=None,
+        ),
+        emit_sampled_info=False,
+        stage_metrics=map_elites_module._IngestStageMetrics(  # noqa: SLF001
+            started_at=0.0
+        ),
+    )
+
+    assert result.record is None
+    assert "repeat" not in state.commit_to_index
+    assert update.front_replace is None
+    assert update.archive_replace is not None
+    assert [elite.commit_hash for elite in update.archive_replace] == ["other"]
 
 
 def test_ingest_passes_external_snapshot_session(
     monkeypatch: pytest.MonkeyPatch, settings: Settings
 ) -> None:
+    _configure_score_objective(settings)
     settings.mapelites_dimensionality_target_dims = 2
-    settings.mapelites_fitness_metric = "score"
     code_embedding = CommitCodeEmbedding(
         files=(),
         vector=(0.5, -0.5),
@@ -917,9 +1041,9 @@ def test_ingest_passes_external_snapshot_session(
                 commit_hash="abc",
                 island_id="default",
                 cell_index=0,
-                fitness=1.0,
+                objective_values=(1.0,),
+                objective_scores=(1.0,),
                 measures=(0.2, 0.8),
-                solution=(0.2, 0.8),
                 timestamp=123.0,
             ),
         ),
@@ -928,7 +1052,7 @@ def test_ingest_passes_external_snapshot_session(
     session_marker = object()
     _ = manager.ingest(
         commit_hash="abc",
-        metrics={"score": 1.0},
+        metrics=_score_metrics(1.0),
         snapshot_session=session_marker,  # type: ignore[arg-type]
     )
 
@@ -940,12 +1064,11 @@ def test_ingest_seeds_archive_after_initial_pca_fit(
 ) -> None:
     """Regression: warmup commits must populate the archive once PCA is fitted."""
 
-    settings.mapelites_default_island_id = "main"
+    _configure_score_objective(settings)
     settings.mapelites_dimensionality_target_dims = 2
     settings.mapelites_archive_cells_per_dim = 4
     settings.mapelites_feature_clip = True
     settings.mapelites_feature_truncation_k = 1.0
-    settings.mapelites_fitness_metric = "score"
 
     projection = PCAProjection(
         feature_count=3,
@@ -1032,15 +1155,18 @@ def test_ingest_seeds_archive_after_initial_pca_fit(
     monkeypatch.setattr(manager, "_persist_island_state", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         manager,
-        "_load_commit_fitnesses",
-        lambda *, commit_hashes, snapshot_session: {"c1": 1.0, "c2": 0.5},
+        "_load_commit_objectives",
+        lambda *, commit_hashes, snapshot_session: {
+            "c1": ResolvedObjectives(values=(1.0,), scores=(1.0,)),
+            "c2": ResolvedObjectives(values=(0.5,), scores=(0.5,)),
+        },
     )
 
-    first = manager.ingest(commit_hash="c1", metrics={"score": 1.0})
+    first = manager.ingest(commit_hash="c1", metrics=_score_metrics(1.0))
     assert first.inserted is False
     assert manager.get_records("main") == ()
 
-    _ = manager.ingest(commit_hash="c2", metrics={"score": 0.5})
+    _ = manager.ingest(commit_hash="c2", metrics=_score_metrics(0.5))
     records = {rec.commit_hash: rec.measures for rec in manager.get_records("main")}
 
     assert records["c1"] == pytest.approx((0.5, 0.5))
@@ -1052,12 +1178,11 @@ def test_ingest_rebuilds_archive_when_pca_projection_refits(
 ) -> None:
     """Regression: PCA refits must rebuild existing archive cells."""
 
-    settings.mapelites_default_island_id = "main"
+    _configure_score_objective(settings)
     settings.mapelites_dimensionality_target_dims = 2
     settings.mapelites_archive_cells_per_dim = 4
     settings.mapelites_feature_clip = True
     settings.mapelites_feature_truncation_k = 1.0
-    settings.mapelites_fitness_metric = "score"
 
     # Two fake projections over 3D vectors. The refit changes the 2nd component
     # from dimension-2 to dimension-3, so existing commits must be reprojected.
@@ -1158,11 +1283,11 @@ def test_ingest_rebuilds_archive_when_pca_projection_refits(
     manager._snapshot_store = NullSnapshotStore()  # type: ignore[attr-defined]
     monkeypatch.setattr(manager, "_persist_island_state", lambda *args, **kwargs: None)
 
-    _ = manager.ingest(commit_hash="c1", metrics={"score": 1.0})
+    _ = manager.ingest(commit_hash="c1", metrics=_score_metrics(1.0))
     before = {rec.commit_hash: rec.measures for rec in manager.get_records("main")}
     assert before["c1"] == pytest.approx((0.5, 1.0))
 
-    _ = manager.ingest(commit_hash="c2", metrics={"score": 0.5})
+    _ = manager.ingest(commit_hash="c2", metrics=_score_metrics(0.5))
     after = {rec.commit_hash: rec.measures for rec in manager.get_records("main")}
 
     # Under the refit projection, c1 loses its second component (it becomes 0),
@@ -1170,124 +1295,107 @@ def test_ingest_rebuilds_archive_when_pca_projection_refits(
     assert after["c1"] == pytest.approx((0.5, 0.5))
 
 
-def test_add_single_updates_mappings_without_retrieval_round_trip() -> None:
-    """Regression: successful single inserts should not re-query the archive."""
-
-    class DummyArchive:
-        def index_of(self, measures: np.ndarray) -> np.ndarray:
-            batch = np.asarray(measures, dtype=np.float64)
-            assert batch.shape[0] == 1
-            return np.asarray([0], dtype=np.int64)
-
-        def add(
-            self,
-            solution: np.ndarray,
-            objective: np.ndarray,
-            measures: np.ndarray,
-            *,
-            commit_hash: np.ndarray,
-            timestamp: np.ndarray,
-        ) -> Mapping[str, np.ndarray]:
-            return {
-                "status": np.asarray([1], dtype=np.int64),
-                "value": np.asarray([0.1], dtype=np.float64),
-            }
-
-        def retrieve_single(self, measures: np.ndarray) -> tuple[bool, dict[str, object]]:
-            raise AssertionError("retrieve_single() should not be called on successful single inserts")
-
-    state = map_elites_module.IslandState(
-        archive=DummyArchive(),  # type: ignore[arg-type]
-        lower_bounds=np.asarray([0.0, 0.0], dtype=np.float64),
-        upper_bounds=np.asarray([1.0, 1.0], dtype=np.float64),
-    )
-    state.index_to_commit[0] = "old"
-    state.commit_to_index["old"] = 0
-    commit_to_island = {"old": "main"}
-
-    status, _delta, record = map_elites_archive_ops.add_single(
-        state=state,
-        island_id="main",
-        commit_hash="c1",
-        fitness=1.0,
-        measures=np.asarray([0.1, 0.2], dtype=np.float64),
-        commit_to_island=commit_to_island,
-        timestamp=42.0,
-    )
-
-    assert status == 1
-    assert record is not None
-    assert record.commit_hash == "c1"
-    assert record.timestamp == pytest.approx(42.0)
-    assert state.index_to_commit == {0: "c1"}
-    assert state.commit_to_index == {"c1": 0}
-    assert commit_to_island == {"c1": "main"}
-
-
-def test_add_batch_to_archive_uses_status_value_to_update_mappings(settings: Settings) -> None:
+def test_refit_missing_an_elite_vector_preserves_the_previous_in_memory_state(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    _configure_score_objective(settings)
     settings.mapelites_dimensionality_target_dims = 2
-    manager = MapElitesManager(settings=settings, repo_root=Path("."))
-
-    class DummyArchive:
-        def __init__(self) -> None:
-            self.add_calls: list[dict[str, np.ndarray]] = []
-
-        def index_of(self, measures: np.ndarray) -> np.ndarray:
-            batch = np.asarray(measures, dtype=np.float64)
-            assert batch.shape[0] == 3
-            return np.asarray([0, 0, 1], dtype=np.int64)
-
-        def add(
-            self,
-            solution: np.ndarray,
-            objective: np.ndarray,
-            measures: np.ndarray,
-            *,
-            commit_hash: np.ndarray,
-            timestamp: np.ndarray,
-        ) -> Mapping[str, np.ndarray]:
-            self.add_calls.append(
-                {
-                    "solution": np.asarray(solution),
-                    "objective": np.asarray(objective),
-                    "measures": np.asarray(measures),
-                    "commit_hash": np.asarray(commit_hash),
-                    "timestamp": np.asarray(timestamp),
-                }
-            )
-            # Same cell for c1/c2 with equal status: value decides winner (c2).
-            return {
-                "status": np.asarray([1, 1, 0], dtype=np.int64),
-                "value": np.asarray([0.1, 0.4, -0.2], dtype=np.float64),
-            }
-
-    state = map_elites_module.IslandState(
-        archive=DummyArchive(),  # type: ignore[arg-type]
-        lower_bounds=np.asarray([0.0, 0.0], dtype=np.float64),
-        upper_bounds=np.asarray([1.0, 1.0], dtype=np.float64),
+    old_projection = PCAProjection(
+        feature_count=3,
+        components=((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+        mean=(0.0, 0.0, 0.0),
+        explained_variance=(1.0, 1.0),
+        explained_variance_ratio=(0.5, 0.5),
+        sample_count=2,
+        epoch=0,
+        fitted_at=10.0,
+        whiten=False,
+        rotation=None,
     )
-    state.index_to_commit[0] = "old"
-    state.commit_to_index["old"] = 0
-    manager._commit_to_island["old"] = "main"
-
-    statuses, values = manager._add_batch_to_archive(
+    new_projection = PCAProjection(
+        feature_count=3,
+        components=((1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
+        mean=(0.0, 0.0, 0.0),
+        explained_variance=(1.0, 1.0),
+        explained_variance_ratio=(0.5, 0.5),
+        sample_count=3,
+        epoch=1,
+        fitted_at=20.0,
+        whiten=False,
+        rotation=None,
+    )
+    old_entry = PcaHistoryEntry(
+        commit_hash="elite",
+        vector=(0.0, 1.0, 0.0),
+        embedding_model="code",
+    )
+    current_entry = PcaHistoryEntry(
+        commit_hash="current",
+        vector=(1.0, 0.0, 1.0),
+        embedding_model="code",
+    )
+    current = FinalEmbedding(
+        commit_hash="current",
+        vector=(1.0, 1.0),
+        dimensions=2,
+        history_entry=current_entry,
+        projection=new_projection,
+    )
+    manager = MapElitesManager(settings=settings, repo_root=Path("."))
+    lower, upper = manager._build_feature_bounds()  # noqa: SLF001
+    state = map_elites_module.IslandState(
+        archive=manager._build_archive(),  # noqa: SLF001
+        lower_bounds=lower,
+        upper_bounds=upper,
+        history=(old_entry,),
+        projection=old_projection,
+        samples_since_fit=3,
+    )
+    manager._archives["main"] = state  # noqa: SLF001
+    manager._add_to_archive(  # noqa: SLF001
         state=state,
         island_id="main",
-        commit_hashes=["c1", "c2", "c3"],
-        objectives=[1.0, 2.0, 3.0],
-        measures=[
-            np.asarray([0.1, 0.1], dtype=np.float64),
-            np.asarray([0.1, 0.1], dtype=np.float64),
-            np.asarray([0.9, 0.9], dtype=np.float64),
-        ],
-        timestamps=[10.0, 11.0, 12.0],
+        commit_hash="elite",
+        objective_values=(1.0,),
+        objective_scores=(1.0,),
+        measures=np.asarray([0.5, 0.5], dtype=np.float64),
     )
+    before = manager.get_records("main")
+    monkeypatch.setattr(
+        map_elites_module,
+        "reduce_commit_embeddings",
+        lambda **_kwargs: (
+            current,
+            (old_entry, current_entry),
+            new_projection,
+            0,
+        ),
+    )
+    monkeypatch.setattr(manager, "_load_commit_vectors", lambda **_kwargs: {})
 
-    assert statuses.tolist() == [1, 1, 0]
-    assert values.tolist() == pytest.approx([0.1, 0.4, -0.2])
-    assert state.index_to_commit == {0: "c2"}
-    assert state.commit_to_index == {"c2": 0}
-    assert manager._commit_to_island == {"c2": "main"}
+    with pytest.raises(ValueError, match="stored vectors are missing"):
+        manager._update_projection_for_ingest(  # noqa: SLF001
+            state=state,
+            island_id="main",
+            commit_hash="current",
+            code_embedding=CommitCodeEmbedding(
+                files=(),
+                vector=current_entry.vector,
+                model="code",
+                dimensions=3,
+            ),
+            snapshot_session=None,
+            stage_metrics=map_elites_module._IngestStageMetrics(  # noqa: SLF001
+                started_at=0.0
+            ),
+        )
+
+    assert manager.get_records("main") == before
+    assert state.history == (old_entry,)
+    assert state.projection == old_projection
+    assert state.samples_since_fit == 3
+    assert manager._reducers["main"].projection == old_projection  # noqa: SLF001
 
 
 def test_load_commit_vectors_batches_long_in_queries(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:

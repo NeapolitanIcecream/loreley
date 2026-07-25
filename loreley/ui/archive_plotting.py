@@ -23,7 +23,7 @@ def build_scatter_points(
 
         raw_value = record.get(value_key)
         if raw_value is None:
-            raw_value = record.get("fitness", 0.0)
+            continue
 
         try:
             value = float(raw_value)

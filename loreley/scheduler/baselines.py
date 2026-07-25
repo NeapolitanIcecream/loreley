@@ -15,7 +15,11 @@ from rich.console import Console
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from loreley.config import Settings, resolve_default_island_id
+from loreley.config import (
+    Settings,
+    resolve_default_island_id,
+    resolve_objective_contract,
+)
 from loreley.core.campaign_program import (
     CampaignProgramSnapshot,
     campaign_program_evaluator_payload,
@@ -164,11 +168,7 @@ def baseline_effective_settings_fingerprint(settings: Settings) -> str:
         "worker_evaluator_max_metrics": int(
             getattr(settings, "worker_evaluator_max_metrics", 0) or 0,
         ),
-        "mapelites_fitness_metric": str(getattr(settings, "mapelites_fitness_metric", "") or ""),
-        "mapelites_fitness_higher_is_better": bool(
-            getattr(settings, "mapelites_fitness_higher_is_better", True),
-        ),
-        "mapelites_fitness_floor": float(getattr(settings, "mapelites_fitness_floor", 0.0) or 0.0),
+        "mapelites_objectives": resolve_objective_contract(settings).as_payload(),
     }
     return baseline_key_hash(payload)
 
@@ -210,9 +210,10 @@ def build_baseline_key(
 
 
 def baseline_metric_spec(settings: Settings) -> BaselineMetricSpec:
+    primary = resolve_objective_contract(settings).primary
     return BaselineMetricSpec(
-        name=normalize_single_line(str(getattr(settings, "mapelites_fitness_metric", "") or "")),
-        higher_is_better=bool(getattr(settings, "mapelites_fitness_higher_is_better", True)),
+        name=primary.name,
+        higher_is_better=primary.higher_is_better,
     )
 
 
@@ -231,7 +232,7 @@ def validate_baseline_primary_metric(
         return BaselineValidationResult(
             ok=False,
             failure_kind="primary_metric_not_configured",
-            failure_summary="MAPELITES_FITNESS_METRIC must be configured for baseline bootstrap.",
+            failure_summary="MAPELITES_OBJECTIVES must define a primary objective.",
         )
     metric = next((item for item in result.metrics if item.name == spec.name), None)
     if metric is None:
@@ -263,7 +264,7 @@ def validate_baseline_primary_metric(
             failure_kind="primary_metric_direction_conflict",
             failure_summary=(
                 f"Baseline primary metric {spec.name!r} direction conflicts with "
-                "MAPELITES_FITNESS_HIGHER_IS_BETTER."
+                "MAPELITES_OBJECTIVES."
             ),
         )
     return BaselineValidationResult(ok=True, metric=metric)
@@ -714,7 +715,7 @@ class BaselineBootstrapService:
             commit_row = CommitCard(
                 commit_hash=commit_hash,
                 parent_commit_hash=None,
-                island_id=resolve_default_island_id(self.settings),
+                island_id=None,
                 author=None,
                 subject=f"Root baseline {commit_hash[:12]}",
                 change_summary="Root baseline commit.",
@@ -730,7 +731,7 @@ class BaselineBootstrapService:
             commit_row.evaluation_summary = result.summary
 
         primary_metric_row: Metric | None = None
-        primary_metric_name = normalize_single_line(str(self.settings.mapelites_fitness_metric or ""))
+        primary_metric_name = resolve_objective_contract(self.settings).primary.name
         for metric in result.metrics:
             try:
                 value = float(metric.value)

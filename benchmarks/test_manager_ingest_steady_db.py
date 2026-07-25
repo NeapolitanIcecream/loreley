@@ -17,7 +17,7 @@ from loreley.config import Settings
 from loreley.db.base import session_scope
 from loreley.core.map_elites.dimension_reduction import DimensionReducer, PCAProjection, PcaHistoryEntry
 from loreley.core.map_elites.file_embedding_cache import DatabaseFileEmbeddingCache
-from loreley.core.map_elites.map_elites import MapElitesManager
+from loreley.core.map_elites.manager import MapElitesManager
 from loreley.core.map_elites.repository_state_embedding import RepositoryStateEmbedder
 
 
@@ -28,13 +28,12 @@ def _configure_manager_settings(settings: Settings) -> None:
     settings.mapelites_preprocess_excluded_globs = []
     settings.mapelites_preprocess_max_file_size_kb = 64
     settings.mapelites_repo_state_ignore_text = ""
-    settings.mapelites_default_island_id = "main"
+    settings.mapelites_islands = ("main",)
     settings.mapelites_dimensionality_target_dims = 2
     settings.mapelites_dimensionality_min_fit_samples = 2
     settings.mapelites_dimensionality_history_size = 8
     settings.mapelites_dimensionality_refit_interval = 10_000
     settings.mapelites_archive_cells_per_dim = 8
-    settings.mapelites_fitness_metric = "composite_score"
     settings.mapelites_ingest_info_log_every = 10_000
 
 

@@ -12,7 +12,11 @@ from rich.console import Console
 
 import loreley.scheduler.job_scheduler as job_scheduler
 from loreley.config import Settings
-from loreley.core.map_elites.sampler import MapElitesSampler, SamplingSnapshot
+from loreley.core.map_elites.sampler import (
+    MapElitesSampler,
+    SamplingSnapshot,
+    ScheduleJobRequest,
+)
 from loreley.core.worker.repair import REPAIR_MODE_REBASE_FROM_NEAREST_VIABLE
 from loreley.db.models import JobStatus
 from loreley.scheduler.baselines import BASELINE_STATUS_DEGRADED, BASELINE_STATUS_VALID
@@ -224,32 +228,26 @@ def test_schedule_jobs_reuses_single_sampling_snapshot_and_avoids_duplicate_base
             self.snapshot_calls += 1
             return SamplingSnapshot(
                 island_id=island_id or "main",
-                cell_commits={0: "base-a", 1: "base-b"},
-                cell_objectives={0: 1.0, 1: 2.0},
+                cell_fronts={0: ("base-a",), 1: ("base-b",)},
                 items=((0, "base-a"), (1, "base-b")),
                 neighbor_cell_indices=None,
                 neighbor_commits=(),
                 neighbor_coords=None,
             )
 
-        def schedule_job(
-            self,
-            *,
-            island_id: str | None = None,
-            sampling_snapshot: SamplingSnapshot | None = None,
-            excluded_base_commits=None,
-            **_kwargs: object,
-        ):
-            excluded = tuple(sorted(str(commit) for commit in (excluded_base_commits or ())))
-            self.schedule_calls.append((island_id, excluded))
-            if sampling_snapshot is None:
+        def schedule_job(self, request: ScheduleJobRequest):
+            excluded = tuple(
+                sorted(str(commit) for commit in (request.excluded_base_commits or ()))
+            )
+            self.schedule_calls.append((request.island_id, excluded))
+            if request.sampling_snapshot is None:
                 raise AssertionError("sampling_snapshot should be reused across the batch")
-            for _cell_index, commit_hash in sampling_snapshot.items:
+            for _cell_index, commit_hash in request.sampling_snapshot.items:
                 if commit_hash in set(excluded):
                     continue
                 return SimpleNamespace(
                     job_id=uuid.uuid4(),
-                    island_id=island_id or "main",
+                    island_id=request.island_id or "main",
                     base_commit_hash=commit_hash,
                     inspiration_commit_hashes=(),
                 )
@@ -270,6 +268,158 @@ def test_schedule_jobs_reuses_single_sampling_snapshot_and_avoids_duplicate_base
     assert sampler.schedule_calls == [
         ("main", ()),
         ("main", ("base-a",)),
+    ]
+
+
+def test_schedule_jobs_round_robins_across_configured_islands(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    sender = DummySenderActor()
+    monkeypatch.setattr(
+        job_scheduler,
+        "build_evolution_job_sender_actor",
+        lambda **_kwargs: sender,
+    )
+    settings.mapelites_islands = ("alpha", "beta", "gamma")
+    settings.mapelites_migration_interval_jobs = 0
+    settings.scheduler_max_unfinished_jobs = 6
+    settings.scheduler_schedule_batch_size = 6
+
+    class DummySampler:
+        def __init__(self) -> None:
+            self.snapshot_calls: list[str] = []
+            self.schedule_calls: list[str] = []
+
+        def get_sampling_snapshot(self, island_id: str | None = None) -> SamplingSnapshot:
+            assert island_id is not None
+            self.snapshot_calls.append(island_id)
+            items = (
+                (0, f"{island_id}-base-1"),
+                (1, f"{island_id}-base-2"),
+            )
+            return SamplingSnapshot(
+                island_id=island_id,
+                cell_fronts={
+                    0: (f"{island_id}-base-1",),
+                    1: (f"{island_id}-base-2",),
+                },
+                items=items,
+                neighbor_cell_indices=None,
+                neighbor_commits=(),
+                neighbor_coords=None,
+            )
+
+        def schedule_job(self, request: ScheduleJobRequest) -> object | None:
+            assert request.island_id is not None
+            assert request.sampling_snapshot is not None
+            excluded = set(request.excluded_base_commits or ())
+            for _cell_index, commit_hash in request.sampling_snapshot.items:
+                if commit_hash in excluded:
+                    continue
+                self.schedule_calls.append(request.island_id)
+                return SimpleNamespace(
+                    job_id=uuid.uuid4(),
+                    island_id=request.island_id,
+                    base_commit_hash=commit_hash,
+                    inspiration_commit_hashes=(),
+                )
+            return None
+
+    sampler = DummySampler()
+    scheduler = cast(Any, JobScheduler)(
+        settings=settings,
+        console=Console(record=True),
+        sampler=cast(MapElitesSampler, sampler),
+    )
+    monkeypatch.setattr(JobScheduler, "_enqueue_jobs", lambda _self, ids: len(list(ids)))
+
+    scheduled = scheduler.schedule_jobs(unfinished_jobs=0, total_jobs=0)
+
+    assert scheduled == 6
+    assert sampler.snapshot_calls == ["alpha", "beta", "gamma"]
+    assert sampler.schedule_calls == [
+        "alpha",
+        "beta",
+        "gamma",
+        "alpha",
+        "beta",
+        "gamma",
+    ]
+
+
+def test_schedule_jobs_records_periodic_cross_island_migration(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    sender = DummySenderActor()
+    monkeypatch.setattr(
+        job_scheduler,
+        "build_evolution_job_sender_actor",
+        lambda **_kwargs: sender,
+    )
+    settings.mapelites_islands = ("alpha", "beta", "gamma")
+    settings.mapelites_migration_interval_jobs = 2
+    settings.scheduler_max_unfinished_jobs = 2
+    settings.scheduler_schedule_batch_size = 2
+
+    class DummySampler:
+        def __init__(self) -> None:
+            self.schedule_calls: list[dict[str, object]] = []
+
+        def get_sampling_snapshot(self, island_id: str | None = None) -> SamplingSnapshot:
+            assert island_id is not None
+            commit_hash = f"{island_id}-elite"
+            return SamplingSnapshot(
+                island_id=island_id,
+                cell_fronts={0: (commit_hash,)},
+                items=((0, commit_hash),),
+                neighbor_cell_indices=None,
+                neighbor_commits=(),
+                neighbor_coords=None,
+            )
+
+        def schedule_job(self, request: ScheduleJobRequest) -> object:
+            assert request.island_id is not None
+            assert request.sampling_snapshot is not None
+            base_commit_hash = request.sampling_snapshot.items[0][1]
+            self.schedule_calls.append(
+                {
+                    "island_id": request.island_id,
+                    "base_commit_hash": base_commit_hash,
+                    "migration_source_island_id": request.migration_source_island_id,
+                    "migration_commit_hash": request.migration_commit_hash,
+                }
+            )
+            return SimpleNamespace(
+                job_id=uuid.uuid4(),
+                island_id=request.island_id,
+                base_commit_hash=base_commit_hash,
+                inspiration_commit_hashes=(),
+            )
+
+    sampler = DummySampler()
+    scheduler = cast(Any, JobScheduler)(
+        settings=settings,
+        console=Console(record=True),
+        sampler=cast(MapElitesSampler, sampler),
+    )
+    monkeypatch.setattr(JobScheduler, "_enqueue_jobs", lambda _self, ids: len(list(ids)))
+
+    assert scheduler.schedule_jobs(unfinished_jobs=0, total_jobs=0) == 2
+    assert sampler.schedule_calls == [
+        {
+            "island_id": "alpha",
+            "base_commit_hash": "alpha-elite",
+            "migration_source_island_id": None,
+            "migration_commit_hash": None,
+        },
+        {
+            "island_id": "beta",
+            "base_commit_hash": "beta-elite",
+            "migration_source_island_id": "gamma",
+            "migration_commit_hash": "gamma-elite",
+        },
     ]
 
 
@@ -678,30 +828,27 @@ def test_schedule_jobs_does_not_reserve_repair_slot_after_deprecation(
         def get_sampling_snapshot(self, island_id: str | None = None):
             return SamplingSnapshot(
                 island_id=island_id or "main",
-                cell_commits={0: "base-a", 1: "base-b"},
-                cell_objectives={0: 1.0, 1: 2.0},
+                cell_fronts={0: ("base-a",), 1: ("base-b",)},
                 items=((0, "base-a"), (1, "base-b")),
                 neighbor_cell_indices=None,
                 neighbor_commits=(),
                 neighbor_coords=None,
             )
 
-        def schedule_job(
-            self,
-            *,
-            island_id: str | None = None,
-            sampling_snapshot: SamplingSnapshot | None = None,
-            excluded_base_commits=None,
-            **_kwargs: object,
-        ):
-            excluded = set(str(commit) for commit in (excluded_base_commits or ()))
-            for index, (_cell_index, commit_hash) in enumerate(sampling_snapshot.items):
+        def schedule_job(self, request: ScheduleJobRequest):
+            assert request.sampling_snapshot is not None
+            excluded = set(
+                str(commit) for commit in (request.excluded_base_commits or ())
+            )
+            for index, (_cell_index, commit_hash) in enumerate(
+                request.sampling_snapshot.items
+            ):
                 if commit_hash in excluded:
                     continue
                 self.normal_scheduled += 1
                 return SimpleNamespace(
                     job_id=normal_job_ids[index],
-                    island_id=island_id or "main",
+                    island_id=request.island_id or "main",
                     base_commit_hash=commit_hash,
                     inspiration_commit_hashes=(),
                 )

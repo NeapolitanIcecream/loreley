@@ -45,20 +45,20 @@ def test_overview_kpis_shape_jobs_and_selected_island_stats(overview_module) -> 
         islands=[
             {
                 "island_id": "main",
-                "metric_name": "score",
-                "higher_is_better": True,
-                "best_fitness": 2.5,
+                "primary_metric_name": "score",
+                "primary_metric_higher_is_better": True,
+                "best_primary_value": 2.5,
                 "coverage": 0.25,
-                "qd_score": 10.0,
-                "norm_qd_score": 0.5,
+                "elites": 4,
+                "objective_count": 2,
                 "occupied": 2,
                 "cells": 8,
             },
             {
                 "island_id": "side",
-                "metric_name": "score",
-                "higher_is_better": True,
-                "best_fitness": 1.5,
+                "primary_metric_name": "score",
+                "primary_metric_higher_is_better": True,
+                "best_primary_value": 1.5,
             },
         ],
     )
@@ -67,8 +67,10 @@ def test_overview_kpis_shape_jobs_and_selected_island_stats(overview_module) -> 
     assert kpis["total_jobs"] == 3
     assert kpis["succeeded"] == 2
     assert kpis["failed"] == 1
-    assert kpis["metric_name"] == "score"
-    assert kpis["best_fitness"] == 2.5
+    assert kpis["primary_metric_name"] == "score"
+    assert kpis["best_primary_value"] == 2.5
     assert kpis["coverage"] == 0.25
+    assert kpis["elites"] == 4
+    assert kpis["objective_count"] == 2
     assert kpis["occupied"] == 2
     assert kpis["cells"] == 8

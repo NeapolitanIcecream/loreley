@@ -148,6 +148,41 @@ def test_coerce_outcome_accepts_eval_pass(
     assert outcome.result.artifacts[0].key == "summary"
 
 
+def test_eval_pass_metric_mapping_parses_false_direction(
+    tmp_path: Path,
+    settings: Settings,
+) -> None:
+    evaluator = Evaluator(settings=settings)
+
+    outcome = evaluator._coerce_outcome(  # type: ignore[attr-defined]
+        EvalPass(
+            summary="ok",
+            metrics=(
+                {
+                    "name": "latency",
+                    "value": 12.0,
+                    "higher_is_better": "false",
+                },
+            ),
+        ),
+        context=EvaluationContext(worktree=tmp_path, candidate_commit_hash="abc"),
+        evaluator_name="simple",
+        started_at=None,  # type: ignore[arg-type]
+        finished_at=None,  # type: ignore[arg-type]
+    )
+
+    assert outcome.result is not None
+    assert outcome.result.metrics[0].higher_is_better is False
+
+
+@pytest.mark.parametrize("value", [True, float("nan"), float("inf")])
+def test_eval_pass_metric_mapping_rejects_invalid_values(
+    value: object,
+) -> None:
+    with pytest.raises(ValueError, match="boolean|finite"):
+        EvalPass(summary="bad", metrics=({"name": "score", "value": value},))
+
+
 def test_coerce_outcome_accepts_eval_fail(
     tmp_path: Path,
     settings: Settings,

@@ -10,12 +10,12 @@ import pytest
 
 from loreley.cli import _status_response_payload, main
 from loreley.core.campaign_program import parse_campaign_program
+from loreley.core.map_elites.objectives import ObjectiveSpec
 from tests.support import TestSettings
 
 
 def _make_settings() -> TestSettings:
     return TestSettings(
-        MAPELITES_FITNESS_METRIC="",
         WORKER_JOB_LEASE_TTL_SECONDS=1800,
         WORKER_JOB_HEARTBEAT_INTERVAL_SECONDS=60,
         SCHEDULER_STALE_RUNNING_MAX_RECOVERY_ATTEMPTS=3,
@@ -45,6 +45,7 @@ def test_status_json_includes_job_lease_health(
     monkeypatch.setattr("loreley.cli._configure_logging_or_exit", lambda **_kwargs: None)
     _patch_cli_db_now(monkeypatch)
     _patch_no_baseline_resolution(monkeypatch)
+    monkeypatch.setattr("loreley.cli._load_best_commit_status_payload", lambda **_kwargs: None)
     monkeypatch.setattr(
         "loreley.cli._load_archive_stats_or_exit",
         lambda **_kwargs: {"island_id": "main", "occupied": 1, "cells": 4, "coverage": 0.25},
@@ -124,6 +125,7 @@ def test_status_table_prints_job_lease_health_section(
     monkeypatch.setattr("loreley.cli._configure_logging_or_exit", lambda **_kwargs: None)
     _patch_cli_db_now(monkeypatch)
     _patch_no_baseline_resolution(monkeypatch)
+    monkeypatch.setattr("loreley.cli._load_best_commit_status_payload", lambda **_kwargs: None)
     monkeypatch.setattr(
         "loreley.cli._load_archive_stats_or_exit",
         lambda **_kwargs: {"island_id": "main", "occupied": 1, "cells": 4, "coverage": 0.25},
@@ -183,7 +185,7 @@ def test_status_json_scopes_baseline_to_current_campaign_program(
     ).raw_sha256
     settings = _make_settings()
     settings.mapelites_experiment_root_commit = "root123"
-    settings.mapelites_fitness_metric = "score"
+    settings.mapelites_objectives = (ObjectiveSpec(name="score", direction="max"),)
     settings.scheduler_repo_root = str(tmp_path)
     monkeypatch.setattr("loreley.cli.get_settings", lambda: settings)
     monkeypatch.setattr("loreley.cli._configure_logging_or_exit", lambda **_kwargs: None)
@@ -269,7 +271,7 @@ def test_status_json_uses_persisted_scheduler_campaign_program(
     disk_program_hash = "b" * 64
     settings = _make_settings()
     settings.mapelites_experiment_root_commit = "root123"
-    settings.mapelites_fitness_metric = "score"
+    settings.mapelites_objectives = (ObjectiveSpec(name="score", direction="max"),)
     monkeypatch.setattr("loreley.cli.get_settings", lambda: settings)
     monkeypatch.setattr("loreley.cli._configure_logging_or_exit", lambda **_kwargs: None)
     monkeypatch.setattr(

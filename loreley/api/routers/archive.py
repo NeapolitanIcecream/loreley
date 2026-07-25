@@ -25,7 +25,7 @@ router = APIRouter()
 @router.get("/archive/islands", response_model=list[IslandStatsOut])
 def get_islands() -> list[IslandStatsOut]:
     settings = get_settings()
-    islands = list_islands()
+    islands = list_islands(settings=settings)
     out: list[IslandStatsOut] = []
     for island_id in islands:
         stats = describe_island(

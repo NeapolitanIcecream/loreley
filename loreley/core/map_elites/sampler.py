@@ -28,14 +28,22 @@ from loreley.db.models import EvolutionJob, JobStatus
 console = Console()
 log = logger.bind(module="map_elites.sampler")
 
-__all__ = ["SamplingSnapshot", "ScheduledSamplerJob", "MapElitesSampler"]
+__all__ = [
+    "MapElitesSampler",
+    "SamplingSnapshot",
+    "ScheduleJobRequest",
+    "ScheduledSamplerJob",
+]
 
 
 class SupportsMapElitesManager(Protocol):
     """Protocol describing the manager interface required by the sampler."""
 
-    def get_cell_commits(self, island_id: str | None = None) -> Mapping[int, str]:
-        """Return occupied cell indices mapped to commit hashes."""
+    def get_cell_fronts(
+        self,
+        island_id: str | None = None,
+    ) -> Mapping[int, Sequence[str]]:
+        """Return occupied behavior cells mapped to Pareto members."""
         ...
 
 
@@ -47,6 +55,8 @@ class ScheduledSamplerJob:
     island_id: str
     base_commit_hash: str
     inspiration_commit_hashes: tuple[str, ...]
+    migration_source_island_id: str | None = None
+    migration_commit_hash: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -54,12 +64,40 @@ class SamplingSnapshot:
     """Precomputed archive view reused across a scheduling tick."""
 
     island_id: str
-    cell_commits: Mapping[int, str]
-    cell_objectives: Mapping[int, float]
+    cell_fronts: Mapping[int, tuple[str, ...]]
     items: tuple[tuple[int, str], ...]
     neighbor_cell_indices: np.ndarray | None
     neighbor_commits: tuple[str, ...]
     neighbor_coords: np.ndarray | None
+
+
+@dataclass(slots=True, frozen=True)
+class ScheduleJobRequest:
+    """Inputs that may vary for one sampler scheduling attempt."""
+
+    island_id: str | None = None
+    priority: int | None = None
+    sampling_snapshot: SamplingSnapshot | None = None
+    cell_fronts: Mapping[int, Sequence[str]] | None = None
+    excluded_base_commits: Collection[str] | None = None
+    campaign_program: CampaignProgramSnapshot | None = None
+    migration_source_island_id: str | None = None
+    migration_commit_hash: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class _PreparedSamplerJob:
+    """Fully selected job fields ready for persistence."""
+
+    island_id: str
+    base_commit_hash: str
+    inspiration_commit_hashes: tuple[str, ...]
+    selection_stats: Mapping[str, Any]
+    iteration_hint: str | None
+    priority: int | None
+    campaign_program: CampaignProgramSnapshot | None = None
+    migration_source_island_id: str | None = None
+    migration_commit_hash: str | None = None
 
 
 @dataclass(slots=True)
@@ -132,16 +170,16 @@ def _neighbor_candidate_positions(
 def _fallback_inspiration_candidates(
     *,
     base_cell_index: int,
-    cell_commits: Mapping[int, str],
+    cell_fronts: Mapping[int, Sequence[str]],
     selected_commits: Collection[str],
 ) -> tuple[str, ...]:
     selected = set(selected_commits)
     return tuple(
         commit_hash
-        for cell_index, commit_hash in cell_commits.items()
+        for cell_index, commits in cell_fronts.items()
         if cell_index != base_cell_index
-        and commit_hash
-        and commit_hash not in selected
+        for commit_hash in commits
+        if commit_hash and commit_hash not in selected
     )
 
 
@@ -181,92 +219,146 @@ class MapElitesSampler:
 
     def schedule_job(
         self,
-        *,
-        island_id: str | None = None,
-        priority: int | None = None,
-        sampling_snapshot: SamplingSnapshot | None = None,
-        cell_commits: Mapping[int, str] | None = None,
-        cell_objectives: Mapping[int, float] | None = None,
-        excluded_base_commits: Collection[str] | None = None,
-        campaign_program: CampaignProgramSnapshot | None = None,
+        request: ScheduleJobRequest | None = None,
     ) -> ScheduledSamplerJob | None:
         """Select base/inspiration commits and persist an EvolutionJob."""
-        effective_island = island_id or self._default_island
-        snapshot = sampling_snapshot
-        if snapshot is None:
-            if cell_commits is not None:
-                snapshot = self._build_sampling_snapshot(
-                    island_id=effective_island,
-                    cell_commits=cell_commits,
-                    cell_objectives=cell_objectives,
-                )
-            else:
-                snapshot = self.get_sampling_snapshot(effective_island)
-        if snapshot is None or not snapshot.cell_commits:
+        request = request or ScheduleJobRequest()
+        effective_island = request.island_id or self._default_island
+        snapshot = self._resolve_sampling_snapshot(request)
+        if snapshot is None or not snapshot.cell_fronts:
             log.warning("Cannot schedule job; island {} archive is empty", effective_island)
             return None
-        effective_island = snapshot.island_id
 
-        base_selection = self._select_base_candidate(
-            snapshot=snapshot,
-            excluded_base_commits=excluded_base_commits,
-        )
-        if base_selection is None:
-            log.info(
-                "Cannot schedule job; island {} has no remaining unique base commits for this batch",
-                effective_island,
-            )
+        prepared = self._prepare_job(request=request, snapshot=snapshot)
+        if prepared is None:
             return None
-        base_cell_index, base_commit_hash = base_selection
-
-        inspirations, selection_stats = self._select_inspirations(
-            base_cell_index=base_cell_index,
-            base_commit_hash=base_commit_hash,
-            cell_commits=snapshot.cell_commits,
-            sampling_snapshot=snapshot,
-        )
-        iteration_hint = None
-        radius_used = selection_stats.get("radius_used")
-        initial_radius = selection_stats.get("initial_radius")
-        if radius_used is not None:
-            iteration_hint = f"MAP-Elites radius {radius_used} (initial {initial_radius})"
-
-        persist_kwargs: dict[str, Any] = {
-            "island_id": effective_island,
-            "base_commit_hash": base_commit_hash,
-            "inspiration_commit_hashes": inspirations,
-            "selection_stats": selection_stats,
-            "iteration_hint": iteration_hint,
-            "priority": priority,
-        }
-        if campaign_program is not None:
-            persist_kwargs["campaign_program"] = campaign_program
-        job = self._persist_job(**persist_kwargs)
+        job = self._persist_job(prepared)
         if not job:
             return None
 
         console.log(
-            f"[bold green]Queued evolution job[/] island={effective_island} "
-            f"base={base_commit_hash} inspirations={len(inspirations)}",
+            f"[bold green]Queued evolution job[/] island={prepared.island_id} "
+            f"base={prepared.base_commit_hash} "
+            f"inspirations={len(prepared.inspiration_commit_hashes)}",
         )
 
         return ScheduledSamplerJob(
             job_id=job.id,
-            island_id=effective_island,
-            base_commit_hash=base_commit_hash,
-            inspiration_commit_hashes=tuple(inspirations),
+            island_id=prepared.island_id,
+            base_commit_hash=prepared.base_commit_hash,
+            inspiration_commit_hashes=prepared.inspiration_commit_hashes,
+            migration_source_island_id=prepared.migration_source_island_id,
+            migration_commit_hash=prepared.migration_commit_hash,
         )
 
-    def get_cell_commits_snapshot(
+    def _resolve_sampling_snapshot(
+        self,
+        request: ScheduleJobRequest,
+    ) -> SamplingSnapshot | None:
+        if request.sampling_snapshot is not None:
+            return request.sampling_snapshot
+        effective_island = request.island_id or self._default_island
+        if request.cell_fronts is not None:
+            return self._build_sampling_snapshot(
+                island_id=effective_island,
+                cell_fronts=request.cell_fronts,
+            )
+        return self.get_sampling_snapshot(effective_island)
+
+    def _prepare_job(
+        self,
+        *,
+        request: ScheduleJobRequest,
+        snapshot: SamplingSnapshot,
+    ) -> _PreparedSamplerJob | None:
+        base_selection = self._select_base_candidate(
+            snapshot=snapshot,
+            excluded_base_commits=request.excluded_base_commits,
+        )
+        if base_selection is None:
+            log.info(
+                "Cannot schedule job; island {} has no remaining unique base commits for this batch",
+                snapshot.island_id,
+            )
+            return None
+
+        base_cell_index, base_commit_hash = base_selection
+        migration_source, migration_commit = self._migration_for_base(
+            request=request,
+            base_commit_hash=base_commit_hash,
+        )
+        inspirations, selection_stats = self._select_inspirations(
+            base_cell_index=base_cell_index,
+            base_commit_hash=base_commit_hash,
+            cell_fronts=snapshot.cell_fronts,
+            sampling_snapshot=snapshot,
+        )
+        inspirations = self._include_migration_inspiration(
+            inspirations,
+            base_commit_hash=base_commit_hash,
+            migration_commit_hash=migration_commit,
+        )
+        return _PreparedSamplerJob(
+            island_id=snapshot.island_id,
+            base_commit_hash=base_commit_hash,
+            inspiration_commit_hashes=inspirations,
+            selection_stats=selection_stats,
+            iteration_hint=self._iteration_hint(selection_stats),
+            priority=request.priority,
+            campaign_program=request.campaign_program,
+            migration_source_island_id=migration_source,
+            migration_commit_hash=migration_commit,
+        )
+
+    def _migration_for_base(
+        self,
+        *,
+        request: ScheduleJobRequest,
+        base_commit_hash: str,
+    ) -> tuple[str | None, str | None]:
+        if (
+            self._inspiration_count <= 0
+            or request.migration_commit_hash == base_commit_hash
+        ):
+            return None, None
+        return request.migration_source_island_id, request.migration_commit_hash
+
+    def _include_migration_inspiration(
+        self,
+        inspirations: tuple[str, ...],
+        *,
+        base_commit_hash: str,
+        migration_commit_hash: str | None,
+    ) -> tuple[str, ...]:
+        if (
+            not migration_commit_hash
+            or migration_commit_hash == base_commit_hash
+            or migration_commit_hash in inspirations
+        ):
+            return inspirations
+        return (
+            *inspirations[: max(0, self._inspiration_count - 1)],
+            migration_commit_hash,
+        )
+
+    @staticmethod
+    def _iteration_hint(selection_stats: Mapping[str, Any]) -> str | None:
+        radius_used = selection_stats.get("radius_used")
+        if radius_used is None:
+            return None
+        initial_radius = selection_stats.get("initial_radius")
+        return f"MAP-Elites radius {radius_used} (initial {initial_radius})"
+
+    def get_cell_fronts_snapshot(
         self,
         island_id: str | None = None,
-    ) -> tuple[str, Mapping[int, str]] | None:
+    ) -> tuple[str, Mapping[int, tuple[str, ...]]] | None:
         """Return a stable occupied-cell snapshot for a scheduling tick."""
 
         snapshot = self.get_sampling_snapshot(island_id)
         if snapshot is None:
             return None
-        return snapshot.island_id, dict(snapshot.cell_commits)
+        return snapshot.island_id, dict(snapshot.cell_fronts)
 
     def get_sampling_snapshot(
         self,
@@ -275,75 +367,41 @@ class MapElitesSampler:
         """Return a precomputed archive snapshot for batch scheduling."""
 
         effective_island = island_id or self._default_island
-        cell_commits = self.manager.get_cell_commits(effective_island)
-        if not cell_commits:
+        cell_fronts = self.manager.get_cell_fronts(effective_island)
+        if not cell_fronts:
             return None
-        cell_objectives = self._load_cell_objectives(effective_island)
         return self._build_sampling_snapshot(
             island_id=effective_island,
-            cell_commits=cell_commits,
-            cell_objectives=cell_objectives,
+            cell_fronts=cell_fronts,
         )
-
-    def _load_cell_objectives(self, island_id: str) -> Mapping[int, float]:
-        getter = getattr(self.manager, "get_cell_objectives", None)
-        if not callable(getter):
-            return {}
-        try:
-            raw = getter(island_id)
-        except TypeError:
-            raw = getter()
-        except Exception as exc:  # pragma: no cover - defensive
-            log.debug("Failed to load cell objectives for island {}: {}", island_id, exc)
-            return {}
-
-        objectives: dict[int, float] = {}
-        if not isinstance(raw, Mapping):
-            return objectives
-        for cell_index, value in raw.items():
-            try:
-                idx = int(cell_index)
-                objective = float(value)
-            except (TypeError, ValueError):
-                continue
-            if not np.isfinite(objective):
-                continue
-            objectives[idx] = objective
-        return objectives
 
     def _build_sampling_snapshot(
         self,
         *,
         island_id: str,
-        cell_commits: Mapping[int, str],
-        cell_objectives: Mapping[int, float] | None = None,
+        cell_fronts: Mapping[int, Sequence[str]],
     ) -> SamplingSnapshot:
         items: list[tuple[int, str]] = []
-        cleaned_commits: dict[int, str] = {}
-        objectives = cell_objectives or {}
-        cleaned_objectives: dict[int, float] = {}
+        cleaned_fronts: dict[int, tuple[str, ...]] = {}
 
-        for raw_index, raw_commit in cell_commits.items():
-            commit_hash = str(raw_commit or "").strip()
-            if not commit_hash:
-                continue
+        for raw_index, raw_commits in cell_fronts.items():
             try:
                 cell_index = int(raw_index)
             except (TypeError, ValueError):
                 continue
-            items.append((cell_index, commit_hash))
-            cleaned_commits[cell_index] = commit_hash
-            value = objectives.get(cell_index)
-            if value is None:
+            commits = tuple(
+                dict.fromkeys(
+                    str(commit or "").strip()
+                    for commit in raw_commits
+                    if str(commit or "").strip()
+                )
+            )
+            if not commits:
                 continue
-            try:
-                objective = float(value)
-            except (TypeError, ValueError):
-                continue
-            if np.isfinite(objective):
-                cleaned_objectives[cell_index] = objective
+            cleaned_fronts[cell_index] = commits
+            items.extend((cell_index, commit) for commit in commits)
 
-        items.sort(key=lambda item: item[0])
+        items.sort()
         neighbor_cell_indices: np.ndarray | None = None
         neighbor_commits: tuple[str, ...] = tuple()
         neighbor_coords: np.ndarray | None = None
@@ -356,8 +414,7 @@ class MapElitesSampler:
 
         return SamplingSnapshot(
             island_id=island_id,
-            cell_commits=cleaned_commits,
-            cell_objectives=cleaned_objectives,
+            cell_fronts=cleaned_fronts,
             items=tuple(items),
             neighbor_cell_indices=neighbor_cell_indices,
             neighbor_commits=neighbor_commits,
@@ -371,71 +428,33 @@ class MapElitesSampler:
         excluded_base_commits: Collection[str] | None,
     ) -> tuple[int, str] | None:
         excluded = {str(commit).strip() for commit in (excluded_base_commits or ()) if str(commit).strip()}
-        candidates = [item for item in snapshot.items if item[1] and item[1] not in excluded]
-        if not candidates:
+        available_cells = [
+            (
+                cell_index,
+                tuple(
+                    commit
+                    for commit in commits
+                    if commit and commit not in excluded
+                ),
+            )
+            for cell_index, commits in snapshot.cell_fronts.items()
+        ]
+        available_cells = [
+            (cell_index, commits)
+            for cell_index, commits in available_cells
+            if commits
+        ]
+        if not available_cells:
             return None
-
-        weights = self._build_base_sampling_weights(
-            items=candidates,
-            cell_objectives=snapshot.cell_objectives,
-        )
-        if weights is None:
-            return self._rng.choice(candidates)
-        return self._weighted_choice(candidates, weights)
-
-    def _build_base_sampling_weights(
-        self,
-        *,
-        items: Sequence[tuple[int, str]],
-        cell_objectives: Mapping[int, float],
-    ) -> tuple[float, ...] | None:
-        if not items or not cell_objectives:
-            return None
-
-        values = np.asarray(
-            [float(cell_objectives.get(cell_index, float("nan"))) for cell_index, _ in items],
-            dtype=np.float64,
-        )
-        finite_mask = np.isfinite(values)
-        if not np.any(finite_mask):
-            return None
-
-        finite_values = values[finite_mask]
-        min_value = float(np.min(finite_values))
-        weights = np.ones(len(items), dtype=np.float64)
-        weights[finite_mask] = (finite_values - min_value) + 1.0
-        return tuple(float(weight) for weight in weights.tolist())
-
-    def _weighted_choice(
-        self,
-        items: Sequence[tuple[int, str]],
-        weights: Sequence[float],
-    ) -> tuple[int, str]:
-        total_weight = float(sum(weights))
-        if total_weight <= 0.0:
-            return self._rng.choice(list(items))
-
-        random_fn = getattr(self._rng, "random", None)
-        if not callable(random_fn):
-            return self._rng.choice(list(items))
-
-        threshold = float(random_fn()) * total_weight
-        cumulative = 0.0
-        last_item = items[-1]
-        for item, raw_weight in zip(items, weights):
-            weight = max(0.0, float(raw_weight))
-            cumulative += weight
-            if cumulative >= threshold:
-                return item
-            last_item = item
-        return last_item
+        cell_index, commits = self._rng.choice(available_cells)
+        return cell_index, self._rng.choice(commits)
 
     def _select_inspirations(
         self,
         *,
         base_cell_index: int,
         base_commit_hash: str,
-        cell_commits: Mapping[int, str],
+        cell_fronts: Mapping[int, Sequence[str]],
         sampling_snapshot: SamplingSnapshot | None = None,
     ) -> tuple[tuple[str, ...], dict[str, Any]]:
         if self._inspiration_count <= 0:
@@ -452,10 +471,10 @@ class MapElitesSampler:
         max_radius = max(min_radius, self._max_neighbor_radius)
         radius = max(1, min_radius) if max_radius > 0 else 1
 
-        if cell_commits and max_radius > 0:
+        if cell_fronts and max_radius > 0:
             radius_used = self._select_neighbor_inspirations(
                 base_cell_index=base_cell_index,
-                cell_commits=cell_commits,
+                cell_fronts=cell_fronts,
                 sampling_snapshot=sampling_snapshot,
                 state=_InspirationSelectionState(
                     selected=selected,
@@ -472,7 +491,7 @@ class MapElitesSampler:
         if len(selected) < self._inspiration_count and self._fallback_sample_size > 0:
             fallback = self._select_fallback_inspirations(
                 base_cell_index=base_cell_index,
-                cell_commits=cell_commits,
+                cell_fronts=cell_fronts,
                 selected_commits=selected_commits,
                 needed=self._inspiration_count - len(selected),
             )
@@ -494,7 +513,7 @@ class MapElitesSampler:
         self,
         *,
         base_cell_index: int,
-        cell_commits: Mapping[int, str],
+        cell_fronts: Mapping[int, Sequence[str]],
         sampling_snapshot: SamplingSnapshot | None,
         state: _InspirationSelectionState,
         radius_config: _NeighborRadiusConfig,
@@ -508,7 +527,7 @@ class MapElitesSampler:
             return 0
 
         commits, coords = self._neighbor_candidates_for_selection(
-            cell_commits=cell_commits,
+            cell_fronts=cell_fronts,
             sampling_snapshot=sampling_snapshot,
         )
         if coords is None:
@@ -539,7 +558,7 @@ class MapElitesSampler:
     def _neighbor_candidates_for_selection(
         self,
         *,
-        cell_commits: Mapping[int, str],
+        cell_fronts: Mapping[int, Sequence[str]],
         sampling_snapshot: SamplingSnapshot | None,
     ) -> tuple[Sequence[str], np.ndarray | None]:
         coords = sampling_snapshot.neighbor_coords if sampling_snapshot is not None else None
@@ -551,7 +570,11 @@ class MapElitesSampler:
         # intractable; instead we compute Chebyshev distances to occupied
         # cells in a single vectorized pass (O(N * d)).
         _cell_indices, commits, coords = _occupied_neighbor_arrays(
-            tuple(cell_commits.items()),
+            tuple(
+                (cell_index, commit_hash)
+                for cell_index, front in cell_fronts.items()
+                for commit_hash in front
+            ),
             grid_shape=self._grid_shape,
         )
         return commits, coords
@@ -580,14 +603,14 @@ class MapElitesSampler:
         self,
         *,
         base_cell_index: int,
-        cell_commits: Mapping[int, str],
+        cell_fronts: Mapping[int, Sequence[str]],
         selected_commits: Collection[str],
         needed: int,
     ) -> tuple[str, ...]:
         candidates = list(
             _fallback_inspiration_candidates(
                 base_cell_index=base_cell_index,
-                cell_commits=cell_commits,
+                cell_fronts=cell_fronts,
                 selected_commits=selected_commits,
             )
         )
@@ -625,20 +648,45 @@ class MapElitesSampler:
 
     def _persist_job(
         self,
-        *,
-        island_id: str,
-        base_commit_hash: str,
-        inspiration_commit_hashes: Sequence[str],
-        selection_stats: Mapping[str, Any],
-        iteration_hint: str | None,
-        priority: int | None,
-        campaign_program: CampaignProgramSnapshot | None = None,
+        request: _PreparedSamplerJob | None = None,
+        **options: Any,
     ) -> EvolutionJob | None:
-        job_priority = self._default_priority if priority is None else priority
+        request = self._resolve_persist_request(request, options)
+        job = self._build_evolution_job(request)
+        if job is None:
+            return None
+        try:
+            with session_scope() as session:
+                session.add(job)
+                session.flush()
+        except SQLAlchemyError as exc:
+            log.error(
+                "Failed to persist evolution job for island {}: {}",
+                request.island_id,
+                exc,
+            )
+            return None
+        return job
+
+    @staticmethod
+    def _resolve_persist_request(
+        request: _PreparedSamplerJob | None,
+        options: Mapping[str, Any],
+    ) -> _PreparedSamplerJob:
+        if request is not None:
+            if options:
+                raise TypeError("Pass either a prepared job or keyword options, not both.")
+            return request
+        return _PreparedSamplerJob(**dict(options))
+
+    def _build_evolution_job(
+        self,
+        request: _PreparedSamplerJob,
+    ) -> EvolutionJob | None:
         default_goal = (self.settings.worker_evolution_global_goal or "").strip() or None
         projection = apply_campaign_program_projection(
             CampaignProjectionInput(
-                snapshot=campaign_program,
+                snapshot=request.campaign_program,
                 goal=default_goal,
                 constraints=(),
                 acceptance_criteria=(),
@@ -646,36 +694,40 @@ class MapElitesSampler:
                 default_goal=default_goal,
             )
         )
-        goal = projection.goal
-        if not goal:
+        if not projection.goal:
             log.error("Cannot schedule job; WORKER_EVOLUTION_GLOBAL_GOAL is empty.")
             return None
-        job = EvolutionJob(
+        selection_stats = request.selection_stats
+        return EvolutionJob(
             status=JobStatus.PENDING,
-            base_commit_hash=base_commit_hash,
-            island_id=island_id,
-            inspiration_commit_hashes=list(inspiration_commit_hashes),
-            goal=goal,
+            base_commit_hash=request.base_commit_hash,
+            island_id=request.island_id,
+            inspiration_commit_hashes=list(request.inspiration_commit_hashes),
+            migration_source_island_id=request.migration_source_island_id,
+            migration_commit_hash=request.migration_commit_hash,
+            goal=projection.goal,
             constraints=projection.constraints,
             acceptance_criteria=projection.acceptance_criteria,
             notes=projection.notes,
             tags=[],
-            iteration_hint=iteration_hint,
+            iteration_hint=request.iteration_hint,
             sampling_strategy="grid_neighbors",
             sampling_initial_radius=int(selection_stats.get("initial_radius", 0)),
             sampling_radius_used=int(selection_stats.get("radius_used", 0)),
-            sampling_fallback_inspirations=int(selection_stats.get("fallback_inspirations", 0)),
+            sampling_fallback_inspirations=int(
+                selection_stats.get("fallback_inspirations", 0)
+            ),
             is_seed_job=False,
             job_kind="evolution",
-            campaign_program_hash=campaign_program.raw_sha256 if campaign_program else None,
-            priority=job_priority,
+            campaign_program_hash=(
+                request.campaign_program.raw_sha256
+                if request.campaign_program
+                else None
+            ),
+            priority=(
+                self._default_priority
+                if request.priority is None
+                else request.priority
+            ),
             scheduled_at=datetime.now(timezone.utc),
         )
-        try:
-            with session_scope() as session:
-                session.add(job)
-                session.flush()
-        except SQLAlchemyError as exc:
-            log.error("Failed to persist evolution job for island {}: {}", island_id, exc)
-            return None
-        return job

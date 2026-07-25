@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import math
 import time
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence, cast
@@ -12,7 +11,12 @@ import numpy as np
 from loguru import logger
 from sqlalchemy.orm import Session
 
-from loreley.config import Settings, get_settings, resolve_default_island_id
+from loreley.config import (
+    Settings,
+    get_settings,
+    resolve_default_island_id,
+    resolve_objective_contract,
+)
 
 from .archive_ops import (
     add_batch as archive_add_batch,
@@ -21,13 +25,13 @@ from .archive_ops import (
     build_archive_replace_payload as archive_build_archive_replace_payload,
     build_feature_bounds as archive_build_feature_bounds,
     clip_vector as archive_clip_vector,
-    record_from_scalar_row as archive_record_from_scalar_row,
-    records_from_store_data as archive_records_from_store_data,
+    record_from_candidate as archive_record_from_candidate,
+    records_from_archive as archive_records_from_archive,
 )
 from .code_embedding import CommitCodeEmbedding
 from .db_ops import (
     iter_query_batches as db_iter_query_batches,
-    load_commit_fitnesses as db_load_commit_fitnesses,
+    load_commit_objectives as db_load_commit_objectives,
     load_commit_vectors as db_load_commit_vectors,
 )
 from .dimension_reduction import (
@@ -38,6 +42,7 @@ from .dimension_reduction import (
     resolve_pca_history_limit,
 )
 from .preprocess import PreprocessedFile
+from .objectives import ObjectiveContractError, ResolvedObjectives
 from .rebuild import (
     pad_or_trim as rebuild_pad_or_trim,
     recompute_final_embedding as rebuild_recompute_final_embedding,
@@ -49,13 +54,12 @@ from .repository_state_embedding import (
     RepositoryStateEmbedder,
     embed_repository_state_incremental,
 )
-from .snapshot import DatabaseSnapshotStore, SnapshotCellUpsert, SnapshotUpdate, apply_snapshot, to_list
+from .snapshot import DatabaseSnapshotStore, SnapshotElite, SnapshotUpdate, apply_snapshot
 from .types import (
     CommitEmbeddingArtifacts,
     IslandState,
     MapElitesInsertionResult,
     MapElitesRecord,
-    Vector,
 )
 
 log = logger.bind(module="map_elites.manager")
@@ -95,7 +99,7 @@ class _ProjectionIngestResult:
 
 @dataclass(slots=True, frozen=True)
 class _ArchiveCandidate:
-    fitness: float
+    objectives: ResolvedObjectives
     vector: np.ndarray
 
 
@@ -117,9 +121,9 @@ class MapElitesManager:
         self._cells_per_dim = max(2, self.settings.mapelites_archive_cells_per_dim)
         self._lower_template, self._upper_template = self._build_feature_bounds()
         self._grid_shape = tuple(self._cells_per_dim for _ in range(self._target_dims))
+        self._objective_contract = resolve_objective_contract(self.settings)
         self._archives: dict[str, IslandState] = {}
         self._reducers: dict[str, DimensionReducer] = {}
-        self._commit_to_island: dict[str, str] = {}
         self._default_island = resolve_default_island_id(self.settings)
         self._snapshot_store = DatabaseSnapshotStore()
         self._ingest_info_log_every = int(self.settings.mapelites_ingest_info_log_every)
@@ -141,9 +145,6 @@ class MapElitesManager:
                 measures = entry.get("measures")
                 if isinstance(measures, (list, tuple)) and measures:
                     return len(measures)
-                solution = entry.get("solution")
-                if isinstance(solution, (list, tuple)) and solution:
-                    return len(solution)
 
         for key in ("lower_bounds", "upper_bounds"):
             bounds = snapshot.get(key)
@@ -158,7 +159,6 @@ class MapElitesManager:
         metrics: Sequence[Mapping[str, Any]] | Mapping[str, Any] | None = None,
         island_id: str | None = None,
         repo_root: Path | None = None,
-        fitness_override: float | None = None,
         snapshot_session: Session | None = None,
     ) -> MapElitesInsertionResult:
         """Process a commit and attempt to insert it into the archive."""
@@ -252,7 +252,6 @@ class MapElitesManager:
                 state=state,
                 commit_hash=commit_hash,
                 metrics=metrics,
-                fitness_override=fitness_override,
                 final_embedding=final_embedding,
                 artifacts=artifacts,
                 emit_sampled_info=emit_sampled_info,
@@ -294,13 +293,16 @@ class MapElitesManager:
         """Return all elites for a given island."""
         effective_island = island_id or self._default_island
         state = self._ensure_island(effective_island)
-        if state.archive.empty:
-            return ()
-        data = state.archive.data()
-        return self._records_from_store_data(
-            cast(Mapping[str, Any], data),
+        return archive_records_from_archive(
+            state.archive,
             effective_island,
         )
+
+    def validate_configured_islands(self) -> None:
+        """Load every configured island before scheduler side effects begin."""
+
+        for island_id in self.settings.mapelites_islands:
+            self._ensure_island(island_id)
 
     def count_pca_history_samples(self, island_id: str | None = None) -> int:
         """Return the number of non-empty PCA history samples for an island."""
@@ -308,69 +310,22 @@ class MapElitesManager:
         state = self._ensure_island(effective_island)
         return sum(1 for entry in state.history if entry.dimensions > 0)
 
-    def get_cell_commits(self, island_id: str | None = None) -> dict[int, str]:
-        """Return a lightweight mapping of occupied cell indices to commit hashes."""
+    def get_cell_fronts(
+        self,
+        island_id: str | None = None,
+    ) -> dict[int, tuple[str, ...]]:
+        """Return every Pareto member grouped by occupied behavior cell."""
+
         effective_island = island_id or self._default_island
         state = self._ensure_island(effective_island)
-        stats = state.archive.stats
-        occupied = int(getattr(stats, "num_elites", 0))
-        if occupied <= 0:
-            return {}
-
-        cell_commits: dict[int, str] = {}
-        for cell_index, commit_hash in state.index_to_commit.items():
-            commit = str(commit_hash or "").strip()
-            if not commit:
-                continue
-            try:
-                idx = int(cell_index)
-            except (TypeError, ValueError):
-                continue
-            cell_commits[idx] = commit
-        if len(cell_commits) != occupied:
-            message = (
-                "MAP-Elites archive bookkeeping mismatch between occupied cells "
-                "and cell->commit mappings."
-            )
-            log.error(
-                "{} island={} occupied={} mapped={}",
-                message,
-                effective_island,
-                occupied,
-                len(cell_commits),
-            )
+        mapped_elites = sum(len(commits) for commits in state.index_to_commits.values())
+        if mapped_elites != state.archive.stats.num_elites:
             raise RuntimeError(
-                f"{message} island={effective_island} occupied={occupied} mapped={len(cell_commits)}"
+                "Pareto archive bookkeeping mismatch "
+                f"(island={effective_island} archive={state.archive.stats.num_elites} "
+                f"mapped={mapped_elites})."
             )
-        return dict(cell_commits)
-
-    def get_cell_objectives(self, island_id: str | None = None) -> dict[int, float]:
-        """Return occupied cell objectives without materialising full archive records."""
-
-        effective_island = island_id or self._default_island
-        state = self._ensure_island(effective_island)
-        if state.archive.empty:
-            return {}
-
-        data = cast(Mapping[str, Any], state.archive.data())
-        indices = to_list(data.get("index"))
-        objectives = to_list(data.get("objective"))
-        if not indices or not objectives:
-            return {}
-
-        values: dict[int, float] = {}
-        for idx, raw_cell_index in enumerate(indices):
-            if idx >= len(objectives):
-                break
-            try:
-                cell_index = int(raw_cell_index)
-                objective = float(objectives[idx])
-            except (TypeError, ValueError):
-                continue
-            if not math.isfinite(objective):
-                continue
-            values[cell_index] = objective
-        return values
+        return dict(state.index_to_commits)
 
     def sample_records(
         self,
@@ -383,10 +338,15 @@ class MapElitesManager:
         state = self._ensure_island(effective_island)
         if state.archive.empty:
             return ()
-        sampled = state.archive.sample_elites(max(1, count))
-        return self._records_from_store_data(
-            cast(Mapping[str, Any], sampled),
-            effective_island,
+        sampled = state.archive.sample(max(1, count))
+        index_by_commit = state.commit_to_index
+        return tuple(
+            archive_record_from_candidate(
+                candidate=candidate,
+                island_id=effective_island,
+                cell_index=index_by_commit[candidate.commit_hash],
+            )
+            for candidate in sampled
         )
 
     def clear_island(self, island_id: str | None = None) -> None:
@@ -399,12 +359,11 @@ class MapElitesManager:
         state.history = tuple()
         state.projection = None
         self._reducers.pop(effective_island, None)
-        for commit in tuple(state.commit_to_index.keys()):
-            self._commit_to_island.pop(commit, None)
         state.commit_to_index.clear()
-        state.index_to_commit.clear()
+        state.index_to_commits.clear()
         log.info("Cleared MAP-Elites state for island {}", effective_island)
         update = SnapshotUpdate(
+            objective_contract=self._objective_contract,
             lower_bounds=state.lower_bounds.tolist(),
             upper_bounds=state.upper_bounds.tolist(),
             projection=None,
@@ -420,26 +379,31 @@ class MapElitesManager:
         state = self._ensure_island(effective_island)
         archive = state.archive
         stats = archive.stats
-        occupied = int(getattr(stats, "num_elites", 0))
+        occupied = int(stats.num_occupied)
+        elites = int(stats.num_elites)
         cells = int(np.prod(getattr(archive, "dims", self._grid_shape)))
-        qd_score = float(getattr(stats, "qd_score", 0.0) or 0.0)
-        coverage_value = getattr(stats, "coverage", None)
-        if coverage_value is None:
-            coverage_value = (occupied / cells) if cells else 0.0
-        norm_qd_value = getattr(stats, "norm_qd_score", None)
-        if norm_qd_value is None:
-            norm_qd_value = (qd_score / cells) if cells else 0.0
-        best = getattr(stats, "objective_max", None)
-        if best is None:
-            best = getattr(stats, "obj_max", None)
+        records = archive_records_from_archive(archive, effective_island)
+        best_primary = (
+            max(records, key=lambda record: record.primary_objective_score)
+            if records
+            else None
+        )
+        primary = self._objective_contract.primary
         return {
             "island_id": effective_island,
             "occupied": occupied,
+            "elites": elites,
             "cells": cells,
-            "coverage": float(coverage_value or 0.0),
-            "qd_score": qd_score,
-            "norm_qd_score": float(norm_qd_value or 0.0),
-            "best_fitness": float(best or 0.0),
+            "coverage": float(stats.coverage),
+            "objective_count": len(self._objective_contract.specs),
+            "front_max_size": state.archive.max_front_size,
+            "primary_metric_name": primary.name,
+            "primary_metric_direction": primary.direction,
+            "best_primary_value": (
+                best_primary.primary_objective_value
+                if best_primary is not None
+                else None
+            ),
         }
 
     def _embed_repo_state_for_ingest(
@@ -500,48 +464,67 @@ class MapElitesManager:
         stage_metrics: _IngestStageMetrics,
     ) -> _ProjectionIngestResult:
         old_projection = state.projection
+        old_history = state.history
+        old_samples_since_fit = state.samples_since_fit
         reducer = self._ensure_reducer(island_id, state)
         pca_fit_started_at = time.perf_counter()
-        final_embedding, history, projection, samples_since_fit = reduce_commit_embeddings(
-            commit_hash=commit_hash,
-            code_embedding=code_embedding,
-            history=state.history,
-            projection=state.projection,
-            samples_since_fit=state.samples_since_fit,
-            settings=self.settings,
-            reducer=reducer,
-        )
-        stage_metrics.pca_fit_ms += (time.perf_counter() - pca_fit_started_at) * 1000.0
-        state.history = history
-        state.projection = projection
-        state.samples_since_fit = samples_since_fit
-
-        did_initial_fit = old_projection is None and state.projection is not None
-        did_refit = (
-            old_projection is not None
-            and state.projection is not None
-            and state.projection.epoch != old_projection.epoch
-        )
-        stage_metrics.did_initial_fit = did_initial_fit
-        stage_metrics.did_refit = did_refit
-        if (
-            did_refit
-            and final_embedding is not None
-            and old_projection is not None
-            and state.projection is not None
-        ):
-            pca_refit_started_at = time.perf_counter()
-            final_embedding = self._rebuild_after_projection_refit(
-                state=state,
-                island_id=island_id,
-                current=final_embedding,
-                old_projection=old_projection,
-                new_projection=state.projection,
-                snapshot_session=snapshot_session,
+        try:
+            final_embedding, history, projection, samples_since_fit = (
+                reduce_commit_embeddings(
+                    commit_hash=commit_hash,
+                    code_embedding=code_embedding,
+                    history=state.history,
+                    projection=state.projection,
+                    samples_since_fit=state.samples_since_fit,
+                    settings=self.settings,
+                    reducer=reducer,
+                )
             )
-            stage_metrics.pca_refit_ms += (time.perf_counter() - pca_refit_started_at) * 1000.0
-            if island_id in self._reducers:
-                self._reducers[island_id].set_projection(state.projection)
+            stage_metrics.pca_fit_ms += (
+                time.perf_counter() - pca_fit_started_at
+            ) * 1000.0
+            state.history = history
+            state.projection = projection
+            state.samples_since_fit = samples_since_fit
+
+            did_initial_fit = old_projection is None and state.projection is not None
+            did_refit = (
+                old_projection is not None
+                and state.projection is not None
+                and state.projection.epoch != old_projection.epoch
+            )
+            stage_metrics.did_initial_fit = did_initial_fit
+            stage_metrics.did_refit = did_refit
+            if (
+                did_refit
+                and final_embedding is not None
+                and old_projection is not None
+                and state.projection is not None
+            ):
+                pca_refit_started_at = time.perf_counter()
+                final_embedding = self._rebuild_after_projection_refit(
+                    state=state,
+                    island_id=island_id,
+                    current=final_embedding,
+                    old_projection=old_projection,
+                    new_projection=state.projection,
+                    snapshot_session=snapshot_session,
+                )
+                stage_metrics.pca_refit_ms += (
+                    time.perf_counter() - pca_refit_started_at
+                ) * 1000.0
+                reducer.set_projection(state.projection)
+        except Exception:
+            state.history = old_history
+            state.projection = old_projection
+            state.samples_since_fit = old_samples_since_fit
+            self._reducers[island_id] = DimensionReducer(
+                settings=self.settings,
+                history=old_history,
+                projection=old_projection,
+                samples_since_fit=old_samples_since_fit,
+            )
+            raise
 
         return _ProjectionIngestResult(
             final_embedding=final_embedding,
@@ -570,6 +553,7 @@ class MapElitesManager:
         final_embedding: FinalEmbedding | None,
     ) -> SnapshotUpdate:
         return SnapshotUpdate(
+            objective_contract=self._objective_contract,
             lower_bounds=state.lower_bounds.tolist(),
             upper_bounds=state.upper_bounds.tolist(),
             projection=state.projection,
@@ -632,16 +616,15 @@ class MapElitesManager:
         state: IslandState,
         commit_hash: str,
         metrics: Sequence[Mapping[str, Any]] | Mapping[str, Any] | None,
-        fitness_override: float | None,
         final_embedding: FinalEmbedding,
         artifacts: CommitEmbeddingArtifacts,
         emit_sampled_info: bool,
     ) -> tuple[_ArchiveCandidate | None, MapElitesInsertionResult | None]:
-        metrics_map = self._coerce_metrics(metrics)
-        fitness = self._resolve_fitness(metrics_map, fitness_override)
-        if fitness is None or not math.isfinite(fitness):
+        try:
+            objectives = self._objective_contract.resolve(metrics)
+        except ObjectiveContractError as exc:
             return None, self._skip_ingest_result(
-                message="Fitness value is undefined; skipping archive update.",
+                message=f"Objective contract rejected metrics: {exc}",
                 commit_hash=commit_hash,
                 artifacts=artifacts,
                 emit_sampled_info=emit_sampled_info,
@@ -661,7 +644,7 @@ class MapElitesManager:
                 log_level="error",
             )
 
-        return _ArchiveCandidate(fitness=fitness, vector=vector), None
+        return _ArchiveCandidate(objectives=objectives, vector=vector), None
 
     def _insert_archive_candidate_for_ingest(
         self,
@@ -677,18 +660,23 @@ class MapElitesManager:
         stage_metrics: _IngestStageMetrics,
     ) -> MapElitesInsertionResult:
         archive_add_started_at = time.perf_counter()
+        replacing_existing = commit_hash in state.commit_to_index
         status, delta, record = self._add_to_archive(
             state=state,
             island_id=island_id,
             commit_hash=commit_hash,
-            fitness=candidate.fitness,
+            objective_values=candidate.objectives.values,
+            objective_scores=candidate.objectives.scores,
             measures=candidate.vector,
         )
         stage_metrics.archive_add_ms += (time.perf_counter() - archive_add_started_at) * 1000.0
 
-        self._record_snapshot_cell_upsert(
+        self._record_snapshot_front_replace(
             update=update,
+            state=state,
+            island_id=island_id,
             record=record,
+            replacing_existing=replacing_existing,
             archive_replace_needed=archive_replace_needed,
         )
         self._log_archive_insertion_outcome(
@@ -707,20 +695,41 @@ class MapElitesManager:
         )
 
     @staticmethod
-    def _record_snapshot_cell_upsert(
+    def _record_snapshot_front_replace(
         *,
         update: SnapshotUpdate | None,
+        state: IslandState,
+        island_id: str,
         record: MapElitesRecord | None,
+        replacing_existing: bool,
         archive_replace_needed: bool,
     ) -> None:
-        if update is not None and record is not None and not archive_replace_needed:
-            update.cell_upsert = SnapshotCellUpsert(
-                cell_index=int(record.cell_index),
-                objective=float(record.fitness),
-                measures=tuple(float(v) for v in record.measures),
-                solution=tuple(float(v) for v in record.solution),
-                commit_hash=str(record.commit_hash),
-                timestamp=float(record.timestamp),
+        if update is None or archive_replace_needed:
+            return
+        records = archive_records_from_archive(state.archive, island_id)
+        if replacing_existing:
+            update.archive_replace = tuple(
+                SnapshotElite(
+                    cell_index=item.cell_index,
+                    commit_hash=item.commit_hash,
+                    objective_values=item.objective_values,
+                    measures=item.measures,
+                    timestamp=item.timestamp,
+                )
+                for item in records
+            )
+            return
+        if record is not None:
+            update.front_replace = tuple(
+                SnapshotElite(
+                    cell_index=item.cell_index,
+                    commit_hash=item.commit_hash,
+                    objective_values=item.objective_values,
+                    measures=item.measures,
+                    timestamp=item.timestamp,
+                )
+                for item in records
+                if item.cell_index == record.cell_index
             )
 
     @staticmethod
@@ -736,29 +745,22 @@ class MapElitesManager:
         if record:
             if emit_sampled_info:
                 log.info(
-                    "Inserted commit {} into island {} (cell={} status={} Δ={:.4f})",
+                    "Retained commit {} in island {} Pareto front "
+                    "(cell={} removed={})",
                     commit_hash,
                     island_id,
                     record.cell_index,
-                    status,
-                    delta,
+                    int(delta),
                 )
-        elif status < 0:
-            log.warning(
-                "Archive rejected commit {} for island {} (status={} Δ={:.4f})",
-                commit_hash,
-                island_id,
-                status,
-                delta,
-            )
         else:
             if emit_sampled_info:
                 log.info(
-                    "Commit {} did not improve island {} (status={} Δ={:.4f})",
+                    "Commit {} was not retained in island {} Pareto front "
+                    "(status={} removed={})",
                     commit_hash,
                     island_id,
                     status,
-                    delta,
+                    int(delta),
                 )
 
     @staticmethod
@@ -771,10 +773,10 @@ class MapElitesManager:
     ) -> MapElitesInsertionResult:
         message: str | None = None
         if status <= 0:
-            if status == 0:
-                message = "Commit not inserted; objective below cell threshold."
-            else:
-                message = f"Commit not inserted; archive rejected insertion (status={status})."
+            message = (
+                "Commit not retained; it was dominated, objective-equivalent, "
+                "or removed by bounded-front crowding."
+            )
         elif record is None:
             message = "Archive reported insertion success but no record could be retrieved."
 
@@ -863,7 +865,8 @@ class MapElitesManager:
         state: IslandState,
         island_id: str,
         commit_hash: str,
-        fitness: float,
+        objective_values: Sequence[float],
+        objective_scores: Sequence[float],
         measures: np.ndarray,
         timestamp: float | None = None,
     ) -> tuple[int, float, MapElitesRecord | None]:
@@ -871,9 +874,9 @@ class MapElitesManager:
             state=state,
             island_id=island_id,
             commit_hash=commit_hash,
-            fitness=fitness,
+            objective_values=objective_values,
+            objective_scores=objective_scores,
             measures=measures,
-            commit_to_island=self._commit_to_island,
             timestamp=timestamp,
         )
 
@@ -883,19 +886,19 @@ class MapElitesManager:
         state: IslandState,
         island_id: str,
         commit_hashes: Sequence[str],
-        objectives: Sequence[float],
+        objective_values: Sequence[Sequence[float]] | np.ndarray,
+        objective_scores: Sequence[Sequence[float]] | np.ndarray,
         measures: Sequence[np.ndarray] | np.ndarray,
         timestamps: Sequence[float],
-        commit_to_island: dict[str, str] | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         return archive_add_batch(
             state=state,
             island_id=island_id,
             commit_hashes=commit_hashes,
-            objectives=objectives,
+            objective_values=objective_values,
+            objective_scores=objective_scores,
             measures=measures,
             timestamps=timestamps,
-            commit_to_island=commit_to_island or self._commit_to_island,
         )
 
     def _seed_archive_after_initial_fit(
@@ -913,10 +916,8 @@ class MapElitesManager:
             projection=projection,
             skip_commit_hash=skip_commit_hash,
             snapshot_session=snapshot_session,
-            settings=self.settings,
             target_dims=self._target_dims,
-            commit_to_island=self._commit_to_island,
-            load_commit_fitnesses=lambda commits, session: self._load_commit_fitnesses(
+            load_commit_objectives=lambda commits, session: self._load_commit_objectives(
                 commit_hashes=commits,
                 snapshot_session=session,
             ),
@@ -945,7 +946,6 @@ class MapElitesManager:
             previous_records=previous_records,
             snapshot_session=snapshot_session,
             target_dims=self._target_dims,
-            commit_to_island=self._commit_to_island,
             load_commit_vectors=lambda i, commits, s, session: self._load_commit_vectors(
                 island_id=i,
                 commit_hashes=commits,
@@ -991,13 +991,13 @@ class MapElitesManager:
             settings=self.settings,
         )
 
-    def _load_commit_fitnesses(
+    def _load_commit_objectives(
         self,
         *,
         commit_hashes: Sequence[str],
         snapshot_session: Session | None,
-    ) -> dict[str, float]:
-        return db_load_commit_fitnesses(
+    ) -> dict[str, ResolvedObjectives]:
+        return db_load_commit_objectives(
             commit_hashes=commit_hashes,
             snapshot_session=snapshot_session,
             settings=self.settings,
@@ -1008,22 +1008,11 @@ class MapElitesManager:
         *,
         state: IslandState,
         island_id: str,
-    ) -> tuple[SnapshotCellUpsert, ...]:
+    ) -> tuple[SnapshotElite, ...]:
         return archive_build_archive_replace_payload(
             state=state,
             island_id=island_id,
         )
-
-    def _records_from_store_data(
-        self,
-        data: Mapping[str, Any],
-        island_id: str,
-    ) -> tuple[MapElitesRecord, ...]:
-        return archive_records_from_store_data(data, island_id)
-
-    @staticmethod
-    def _record_from_scalar_row(data: Mapping[str, Any], island_id: str) -> MapElitesRecord:
-        return archive_record_from_scalar_row(data, island_id)
 
     def _ensure_island(self, island_id: str) -> IslandState:
         state = self._archives.get(island_id)
@@ -1042,9 +1031,22 @@ class MapElitesManager:
                 f"settings_dims={self._target_dims} snapshot_dims={snapshot_dims})."
             )
 
-        archive = self._build_archive()
-        lower_template = self._lower_template
-        upper_template = self._upper_template
+        lower_template = np.asarray(
+            snapshot.get("lower_bounds", self._lower_template)
+            if snapshot
+            else self._lower_template,
+            dtype=np.float64,
+        )
+        upper_template = np.asarray(
+            snapshot.get("upper_bounds", self._upper_template)
+            if snapshot
+            else self._upper_template,
+            dtype=np.float64,
+        )
+        archive = self._build_archive(
+            lower_bounds=lower_template,
+            upper_bounds=upper_template,
+        )
 
         state = IslandState(
             archive=archive,
@@ -1056,7 +1058,7 @@ class MapElitesManager:
                 state=state,
                 snapshot=snapshot,
                 island_id=island_id,
-                commit_to_island=self._commit_to_island,
+                objective_contract=self._objective_contract,
             )
         self._archives[island_id] = state
         self._reducers[island_id] = DimensionReducer(
@@ -1115,58 +1117,6 @@ class MapElitesManager:
             state=state,
         )
 
-    def _resolve_fitness(
-        self,
-        metrics: Mapping[str, float],
-        override: float | None,
-    ) -> float | None:
-        if override is not None:
-            return float(override)
-        metric_name = self.settings.mapelites_fitness_metric
-        if not metric_name:
-            return None
-        value = metrics.get(metric_name)
-        if value is None:
-            log.warning(
-                "Missing metric {!r}; using configured floor {}",
-                metric_name,
-                self.settings.mapelites_fitness_floor,
-            )
-            return self.settings.mapelites_fitness_floor
-        direction = 1.0 if self.settings.mapelites_fitness_higher_is_better else -1.0
-        return float(value) * direction
-
-    def _coerce_metrics(
-        self,
-        metrics: Sequence[Mapping[str, Any]] | Mapping[str, Any] | None,
-    ) -> dict[str, float]:
-        if metrics is None:
-            return {}
-        if isinstance(metrics, Mapping):
-            result: dict[str, float] = {}
-            for key, value in metrics.items():
-                numeric = self._maybe_float(value)
-                if numeric is None:
-                    continue
-                result[str(key)] = numeric
-            return result
-        aggregated: dict[str, float] = {}
-        for entry in metrics:
-            if hasattr(entry, "name") and hasattr(entry, "value"):
-                value = getattr(entry, "value")
-                numeric = self._maybe_float(value)
-                if numeric is not None:
-                    aggregated[str(getattr(entry, "name"))] = numeric
-                continue
-            if isinstance(entry, Mapping):
-                name = entry.get("name") or entry.get("metric") or entry.get("key")
-                value = entry.get("value")
-                if not name:
-                    continue
-                numeric = self._maybe_float(value)
-                if numeric is not None:
-                    aggregated[str(name)] = numeric
-        return aggregated
 
     def _next_ingest_invocation(self) -> int:
         self._ingest_invocations += 1
@@ -1206,12 +1156,3 @@ class MapElitesManager:
         if update is None:
             return
         self._snapshot_store.apply_update(island_id, update=update, session=session)
-
-    @staticmethod
-    def _maybe_float(value: Any) -> float | None:
-        if value is None:
-            return None
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return None

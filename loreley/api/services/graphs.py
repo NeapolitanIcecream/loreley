@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from loreley.api.services.candidate_fates import load_candidate_fates_for_commits
 from loreley.api.services.evidence import load_evidence_indicators_by_commit_hash
-from loreley.config import Settings, get_settings
+from loreley.config import Settings, get_settings, resolve_objective_contract
 from loreley.db.base import session_scope
 from loreley.db.models import CommitCard, Metric
 
@@ -23,9 +23,7 @@ class CommitNode:
     created_at: datetime | None
     author: str | None
     message: str | None
-    metric_value: float | None
-    fitness: float | None
-    objective: float | None
+    primary_metric_value: float | None
     has_evaluation_evidence: bool
     agent_visible_evidence_count: int
     top_evaluation_diagnosis: str | None
@@ -46,8 +44,8 @@ class CommitGraph:
     nodes: list[CommitNode]
     edges: list[CommitEdge]
     truncated: bool
-    metric_name: str | None
-    higher_is_better: bool
+    primary_metric_name: str
+    primary_metric_higher_is_better: bool
 
 
 def build_commit_lineage_graph(
@@ -63,10 +61,8 @@ def build_commit_lineage_graph(
     """
 
     base_settings = settings or get_settings()
-    metric_name = (base_settings.mapelites_fitness_metric or "").strip() or None
-    higher_is_better = bool(base_settings.mapelites_fitness_higher_is_better)
-    direction = 1.0 if higher_is_better else -1.0
-    fitness_floor = float(base_settings.mapelites_fitness_floor)
+    primary = resolve_objective_contract(base_settings).primary
+    metric_name = primary.name
 
     limit = max(1, min(int(max_nodes), 5000))
     mode = (mode or "parent_chain").strip()
@@ -100,7 +96,6 @@ def build_commit_lineage_graph(
 
     for c in commits:
         raw = metric_map.get(str(c.id))
-        objective = fitness_floor if raw is None else raw * direction
         indicator = evidence.get(c.commit_hash)
         fate = fates.get(c.commit_hash)
         nodes.append(
@@ -111,9 +106,7 @@ def build_commit_lineage_graph(
                 created_at=c.created_at,
                 author=c.author,
                 message=getattr(c, "subject", None),
-                metric_value=raw,
-                fitness=raw,
-                objective=objective,
+                primary_metric_value=raw,
                 has_evaluation_evidence=(
                     bool(indicator.has_evaluation_evidence) if indicator is not None else False
                 ),
@@ -139,6 +132,6 @@ def build_commit_lineage_graph(
         nodes=nodes,
         edges=edges,
         truncated=truncated,
-        metric_name=metric_name,
-        higher_is_better=higher_is_better,
+        primary_metric_name=metric_name,
+        primary_metric_higher_is_better=primary.higher_is_better,
     )
