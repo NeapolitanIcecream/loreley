@@ -1,0 +1,861 @@
+{
+  "commands": {
+    "scheduler": [
+      "/Users/chenmohan/gits/ACE/loreley/.venv/bin/python3",
+      "examples/evol_circle_packing.py",
+      "scheduler",
+      "--phase",
+      "smoke",
+      "--init-db",
+      "--yes",
+      "--preflight-timeout-seconds",
+      "5",
+      "--max-total-jobs",
+      "4"
+    ],
+    "worker": [
+      "/Users/chenmohan/gits/ACE/loreley/.venv/bin/python3",
+      "examples/evol_circle_packing.py",
+      "worker",
+      "--phase",
+      "smoke",
+      "--processes",
+      "2",
+      "--preflight-timeout-seconds",
+      "5"
+    ]
+  },
+  "environment": {
+    "backend": "kilocode",
+    "database_host": "localhost:5432",
+    "model": "gpt-5.4-mini",
+    "python": "3.13.9 (main, Nov 19 2025, 23:39:32) [Clang 21.1.4 ]",
+    "redis_db": 15,
+    "repository": "/Users/chenmohan/gits/ACE/loreley/examples/circle-packing",
+    "root_commit": "6dab191",
+    "secrets_forwarded_to_worker": true,
+    "secrets_recorded": false
+  },
+  "generated_at": "2026-07-25T17:43:52.387012+00:00",
+  "logs": {
+    "scheduler": "/Users/chenmohan/gits/ACE/loreley/docs/research/artifacts/2026-07-26-v15-validation/system-live-gpt54mini.scheduler.log",
+    "worker": "/Users/chenmohan/gits/ACE/loreley/docs/research/artifacts/2026-07-26-v15-validation/system-live-gpt54mini.worker.log"
+  },
+  "report": {
+    "artifacts": [
+      {
+        "bytes": 13500,
+        "path": "/Users/chenmohan/gits/ACE/loreley/docs/research/artifacts/2026-07-26-v15-validation/v15-live-gpt54mini-report/smoke-report.json",
+        "sha256": "df5c8e28bde8fb0a6119772e212b61db13fdc37ffc17234a668ef1bf0a09d44c"
+      },
+      {
+        "bytes": 2311,
+        "path": "/Users/chenmohan/gits/ACE/loreley/docs/research/artifacts/2026-07-26-v15-validation/v15-live-gpt54mini-report/smoke-report.md",
+        "sha256": "13130308376dc3d3210aa85801bf67835a8a9c23efa13a314b341d88229dd4fb"
+      }
+    ],
+    "command": [
+      "/Users/chenmohan/gits/ACE/loreley/.venv/bin/python3",
+      "examples/evol_circle_packing.py",
+      "report",
+      "--phase",
+      "smoke",
+      "--runs",
+      "7",
+      "--output-dir",
+      "/Users/chenmohan/gits/ACE/loreley/docs/research/artifacts/2026-07-26-v15-validation/v15-live-gpt54mini-report"
+    ],
+    "log": "/Users/chenmohan/gits/ACE/loreley/docs/research/artifacts/2026-07-26-v15-validation/system-live-gpt54mini.report.log"
+  },
+  "rows": {
+    "archive_cells": [
+      {
+        "cell_index": 1,
+        "commit_hash": "12ce3d5032238c88c5b02e8dd783fb24c5c5f232",
+        "island_id": "alpha",
+        "measures": [
+          0.3821488698022421
+        ],
+        "objective_values": [
+          2.5,
+          0.002415967173874378
+        ]
+      },
+      {
+        "cell_index": 2,
+        "commit_hash": "6e1435c2f1a7cc40a2adf1a655e889df2d8fc4bf",
+        "island_id": "alpha",
+        "measures": [
+          0.617851130197758
+        ],
+        "objective_values": [
+          2.4389662673771957,
+          0.005875015631318092
+        ]
+      },
+      {
+        "cell_index": 1,
+        "commit_hash": "1f8c02f99b2657d4463130c2bbd93088a6a28f8e",
+        "island_id": "beta",
+        "measures": [
+          0.3821488698022421
+        ],
+        "objective_values": [
+          2.5,
+          0.003500026650726795
+        ]
+      },
+      {
+        "cell_index": 2,
+        "commit_hash": "e277ccb3a94b3813f60b595ab80e3506fa8c63b9",
+        "island_id": "beta",
+        "measures": [
+          0.617851130197758
+        ],
+        "objective_values": [
+          2.4389662673796346,
+          0.11133297812193632
+        ]
+      }
+    ],
+    "island_states": [
+      {
+        "island_id": "alpha",
+        "snapshot": {
+          "last_update_at": 1785001252.148121,
+          "lower_bounds": [
+            0.0
+          ],
+          "objective_contract": [
+            {
+              "direction": "max",
+              "name": "sum_radii"
+            },
+            {
+              "direction": "min",
+              "name": "runtime_p50_ms"
+            }
+          ],
+          "objective_contract_fingerprint": "8bbbad7efe16d7ec03df3825409b3f7e5c8e367b418ed4196d0f13de9f718efe",
+          "projection": {
+            "components": [
+              [
+                0.07001963394475322,
+                0.030493269452612822,
+                0.1752947397575999,
+                0.009930165035266081,
+                0.11226765926033651,
+                0.02416297009908881,
+                0.02973650374272203,
+                -0.06541043215346704,
+                0.11643921494008962,
+                -0.15582839826386166,
+                -0.03290175210196546,
+                -0.14773001462284702,
+                -0.0832636806364744,
+                0.2877794549654916,
+                0.0055356648660337,
+                -0.0757929940861981,
+                0.07685288985535005,
+                0.10961155860617675,
+                0.06348493574052479,
+                -0.18813636907637868,
+                0.056173382623772736,
+                0.16831150382733306,
+                -0.08213965158453276,
+                -0.1954342962111689,
+                0.2060841155344645,
+                -0.06437615591227336,
+                0.013127299301738905,
+                0.24664108302509496,
+                0.06661083502976879,
+                -0.1717311442026495,
+                0.040846091525975965,
+                0.10830084921164627,
+                0.07001963394475284,
+                0.030493269452612822,
+                0.1752947397575999,
+                0.009930165035266081,
+                0.11226765926033651,
+                0.02416297009908881,
+                0.02973650374272203,
+                -0.06541043215346704,
+                0.11643921494008962,
+                -0.15582839826386166,
+                -0.03290175210196546,
+                -0.14773001462284702,
+                -0.0832636806364744,
+                0.2877794549654916,
+                0.0055356648660337,
+                -0.0757929940861981,
+                0.07685288985535005,
+                0.10961155860617675,
+                0.06348493574052479,
+                -0.18813636907637868,
+                0.056173382623772736,
+                0.16831150382733306,
+                -0.08213965158453276,
+                -0.1954342962111689,
+                0.2060841155344645,
+                -0.06437615591227336,
+                0.013127299301738905,
+                0.24664108302509496,
+                0.06661083502976879,
+                -0.1717311442026495,
+                0.040846091525975965,
+                0.10830084921164627
+              ]
+            ],
+            "epoch": 0,
+            "explained_variance": [
+              1.0671162408968675
+            ],
+            "explained_variance_ratio": [
+              1.0
+            ],
+            "feature_count": 64,
+            "fitted_at": 1785001252.148007,
+            "mean": [
+              -0.0036741858716312185,
+              0.004388779510599064,
+              -0.04217216915336422,
+              -0.00562922150893487,
+              0.09399787288635278,
+              0.1242748957259894,
+              -0.15527925795712683,
+              -0.07738192986758909,
+              0.14151777134439036,
+              -0.039132604030111116,
+              0.09369299801325104,
+              -0.025679374782046148,
+              0.06930913684362372,
+              0.010937723863364945,
+              0.033988993927289594,
+              -0.10415290377422737,
+              -0.11476433116336536,
+              -0.018404721543682036,
+              -0.017013096450169095,
+              0.04793603769567953,
+              0.10325266376696639,
+              -0.01129740631578028,
+              -0.01251107318974095,
+              -0.05819514420491662,
+              -0.049216363782297594,
+              0.11291395501516777,
+              -0.14541490809478375,
+              -0.0278145121174824,
+              -0.14657205326683115,
+              -0.037660482726928984,
+              0.18052272470946823,
+              -0.07788255635260304,
+              -0.0036741858716312185,
+              0.004388779510599064,
+              -0.04217216915336422,
+              -0.00562922150893487,
+              0.09399787288635278,
+              0.1242748957259894,
+              -0.15527925795712683,
+              -0.07738192986758909,
+              0.14151777134439036,
+              -0.039132604030111116,
+              0.09369299801325104,
+              -0.025679374782046148,
+              0.06930913684362372,
+              0.010937723863364945,
+              0.033988993927289594,
+              -0.10415290377422737,
+              -0.11476433116336536,
+              -0.018404721543682036,
+              -0.017013096450169095,
+              0.04793603769567953,
+              0.10325266376696639,
+              -0.01129740631578028,
+              -0.01251107318974095,
+              -0.05819514420491662,
+              -0.049216363782297594,
+              0.11291395501516777,
+              -0.14541490809478375,
+              -0.0278145121174824,
+              -0.14657205326683115,
+              -0.037660482726928984,
+              0.18052272470946823,
+              -0.07788255635260304
+            ],
+            "rotation": null,
+            "sample_count": 2,
+            "whiten": true
+          },
+          "samples_since_fit": 0,
+          "upper_bounds": [
+            1.0
+          ]
+        }
+      },
+      {
+        "island_id": "beta",
+        "snapshot": {
+          "last_update_at": 1785001428.322958,
+          "lower_bounds": [
+            0.0
+          ],
+          "objective_contract": [
+            {
+              "direction": "max",
+              "name": "sum_radii"
+            },
+            {
+              "direction": "min",
+              "name": "runtime_p50_ms"
+            }
+          ],
+          "objective_contract_fingerprint": "8bbbad7efe16d7ec03df3825409b3f7e5c8e367b418ed4196d0f13de9f718efe",
+          "projection": {
+            "components": [
+              [
+                -0.02587777113974076,
+                0.038330515424701846,
+                -0.08344699000349307,
+                -0.18625354037781666,
+                -0.058320000102965334,
+                -0.03805087600541918,
+                0.11160526622739957,
+                0.2992876598554501,
+                -0.1487435910716394,
+                0.028142150391556618,
+                0.0009159114825233732,
+                0.19962516772310376,
+                0.2382786024854197,
+                -0.06301178477546797,
+                0.049150269441832074,
+                -0.04845892813886813,
+                0.0697404269593154,
+                0.19450909293490062,
+                0.07704286632543818,
+                0.04857943855180608,
+                -0.019504190206364673,
+                -0.028642994102170333,
+                0.09032650390573978,
+                -0.03495423076730763,
+                0.09177122345085516,
+                -0.08402109507748128,
+                -0.17432343592927246,
+                -0.08631667924233084,
+                0.036529850987759564,
+                0.039041799996036866,
+                0.2703081695133403,
+                -0.17386777750889718,
+                -0.025877771139741008,
+                0.038330515424701846,
+                -0.08344699000349307,
+                -0.18625354037781666,
+                -0.058320000102965334,
+                -0.03805087600541918,
+                0.11160526622739957,
+                0.2992876598554501,
+                -0.1487435910716394,
+                0.028142150391556618,
+                0.0009159114825233732,
+                0.19962516772310376,
+                0.2382786024854197,
+                -0.06301178477546797,
+                0.049150269441832074,
+                -0.04845892813886813,
+                0.0697404269593154,
+                0.19450909293490062,
+                0.07704286632543818,
+                0.04857943855180608,
+                -0.019504190206364673,
+                -0.028642994102170333,
+                0.09032650390573978,
+                -0.03495423076730763,
+                0.09177122345085516,
+                -0.08402109507748128,
+                -0.17432343592927246,
+                -0.08631667924233084,
+                0.036529850987759564,
+                0.039041799996036866,
+                0.2703081695133403,
+                -0.17386777750889718
+              ]
+            ],
+            "epoch": 0,
+            "explained_variance": [
+              0.9889872175091845
+            ],
+            "explained_variance_ratio": [
+              1.0
+            ],
+            "feature_count": 64,
+            "fitted_at": 1785001428.322848,
+            "mean": [
+              -0.018631473861637892,
+              0.0016279229416645297,
+              -0.059610472989182005,
+              -0.020303665756465188,
+              0.04642143718720621,
+              0.2319004345117982,
+              0.001592853285409146,
+              -0.0022594997390546906,
+              -0.056818221860056195,
+              -0.15662535723973575,
+              -0.16708764943222923,
+              -0.09864028886152067,
+              0.02744741344131575,
+              -0.09337048084799335,
+              0.02813283678811129,
+              0.14870627756017119,
+              -0.019494128761428836,
+              -0.005977738659934728,
+              0.08463017623829684,
+              0.08851427670223111,
+              -0.16081402410239165,
+              0.05166050329028457,
+              -0.13369565615716084,
+              0.00959494824897109,
+              0.06839986417342712,
+              0.002422619601090671,
+              -0.026882681298006264,
+              -0.09230931225812328,
+              -0.1050779456010793,
+              -0.05555358381328444,
+              -0.03280977056664772,
+              -0.06059238718535562,
+              -0.018631473861637892,
+              0.0016279229416645297,
+              -0.059610472989182005,
+              -0.020303665756465188,
+              0.04642143718720621,
+              0.2319004345117982,
+              0.001592853285409146,
+              -0.0022594997390546906,
+              -0.056818221860056195,
+              -0.15662535723973575,
+              -0.16708764943222923,
+              -0.09864028886152067,
+              0.02744741344131575,
+              -0.09337048084799335,
+              0.02813283678811129,
+              0.14870627756017119,
+              -0.019494128761428836,
+              -0.005977738659934728,
+              0.08463017623829684,
+              0.08851427670223111,
+              -0.16081402410239165,
+              0.05166050329028457,
+              -0.13369565615716084,
+              0.00959494824897109,
+              0.06839986417342712,
+              0.002422619601090671,
+              -0.026882681298006264,
+              -0.09230931225812328,
+              -0.1050779456010793,
+              -0.05555358381328444,
+              -0.03280977056664772,
+              -0.06059238718535562
+            ],
+            "rotation": null,
+            "sample_count": 2,
+            "whiten": true
+          },
+          "samples_since_fit": 0,
+          "upper_bounds": [
+            1.0
+          ]
+        }
+      }
+    ],
+    "jobs": [
+      {
+        "base_commit_hash": "6dab19189cd41b9e57f11e12c315341da53f22af",
+        "candidate_commit_hash": "6e1435c2f1a7cc40a2adf1a655e889df2d8fc4bf",
+        "completed_at_epoch": 1785001164.820287,
+        "id": "d94ae65e-284f-4060-a0c2-18c75c47776a",
+        "ingestion_status": "skipped",
+        "inspiration_commit_hashes": [],
+        "is_seed_job": true,
+        "island_id": "alpha",
+        "job_kind": "seed",
+        "last_error": null,
+        "migration_commit_hash": null,
+        "migration_source_island_id": null,
+        "result_commit_hash": "6e1435c2f1a7cc40a2adf1a655e889df2d8fc4bf",
+        "scheduled_at_epoch": 1785001032.572271,
+        "started_at_epoch": 1785001032.636092,
+        "status": "SUCCEEDED",
+        "worker_id": null
+      },
+      {
+        "base_commit_hash": "6dab19189cd41b9e57f11e12c315341da53f22af",
+        "candidate_commit_hash": "e277ccb3a94b3813f60b595ab80e3506fa8c63b9",
+        "completed_at_epoch": 1785001202.576837,
+        "id": "291eef23-0f2f-40cb-bc4f-feff48dd15e6",
+        "ingestion_status": "skipped",
+        "inspiration_commit_hashes": [],
+        "is_seed_job": true,
+        "island_id": "beta",
+        "job_kind": "seed",
+        "last_error": null,
+        "migration_commit_hash": null,
+        "migration_source_island_id": null,
+        "result_commit_hash": "e277ccb3a94b3813f60b595ab80e3506fa8c63b9",
+        "scheduled_at_epoch": 1785001032.58469,
+        "started_at_epoch": 1785001032.638369,
+        "status": "SUCCEEDED",
+        "worker_id": null
+      },
+      {
+        "base_commit_hash": "6dab19189cd41b9e57f11e12c315341da53f22af",
+        "candidate_commit_hash": "12ce3d5032238c88c5b02e8dd783fb24c5c5f232",
+        "completed_at_epoch": 1785001251.636639,
+        "id": "161930d6-20f9-4f74-b696-46211b2c10ec",
+        "ingestion_status": "succeeded",
+        "inspiration_commit_hashes": [],
+        "is_seed_job": true,
+        "island_id": "alpha",
+        "job_kind": "seed",
+        "last_error": null,
+        "migration_commit_hash": null,
+        "migration_source_island_id": null,
+        "result_commit_hash": "12ce3d5032238c88c5b02e8dd783fb24c5c5f232",
+        "scheduled_at_epoch": 1785001165.654976,
+        "started_at_epoch": 1785001166.253246,
+        "status": "SUCCEEDED",
+        "worker_id": null
+      },
+      {
+        "base_commit_hash": "6dab19189cd41b9e57f11e12c315341da53f22af",
+        "candidate_commit_hash": "1f8c02f99b2657d4463130c2bbd93088a6a28f8e",
+        "completed_at_epoch": 1785001427.272926,
+        "id": "f442b17e-b7aa-4c19-ad29-922468e294ad",
+        "ingestion_status": "succeeded",
+        "inspiration_commit_hashes": [],
+        "is_seed_job": true,
+        "island_id": "beta",
+        "job_kind": "seed",
+        "last_error": null,
+        "migration_commit_hash": null,
+        "migration_source_island_id": null,
+        "result_commit_hash": "1f8c02f99b2657d4463130c2bbd93088a6a28f8e",
+        "scheduled_at_epoch": 1785001202.811563,
+        "started_at_epoch": 1785001203.319085,
+        "status": "SUCCEEDED",
+        "worker_id": null
+      }
+    ],
+    "usage": [
+      {
+        "cached_input_tokens": 56832,
+        "cost_usd": 0.0,
+        "input_tokens": 129083,
+        "model": "gpt-5.4-mini",
+        "output_tokens": 3677,
+        "phase": "coding",
+        "reasoning_output_tokens": 14553,
+        "source": "kilo_cli",
+        "total_tokens": 189592
+      },
+      {
+        "cached_input_tokens": 1664,
+        "cost_usd": 0.0,
+        "input_tokens": 25175,
+        "model": "gpt-5.4-mini",
+        "output_tokens": 531,
+        "phase": "planning",
+        "reasoning_output_tokens": 490,
+        "source": "kilo_cli",
+        "total_tokens": 27370
+      },
+      {
+        "cached_input_tokens": 52736,
+        "cost_usd": 0.0,
+        "input_tokens": 49986,
+        "model": "gpt-5.4-mini",
+        "output_tokens": 3441,
+        "phase": "coding",
+        "reasoning_output_tokens": 28552,
+        "source": "kilo_cli",
+        "total_tokens": 106163
+      },
+      {
+        "cached_input_tokens": 1664,
+        "cost_usd": 0.0,
+        "input_tokens": 25175,
+        "model": "gpt-5.4-mini",
+        "output_tokens": 552,
+        "phase": "planning",
+        "reasoning_output_tokens": 265,
+        "source": "kilo_cli",
+        "total_tokens": 27391
+      },
+      {
+        "cached_input_tokens": 16256,
+        "cost_usd": 0.0,
+        "input_tokens": 24155,
+        "model": "gpt-5.4-mini",
+        "output_tokens": 657,
+        "phase": "planning",
+        "reasoning_output_tokens": 605,
+        "source": "kilo_cli",
+        "total_tokens": 41068
+      },
+      {
+        "cached_input_tokens": 47616,
+        "cost_usd": 0.0,
+        "input_tokens": 73265,
+        "model": "gpt-5.4-mini",
+        "output_tokens": 2206,
+        "phase": "coding",
+        "reasoning_output_tokens": 9157,
+        "source": "kilo_cli",
+        "total_tokens": 123087
+      },
+      {
+        "cached_input_tokens": 1664,
+        "cost_usd": 0.0,
+        "input_tokens": 25151,
+        "model": "gpt-5.4-mini",
+        "output_tokens": 540,
+        "phase": "planning",
+        "reasoning_output_tokens": 293,
+        "source": "kilo_cli",
+        "total_tokens": 27355
+      },
+      {
+        "cached_input_tokens": 76032,
+        "cost_usd": 0.0,
+        "input_tokens": 19556,
+        "model": "gpt-5.4-mini",
+        "output_tokens": 2416,
+        "phase": "coding",
+        "reasoning_output_tokens": 26525,
+        "source": "kilo_cli",
+        "total_tokens": 98004
+      }
+    ]
+  },
+  "summary": {
+    "all_jobs_terminal": true,
+    "api_cost_usd": 0.0,
+    "archive_islands": [
+      "alpha",
+      "beta"
+    ],
+    "coding_workspaces": [
+      "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-live-gpt54mini/worker-pid-98414-90319bce-worktrees/161930d6-20f9-4f74-b696-46211b2c10ec-8d0d2971",
+      "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-live-gpt54mini/worker-pid-98414-90319bce-worktrees/d94ae65e-284f-4060-a0c2-18c75c47776a-8ff5d137",
+      "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-live-gpt54mini/worker-pid-98415-246e4e77-worktrees/291eef23-0f2f-40cb-bc4f-feff48dd15e6-c6efb861",
+      "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-live-gpt54mini/worker-pid-98415-246e4e77-worktrees/f442b17e-b7aa-4c19-ad29-922468e294ad-eec0f018"
+    ],
+    "configured": {
+      "backend": "kilocode",
+      "coding_delay_seconds": 0.0,
+      "islands": [
+        "alpha",
+        "beta"
+      ],
+      "max_total_jobs": 4,
+      "max_unfinished_jobs": 2,
+      "migration_interval_jobs": 0,
+      "model": "gpt-5.4-mini",
+      "planning_delay_seconds": 0.0,
+      "processes": 2,
+      "seed_population_per_island": 2
+    },
+    "distinct_coding_workspace_count": 4,
+    "distinct_worker_pid_count": 2,
+    "duplicate_phase_events": {},
+    "every_job_has_one_planning_and_coding_event": true,
+    "fair_target_allocation": true,
+    "island_job_counts": {
+      "alpha": 2,
+      "beta": 2
+    },
+    "island_state_ids": [
+      "alpha",
+      "beta"
+    ],
+    "job_execution_window_seconds": 394.6368341445923,
+    "jobs_total": 4,
+    "label": "v15-live-gpt54mini",
+    "migration_disabled_has_no_donors": true,
+    "migration_evidence": [],
+    "migration_job_count": 0,
+    "migration_provenance_valid": false,
+    "normal_job_counts": {},
+    "scheduler_worker_wall_seconds": 401.0076816669898,
+    "seed_job_counts": {
+      "alpha": 2,
+      "beta": 2
+    },
+    "status_counts": {
+      "succeeded": 4
+    },
+    "trace_events": 8,
+    "unpriced_usage_event_count": 0,
+    "usage_event_count": 8,
+    "usage_models": [
+      "gpt-5.4-mini"
+    ],
+    "usage_token_totals": {
+      "cached_input_tokens": 254464,
+      "input_tokens": 371546,
+      "output_tokens": 14020,
+      "reasoning_output_tokens": 80440,
+      "total_tokens": 640030
+    },
+    "worker_pids": [
+      98414,
+      98415
+    ]
+  },
+  "trace": [
+    {
+      "configured_delay_seconds": 0.0,
+      "duration_seconds": 11.84435366699472,
+      "error_type": null,
+      "finished_at": "2026-07-25T17:37:25.152560+00:00",
+      "job_id": "291eef23-0f2f-40cb-bc4f-feff48dd15e6",
+      "outcome": "succeeded",
+      "phase": "planning",
+      "pid": 98415,
+      "ppid": 98360,
+      "prompt_commit_hashes": [
+        "6dab19189cd41b9e57f11e12c315341da53f22af"
+      ],
+      "prompt_sha256": "e15672cecd4a1a65d27c5f1791c80c985a3c33035bc3b67fd147d07651fe33ed",
+      "run_token": "c6efb861-1443-4f4f-8bac-156d3dc6ef94",
+      "started_at": "2026-07-25T17:37:13.308428+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-live-gpt54mini/worker-pid-98415-246e4e77-worktrees/291eef23-0f2f-40cb-bc4f-feff48dd15e6-c6efb861"
+    },
+    {
+      "configured_delay_seconds": 0.0,
+      "duration_seconds": 14.076578375068493,
+      "error_type": null,
+      "finished_at": "2026-07-25T17:37:27.524656+00:00",
+      "job_id": "d94ae65e-284f-4060-a0c2-18c75c47776a",
+      "outcome": "succeeded",
+      "phase": "planning",
+      "pid": 98414,
+      "ppid": 98360,
+      "prompt_commit_hashes": [
+        "6dab19189cd41b9e57f11e12c315341da53f22af"
+      ],
+      "prompt_sha256": "e15672cecd4a1a65d27c5f1791c80c985a3c33035bc3b67fd147d07651fe33ed",
+      "run_token": "8ff5d137-2978-429c-bfe0-7d448bd7786f",
+      "started_at": "2026-07-25T17:37:13.448350+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-live-gpt54mini/worker-pid-98414-90319bce-worktrees/d94ae65e-284f-4060-a0c2-18c75c47776a-8ff5d137"
+    },
+    {
+      "configured_delay_seconds": 0.0,
+      "duration_seconds": 116.34421541693155,
+      "error_type": null,
+      "finished_at": "2026-07-25T17:39:23.890504+00:00",
+      "job_id": "d94ae65e-284f-4060-a0c2-18c75c47776a",
+      "outcome": "succeeded",
+      "phase": "coding",
+      "pid": 98414,
+      "ppid": 98360,
+      "prompt_commit_hashes": [
+        "6dab19189cd41b9e57f11e12c315341da53f22af",
+        "8e73f2935fc90c022f8d204fae32bbd665002839"
+      ],
+      "prompt_sha256": "89aebb3c65b09608587fffd06904cb348dd90ca54440f7b9786cf398c69fac49",
+      "run_token": "8ff5d137-2978-429c-bfe0-7d448bd7786f",
+      "started_at": "2026-07-25T17:37:27.548489+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-live-gpt54mini/worker-pid-98414-90319bce-worktrees/d94ae65e-284f-4060-a0c2-18c75c47776a-8ff5d137"
+    },
+    {
+      "configured_delay_seconds": 0.0,
+      "duration_seconds": 16.299351750058122,
+      "error_type": null,
+      "finished_at": "2026-07-25T17:39:42.838458+00:00",
+      "job_id": "161930d6-20f9-4f74-b696-46211b2c10ec",
+      "outcome": "succeeded",
+      "phase": "planning",
+      "pid": 98414,
+      "ppid": 98360,
+      "prompt_commit_hashes": [
+        "6dab19189cd41b9e57f11e12c315341da53f22af"
+      ],
+      "prompt_sha256": "e15672cecd4a1a65d27c5f1791c80c985a3c33035bc3b67fd147d07651fe33ed",
+      "run_token": "8d0d2971-8b76-4b77-81f0-eb9d5c167406",
+      "started_at": "2026-07-25T17:39:26.539422+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-live-gpt54mini/worker-pid-98414-90319bce-worktrees/161930d6-20f9-4f74-b696-46211b2c10ec-8d0d2971"
+    },
+    {
+      "configured_delay_seconds": 0.0,
+      "duration_seconds": 156.46421883394942,
+      "error_type": null,
+      "finished_at": "2026-07-25T17:40:01.631859+00:00",
+      "job_id": "291eef23-0f2f-40cb-bc4f-feff48dd15e6",
+      "outcome": "succeeded",
+      "phase": "coding",
+      "pid": 98415,
+      "ppid": 98360,
+      "prompt_commit_hashes": [
+        "6dab19189cd41b9e57f11e12c315341da53f22af",
+        "8e73f2935fc90c022f8d204fae32bbd665002839"
+      ],
+      "prompt_sha256": "49d2f8d0a9f802a78687ea215b77781e570fef28791a05d7aef2e91c92b94080",
+      "run_token": "c6efb861-1443-4f4f-8bac-156d3dc6ef94",
+      "started_at": "2026-07-25T17:37:25.170589+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-live-gpt54mini/worker-pid-98415-246e4e77-worktrees/291eef23-0f2f-40cb-bc4f-feff48dd15e6-c6efb861"
+    },
+    {
+      "configured_delay_seconds": 0.0,
+      "duration_seconds": 12.249622167088091,
+      "error_type": null,
+      "finished_at": "2026-07-25T17:40:15.856854+00:00",
+      "job_id": "f442b17e-b7aa-4c19-ad29-922468e294ad",
+      "outcome": "succeeded",
+      "phase": "planning",
+      "pid": 98415,
+      "ppid": 98360,
+      "prompt_commit_hashes": [
+        "6dab19189cd41b9e57f11e12c315341da53f22af"
+      ],
+      "prompt_sha256": "e15672cecd4a1a65d27c5f1791c80c985a3c33035bc3b67fd147d07651fe33ed",
+      "run_token": "eec0f018-318b-45bf-ae7a-045ccf87cce9",
+      "started_at": "2026-07-25T17:40:03.607473+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-live-gpt54mini/worker-pid-98415-246e4e77-worktrees/f442b17e-b7aa-4c19-ad29-922468e294ad-eec0f018"
+    },
+    {
+      "configured_delay_seconds": 0.0,
+      "duration_seconds": 68.21026304201223,
+      "error_type": null,
+      "finished_at": "2026-07-25T17:40:51.070941+00:00",
+      "job_id": "161930d6-20f9-4f74-b696-46211b2c10ec",
+      "outcome": "succeeded",
+      "phase": "coding",
+      "pid": 98414,
+      "ppid": 98360,
+      "prompt_commit_hashes": [
+        "6dab19189cd41b9e57f11e12c315341da53f22af",
+        "8e73f2935fc90c022f8d204fae32bbd665002839"
+      ],
+      "prompt_sha256": "22ae46cb79f836703e0749e98e4960c04d2ea512e70360a0b5413580fde26f98",
+      "run_token": "8d0d2971-8b76-4b77-81f0-eb9d5c167406",
+      "started_at": "2026-07-25T17:39:42.861969+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-live-gpt54mini/worker-pid-98414-90319bce-worktrees/161930d6-20f9-4f74-b696-46211b2c10ec-8d0d2971"
+    },
+    {
+      "configured_delay_seconds": 0.0,
+      "duration_seconds": 210.82019025005866,
+      "error_type": null,
+      "finished_at": "2026-07-25T17:43:46.697651+00:00",
+      "job_id": "f442b17e-b7aa-4c19-ad29-922468e294ad",
+      "outcome": "succeeded",
+      "phase": "coding",
+      "pid": 98415,
+      "ppid": 98360,
+      "prompt_commit_hashes": [
+        "6dab19189cd41b9e57f11e12c315341da53f22af",
+        "8e73f2935fc90c022f8d204fae32bbd665002839"
+      ],
+      "prompt_sha256": "ee3770ac3efb76c560c684e955c86a092dc82de8d9f444c9ee32f389ca84e488",
+      "run_token": "eec0f018-318b-45bf-ae7a-045ccf87cce9",
+      "started_at": "2026-07-25T17:40:15.881428+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-live-gpt54mini/worker-pid-98415-246e4e77-worktrees/f442b17e-b7aa-4c19-ad29-922468e294ad-eec0f018"
+    }
+  ]
+}

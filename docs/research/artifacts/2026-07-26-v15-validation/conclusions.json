@@ -1,0 +1,85 @@
+{
+  "generated_at": "2026-07-26T02:00:00+08:00",
+  "scope": "Deterministic 26-circle packing campaign, PostgreSQL 18, Redis 8, Python 3.12/3.13, Kilo 7.3.1, local Apple Silicon host.",
+  "claims": [
+    {
+      "id": "same-niche-pareto-retention",
+      "state": "supported_within_tested_scope",
+      "result": "The measured baseline/deepseek pair was non-dominated: quality 0.25 versus 2.4389662674 and runtime p50 0.001560605 ms versus 0.101259361 ms. The Pareto archive retained both; a primary-quality scalar policy retained only deepseek.",
+      "countercheck": "Adding the mini candidate at equal quality and 0.000095707 ms collapsed the front to mini, so the replay does not preserve dominated points.",
+      "evidence": "pareto-replay.json"
+    },
+    {
+      "id": "true-multi-island-execution",
+      "state": "supported_within_tested_scope",
+      "result": "Eight jobs split 4/4 across alpha and beta, with independent persisted states and archive rows. With migration interval 2, alpha received one beta donor and beta received one alpha donor; each donor was present in persisted inspirations and the planning prompt.",
+      "countercheck": "The migration-disabled controls contained no donor provenance. A pre-fix global cadence that targeted only beta was rejected and replaced with per-island cadence.",
+      "evidence": "system-islands-migration.json"
+    },
+    {
+      "id": "one-command-worker-parallelism",
+      "state": "supported_within_tested_scope",
+      "result": "For the same deterministic 8-job workload, processes=1 used a 25.701889 s execution window and processes=4 used 8.452003 s: 3.041× speedup. Wall time improved from 29.694509 s to 15.068000 s: 1.970×.",
+      "countercheck": "The processes=4 run used 4 PIDs and 8 distinct coding workspaces, completed every planning/coding phase exactly once, and had no failed or duplicate jobs.",
+      "evidence": [
+        "system-parallel-p1.json",
+        "system-parallel-p4.json"
+      ]
+    },
+    {
+      "id": "selected-model-end-to-end",
+      "state": "supported_within_tested_scope",
+      "result": "gpt-5.4-mini completed 4/4 Loreley jobs through planning, coding, evaluation, publication, ingestion, two island archives, usage persistence, and report generation. The best valid sum_radii was 2.5 versus the 0.25 root and 2.0035698 historical reference.",
+      "countercheck": "Two worker PIDs each completed two jobs; all 4 jobs used separate worktrees and exactly one planning plus one coding invocation.",
+      "evidence": [
+        "system-live-gpt54mini.json",
+        "v15-live-gpt54mini-report/smoke-report.json",
+        "v15-live-gpt54mini-report/smoke-report.md"
+      ]
+    },
+    {
+      "id": "model-backend-selection",
+      "state": "supported_for_operational_choice_not_general_model_ranking",
+      "result": "In the controlled Kilo bake-off, gpt-5.4-mini and deepseek-v4-flash both produced quality 2.4389662674. Mini took 85.626 s and $0.0867366; DeepSeek took 217.568 s and $0.5497128. gpt-5.4 produced 1.4768432292 in 102.654 s at $0.24603. Claude timed out after 240 s without an edit at $1.845954.",
+      "countercheck": "The later four-job live campaign had 4/4 valid outputs, but a separate one-job cost-path confirmation timed out at 360 s. The conclusion is therefore an operational selection for this campaign, not a claim of universal superiority or a zero failure rate.",
+      "evidence": [
+        "model-calibration.json",
+        "kilo-bakeoff.json",
+        "kilo-bakeoff-contenders.json",
+        "system-live-cost-accounting.json"
+      ]
+    },
+    {
+      "id": "migration-quality-improvement",
+      "state": "bounded_inconclusive",
+      "result": "The experiments establish fair, causal donor delivery and provenance, not a statistically defensible quality improvement from migration.",
+      "reopen_condition": "Run repeated matched campaigns with identical initial candidates and seeds, enough non-seed jobs per island, and migration as the only changed factor."
+    }
+  ],
+  "budget": {
+    "hard_cap_usd": 100.0,
+    "operational_stop_usd": 90.0,
+    "attributed_spend_usd": 3.844143,
+    "unused_cap_usd": 96.155857,
+    "utilization_percent": 3.844143,
+    "reason_to_stop": "Every target decision had decisive evidence; additional calls would estimate variance but would not change implementation, model selection, or merge readiness."
+  },
+  "quality_controls": {
+    "failed_runs_retained": true,
+    "secrets_recorded": false,
+    "adversarial_audits": [
+      "algorithm audit: no blocker or major finding",
+      "parallelism/debt audit: resolved structural hotspots without changing behavior",
+      "live failure-path experiments: found and fixed zero-cost accounting and empty-campaign terminal handling"
+    ],
+    "incident_log": "incidents.json",
+    "resource_ledger": "resource-ledger.json",
+    "structural_audit": {
+      "evidence": "structural-audit.json",
+      "tests_passed": 848,
+      "new_debt_signals": 0,
+      "worsened_debt_signals": 0,
+      "resolved_debt_signals": 17
+    }
+  }
+}

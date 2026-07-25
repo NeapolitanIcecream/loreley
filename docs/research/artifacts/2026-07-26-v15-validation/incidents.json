@@ -1,0 +1,130 @@
+{
+  "generated_at": "2026-07-26T01:50:00+08:00",
+  "policy": {
+    "failed_runs_are_evidence": true,
+    "replacement_runs_do_not_erase_incidents": true,
+    "secrets_recorded": false
+  },
+  "incidents": [
+    {
+      "id": "kilo-provider-adapter",
+      "stage": "coding-agent calibration",
+      "symptom": "Kilo exited successfully while its JSON event stream contained a provider/model error and no usable edit.",
+      "cause": "The custom gateway used the wrong AI SDK adapter for chat completions and did not register the gateway model explicitly.",
+      "decision": "Use @ai-sdk/openai-compatible for chat_completions, retain @ai-sdk/openai for responses, register the selected gateway model, and reject JSON error events even when the process exit code is zero.",
+      "status": "fixed",
+      "decisive_evidence": [
+        "tests/core/worker/test_agent_backends.py",
+        "docs/research/artifacts/2026-07-26-v15-validation/kilo-bakeoff.json"
+      ],
+      "api_cost_usd": 0.0
+    },
+    {
+      "id": "kilo-headless-interaction",
+      "stage": "coding-agent calibration",
+      "symptom": "A non-interactive Kilo run waited on an interactive suggest/question path until timeout.",
+      "cause": "The generated headless agent policy still exposed interactive tools.",
+      "decision": "Deny suggest, question, and plan tools in the headless agent and recover usage from Kilo's database on timeout.",
+      "status": "fixed",
+      "decisive_evidence": [
+        "tests/core/worker/test_agent_backends.py",
+        "docs/research/artifacts/2026-07-26-v15-validation/resource-ledger.json"
+      ],
+      "api_cost_usd": 0.057042
+    },
+    {
+      "id": "zero-variance-pca-json",
+      "stage": "first deterministic system run",
+      "symptom": "Identical valid candidates produced NaN explained-variance diagnostics; PostgreSQL rejected the JSONB snapshot, while the in-memory manager still exposed the uncommitted candidate to scheduling.",
+      "cause": "Zero-variance PCA diagnostics were not normalized and ingestion failure did not restore the manager from the durable snapshot in the same transaction.",
+      "decision": "Normalize non-finite projection diagnostics to zero and reload the affected island from the durable snapshot before recording ingestion failure.",
+      "status": "fixed",
+      "decisive_evidence": [
+        "tests/core/map_elites/test_dimension_reduction.py",
+        "tests/scheduler/test_ingestion_resilience.py",
+        "docs/research/artifacts/2026-07-26-v15-validation/system-parallel-p1.json"
+      ],
+      "api_cost_usd": 0.0
+    },
+    {
+      "id": "worker-spawn-context",
+      "stage": "first processes=4 system run",
+      "symptom": "Dramatiq --use-spawn raised RuntimeError: context has already been set.",
+      "cause": "Queued Loguru logging initialized the multiprocessing context before the worker pool unconditionally requested --use-spawn.",
+      "decision": "Request --use-spawn only when no start method exists; otherwise reuse the initialized context.",
+      "status": "fixed",
+      "decisive_evidence": [
+        "tests/test_entrypoints.py",
+        "docs/research/artifacts/2026-07-26-v15-validation/system-parallel-p4.json"
+      ],
+      "api_cost_usd": 0.0
+    },
+    {
+      "id": "multi-island-cold-start-bias",
+      "stage": "first successful processes=1 system run",
+      "symptom": "The first ready island consumed normal-job budget before the second island had completed its seed population, yielding a 5/3 target split.",
+      "cause": "Normal scheduling began as soon as any island had a usable front.",
+      "decision": "Hold normal scheduling until every configured island has a non-empty front.",
+      "status": "fixed",
+      "decisive_evidence": [
+        "tests/scheduler/test_job_scheduler.py",
+        "docs/research/artifacts/2026-07-26-v15-validation/system-parallel-p1.json"
+      ],
+      "post_fix_result": {
+        "alpha_jobs": 4,
+        "beta_jobs": 4
+      },
+      "api_cost_usd": 0.0
+    },
+    {
+      "id": "migration-cadence-alias",
+      "stage": "first migration-enabled system run",
+      "symptom": "Both migration jobs targeted beta because a global every-second-job cadence aliased with two-island round-robin scheduling.",
+      "cause": "Migration eligibility used the global scheduled-job ordinal instead of a target-island-local ordinal.",
+      "decision": "Count migration cadence independently per target island and rotate donors by migration round.",
+      "status": "fixed",
+      "decisive_evidence": [
+        "tests/scheduler/test_job_scheduler.py",
+        "docs/research/artifacts/2026-07-26-v15-validation/system-islands-migration.json"
+      ],
+      "post_fix_result": {
+        "alpha_received_from": "beta",
+        "beta_received_from": "alpha"
+      },
+      "api_cost_usd": 0.0
+    },
+    {
+      "id": "kilo-zero-cost-placeholder",
+      "stage": "selected-model end-to-end run",
+      "symptom": "Eight complete Kilo usage events contained 640030 tokens but persisted provider-reported cost 0, bypassing the configured pricing table.",
+      "cause": "The OpenAI-compatible gateway leaves Kilo's provider cost field at zero; Loreley treated every present provider cost as authoritative.",
+      "decision": "For non-empty Kilo usage only, allow an explicit matching pricing rule to replace a zero cost placeholder; preserve positive provider costs.",
+      "status": "fixed",
+      "decisive_evidence": [
+        "docs/research/artifacts/2026-07-26-v15-validation/system-live-gpt54mini.json",
+        "docs/research/artifacts/2026-07-26-v15-validation/system-live-cost-accounting.json",
+        "tests/core/test_llm_usage.py"
+      ],
+      "post_fix_result": {
+        "usage_events": 2,
+        "tokens": 319231,
+        "estimated_cost_usd": 0.3277944,
+        "pricing_version": "newapi-2026-07-26-conservative"
+      },
+      "api_cost_usd": 0.3277944
+    },
+    {
+      "id": "empty-campaign-terminal-crash",
+      "stage": "live cost-accounting confirmation",
+      "symptom": "After the only job failed, the exhausted scheduler raised SchedulerError because no retained candidate could supply the primary-objective branch.",
+      "cause": "The terminal deliverable hook was named 'if possible' but treated an empty archive as a fatal configuration error.",
+      "decision": "Skip the primary-objective branch with an explicit warning when no candidate was retained, then stop normally at the configured job limit.",
+      "status": "fixed",
+      "decisive_evidence": [
+        "docs/research/artifacts/2026-07-26-v15-validation/system-live-cost-accounting.json",
+        "tests/scheduler/test_seed_job_scheduling.py"
+      ],
+      "api_cost_usd": 0.0
+    }
+  ]
+}

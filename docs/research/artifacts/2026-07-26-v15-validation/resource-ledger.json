@@ -1,0 +1,235 @@
+{
+  "caps": [
+    {
+      "amount": 100,
+      "resource": "LLM proxy attributed spend",
+      "unit": "USD"
+    },
+    {
+      "amount": 50000000,
+      "resource": "LLM proxy quota equivalent",
+      "unit": "quota_points"
+    }
+  ],
+  "currency": "USD",
+  "entries": [
+    {
+      "action": "one-shot circle-packing model calibration",
+      "amount": 0.0078732,
+      "decision_changed": false,
+      "evidence": "model-calibration.json request_id=202607251618591673391548268d9d6vOTxgSO3",
+      "input_tokens": 561,
+      "output_tokens": 3000,
+      "quota_points": 3936.6,
+      "resource": "LLM proxy model=deepseek-v4-flash",
+      "status": "observed_tokens_conservative_proxy_price",
+      "time": "2026-07-25T16:19:30.695388+00:00",
+      "unit": "USD"
+    },
+    {
+      "action": "one-shot circle-packing model calibration",
+      "amount": 0.003897,
+      "decision_changed": true,
+      "evidence": "model-calibration.json request_id=202607251619309425907728268d9d6Hg2SV82y",
+      "input_tokens": 562,
+      "output_tokens": 628,
+      "quota_points": 1948.5,
+      "resource": "LLM proxy model=gpt-5.4-mini",
+      "status": "observed_tokens_conservative_proxy_price",
+      "time": "2026-07-25T16:19:35.173319+00:00",
+      "unit": "USD"
+    },
+    {
+      "action": "one-shot circle-packing model calibration",
+      "amount": 0.023718,
+      "decision_changed": false,
+      "evidence": "model-calibration.json request_id=202607251619354201968568268d9d6x24as1U7",
+      "input_tokens": 562,
+      "output_tokens": 1224,
+      "quota_points": 11859.0,
+      "resource": "LLM proxy model=gpt-5.4",
+      "status": "observed_tokens_conservative_proxy_price",
+      "time": "2026-07-25T16:19:46.261828+00:00",
+      "unit": "USD"
+    },
+    {
+      "action": "one-shot circle-packing model calibration",
+      "amount": 0.056268,
+      "decision_changed": false,
+      "evidence": "model-calibration.json request_id=202607251619465240365678268d9d6MzkhsMaq",
+      "input_tokens": 630,
+      "output_tokens": 3000,
+      "quota_points": 28134.0,
+      "resource": "LLM proxy model=claude-sonnet-4-6",
+      "status": "observed_tokens_conservative_proxy_price",
+      "time": "2026-07-25T16:20:20.204994+00:00",
+      "unit": "USD"
+    },
+    {
+      "action": "Kilo provider-adapter probe before API-surface fix",
+      "amount": 0.0,
+      "cached_input_tokens": 0,
+      "decision_changed": true,
+      "evidence": "incident session=ses_065e319ccffeNtK094Lkoumv9f; Kilo DB recorded zero assistant tokens",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "quota_points": 0.0,
+      "resource": "LLM proxy model=deepseek-v4-flash",
+      "status": "zero_token_provider_adapter_failure",
+      "time": "2026-07-25T16:40:12.792168+00:00",
+      "unit": "USD"
+    },
+    {
+      "action": "Kilo headless-exit probe before suggest-tool fix",
+      "amount": 0.057042,
+      "cached_input_tokens": 33024,
+      "decision_changed": true,
+      "evidence": "incident session=ses_065d55b29ffePRuP1hoJXqKKN8; usage recovered from Kilo DB",
+      "input_tokens": 20936,
+      "output_tokens": 1570,
+      "quota_points": 28521.0,
+      "resource": "LLM proxy model=gpt-5.4-mini",
+      "status": "recovered_kilo_tokens_conservative_proxy_price",
+      "time": "2026-07-25T16:50:13.790926+00:00",
+      "unit": "USD"
+    },
+    {
+      "action": "Kilo circle-packing coding-agent bake-off",
+      "amount": 0.0867366,
+      "cached_input_tokens": 64000,
+      "decision_changed": true,
+      "evidence": "kilo-bakeoff.json source=fb797720acfea29b8fd4fb2bfc9dd27198c245ce0461f3481b252fcdf3c890d7",
+      "input_tokens": 20236,
+      "output_tokens": 2023,
+      "quota_points": 43368.3,
+      "resource": "LLM proxy model=gpt-5.4-mini",
+      "status": "observed_tokens_conservative_proxy_price",
+      "time": "2026-07-25T16:55:08.030393+00:00",
+      "unit": "USD"
+    },
+    {
+      "action": "Kilo circle-packing coding-agent bake-off",
+      "amount": 0.5497127999999999,
+      "cached_input_tokens": 427520,
+      "decision_changed": true,
+      "evidence": "kilo-bakeoff-contenders.json source=439aaeeb690f03ecc02194429cd620c69b0bc088f0d1a45e03a0aeb0b9796ac9",
+      "input_tokens": 23526,
+      "output_tokens": 3524,
+      "quota_points": 274856.39999999997,
+      "resource": "LLM proxy model=deepseek-v4-flash",
+      "status": "observed_tokens_conservative_proxy_price",
+      "time": "2026-07-25T17:01:15.532012+00:00",
+      "unit": "USD"
+    },
+    {
+      "action": "Kilo circle-packing coding-agent bake-off",
+      "amount": 0.24603,
+      "cached_input_tokens": 35072,
+      "decision_changed": true,
+      "evidence": "kilo-bakeoff-contenders.json source=585cf5d74343178c047922255dc209a165ad217e50acf6697df83333b37a9be0",
+      "input_tokens": 31596,
+      "output_tokens": 2557,
+      "quota_points": 123015.0,
+      "resource": "LLM proxy model=gpt-5.4",
+      "status": "observed_tokens_conservative_proxy_price",
+      "time": "2026-07-25T17:03:00.664284+00:00",
+      "unit": "USD"
+    },
+    {
+      "action": "Kilo circle-packing coding-agent bake-off",
+      "amount": 1.845954,
+      "cached_input_tokens": 0,
+      "decision_changed": false,
+      "evidence": "kilo-bakeoff-contenders.json source=18bacee43b713e5a76941f892c5bd7b6b69d08c1327cb87af8a4094a83d9061f",
+      "input_tokens": 425805,
+      "output_tokens": 17392,
+      "quota_points": 922977.0,
+      "resource": "LLM proxy model=claude-sonnet-4-6",
+      "status": "observed_tokens_conservative_proxy_price",
+      "time": "2026-07-25T17:07:03.208765+00:00",
+      "unit": "USD"
+    },
+    {
+      "action": "Selected-model Loreley end-to-end campaign",
+      "amount": 0.639117,
+      "cached_input_tokens": 254464,
+      "decision_changed": true,
+      "evidence": "system-live-gpt54mini.json jobs=4 succeeded=4 usage_events=8",
+      "input_tokens": 371546,
+      "output_tokens": 14020,
+      "quota_points": 319558.5,
+      "resource": "LLM proxy model=gpt-5.4-mini",
+      "status": "observed_tokens_conservative_proxy_price",
+      "time": "2026-07-25T17:43:52.387012+00:00",
+      "unit": "USD"
+    },
+    {
+      "action": "Live zero-cost accounting and failure-path confirmation",
+      "amount": 0.3277944,
+      "cached_input_tokens": 282112,
+      "decision_changed": true,
+      "evidence": "system-live-cost-accounting.json usage_events=2 coding_timeout=true",
+      "input_tokens": 28122,
+      "output_tokens": 8997,
+      "quota_points": 163897.2,
+      "resource": "LLM proxy model=gpt-5.4-mini",
+      "status": "observed_tokens_conservative_proxy_price",
+      "time": "2026-07-25T17:53:01+00:00",
+      "unit": "USD"
+    }
+  ],
+  "end": {
+    "time": "2026-07-26T01:53:30+08:00",
+    "total_available_quota": 780697899,
+    "total_granted_quota": 1500000000,
+    "total_used_quota": 719302101,
+    "unlimited_quota": false
+  },
+  "global_balance_status": "Contaminated upper-bound signal: the bearer token appears shared and total_used changed during read-only investigation.",
+  "operational_stop_usd": 90,
+  "pricing": {
+    "group_multiplier_upper_bound": 1.2,
+    "models": {
+      "claude-sonnet-4-6": {
+        "completion_ratio": 5,
+        "model_ratio": 1.5
+      },
+      "deepseek-v4-flash": {
+        "completion_ratio": 2,
+        "model_ratio": 0.5
+      },
+      "gpt-5.4": {
+        "completion_ratio": 6,
+        "model_ratio": 1.25
+      },
+      "gpt-5.4-mini": {
+        "completion_ratio": 6,
+        "model_ratio": 0.375
+      }
+    }
+  },
+  "pricing_status": "Proxy /api/pricing ratios observed; group multiplier conservatively bounded by the largest advertised usable multiplier when exact request group is unavailable.",
+  "quota_points_per_usd": 500000,
+  "start": {
+    "time": "2026-07-26T00:11:56+08:00",
+    "total_available_quota": 787446517,
+    "total_granted_quota": 1500000000,
+    "total_used_quota": 712553483,
+    "unlimited_quota": false
+  },
+  "totals": [
+    {
+      "amount": 3.844143,
+      "resource": "LLM proxy attributed spend",
+      "status": "observed_tokens_estimated_price",
+      "unit": "USD"
+    },
+    {
+      "amount": 1922071.5,
+      "resource": "LLM proxy attributed quota",
+      "status": "observed_tokens_estimated_price",
+      "unit": "quota_points"
+    }
+  ],
+  "version": 1
+}
