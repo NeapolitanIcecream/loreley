@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tools.migrate_v15_config import main, migrate_env_text
 
 
@@ -51,6 +53,32 @@ MAPELITES_ARCHIVE_EPSILON=0.1
     assert migrated.count("MAPELITES_OBJECTIVES=") == 1
     assert migrated.count("MAPELITES_PARETO_EPSILON=") == 1
     assert "legacy_score" not in migrated
+
+
+@pytest.mark.parametrize(
+    ("legacy_value", "expected_island"),
+    [
+        ("", "main"),
+        ("   ", "main"),
+        ('"   "', "main"),
+        ("'   '", "main"),
+        (" # empty legacy override", "main"),
+        ('"  explore  "', "explore"),
+    ],
+)
+def test_migration_normalizes_the_legacy_default_island(
+    legacy_value: str,
+    expected_island: str,
+) -> None:
+    migrated = migrate_env_text(
+        f"MAPELITES_DEFAULT_ISLAND_ID={legacy_value}\n"
+        "OTHER_SETTING=keep\n"
+    )
+
+    assert migrated == (
+        f'MAPELITES_ISLANDS=["{expected_island}"]\n'
+        "OTHER_SETTING=keep\n"
+    )
 
 
 def test_migration_preserves_a_direction_override_of_the_legacy_default_metric() -> None:

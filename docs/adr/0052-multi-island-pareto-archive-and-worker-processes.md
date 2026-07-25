@@ -156,7 +156,8 @@ Schema version 15 performs one native migration:
 
 `tools/migrate_v15_config.py` converts an environment file:
 
-- `MAPELITES_DEFAULT_ISLAND_ID` to `MAPELITES_ISLANDS`;
+- `MAPELITES_DEFAULT_ISLAND_ID` to `MAPELITES_ISLANDS`, preserving the legacy
+  `main` fallback when the old value is blank;
 - `MAPELITES_FITNESS_METRIC` and
   `MAPELITES_FITNESS_HIGHER_IS_BETTER` to `MAPELITES_OBJECTIVES`;
 - `MAPELITES_ARCHIVE_EPSILON` to `MAPELITES_PARETO_EPSILON`;

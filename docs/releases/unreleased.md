@@ -30,3 +30,5 @@ These notes cover changes merged after `v0.8.4-alpha`.
   Review the generated objective/island JSON before starting Loreley. Runtime
   code no longer accepts `MAPELITES_FITNESS_*`,
   `MAPELITES_DEFAULT_ISLAND_ID`, or other scalar-archive settings.
+  Blank legacy default-island overrides migrate to the historical `main`
+  fallback.

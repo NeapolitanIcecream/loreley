@@ -14,9 +14,9 @@ from collections.abc import Sequence
 from pathlib import Path
 
 _ASSIGNMENT = re.compile(
-    r"^(?P<prefix>\s*(?:export\s+)?)"
+    r"^(?P<prefix>[ \t]*(?:export[ \t]+)?)"
     r"(?P<key>[A-Za-z_][A-Za-z0-9_]*)"
-    r"\s*=\s*(?P<value>.*?)(?P<newline>\r?\n)?$"
+    r"[ \t]*=[ \t]*(?P<value>[^\r\n]*)(?P<newline>\r?\n)?\Z"
 )
 
 _REMOVED_KEYS = {
@@ -29,6 +29,7 @@ _REMOVED_KEYS = {
     "MAPELITES_ARCHIVE_THRESHOLD_MIN",
     "MAPELITES_ARCHIVE_QD_SCORE_OFFSET",
 }
+_DEFAULT_ISLAND_ID = "main"
 
 
 def migrate_env_text(source: str) -> str:
@@ -74,6 +75,7 @@ def _legacy_islands_replacement(assignments: dict[str, str]) -> str | None:
     island_id = assignments.get("MAPELITES_DEFAULT_ISLAND_ID")
     if island_id is None:
         return None
+    island_id = island_id.strip() or _DEFAULT_ISLAND_ID
     payload = json.dumps([island_id], ensure_ascii=True, separators=(",", ":"))
     return f"MAPELITES_ISLANDS={payload}"
 

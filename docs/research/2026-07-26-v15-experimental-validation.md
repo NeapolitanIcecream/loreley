@@ -289,8 +289,8 @@ one-shot migration command documented in the architecture work.
 
 ## Final verification and structural-debt gate
 
-The final suite ran with the PostgreSQL migration tests enabled: **850 passed,
-0 failed, 0 skipped** in 41.47 seconds. Coverage.py measured 82.59% statement
+The final suite ran with the PostgreSQL migration tests enabled: **856 passed,
+0 failed, 0 skipped** in 43.34 seconds. Coverage.py measured 82.60% statement
 coverage and 57.23% branch coverage (78.64% combined).
 
 Cremona then scanned 278 Python files against the committed refactor baseline
@@ -360,7 +360,7 @@ uv run python tools/run_v15_system_experiment.py \
 - Selected Kilo/Mini end-to-end path: supported, with observed timeout risk.
 - Migration quality benefit: bounded inconclusive.
 - Algorithm, debt, and parallelism audits reported no blocker or major finding.
-- Final verification: 850 tests passed; structural audit found no regression
+- Final verification: 856 tests passed; structural audit found no regression
   and resolved 22 baseline signals.
 - All failed and superseded experiments remain in the incident ledger.
 - No credential was written to an artifact.
