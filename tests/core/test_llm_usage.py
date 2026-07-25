@@ -253,3 +253,47 @@ def test_kilo_usage_parser_estimates_cost_when_provider_cost_is_missing(settings
     assert event.cost_source == "estimated"
     assert event.pricing_version == "kilo-test"
     assert str(event.cost_usd) == "0.00021500"
+
+
+def test_kilo_usage_parser_reprices_zero_cost_gateway_placeholder(settings) -> None:
+    settings.llm_usage_pricing_json = json.dumps(
+        {
+            "version": "gateway-test",
+            "prices": [
+                {
+                    "provider": "loreley-openai-compatible",
+                    "model": "gpt-test",
+                    "api_surface": "kilo_run",
+                    "input_usd_per_1m": "0.9",
+                    "cached_input_usd_per_1m": "0.9",
+                    "output_usd_per_1m": "5.4",
+                }
+            ],
+        }
+    )
+    messages = [
+        {
+            "role": "assistant",
+            "providerID": "loreley-openai-compatible",
+            "modelID": "gpt-test",
+            "cost": 0,
+            "tokens": {
+                "input": 100,
+                "output": 20,
+                "cache": {"read": 50, "write": 0},
+            },
+        },
+    ]
+
+    event = kilo_usage_event_from_messages(
+        messages,
+        phase="coding",
+        title="loreley:test",
+        session_id="sess-zero-cost",
+        settings=settings,
+    )
+
+    assert event is not None
+    assert event.cost_source == "estimated"
+    assert event.pricing_version == "gateway-test"
+    assert str(event.cost_usd) == "0.00024300"

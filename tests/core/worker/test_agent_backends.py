@@ -23,13 +23,10 @@ from loreley.core.worker.agent import (
 from loreley.core.worker.agent.backends import (
     CodexCliBackend,
     CursorCliBackend,
-    DEFAULT_CURSOR_MODEL,
     KilocodeCliBackend,
     codex_coding_backend,
     codex_planning_backend,
     cursor_backend,
-    cursor_coding_backend,
-    cursor_planning_backend,
     kilocode_backend,
     kilocode_coding_backend,
     kilocode_planning_backend,
@@ -770,10 +767,18 @@ def test_kilocode_default_provider_adapter_uses_isolated_config_env_refs() -> No
     assert "KILO_OPENAI_API_KEY" not in env
     assert "sk-worker" not in env["KILO_CONFIG_CONTENT"]
     assert env["LORELEY_KILO_OPENAI_BASE_URL"] == "https://worker.example.com/v1"
-    assert config["model"] == "openai-responses/gpt-5.4"
-    assert config["provider"]["openai-responses"]["options"] == {
+    assert config["default_agent"] == "loreley-headless"
+    assert config["permission"]["suggest"] == "deny"
+    assert config["agent"]["loreley-headless"]["permission"]["suggest"] == "deny"
+    assert config["model"] == "loreley-openai-responses/gpt-5.4"
+    provider = config["provider"]["loreley-openai-responses"]
+    assert provider["npm"] == "@ai-sdk/openai"
+    assert provider["options"] == {
         "apiKey": "{env:LORELEY_KILO_OPENAI_API_KEY}",
         "baseURL": "{env:LORELEY_KILO_OPENAI_BASE_URL}",
+    }
+    assert provider["models"] == {
+        "gpt-5.4": {"name": "gpt-5.4"}
     }
 
 
@@ -1086,6 +1091,40 @@ def test_kilocode_cli_backend_raises_on_nonzero_exit_with_stdout_and_stderr_cont
     assert 'stdout: {"event":"error","message":"permission denied"}' in message
 
 
+def test_kilocode_cli_backend_raises_on_error_event_with_zero_exit(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Kilo 7 may report provider failures as JSON while exiting successfully."""
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+
+    def fake_run(*_args, **_kwargs):  # noqa: ANN001, ANN002
+        return types.SimpleNamespace(
+            stdout=(
+                "ProviderModelNotFoundError\n"
+                '{"type":"error","error":{"name":"UnknownError","data":'
+                '{"message":"Model not found: openai/custom."}}}'
+            ),
+            stderr="",
+            returncode=0,
+        )
+
+    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+
+    backend = KilocodeCliBackend(
+        bin="kilo",
+        timeout_seconds=10,
+        extra_env={},
+        error_cls=RuntimeError,
+    )
+
+    with pytest.raises(RuntimeError, match="Model not found: openai/custom"):
+        backend.run(
+            AgentTask(name="coding", prompt="run"),
+            working_dir=repo_dir,
+        )
+
+
 def test_kilocode_cli_backend_raises_on_timeout(tmp_path: Path, monkeypatch) -> None:
     """Subprocess timeout is surfaced via the configured error class."""
     repo_dir = tmp_path / "repo"
@@ -1155,14 +1194,14 @@ def test_kilocode_backend_factory_uses_env_settings(monkeypatch: pytest.MonkeyPa
     assert isinstance(backend, KilocodeCliBackend)
     assert backend.bin == "/usr/local/bin/kilo"
     assert backend.agent == "architect"
-    assert backend.model == "openai/gpt-5.4"
+    assert backend.model == "loreley-openai-responses/gpt-4o-mini"
     assert backend.variant == "high"
     assert backend.json_output is True
     config = json.loads(backend.extra_env["KILO_CONFIG_CONTENT"])
     assert "KILO_PROVIDER_TYPE" not in backend.extra_env
     assert backend.extra_env["LORELEY_KILO_OPENAI_BASE_URL"] == "https://example.invalid/v1"
-    assert config["model"] == "openai-responses/gpt-4o-mini"
-    assert config["provider"]["openai-responses"]["options"]["apiKey"] == (
+    assert config["model"] == "loreley-openai-responses/gpt-4o-mini"
+    assert config["provider"]["loreley-openai-responses"]["options"]["apiKey"] == (
         "{env:LORELEY_KILO_OPENAI_API_KEY}"
     )
 
@@ -1263,7 +1302,7 @@ def test_kilocode_backend_factory_falls_back_to_global_openai_aliases(
 
     config = json.loads(backend.extra_env["KILO_CONFIG_CONTENT"])
     assert backend.extra_env["LORELEY_KILO_OPENAI_BASE_URL"] == "https://alias.example.com/v1"
-    assert "openai" in config["provider"]
+    assert "loreley-openai-compatible" in config["provider"]
 
     get_settings.cache_clear()
 
@@ -1286,7 +1325,7 @@ def test_kilocode_backend_factory_prefers_worker_specific_openai_config(
 
     config = json.loads(backend.extra_env["KILO_CONFIG_CONTENT"])
     assert backend.extra_env["LORELEY_KILO_OPENAI_BASE_URL"] == "https://worker.example.com/v1"
-    assert "openai-responses" in config["provider"]
+    assert "loreley-openai-responses" in config["provider"]
 
     get_settings.cache_clear()
 
@@ -1308,7 +1347,7 @@ def test_kilocode_backend_factory_keeps_global_api_spec_under_partial_worker_ove
 
     config = json.loads(backend.extra_env["KILO_CONFIG_CONTENT"])
     assert backend.extra_env["LORELEY_KILO_OPENAI_BASE_URL"] == "https://worker.example.com/v1"
-    assert "openai-responses" in config["provider"]
+    assert "loreley-openai-responses" in config["provider"]
 
     get_settings.cache_clear()
 
@@ -1359,8 +1398,8 @@ def test_codex_backend_factories_use_worker_safe_defaults(monkeypatch: pytest.Mo
 @pytest.mark.parametrize(
     ("api_spec", "expected_provider_type"),
     [
-        ("chat_completions", "openai"),
-        ("responses", "openai-responses"),
+        ("chat_completions", "loreley-openai-compatible"),
+        ("responses", "loreley-openai-responses"),
     ],
 )
 def test_kilocode_backend_factory_maps_openai_api_spec_to_provider_type(
@@ -1379,6 +1418,12 @@ def test_kilocode_backend_factory_maps_openai_api_spec_to_provider_type(
 
     config = json.loads(backend.extra_env["KILO_CONFIG_CONTENT"])
     assert expected_provider_type in config["provider"]
+    expected_npm = (
+        "@ai-sdk/openai"
+        if api_spec == "responses"
+        else "@ai-sdk/openai-compatible"
+    )
+    assert config["provider"][expected_provider_type]["npm"] == expected_npm
 
     get_settings.cache_clear()
 
