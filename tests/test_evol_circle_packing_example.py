@@ -26,35 +26,6 @@ def _load_module(name: str, path: Path):
     return module
 
 
-def test_build_worker_process_specs_creates_four_distinct_processes() -> None:
-    module = _load_module("test_evol_circle_packing", EXAMPLE_SCRIPT)
-
-    specs = module._build_worker_process_specs(  # noqa: SLF001 - spec-level assertion
-        phase="smoke",
-        count=4,
-        log_level="INFO",
-        no_preflight=True,
-        preflight_timeout_seconds=1.5,
-    )
-
-    assert len(specs) == 4
-    assert [spec.instance_id for spec in specs] == [
-        "worker-01",
-        "worker-02",
-        "worker-03",
-        "worker-04",
-    ]
-    assert len({str(spec.worktree_base) for spec in specs}) == 4
-    for spec in specs:
-        assert "worker" in spec.command
-        assert "--phase" in spec.command and "smoke" in spec.command
-        assert "--manifest-entry" in spec.command
-        assert spec.env["LORELEY_WORKER_INSTANCE_ID"] == spec.instance_id
-        assert spec.env["WORKER_REPO_WORKTREE_RANDOMIZE"] == "true"
-        assert spec.env["TASKS_QUEUE_PREFETCH"] == "1"
-        assert spec.env["TASKS_DELAY_QUEUE_PREFETCH"] == "1"
-
-
 def test_build_env_overrides_accepts_max_total_jobs_override() -> None:
     module = _load_module("test_evol_circle_packing_override", EXAMPLE_SCRIPT)
 
@@ -65,97 +36,41 @@ def test_build_env_overrides_accepts_max_total_jobs_override() -> None:
 
     assert env["SCHEDULER_MAX_TOTAL_JOBS"] == "96"
     assert "250 ms" in env["WORKER_EVOLUTION_GLOBAL_GOAL"]
-
-
-def test_open_supervisor_log_truncates_previous_run(tmp_path: Path) -> None:
-    module = _load_module("test_evol_circle_packing_logs", EXAMPLE_SCRIPT)
-    log_path = tmp_path / "worker-01.log"
-    log_path.write_text("old-run\n", encoding="utf-8")
-
-    handle = module._open_supervisor_log(log_path)  # noqa: SLF001 - spec-level assertion
-    handle.write("new-run\n")
-    handle.close()
-
-    assert log_path.read_text(encoding="utf-8") == "new-run\n"
-
-
-def test_run_workers_stops_siblings_and_records_failed_manifest_when_worker_exits(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    module = _load_module("test_evol_circle_packing_supervisor", EXAMPLE_SCRIPT)
-    specs = [
-        module.WorkerProcessSpec(
-            instance_id="worker-01",
-            command=("python", "worker-01"),
-            env={"WORKER": "1"},
-            log_path=tmp_path / "worker-01.log",
-            manifest_entry_path=tmp_path / "worker-01.json",
-            worktree_base=tmp_path / "worker-01-worktree",
-        ),
-        module.WorkerProcessSpec(
-            instance_id="worker-02",
-            command=("python", "worker-02"),
-            env={"WORKER": "2"},
-            log_path=tmp_path / "worker-02.log",
-            manifest_entry_path=tmp_path / "worker-02.json",
-            worktree_base=tmp_path / "worker-02-worktree",
-        ),
+    assert json.loads(env["MAPELITES_OBJECTIVES"]) == [
+        {"name": "sum_radii", "direction": "max"},
+        {"name": "runtime_p50_ms", "direction": "min"},
+    ]
+    assert json.loads(env["MAPELITES_ISLANDS"]) == [
+        "circle_packing_alpha",
+        "circle_packing_beta",
     ]
 
-    class FakeProcess:
-        _next_pid = 2000
 
-        def __init__(self, command: list[str], **_kwargs: Any) -> None:
-            FakeProcess._next_pid += 1
-            self.pid = FakeProcess._next_pid
-            self.returncode = 7 if command[-1] == "worker-01" else None
-
-        def poll(self) -> int | None:
-            return self.returncode
-
-    def fake_popen(command: list[str], **kwargs: Any) -> FakeProcess:
-        return FakeProcess(command, **kwargs)
-
-    terminated: list[tuple[int, bool]] = []
-
-    def fake_terminate(process: FakeProcess, *, force: bool = False) -> None:
-        if process.poll() is not None:
-            return
-        terminated.append((process.pid, force))
-        process.returncode = -15 if not force else -9
-
-    previous_handlers = {
-        module.signal.SIGINT: object(),
-        module.signal.SIGTERM: object(),
-    }
-    installed_handlers: list[tuple[int, Any]] = []
-
-    monkeypatch.setattr(module, "_supervisor_dir", lambda _phase: tmp_path)
-    monkeypatch.setattr(module, "_build_worker_process_specs", lambda **_kwargs: specs)
-    monkeypatch.setattr(module.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(module, "_terminate_process_group", fake_terminate)
-    monkeypatch.setattr(module.signal, "getsignal", lambda signum: previous_handlers[signum])
+def test_run_workers_delegates_to_product_worker_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module("test_evol_circle_packing_pool", EXAMPLE_SCRIPT)
+    captured: dict[str, Any] = {}
     monkeypatch.setattr(
-        module.signal,
-        "signal",
-        lambda signum, handler: installed_handlers.append((signum, handler)),
+        module,
+        "_run_worker",
+        lambda **kwargs: captured.update(kwargs) or 7,
     )
 
-    exit_code = module._run_workers(  # noqa: SLF001 - spec-level assertion
+    assert module._run_workers(  # noqa: SLF001 - spec-level assertion
         phase="smoke",
-        count=2,
-        log_level=None,
+        count=4,
+        log_level="INFO",
         no_preflight=True,
-        preflight_timeout_seconds=1.0,
-    )
-
-    manifest = module._read_json(tmp_path / "workers-manifest.json")  # noqa: SLF001
-    assert exit_code == 7
-    assert terminated == [(2002, False)]
-    assert manifest["status"] == "failed"
-    assert [worker["returncode"] for worker in manifest["workers"]] == [7, -15]
-    assert installed_handlers[-2:] == list(previous_handlers.items())
+        preflight_timeout_seconds=1.5,
+    ) == 7
+    assert captured == {
+        "phase": "smoke",
+        "processes": 4,
+        "log_level": "INFO",
+        "no_preflight": True,
+        "preflight_timeout_seconds": 1.5,
+    }
 
 
 def test_main_dispatches_workers_with_parsed_arguments(
@@ -261,7 +176,13 @@ def test_build_report_payload_aggregates_worker_and_objective_stats() -> None:
         },
     ]
     archive_cells = [
-        {"cell_index": 0, "commit_hash": "b", "objective": 1.1, "timestamp": 1.0},
+        {
+            "island_id": "circle_packing_alpha",
+            "cell_index": 0,
+            "commit_hash": "b",
+            "objective_values": [1.1, 100.0],
+            "timestamp": 1.0,
+        },
     ]
     references = [
         {
@@ -285,6 +206,8 @@ def test_build_report_payload_aggregates_worker_and_objective_stats() -> None:
     assert report["jobs"]["failed"] == 1
     assert report["best"]["commit_hash"] == "b"
     assert report["archive"]["occupied_cells"] == 1
+    assert report["archive"]["retained_elites"] == 1
+    assert report["archive"]["best_primary_value"] == pytest.approx(1.1)
     assert report["first_above_baseline"]["job_id"] == "job-1"
     assert report["worker_throughput"][0]["worker_instance_id"] == "worker-01"
     assert report["worker_throughput"][0]["jobs_succeeded"] == 2

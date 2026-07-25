@@ -15,18 +15,19 @@ uv run loreley status
 ```
 
 It displays:
+
 - Experiment and root commit information.
 - The number of unfinished and pending-ingestion jobs.
 - Job lease health for `RUNNING` jobs, including stale and recovery-exhausted counts.
 - The current lease TTL, heartbeat interval, and max recovery budget.
-- Default island MAP-Elites statistics (occupied cells, coverage, QD score, normalized QD score).
-- The current best-fitness commit.
+- Selected-island MAP-Elites statistics (occupied cells, coverage, retained elites, objective count).
+- The best retained commit by the configured primary objective, labelled as such.
 - Current root baseline status when a matching campaign baseline is known,
   including status, metric, value, baseline key, and failure kind.
 
 ## Options
 
-- `--island-id`: Inspect a specific island. If omitted, uses the default island.
+- `--island-id`: Inspect a specific island. If omitted, uses the first ID in `MAPELITES_ISLANDS`.
 - `--json`: Print the status payload as JSON, useful for machine-readable integrations.
 
 ## Lease health

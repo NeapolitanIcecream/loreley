@@ -66,7 +66,7 @@ The API relies on standard Loreley settings (database/logs). See:
 
 The Streamlit UI is multi-page (implemented under `loreley/ui/pages`):
 
-- **Overview**: quick KPIs, fitness trend, island table.
+- **Overview**: quick KPIs, primary-objective trend, island/Pareto table.
 - **Campaign**: campaign program sections, warnings, active/current hash
   comparison, baseline status, and baseline ensure background tasks.
 - **Jobs**: job table with status, kind, fate, and evidence filters; single-job
@@ -75,7 +75,7 @@ The Streamlit UI is multi-page (implemented under `loreley/ui/pages`):
   details with charts.
 - **Archive**: island stats, snapshot metadata, record plots, fate/evidence
   indicators, and baseline delta when available.
-- **Graphs**: fitness scatter and commit lineage graph with fate and
+- **Graphs**: primary-objective scatter and commit lineage graph with fate and
   agent-visible evidence counts.
 - **Logs**: browse role logs and tail a file.
 - **Settings**: API health and safe settings (`Settings.export_safe()`).

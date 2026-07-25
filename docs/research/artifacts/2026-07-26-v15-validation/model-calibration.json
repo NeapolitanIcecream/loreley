@@ -1,0 +1,252 @@
+{
+  "evaluator": "/Users/chenmohan/gits/ACE/loreley/examples/circle-packing/scripts/local_eval.py",
+  "generated_at": "2026-07-25T16:20:20.208132+00:00",
+  "models": [
+    "deepseek-v4-flash",
+    "gpt-5.4-mini",
+    "gpt-5.4",
+    "claude-sonnet-4-6"
+  ],
+  "prompt_sha256": "ebcc72889ad1020f5cb9184bc067f298d8f7a3ab30ebdb7b432d8b12d9076771",
+  "results": [
+    {
+      "attributed_cost_usd_upper_bound": 0.0078732,
+      "attributed_quota_upper_bound": 3936.6,
+      "duration_seconds": 31.63006483297795,
+      "evaluation": {
+        "error": "model response does not define pack_circles",
+        "valid": false
+      },
+      "global_quota_after": {
+        "total_available": 786795552,
+        "total_granted": 1499985784,
+        "total_used": 713190232,
+        "unlimited_quota": false
+      },
+      "global_quota_before": {
+        "total_available": 786844188,
+        "total_granted": 1499908137,
+        "total_used": 713063949,
+        "unlimited_quota": false
+      },
+      "global_quota_delta_contaminated": 126283,
+      "model": "deepseek-v4-flash",
+      "pricing": {
+        "completion_ratio": 2.0,
+        "group_multiplier_upper_bound": 1.2,
+        "model_ratio": 0.5
+      },
+      "request_id": "202607251618591673391548268d9d6vOTxgSO3",
+      "response_sha256": "c47e74264d17b684b3df9f7bcf3c67bef13d5f17e086d805b6173f2341c1f197",
+      "source": "\n",
+      "source_sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "usage": {
+        "input_tokens": 561,
+        "output_tokens": 3000,
+        "total_tokens": 3561
+      }
+    },
+    {
+      "attributed_cost_usd_upper_bound": 0.003897,
+      "attributed_quota_upper_bound": 1948.5,
+      "duration_seconds": 3.9733108750078827,
+      "evaluation": {
+        "error": null,
+        "metrics": {
+          "repeated_runs": {
+            "deterministic": true,
+            "min_boundary_margin": {
+              "count": 100,
+              "max": 0.0,
+              "mean": 0.0,
+              "min": 0.0,
+              "p50": 0.0,
+              "p90": 0.0,
+              "p99": 0.0
+            },
+            "min_gap": {
+              "count": 100,
+              "max": 0.03999999999999989,
+              "mean": 0.03999999999999989,
+              "min": 0.03999999999999989,
+              "p50": 0.03999999999999989,
+              "p90": 0.03999999999999989,
+              "p99": 0.03999999999999989
+            },
+            "packing_density": {
+              "count": 100,
+              "max": 0.02783934413027264,
+              "mean": 0.02783934413027264,
+              "min": 0.02783934413027264,
+              "p50": 0.02783934413027264,
+              "p90": 0.02783934413027264,
+              "p99": 0.02783934413027264
+            },
+            "sum_radii": {
+              "count": 100,
+              "max": 0.4800000000000002,
+              "mean": 0.4800000000000002,
+              "min": 0.4800000000000002,
+              "p50": 0.4800000000000002,
+              "p90": 0.4800000000000002,
+              "p99": 0.4800000000000002
+            },
+            "time_ms": {
+              "count": 100,
+              "max": 0.0033330870792269707,
+              "mean": 0.002598825376480818,
+              "min": 0.0022919848561286926,
+              "p50": 0.002624932676553726,
+              "p90": 0.002754270099103451,
+              "p99": 0.0032924034167081118
+            }
+          },
+          "repo_root": "/candidate",
+          "runs": 100,
+          "samples": {
+            "1": {
+              "min_boundary_margin": 0.0,
+              "min_gap": 0.0,
+              "packing_density": 0.7853981633974483,
+              "sum_radii": 0.5
+            },
+            "2": {
+              "min_boundary_margin": 0.0,
+              "min_gap": 0.6697252332435327,
+              "packing_density": 0.09047786842338604,
+              "sum_radii": 0.24
+            },
+            "26": {
+              "min_boundary_margin": 0.0,
+              "min_gap": 0.03999999999999989,
+              "packing_density": 0.02783934413027264,
+              "sum_radii": 0.4800000000000002
+            },
+            "5": {
+              "min_boundary_margin": 0.0,
+              "min_gap": 0.17333333333333328,
+              "packing_density": 0.10053096491487334,
+              "sum_radii": 0.3999999999999999
+            }
+          },
+          "target_metrics": {
+            "min_boundary_margin": 0.0,
+            "min_gap": 0.03999999999999989,
+            "packing_density": 0.02783934413027264,
+            "sum_radii": 0.4800000000000002
+          },
+          "target_n": 26
+        },
+        "valid": true
+      },
+      "global_quota_after": {
+        "total_available": 786794367,
+        "total_granted": 1499984599,
+        "total_used": 713190232,
+        "unlimited_quota": false
+      },
+      "global_quota_before": {
+        "total_available": 786795552,
+        "total_granted": 1499985784,
+        "total_used": 713190232,
+        "unlimited_quota": false
+      },
+      "global_quota_delta_contaminated": 0,
+      "model": "gpt-5.4-mini",
+      "pricing": {
+        "completion_ratio": 6.0,
+        "group_multiplier_upper_bound": 1.2,
+        "model_ratio": 0.375
+      },
+      "request_id": "202607251619309425907728268d9d6Hg2SV82y",
+      "response_sha256": "dbf60cb801f949499122c8eb6df55b98d6582403d53b9e3d2b9265aa83a4ec7b",
+      "source": "from __future__ import annotations\n\nfrom typing import Iterable, List, Tuple\n\n\ndef pack_circles(n: int = 26) -> Iterable[Tuple[float, float, float]]:\n    \"\"\"\n    Deterministic circle packing in the unit square.\n\n    Strategy:\n    - n == 1: one maximal inscribed circle.\n    - n >= 2: a small, guaranteed-valid construction using a 2-row staggered grid\n      with radii chosen from the exact horizontal and vertical spacings.\n\n    This is fast, fully deterministic, and valid for every positive integer n.\n    \"\"\"\n    if n <= 0:\n        raise ValueError(\"n must be a positive integer.\")\n\n    if n == 1:\n        return [(0.5, 0.5, 0.5)]\n\n    # Use a near-square arrangement with two staggered rows.\n    # The packing is valid if:\n    #   - circles stay within the square\n    #   - same-row neighbors do not overlap\n    #   - cross-row neighbors do not overlap\n    #\n    # We choose the number of columns to keep the radius reasonably large.\n    cols = (n + 1) // 2\n    rows = 2 if n > 1 else 1\n\n    # Spacing between adjacent columns and rows.\n    dx = 1.0 / cols\n    dy = 1.0 / rows\n\n    # Same-row neighbors are separated by dx; cross-row stagger creates\n    # a horizontal offset of dx / 2 and vertical offset of dy.\n    # We take the minimum of the boundary-limited and pairwise-limited radii.\n    r = min(dx, dy, (dx * dx / 4.0 + dy * dy) ** 0.5 - 1e-15) * 0.49\n    # The above formula is conservative; simplify to a stable exact lower bound.\n    r = min(dx, dy) * 0.24\n\n    circles: List[Tuple[float, float, float]] = []\n    placed = 0\n\n    # Bottom row: centers at y = r.\n    y0 = r\n    for c in range(cols):\n        if placed >= n:\n            break\n        x = r + c * dx\n        if x > 1.0 - r:\n            x = 1.0 - r\n        circles.append((x, y0, r))\n        placed += 1\n\n    # Top row: staggered by half a column, centers at y = 1 - r.\n    y1 = 1.0 - r\n    for c in range(cols):\n        if placed >= n:\n            break\n        x = r + (c + 0.5) * dx\n        if x > 1.0 - r:\n            x = 1.0 - r\n        circles.append((x, y1, r))\n        placed += 1\n\n    return circles\n",
+      "source_sha256": "97b3e1523b63a65c219e6cc2a6450528009ad212f2510b962a73b984992d8c7b",
+      "usage": {
+        "input_tokens": 562,
+        "output_tokens": 628,
+        "total_tokens": 1190
+      }
+    },
+    {
+      "attributed_cost_usd_upper_bound": 0.023718,
+      "attributed_quota_upper_bound": 11859.0,
+      "duration_seconds": 10.720173791982234,
+      "evaluation": {
+        "error": "evaluation exited with code 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/runner/local_eval.py\", line 276, in <module>\n    raise SystemExit(main())\n                     ^^^^^^\n  File \"/runner/local_eval.py\", line 263, in main\n    payload = evaluate_repo(\n              ^^^^^^^^^^^^^^\n  File \"/runner/local_eval.py\", line 148, in evaluate_repo\n    circles = _coerce_circles(pack_circles(n), n=n)\n                              ^^^^^^^^^^^^^^^\n  File \"/candidate/solution.py\", line 132, in pack_circles\n    return _validate(circles, n)\n           ^^^^^^^^^^^^^^^^^^^^^\n  File \"/candidate/solution.py\", line 97, in _validate\n    raise AssertionError(\"circle outside unit square\")\nAssertionError: circle outside unit square\n",
+        "stdout": "",
+        "valid": false
+      },
+      "global_quota_after": {
+        "total_available": 786767705,
+        "total_granted": 1499957937,
+        "total_used": 713190232,
+        "unlimited_quota": false
+      },
+      "global_quota_before": {
+        "total_available": 786794367,
+        "total_granted": 1499984599,
+        "total_used": 713190232,
+        "unlimited_quota": false
+      },
+      "global_quota_delta_contaminated": 0,
+      "model": "gpt-5.4",
+      "pricing": {
+        "completion_ratio": 6.0,
+        "group_multiplier_upper_bound": 1.2,
+        "model_ratio": 1.25
+      },
+      "request_id": "202607251619354201968568268d9d6x24as1U7",
+      "response_sha256": "e1324207a55836131a76cdd0a1a366c18f65565aa3cf764c37be5c15b19d07ad",
+      "source": "from __future__ import annotations\n\nimport math\nfrom typing import Iterable, List, Tuple\n\n\nCircle = Tuple[float, float, float]\n\n\ndef _grid_dims(n: int) -> Tuple[int, int]:\n    cols = math.ceil(math.sqrt(n))\n    rows = (n + cols - 1) // cols\n    return rows, cols\n\n\ndef _grid_packing(n: int) -> List[Circle]:\n    if n == 1:\n        return [(0.5, 0.5, 0.5)]\n\n    rows, cols = _grid_dims(n)\n    r = min(1.0 / (2.0 * cols), 1.0 / (2.0 * rows))\n    xs = [(j + 0.5) / cols for j in range(cols)]\n    ys = [(i + 0.5) / rows for i in range(rows)]\n\n    circles: List[Circle] = []\n    for i in range(rows):\n        y = ys[i]\n        for j in range(cols):\n            if len(circles) >= n:\n                return circles\n            x = xs[j]\n            circles.append((x, y, r))\n    return circles\n\n\ndef _hex_radius_for_dims(rows: int, cols: int, odd_short: bool) -> float:\n    if rows <= 0 or cols <= 0:\n        return 0.0\n    if rows == 1:\n        return 1.0 / (2.0 * cols)\n    width_factor = 2.0 * cols - (1.0 if odd_short else 0.0)\n    return min(1.0 / width_factor, 1.0 / (2.0 + math.sqrt(3.0) * (rows - 1)))\n\n\ndef _hex_packing(rows: int, cols: int, odd_short: bool, n: int) -> List[Circle]:\n    r = _hex_radius_for_dims(rows, cols, odd_short)\n    if not (r > 0.0 and math.isfinite(r)):\n        return []\n\n    dy = math.sqrt(3.0) * r\n    circles: List[Circle] = []\n    for i in range(rows):\n        offset = r if (i % 2 == 0) else 2.0 * r\n        count = cols - 1 if (odd_short and (i % 2 == 1)) else cols\n        y = r + i * dy\n        for j in range(count):\n            x = offset + 2.0 * r * j\n            circles.append((x, y, r))\n            if len(circles) == n:\n                return circles\n    return circles if len(circles) == n else []\n\n\ndef _best_hex_packing(n: int) -> List[Circle]:\n    if n == 1:\n        return [(0.5, 0.5, 0.5)]\n\n    best: List[Circle] = []\n    best_r = -1.0\n\n    max_rows = n\n    for rows in range(1, max_rows + 1):\n        cols = (n + rows - 1) // rows\n        for odd_short in (False, True):\n            capacity = rows * cols - ((rows // 2) if odd_short else 0)\n            if capacity < n:\n                continue\n            packing = _hex_packing(rows, cols, odd_short, n)\n            if not packing:\n                continue\n            r = packing[0][2]\n            if r > best_r:\n                best_r = r\n                best = packing\n\n    return best\n\n\ndef _validate(circles: List[Circle], n: int) -> List[Circle]:\n    if len(circles) != n:\n        raise AssertionError(\"incorrect number of circles\")\n\n    for x, y, r in circles:\n        if not (r > 0.0 and math.isfinite(x) and math.isfinite(y) and math.isfinite(r)):\n            raise AssertionError(\"non-finite or non-positive circle\")\n        if x - r < -1e-15 or y - r < -1e-15 or x + r > 1.0 + 1e-15 or y + r > 1.0 + 1e-15:\n            raise AssertionError(\"circle outside unit square\")\n\n    for i in range(n):\n        x1, y1, r1 = circles[i]\n        for j in range(i + 1, n):\n            x2, y2, r2 = circles[j]\n            dx = x1 - x2\n            dy = y1 - y2\n            if dx * dx + dy * dy < (r1 + r2) * (r1 + r2) - 1e-15:\n                raise AssertionError(\"overlapping circles\")\n\n    return circles\n\n\ndef pack_circles(n: int = 26) -> Iterable[Tuple[float, float, float]]:\n    if n <= 0:\n        raise ValueError(\"n must be a positive integer\")\n\n    if n == 1:\n        return [(0.5, 0.5, 0.5)]\n\n    if n == 2:\n        circles = [(0.25, 0.5, 0.25), (0.75, 0.5, 0.25)]\n        return _validate(circles, n)\n\n    best = _best_hex_packing(n)\n    grid = _grid_packing(n)\n\n    if not best:\n        circles = grid\n    else:\n        sum_best = best[0][2] * len(best)\n        sum_grid = grid[0][2] * len(grid)\n        circles = best if sum_best >= sum_grid else grid\n\n    return _validate(circles, n)\n",
+      "source_sha256": "ccf66e0a733104690addc740494fad6b2352dc93fbc7e28740ad8bf1deba4c5e",
+      "usage": {
+        "input_tokens": 562,
+        "output_tokens": 1224,
+        "total_tokens": 1786
+      }
+    },
+    {
+      "attributed_cost_usd_upper_bound": 0.056268,
+      "attributed_quota_upper_bound": 28134.0,
+      "duration_seconds": 33.593256791937165,
+      "evaluation": {
+        "error": "evaluation exited with code 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/runner/local_eval.py\", line 276, in <module>\n    raise SystemExit(main())\n                     ^^^^^^\n  File \"/runner/local_eval.py\", line 263, in main\n    payload = evaluate_repo(\n              ^^^^^^^^^^^^^^\n  File \"/runner/local_eval.py\", line 141, in evaluate_repo\n    module = _load_solution_module(repo_root)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/runner/local_eval.py\", line 72, in _load_solution_module\n    spec.loader.exec_module(module)\n  File \"<frozen importlib._bootstrap_external>\", line 995, in exec_module\n  File \"<frozen importlib._bootstrap_external>\", line 1133, in get_code\n  File \"<frozen importlib._bootstrap_external>\", line 1063, in source_to_code\n  File \"<frozen importlib._bootstrap>\", line 488, in _call_with_frames_removed\n  File \"/candidate/solution.py\", line 269\n    1: [(0.5, 0.\n        ^\nSyntaxError: '(' was never closed\n",
+        "stdout": "",
+        "valid": false
+      },
+      "global_quota_after": {
+        "total_available": 786687008,
+        "total_granted": 1499954393,
+        "total_used": 713267385,
+        "unlimited_quota": false
+      },
+      "global_quota_before": {
+        "total_available": 786767705,
+        "total_granted": 1499957937,
+        "total_used": 713190232,
+        "unlimited_quota": false
+      },
+      "global_quota_delta_contaminated": 77153,
+      "model": "claude-sonnet-4-6",
+      "pricing": {
+        "completion_ratio": 5.0,
+        "group_multiplier_upper_bound": 1.2,
+        "model_ratio": 1.5
+      },
+      "request_id": "202607251619465240365678268d9d6MzkhsMaq",
+      "response_sha256": "e771a838b1ec0ec34f6b093fa69635d5f29988937c90d09c91af8b082fd465a0",
+      "source": "from __future__ import annotations\n\nimport math\nfrom typing import Iterable, List, Tuple\n\n\ndef pack_circles(n: int = 26) -> Iterable[Tuple[float, float, float]]:\n    \"\"\"\n    Pack n non-overlapping circles fully inside [0,1]^2, maximizing sum of radii.\n    Uses known optimal/good configurations for small n, and a grid-based\n    approach for larger n.\n    \"\"\"\n    if n <= 0:\n        raise ValueError(\"n must be a positive integer.\")\n\n    if n == 1:\n        return [(0.5, 0.5, 0.5)]\n\n    # Try to use known good packings or compute a good grid-based packing\n    result = _compute_packing(n)\n    return result\n\n\ndef _compute_packing(n: int) -> List[Tuple[float, float, float]]:\n    \"\"\"Compute a good packing for n circles in the unit square.\"\"\"\n\n    # Known optimal/good packings (x, y, r) for small n\n    # Sources: Packomania and known results\n    known: dict[int, List[Tuple[float, float, float]]] = {\n        1: [(0.5, 0.5, 0.5)],\n        2: [(0.25, 0.5, 0.25), (0.75, 0.5, 0.25)],\n        3: [\n            (0.25, 0.25, 0.25),\n            (0.75, 0.25, 0.25),\n            (0.5, 0.7071067811865476, 0.2928932188134524),\n        ],\n        4: [(0.25, 0.25, 0.25), (0.75, 0.25, 0.25),\n            (0.25, 0.75, 0.25), (0.75, 0.75, 0.25)],\n        5: [\n            (0.2071067811865476, 0.2071067811865476, 0.2071067811865476),\n            (0.7928932188134524, 0.2071067811865476, 0.2071067811865476),\n            (0.2071067811865476, 0.7928932188134524, 0.2071067811865476),\n            (0.7928932188134524, 0.7928932188134524, 0.2071067811865476),\n            (0.5, 0.5, 0.2071067811865476),\n        ],\n    }\n\n    if n in known:\n        return known[n]\n\n    # For general n, use optimized grid placement\n    return _grid_packing(n)\n\n\ndef _grid_packing(n: int) -> List[Tuple[float, float, float]]:\n    \"\"\"\n    Place n circles in a grid pattern, optimizing the radius.\n    Try different grid configurations (cols x rows) and pick the best.\n    \"\"\"\n    best_circles = None\n    best_sum = -1.0\n\n    # Try all reasonable grid splits\n    for cols in range(1, n + 1):\n        rows = math.ceil(n / cols)\n        if rows > n:\n            continue\n\n        # We have cols*rows >= n cells; use the first n of them\n        # Each cell is (1/cols) x (1/rows)\n        cell_w = 1.0 / cols\n        cell_h = 1.0 / rows\n        # Max radius fitting in cell\n        r = min(cell_w, cell_h) / 2.0\n\n        # Check if all n circles fit and don't overlap\n        # Place first n circles in row-major order\n        circles = []\n        for i in range(n):\n            row = i // cols\n            col = i % cols\n            cx = (col + 0.5) * cell_w\n            cy = (row + 0.5) * cell_h\n            circles.append((cx, cy, r))\n\n        # Verify (should always be valid for this construction)\n        if _is_valid(circles):\n            s = sum(c[2] for c in circles)\n            if s > best_sum:\n                best_sum = s\n                best_circles = circles\n\n    if best_circles is None:\n        # Fallback: diagonal packing\n        return _diagonal_packing(n)\n\n    # Try to improve by using a mixed-row approach:\n    # some rows have 'cols' circles, last row might have fewer\n    # We can try to increase radius for the last partial row\n    best_circles = _try_improve_grid(n, best_circles, best_sum)\n\n    return best_circles\n\n\ndef _try_improve_grid(n: int, current_best: List[Tuple[float, float, float]],\n                      current_sum: float) -> List[Tuple[float, float, float]]:\n    \"\"\"\n    Try various grid configurations where the last row may have fewer circles\n    and potentially a larger radius, or use hexagonal offset rows.\n    \"\"\"\n    best = current_best\n    best_sum = current_sum\n\n    for cols in range(1, n + 1):\n        rows = math.ceil(n / cols)\n        last_row_count = n - (rows - 1) * cols\n        if last_row_count <= 0:\n            last_row_count = cols\n\n        # Standard grid radius\n        cell_w = 1.0 / cols\n        cell_h = 1.0 / rows\n        r = min(cell_w, cell_h) / 2.0\n\n        circles = []\n        for i in range(n):\n            row = i // cols\n            col = i % cols\n            cx = (col + 0.5) * cell_w\n            cy = (row + 0.5) * cell_h\n            circles.append((cx, cy, r))\n\n        if _is_valid(circles):\n            s = sum(c[2] for c in circles)\n            if s > best_sum:\n                best_sum = s\n                best = circles\n\n        # Try hexagonal offset: alternate rows shifted by half cell width\n        circles_hex = _hex_grid_packing(n, cols, rows, cell_w, cell_h)\n        if circles_hex and _is_valid(circles_hex):\n            s = sum(c[2] for c in circles_hex)\n            if s > best_sum:\n                best_sum = s\n                best = circles_hex\n\n    return best\n\n\ndef _hex_grid_packing(n: int, cols: int, rows: int,\n                      cell_w: float, cell_h: float) -> List[Tuple[float, float, float]]:\n    \"\"\"\n    Hexagonal offset grid: even rows normal, odd rows shifted by cell_w/2.\n    Compute the maximum valid radius.\n    \"\"\"\n    # With hex offset, vertical spacing between row centers is cell_h\n    # Horizontal distance between adjacent circles in same row: cell_w\n    # Distance between circles in adjacent rows (offset by cell_w/2):\n    #   horizontal diff = cell_w/2, vertical diff = cell_h\n    #   dist = sqrt((cell_w/2)^2 + cell_h^2)\n    # For non-overlap: 2r <= min(cell_w, sqrt((cell_w/2)^2 + cell_h^2))\n    # Also must be inside square: r <= min(cx, 1-cx, cy, 1-cy) for all circles\n\n    dx = cell_w / 2.0\n    dy = cell_h\n    diag_dist = math.sqrt(dx * dx + dy * dy)\n    r = min(cell_w, diag_dist) / 2.0\n\n    circles = []\n    for i in range(n):\n        row = i // cols\n        col = i % cols\n        offset = (cell_w / 2.0) if (row % 2 == 1) else 0.0\n        cx = offset + (col + 0.5) * cell_w\n        cy = (row + 0.5) * cell_h\n\n        # Check inside square\n        if cx - r < 0 or cx + r > 1 or cy - r < 0 or cy + r > 1:\n            # Try smaller radius\n            r2 = min(cx, 1 - cx, cy, 1 - cy)\n            if r2 <= 0:\n                return []\n            # This would need per-circle radius which complicates overlap check\n            return []\n\n        circles.append((cx, cy, r))\n\n    return circles\n\n\ndef _diagonal_packing(n: int) -> List[Tuple[float, float, float]]:\n    \"\"\"Fallback diagonal packing.\"\"\"\n    r = 1.0 / (4.0 * n)\n    positions = [i / (n - 1) for i in range(n)] if n > 1 else [0.5]\n    step = 1.0 - 2.0 * r\n    circles = []\n    for t in positions:\n        x = r + t * step\n        y = r + t * step\n        circles.append((x, y, r))\n    return circles\n\n\ndef _is_valid(circles: List[Tuple[float, float, float]]) -> bool:\n    \"\"\"Check all circles are inside [0,1]^2 and non-overlapping.\"\"\"\n    for x, y, r in circles:\n        if r <= 0:\n            return False\n        if x - r < -1e-12 or x + r > 1 + 1e-12:\n            return False\n        if y - r < -1e-12 or y + r > 1 + 1e-12:\n            return False\n\n    for i in range(len(circles)):\n        x1, y1, r1 = circles[i]\n        for j in range(i + 1, len(circles)):\n            x2, y2, r2 = circles[j]\n            dist2 = (x1 - x2) ** 2 + (y1 - y2) ** 2\n            min_dist = r1 + r2\n            if dist2 < min_dist * min_dist - 1e-12:\n                return False\n    return True\n\n\n# ---------------------------------------------------------------------------\n# Optimized packing using a local optimizer for n=26 specifically\n# ---------------------------------------------------------------------------\n\ndef _optimize_packing(n: int, initial: List[Tuple[float, float, float]],\n                      iterations: int = 500) -> List[Tuple[float, float, float]]:\n    \"\"\"\n    Simple gradient-free local optimization: try to increase radii and\n    adjust positions to improve sum of radii.\n    This is deterministic.\n    \"\"\"\n    circles = [list(c) for c in initial]\n\n    def compute_max_r(idx: int, others: List) -> float:\n        \"\"\"Max radius for circle idx given others are fixed.\"\"\"\n        x, y, _ = circles[idx]\n        # Constraint from walls\n        r_max = min(x, 1 - x, y, 1 - y)\n        # Constraint from other circles\n        for j, (xj, yj, rj) in enumerate(others):\n            if j == idx:\n                continue\n            dist = math.sqrt((x - xj) ** 2 + (y - yj) ** 2)\n            r_max = min(r_max, dist - rj)\n        return r_max\n\n    # Iteratively maximize each radius\n    for _ in range(iterations):\n        improved = False\n        for i in range(n):\n            r_max = compute_max_r(i, circles)\n            if r_max > circles[i][2] + 1e-10:\n                circles[i][2] = r_max\n                improved = True\n\n    return [(c[0], c[1], c[2]) for c in circles]\n\n\n# Override _compute_packing to use optimization for larger n\n_original_compute = _compute_packing\n\n\ndef _compute_packing(n: int) -> List[Tuple[float, float, float]]:  # type: ignore[misc]\n    known: dict[int, List[Tuple[float, float, float]]] = {\n        1: [(0.5, 0.\n",
+      "source_sha256": "b272652f54f25dd232a7e7b963cb307f14d422ea3fd6728832f7c75f12840042",
+      "usage": {
+        "input_tokens": 630,
+        "output_tokens": 3000,
+        "total_tokens": 3630
+      }
+    }
+  ],
+  "source": "/Users/chenmohan/gits/ACE/loreley/examples/circle-packing/solution.py",
+  "source_commit": "6dab191"
+}

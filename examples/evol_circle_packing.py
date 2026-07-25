@@ -9,8 +9,8 @@ This helper standardises two experiment phases:
 
 It supports:
   - `scheduler`: run Loreley's scheduler
-  - `worker`: run one worker process
-  - `workers`: supervise N independent worker OS processes
+  - `worker`: run a managed worker process pool
+  - `workers`: alias for `worker --processes N`
   - `api` / `ui`: inspect results
   - `report`: aggregate DB rows + artifact JSON into Markdown/JSON summaries
 """
@@ -19,11 +19,9 @@ import argparse
 import importlib.util
 import json
 import os
-import signal
 import subprocess
 import sys
 import tempfile
-import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -77,8 +75,16 @@ UI_PORT: int = 8501
 WORKER_EVALUATOR_PYTHON_PATHS: list[str] = [str(EVAL_ENV_ROOT)]
 WORKER_EVALUATOR_PLUGIN: str = "evaluate:plugin"
 
-MAPELITES_FITNESS_METRIC: str = "sum_radii"
-MAPELITES_DEFAULT_ISLAND_ID: str = "circle_packing"
+MAPELITES_OBJECTIVES: list[dict[str, str]] = [
+    {"name": "sum_radii", "direction": "max"},
+    {"name": "runtime_p50_ms", "direction": "min"},
+]
+MAPELITES_ISLANDS: list[str] = [
+    "circle_packing_alpha",
+    "circle_packing_beta",
+]
+MAPELITES_PARETO_FRONT_MAX_SIZE: int = 4
+MAPELITES_MIGRATION_INTERVAL_JOBS: int = 8
 MAPELITES_EXPERIMENT_ROOT_COMMIT: str = "6dab191"
 MAPELITES_DIMENSION_REDUCTION_TARGET_DIMS: int = 2
 MAPELITES_ARCHIVE_CELLS_PER_DIM: int = 12
@@ -136,23 +142,6 @@ class PhasePreset:
     schedule_batch_size: int
     dispatch_batch_size: int
     ingest_batch_size: int
-
-
-@dataclass(frozen=True, slots=True)
-class WorkerProcessSpec:
-    instance_id: str
-    command: tuple[str, ...]
-    env: dict[str, str]
-    log_path: Path
-    manifest_entry_path: Path
-    worktree_base: Path
-
-
-@dataclass(slots=True)
-class WorkerSupervisorState:
-    stop_requested: bool = False
-    interrupted: bool = False
-    exit_code: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -342,9 +331,6 @@ def _build_env_overrides(
     *,
     phase: str,
     include_worker_repo: bool = False,
-    worker_instance_id: str | None = None,
-    worker_manifest_entry: Path | None = None,
-    worker_worktree_base: Path | None = None,
     max_total_jobs_override: int | None = None,
 ) -> dict[str, str]:
     preset = _phase_preset(phase)
@@ -378,8 +364,10 @@ def _build_env_overrides(
         "SCHEDULER_SCHEDULE_BATCH_SIZE": str(preset.schedule_batch_size),
         "SCHEDULER_DISPATCH_BATCH_SIZE": str(preset.dispatch_batch_size),
         "SCHEDULER_INGEST_BATCH_SIZE": str(preset.ingest_batch_size),
-        "MAPELITES_FITNESS_METRIC": MAPELITES_FITNESS_METRIC,
-        "MAPELITES_DEFAULT_ISLAND_ID": MAPELITES_DEFAULT_ISLAND_ID,
+        "MAPELITES_OBJECTIVES": json.dumps(MAPELITES_OBJECTIVES),
+        "MAPELITES_ISLANDS": json.dumps(MAPELITES_ISLANDS),
+        "MAPELITES_PARETO_FRONT_MAX_SIZE": str(MAPELITES_PARETO_FRONT_MAX_SIZE),
+        "MAPELITES_MIGRATION_INTERVAL_JOBS": str(MAPELITES_MIGRATION_INTERVAL_JOBS),
         "MAPELITES_EXPERIMENT_ROOT_COMMIT": MAPELITES_EXPERIMENT_ROOT_COMMIT,
         "MAPELITES_SEED_POPULATION_SIZE": str(preset.seed_population_size),
         "MAPELITES_DIMENSION_REDUCTION_TARGET_DIMS": str(
@@ -422,14 +410,10 @@ def _build_env_overrides(
     if LORELEY_LLM_BASE_URL:
         overrides["LORELEY_LLM_BASE_URL"] = LORELEY_LLM_BASE_URL
     if include_worker_repo:
-        overrides["WORKER_REPO_WORKTREE"] = str(worker_worktree_base or WORKER_REPO_WORKTREE)
+        overrides["WORKER_REPO_WORKTREE"] = str(WORKER_REPO_WORKTREE)
         overrides["WORKER_REPO_WORKTREE_RANDOMIZE"] = str(
             WORKER_REPO_WORKTREE_RANDOMIZE
         ).lower()
-    if worker_instance_id:
-        overrides["LORELEY_WORKER_INSTANCE_ID"] = worker_instance_id
-    if worker_manifest_entry is not None:
-        overrides["LORELEY_WORKER_MANIFEST_ENTRY"] = str(worker_manifest_entry)
     return overrides
 
 
@@ -437,15 +421,11 @@ def _apply_base_env(
     *,
     phase: str,
     include_worker_repo: bool = False,
-    worker_instance_id: str | None = None,
-    worker_manifest_entry: Path | None = None,
     max_total_jobs_override: int | None = None,
 ) -> None:
     overrides = _build_env_overrides(
         phase=phase,
         include_worker_repo=include_worker_repo,
-        worker_instance_id=worker_instance_id,
-        worker_manifest_entry=worker_manifest_entry,
         max_total_jobs_override=max_total_jobs_override,
     )
     for name, value in overrides.items():
@@ -572,45 +552,19 @@ def _run_scheduler(
     return int(loreley_main(argv))
 
 
-def _write_worker_manifest_entry(*, path: Path, phase: str, worker_instance_id: str | None) -> None:
-    from loreley.config import get_settings
-
-    get_settings.cache_clear()
-    settings = get_settings()
-    payload = {
-        "phase": phase,
-        "experiment_id": str(settings.experiment_id or ""),
-        "worker_instance_id": worker_instance_id,
-        "pid": os.getpid(),
-        "worker_repo_worktree": settings.worker_repo_worktree,
-        "worker_repo_worktree_randomize": settings.worker_repo_worktree_randomize,
-        "started_at": _now_utc_iso(),
-    }
-    _write_json(path, payload)
-
-
 def _run_worker(
     *,
     phase: str,
+    processes: int,
     log_level: str | None,
     no_preflight: bool,
     preflight_timeout_seconds: float,
-    manifest_entry: Path | None,
 ) -> int:
-    worker_instance_id = (os.getenv("LORELEY_WORKER_INSTANCE_ID") or "").strip() or None
     _apply_base_env(
         phase=phase,
         include_worker_repo=True,
-        worker_instance_id=worker_instance_id,
-        worker_manifest_entry=manifest_entry,
     )
     _ensure_repo_on_sys_path()
-    if manifest_entry is not None:
-        _write_worker_manifest_entry(
-            path=manifest_entry,
-            phase=phase,
-            worker_instance_id=worker_instance_id,
-        )
     _print_environment_summary(phase=phase)
 
     from loreley.cli import main as loreley_main
@@ -618,308 +572,17 @@ def _run_worker(
     argv: list[str] = []
     if log_level:
         argv += ["--log-level", str(log_level)]
-    argv.append("worker")
+    argv += ["worker", "--processes", str(int(processes))]
     if no_preflight:
         argv.append("--no-preflight")
     argv += ["--preflight-timeout-seconds", str(float(preflight_timeout_seconds))]
     console.log(
-        "[bold green]Starting worker[/] phase={} instance={}".format(
+        "[bold green]Starting worker pool[/] phase={} processes={}".format(
             phase,
-            worker_instance_id or "<unset>",
+            processes,
         )
     )
     return int(loreley_main(argv))
-
-
-def _supervisor_dir(phase: str) -> Path:
-    return _phase_logs_root(phase) / "worker" / "supervisor"
-
-
-def _build_worker_process_specs(
-    *,
-    phase: str,
-    count: int,
-    log_level: str | None,
-    no_preflight: bool,
-    preflight_timeout_seconds: float,
-) -> list[WorkerProcessSpec]:
-    script_path = Path(__file__).resolve()
-    supervisor_dir = _supervisor_dir(phase)
-    supervisor_dir.mkdir(parents=True, exist_ok=True)
-
-    specs: list[WorkerProcessSpec] = []
-    for index in range(1, count + 1):
-        instance_id = f"worker-{index:02d}"
-        log_path = supervisor_dir / f"{instance_id}.log"
-        manifest_entry_path = supervisor_dir / f"{instance_id}.json"
-        worktree_base = WORKER_REPO_WORKTREE / instance_id
-        command: list[str] = [
-            sys.executable,
-            str(script_path),
-            "worker",
-            "--phase",
-            phase,
-            "--manifest-entry",
-            str(manifest_entry_path),
-        ]
-        if log_level:
-            command += ["--log-level", str(log_level)]
-        if no_preflight:
-            command.append("--no-preflight")
-        command += [
-            "--preflight-timeout-seconds",
-            str(float(preflight_timeout_seconds)),
-        ]
-
-        env = os.environ.copy()
-        env.update(
-            _build_env_overrides(
-                phase=phase,
-                include_worker_repo=True,
-                worker_instance_id=instance_id,
-                worker_manifest_entry=manifest_entry_path,
-                worker_worktree_base=worktree_base,
-            )
-        )
-        specs.append(
-            WorkerProcessSpec(
-                instance_id=instance_id,
-                command=tuple(command),
-                env=env,
-                log_path=log_path,
-                manifest_entry_path=manifest_entry_path,
-                worktree_base=worktree_base,
-            )
-        )
-    return specs
-
-
-def _collect_supervisor_manifest(
-    *,
-    phase: str,
-    specs: Sequence[WorkerProcessSpec],
-    processes: Sequence[subprocess.Popen[str]],
-    status: str,
-    started_at: str,
-    ended_at: str | None = None,
-) -> dict[str, Any]:
-    preset = _phase_preset(phase)
-    workers: list[dict[str, Any]] = []
-    for spec, proc in zip(specs, processes, strict=False):
-        manifest_entry = _read_json(spec.manifest_entry_path)
-        workers.append(
-            {
-                "instance_id": spec.instance_id,
-                "pid": proc.pid,
-                "returncode": proc.poll(),
-                "log_path": str(spec.log_path),
-                "manifest_entry_path": str(spec.manifest_entry_path),
-                "worktree_base": str(spec.worktree_base),
-                "worker_repo_worktree": manifest_entry.get("worker_repo_worktree"),
-                "started_at": manifest_entry.get("started_at"),
-            }
-        )
-    return {
-        "phase": phase,
-        "experiment_id": preset.experiment_id,
-        "status": status,
-        "started_at": started_at,
-        "ended_at": ended_at,
-        "workers": workers,
-    }
-
-
-def _terminate_process_group(proc: subprocess.Popen[str], *, force: bool = False) -> None:
-    if proc.poll() is not None:
-        return
-    try:
-        sig = signal.SIGKILL if force else signal.SIGTERM
-        os.killpg(int(proc.pid), int(sig))
-    except ProcessLookupError:
-        return
-    except Exception as exc:
-        log.warning("Failed to terminate worker pid={} force={}: {}", proc.pid, force, exc)
-
-
-def _open_supervisor_log(path: Path) -> Any:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return path.open("w", encoding="utf-8")
-
-
-def _supervisor_manifest_path(phase: str) -> Path:
-    return _supervisor_dir(phase) / "workers-manifest.json"
-
-
-def _write_supervisor_manifest(
-    *,
-    path: Path,
-    phase: str,
-    specs: Sequence[WorkerProcessSpec],
-    processes: Sequence[subprocess.Popen[str]],
-    status: str,
-    started_at: str,
-    ended_at: str | None = None,
-) -> None:
-    _write_json(
-        path,
-        _collect_supervisor_manifest(
-            phase=phase,
-            specs=specs,
-            processes=processes,
-            status=status,
-            started_at=started_at,
-            ended_at=ended_at,
-        ),
-    )
-
-
-def _start_worker_process(
-    spec: WorkerProcessSpec,
-    log_handle: Any,
-) -> subprocess.Popen[str]:
-    return subprocess.Popen(
-        list(spec.command),
-        env=spec.env,
-        stdout=log_handle,
-        stderr=subprocess.STDOUT,
-        text=True,
-        start_new_session=True,
-    )
-
-
-def _start_worker_processes(
-    specs: Sequence[WorkerProcessSpec],
-    *,
-    processes: list[subprocess.Popen[str]],
-    log_handles: list[Any],
-) -> None:
-    for spec in specs:
-        handle = _open_supervisor_log(spec.log_path)
-        log_handles.append(handle)
-        proc = _start_worker_process(spec, handle)
-        processes.append(proc)
-        console.log(
-            "[bold green]Started worker process[/] instance={} pid={} log={}".format(
-                spec.instance_id,
-                proc.pid,
-                spec.log_path,
-            )
-        )
-
-
-def _request_worker_supervisor_stop(
-    *,
-    signum: int,
-    processes: Sequence[subprocess.Popen[str]],
-    state: WorkerSupervisorState,
-) -> None:
-    state.interrupted = True
-    state.stop_requested = True
-    state.exit_code = 130 if signum == signal.SIGINT else 143
-    console.log(f"[yellow]Signal received[/] signum={signum}; stopping workers...")
-    for proc in processes:
-        _terminate_process_group(proc)
-
-
-def _install_worker_signal_handlers(
-    *,
-    processes: Sequence[subprocess.Popen[str]],
-    state: WorkerSupervisorState,
-) -> dict[int, Any]:
-    def _request_stop(signum: int, _frame: Any) -> None:
-        _request_worker_supervisor_stop(
-            signum=signum,
-            processes=processes,
-            state=state,
-        )
-
-    previous_handlers = {
-        signal.SIGINT: signal.getsignal(signal.SIGINT),
-        signal.SIGTERM: signal.getsignal(signal.SIGTERM),
-    }
-    signal.signal(signal.SIGINT, _request_stop)
-    signal.signal(signal.SIGTERM, _request_stop)
-    return previous_handlers
-
-
-def _restore_signal_handlers(previous_handlers: dict[int, Any]) -> None:
-    for signum, handler in previous_handlers.items():
-        signal.signal(signum, handler)
-
-
-def _terminate_sibling_workers(
-    processes: Sequence[subprocess.Popen[str]],
-    failed_process: subprocess.Popen[str],
-) -> None:
-    for sibling in processes:
-        if sibling is not failed_process:
-            _terminate_process_group(sibling)
-
-
-def _track_worker_exit(
-    proc: subprocess.Popen[str],
-    *,
-    processes: Sequence[subprocess.Popen[str]],
-    state: WorkerSupervisorState,
-) -> bool:
-    returncode = proc.poll()
-    if returncode is None:
-        return True
-    if returncode != 0 and not state.stop_requested:
-        state.exit_code = int(returncode)
-        state.stop_requested = True
-        console.log(
-            "[bold red]Worker exited unexpectedly[/] pid={} returncode={}".format(
-                proc.pid,
-                returncode,
-            )
-        )
-        _terminate_sibling_workers(processes, proc)
-    return False
-
-
-def _monitor_worker_processes(
-    processes: Sequence[subprocess.Popen[str]],
-    *,
-    state: WorkerSupervisorState,
-    poll_interval_seconds: float = 1.0,
-) -> None:
-    while processes:
-        live_count = sum(
-            1
-            for proc in processes
-            if _track_worker_exit(proc, processes=processes, state=state)
-        )
-        if live_count == 0:
-            break
-        time.sleep(poll_interval_seconds)
-
-
-def _await_worker_shutdown(
-    processes: Sequence[subprocess.Popen[str]],
-    *,
-    timeout_seconds: float = 10.0,
-) -> None:
-    deadline = time.time() + timeout_seconds
-    while time.time() < deadline:
-        if all(proc.poll() is not None for proc in processes):
-            break
-        time.sleep(0.25)
-    for proc in processes:
-        _terminate_process_group(proc, force=True)
-
-
-def _final_supervisor_status(state: WorkerSupervisorState) -> str:
-    if state.interrupted:
-        return "interrupted"
-    if state.exit_code:
-        return "failed"
-    return "completed"
-
-
-def _close_log_handles(log_handles: Sequence[Any]) -> None:
-    for handle in log_handles:
-        handle.close()
 
 
 def _run_workers(
@@ -930,52 +593,13 @@ def _run_workers(
     no_preflight: bool,
     preflight_timeout_seconds: float,
 ) -> int:
-    specs = _build_worker_process_specs(
+    return _run_worker(
         phase=phase,
-        count=count,
+        processes=count,
         log_level=log_level,
         no_preflight=no_preflight,
         preflight_timeout_seconds=preflight_timeout_seconds,
     )
-    manifest_path = _supervisor_manifest_path(phase)
-    started_at = _now_utc_iso()
-    processes: list[subprocess.Popen[str]] = []
-    log_handles: list[Any] = []
-    state = WorkerSupervisorState()
-    previous_handlers = _install_worker_signal_handlers(processes=processes, state=state)
-
-    try:
-        _start_worker_processes(
-            specs,
-            processes=processes,
-            log_handles=log_handles,
-        )
-        _write_supervisor_manifest(
-            path=manifest_path,
-            phase=phase,
-            specs=specs,
-            processes=processes,
-            status="running",
-            started_at=started_at,
-        )
-
-        _monitor_worker_processes(processes, state=state)
-        if state.stop_requested:
-            _await_worker_shutdown(processes)
-
-        _write_supervisor_manifest(
-            path=manifest_path,
-            phase=phase,
-            specs=specs,
-            processes=processes,
-            status=_final_supervisor_status(state),
-            started_at=started_at,
-            ended_at=_now_utc_iso(),
-        )
-        return state.exit_code
-    finally:
-        _restore_signal_handlers(previous_handlers)
-        _close_log_handles(log_handles)
 
 
 def _run_api(
@@ -1384,9 +1008,10 @@ def _build_experiment_job_payloads(
 
 def _build_archive_payload(cell: Any) -> dict[str, Any]:
     return {
+        "island_id": str(cell.island_id),
         "cell_index": int(cell.cell_index),
         "commit_hash": cell.commit_hash,
-        "objective": float(cell.objective),
+        "objective_values": [float(value) for value in (cell.objective_values or ())],
         "timestamp": float(cell.timestamp),
         "created_at": _dt_iso(cell.created_at),
         "updated_at": _dt_iso(cell.updated_at),
@@ -1638,13 +1263,29 @@ def _failure_summaries(failed_jobs: Sequence[dict[str, Any]]) -> list[dict[str, 
 
 
 def _build_archive_summary(archive_cells: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    occupied = {
+        (str(cell.get("island_id") or ""), int(cell["cell_index"]))
+        for cell in archive_cells
+    }
+    cells_with_primary = [
+        cell
+        for cell in archive_cells
+        if cell.get("objective_values")
+    ]
     archive_summary = {
-        "occupied_cells": len(archive_cells),
-        "best_objective": max((float(cell["objective"]) for cell in archive_cells), default=None),
+        "occupied_cells": len(occupied),
+        "retained_elites": len(archive_cells),
+        "best_primary_value": max(
+            (float(cell["objective_values"][0]) for cell in cells_with_primary),
+            default=None,
+        ),
         "best_commit_hash": None,
     }
-    if archive_cells:
-        best_cell = max(archive_cells, key=lambda cell: float(cell["objective"]))
+    if cells_with_primary:
+        best_cell = max(
+            cells_with_primary,
+            key=lambda cell: float(cell["objective_values"][0]),
+        )
         archive_summary["best_commit_hash"] = best_cell.get("commit_hash")
     return archive_summary
 
@@ -1837,7 +1478,11 @@ def _render_report_markdown(report: dict[str, Any]) -> str:
         f"- Non-seed success rate: {jobs['non_seed_success_rate']!r}",
         f"- Best sum_radii: {best['sum_radii']!r} commit={best['commit_hash']!r}",
         f"- Best runtime_p50_ms: {best['runtime_p50_ms']!r}",
-        f"- Archive occupied cells: {archive['occupied_cells']} best_objective={archive['best_objective']!r}",
+        "- Archive occupied cells: {} retained_elites={} best_primary_value={!r}".format(
+            archive["occupied_cells"],
+            archive["retained_elites"],
+            archive["best_primary_value"],
+        ),
         "",
         "## Timing",
         "",
@@ -2054,7 +1699,7 @@ def _add_scheduler_parser(subparsers: Any) -> None:
 
 
 def _add_worker_parser(subparsers: Any) -> None:
-    worker_parser = subparsers.add_parser("worker", help="Run one evolution worker process.")
+    worker_parser = subparsers.add_parser("worker", help="Run an evolution worker process pool.")
     _add_phase_argument(worker_parser, default="smoke")
     _add_preflight_arguments(
         worker_parser,
@@ -2062,17 +1707,17 @@ def _add_worker_parser(subparsers: Any) -> None:
     )
     _add_log_level_argument(worker_parser)
     worker_parser.add_argument(
-        "--manifest-entry",
-        type=Path,
-        default=None,
-        help=argparse.SUPPRESS,
+        "--processes",
+        type=_positive_int,
+        default=1,
+        help="Number of worker processes managed by Loreley.",
     )
 
 
 def _add_workers_parser(subparsers: Any) -> None:
     workers_parser = subparsers.add_parser(
         "workers",
-        help="Supervise multiple independent worker OS processes.",
+        help="Alias for `worker --processes N`.",
     )
     _add_phase_argument(workers_parser, default="smoke")
     workers_parser.add_argument(
@@ -2190,10 +1835,10 @@ def _dispatch_scheduler_command(args: argparse.Namespace) -> int:
 def _dispatch_worker_command(args: argparse.Namespace) -> int:
     return _run_worker(
         phase=str(args.phase),
+        processes=int(args.processes),
         log_level=_arg_log_level(args),
         no_preflight=bool(args.no_preflight),
         preflight_timeout_seconds=float(args.preflight_timeout_seconds),
-        manifest_entry=(Path(args.manifest_entry) if args.manifest_entry else None),
     )
 
 

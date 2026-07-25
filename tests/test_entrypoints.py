@@ -4,6 +4,7 @@ import signal
 import sys
 from types import SimpleNamespace
 
+import pytest
 from rich.console import Console
 
 import loreley.entrypoints as entrypoints
@@ -65,6 +66,214 @@ def test_apply_dramatiq_prefetch_settings_preserves_explicit_zero(
     assert dramatiq_worker.DELAY_QUEUE_PREFETCH == 0
 
 
+def test_worker_pool_uses_spawned_single_threaded_dramatiq_processes(
+    monkeypatch,
+) -> None:
+    captured: list[object] = []
+    child_environment: list[str | None] = []
+    context_changes: list[tuple[str | None, bool]] = []
+
+    def no_start_method(*, allow_none: bool) -> None:
+        assert allow_none is True
+
+    def fake_main(args: object) -> int:
+        assert context_changes == [("spawn", True)]
+        captured.append(args)
+        child_environment.append(
+            entrypoints.os.environ.get("WORKER_REPO_WORKTREE_RANDOMIZE")
+        )
+        return 7
+
+    monkeypatch.setattr("dramatiq.cli.main", fake_main)
+    monkeypatch.setattr(
+        entrypoints.multiprocessing,
+        "get_start_method",
+        no_start_method,
+    )
+    monkeypatch.setattr(
+        entrypoints.multiprocessing,
+        "set_start_method",
+        lambda method, *, force: context_changes.append((method, force)),
+    )
+    monkeypatch.setenv("WORKER_REPO_WORKTREE_RANDOMIZE", "false")
+
+    rc = entrypoints._run_dramatiq_worker_pool(  # noqa: SLF001 - process contract
+        processes=3,
+        console=Console(record=True),
+    )
+
+    assert rc == 7
+    assert len(captured) == 1
+    args = captured[0]
+    assert getattr(args, "processes") == 3
+    assert getattr(args, "threads") == 1
+    assert getattr(args, "use_spawn") is False
+    assert getattr(args, "broker") == "loreley.tasks.worker_runtime:broker"
+    assert child_environment == ["true"]
+    assert context_changes == [("spawn", True), (None, True)]
+    assert entrypoints.os.environ["WORKER_REPO_WORKTREE_RANDOMIZE"] == "false"
+
+
+def test_worker_pool_reuses_logging_initialized_spawn_context(
+    monkeypatch,
+) -> None:
+    captured: list[object] = []
+
+    def initialized_start_method(*, allow_none: bool) -> str:
+        assert allow_none is True
+        return "spawn"
+
+    monkeypatch.setattr(
+        "dramatiq.cli.main",
+        lambda args: captured.append(args) or 0,
+    )
+    monkeypatch.setattr(
+        entrypoints.multiprocessing,
+        "get_start_method",
+        initialized_start_method,
+    )
+
+    rc = entrypoints._run_dramatiq_worker_pool(  # noqa: SLF001
+        processes=2,
+        console=Console(record=True),
+    )
+
+    assert rc == 0
+    assert len(captured) == 1
+    assert getattr(captured[0], "use_spawn") is False
+
+
+def test_worker_pool_temporarily_replaces_an_initialized_fork_context(
+    monkeypatch,
+) -> None:
+    captured: list[object] = []
+    child_environment: list[str | None] = []
+    context_changes: list[tuple[str | None, bool]] = []
+
+    monkeypatch.setattr(
+        entrypoints.multiprocessing,
+        "get_start_method",
+        lambda *, allow_none: "fork",
+    )
+    monkeypatch.setattr(
+        entrypoints.multiprocessing,
+        "set_start_method",
+        lambda method, *, force: context_changes.append((method, force)),
+    )
+
+    def fake_main(args: object) -> int:
+        assert context_changes == [("spawn", True)]
+        captured.append(args)
+        child_environment.append(
+            entrypoints.os.environ.get("WORKER_REPO_WORKTREE_RANDOMIZE")
+        )
+        return 0
+
+    monkeypatch.setattr("dramatiq.cli.main", fake_main)
+    monkeypatch.setenv("WORKER_REPO_WORKTREE_RANDOMIZE", "false")
+
+    rc = entrypoints._run_dramatiq_worker_pool(  # noqa: SLF001
+        processes=2,
+        console=Console(record=True),
+    )
+
+    assert rc == 0
+    assert len(captured) == 1
+    assert getattr(captured[0], "use_spawn") is False
+    assert child_environment == ["true"]
+    assert context_changes == [("spawn", True), ("fork", True)]
+    assert entrypoints.os.environ["WORKER_REPO_WORKTREE_RANDOMIZE"] == "false"
+
+
+def test_worker_pool_restores_context_and_environment_when_master_fails(
+    monkeypatch,
+) -> None:
+    context_changes: list[tuple[str | None, bool]] = []
+
+    monkeypatch.setattr(
+        entrypoints.multiprocessing,
+        "get_start_method",
+        lambda *, allow_none: "fork",
+    )
+    monkeypatch.setattr(
+        entrypoints.multiprocessing,
+        "set_start_method",
+        lambda method, *, force: context_changes.append((method, force)),
+    )
+
+    def fail_main(_args: object) -> int:
+        assert context_changes == [("spawn", True)]
+        assert (
+            entrypoints.os.environ["WORKER_REPO_WORKTREE_RANDOMIZE"]
+            == "true"
+        )
+        raise RuntimeError("worker master failed")
+
+    monkeypatch.setattr("dramatiq.cli.main", fail_main)
+    monkeypatch.setenv("WORKER_REPO_WORKTREE_RANDOMIZE", "false")
+
+    with pytest.raises(RuntimeError, match="worker master failed"):
+        entrypoints._run_dramatiq_worker_pool(  # noqa: SLF001
+            processes=2,
+            console=Console(record=True),
+        )
+
+    assert context_changes == [("spawn", True), ("fork", True)]
+    assert entrypoints.os.environ["WORKER_REPO_WORKTREE_RANDOMIZE"] == "false"
+
+
+def test_run_worker_delegates_multi_process_lifecycle_to_dramatiq(
+    monkeypatch,
+    settings,
+) -> None:
+    schema_calls: list[object] = []
+    pool_calls: list[int] = []
+    monkeypatch.setattr(
+        "loreley.db.base.ensure_database_schema",
+        lambda *, settings: schema_calls.append(settings),
+    )
+    monkeypatch.setattr(
+        entrypoints,
+        "_run_dramatiq_worker_pool",
+        lambda *, processes, console: pool_calls.append(processes) or 0,
+    )
+
+    rc = entrypoints.run_worker(
+        settings=settings,
+        console=Console(record=True),
+        processes=4,
+        preflight=False,
+    )
+
+    assert rc == 0
+    assert schema_calls == [settings]
+    assert pool_calls == [4]
+
+
+def test_process_log_paths_are_unique_within_the_same_second(
+    monkeypatch,
+    tmp_path,
+    settings,
+) -> None:
+    settings.logs_base_dir = str(tmp_path)
+    monkeypatch.setattr(entrypoints.os, "getpid", lambda: 101)
+    first = entrypoints.configure_process_logging(
+        settings=settings,
+        console=Console(record=True),
+        role="worker",
+    )
+    monkeypatch.setattr(entrypoints.os, "getpid", lambda: 202)
+    second = entrypoints.configure_process_logging(
+        settings=settings,
+        console=Console(record=True),
+        role="worker",
+    )
+
+    assert first != second
+    assert "pid-101" in first.name
+    assert "pid-202" in second.name
+
+
 def test_run_ui_starts_streamlit_with_api_environment_when_api_is_reachable(
     monkeypatch,
     settings,
@@ -76,7 +285,9 @@ def test_run_ui_starts_streamlit_with_api_environment_when_api_is_reachable(
         popen_calls.append((cmd, kwargs))
         return streamlit_proc
 
-    monkeypatch.setattr(entrypoints, "_is_ui_api_reachable", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        entrypoints, "_is_ui_api_reachable", lambda *args, **kwargs: True
+    )
     monkeypatch.setattr(entrypoints.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(entrypoints.signal, "signal", lambda *args, **kwargs: None)
 
@@ -95,7 +306,9 @@ def test_run_ui_starts_streamlit_with_api_environment_when_api_is_reachable(
     assert len(popen_calls) == 1
     cmd, kwargs = popen_calls[0]
     expected_ui_script = str(
-        (entrypoints.Path(entrypoints.__file__).resolve().parent / "ui" / "app.py").resolve()
+        (
+            entrypoints.Path(entrypoints.__file__).resolve().parent / "ui" / "app.py"
+        ).resolve()
     )
     assert cmd == [
         sys.executable,
@@ -123,12 +336,16 @@ def test_run_ui_preflight_warning_blocks_startup_before_spawning_processes(
 ) -> None:
     timeouts: list[float] = []
 
-    def fake_preflight_ui(_settings: object, *, timeout_seconds: float) -> list[CheckResult]:
+    def fake_preflight_ui(
+        _settings: object, *, timeout_seconds: float
+    ) -> list[CheckResult]:
         timeouts.append(timeout_seconds)
         return [CheckResult("streamlit_deps", "warn", "missing optional dependency")]
 
     def fail_popen(*args: object, **kwargs: object) -> None:
-        raise AssertionError("run_ui should not spawn processes when preflight blocks startup")
+        raise AssertionError(
+            "run_ui should not spawn processes when preflight blocks startup"
+        )
 
     monkeypatch.setattr(entrypoints, "preflight_ui", fake_preflight_ui)
     monkeypatch.setattr(entrypoints.subprocess, "Popen", fail_popen)
@@ -255,7 +472,9 @@ def test_run_ui_autostarts_local_api_before_streamlit_when_api_is_unreachable(
         popen_calls.append((cmd, kwargs, proc))
         return proc
 
-    def fake_stop_proc(proc: _FakeProcess, *, console: Console, first_signal: int) -> None:
+    def fake_stop_proc(
+        proc: _FakeProcess, *, console: Console, first_signal: int
+    ) -> None:
         stop_calls.append((proc, first_signal))
 
     monkeypatch.setattr(entrypoints, "_is_ui_api_reachable", fake_is_reachable)

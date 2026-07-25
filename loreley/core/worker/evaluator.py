@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import math
 import re
 import sys
 import multiprocessing
@@ -18,6 +19,10 @@ from rich.console import Console
 
 from loreley.config import Settings, get_settings
 from loreley.core.contracts import clamp_text, normalize_single_line
+from loreley.core.map_elites.objectives import (
+    ObjectiveContractError,
+    parse_higher_is_better,
+)
 
 console = Console()
 log = logger.bind(module="worker.evaluator")
@@ -288,11 +293,27 @@ def _public_metric_from_mapping(item: Mapping[str, Any]) -> EvaluationMetric:
         raise ValueError("EvalPass metric entries must include a non-empty name.")
     if "value" not in item:
         raise ValueError("EvalPass metric entries must include a value.")
+    raw_value = item["value"]
+    if isinstance(raw_value, bool):
+        raise ValueError("EvalPass metric values cannot be boolean.")
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("EvalPass metric values must be numeric.") from exc
+    if not math.isfinite(value):
+        raise ValueError("EvalPass metric values must be finite.")
+    try:
+        higher_is_better = parse_higher_is_better(
+            item.get("higher_is_better"),
+            default=True,
+        )
+    except ObjectiveContractError as exc:
+        raise ValueError(str(exc)) from exc
     return EvaluationMetric(
         name=name,
-        value=float(item["value"]),
+        value=value,
         unit=str(item["unit"]).strip() if item.get("unit") is not None else None,
-        higher_is_better=bool(item.get("higher_is_better", True)),
+        higher_is_better=higher_is_better,
         details=dict(item.get("details") or {}),
     )
 
@@ -951,15 +972,19 @@ def _bound_metadata_value(value: Any) -> Any:
     if isinstance(value, str):
         return clamp_text(normalize_single_line(value), 512)
     if isinstance(value, Mapping):
-        nested: dict[str, Any] = {}
-        for raw_key, raw_value in list(value.items())[:16]:
-            key = clamp_text(normalize_single_line(str(raw_key)), 64)
-            if key:
-                nested[key] = _bound_metadata_value(raw_value)
-        return nested
+        return _bound_metadata_mapping(value)
     if isinstance(value, Sequence) and not isinstance(value, bytes | bytearray):
         return [_bound_metadata_value(item) for item in list(value)[:16]]
     return clamp_text(normalize_single_line(str(value)), 512)
+
+
+def _bound_metadata_mapping(value: Mapping[Any, Any]) -> dict[str, Any]:
+    nested: dict[str, Any] = {}
+    for raw_key, raw_value in list(value.items())[:16]:
+        key = clamp_text(normalize_single_line(str(raw_key)), 64)
+        if key:
+            nested[key] = _bound_metadata_value(raw_value)
+    return nested
 
 
 def _artifact_warning(

@@ -83,7 +83,7 @@ def _scheduler(events: list[str], *, can_run: bool, job_scheduler: object) -> Ev
     scheduler = cast(Any, EvolutionScheduler.__new__(EvolutionScheduler))
     scheduler.settings = TestSettings(
         MAPELITES_EXPERIMENT_ROOT_COMMIT="root123",
-        MAPELITES_FITNESS_METRIC="score",
+        MAPELITES_OBJECTIVES=[{"name": "score", "direction": "max"}],
         SCHEDULER_MAX_TOTAL_JOBS=10,
     )
     scheduler.console = Console(record=True)
@@ -97,7 +97,7 @@ def _scheduler(events: list[str], *, can_run: bool, job_scheduler: object) -> Ev
     scheduler._maybe_schedule_seed_jobs = lambda unfinished_jobs: events.append(
         f"seed:{unfinished_jobs}"
     ) or 1
-    scheduler._create_best_fitness_branch_if_possible = lambda: None
+    scheduler._create_primary_objective_branch_if_possible = lambda: None
     scheduler.stop = lambda: None
     return cast(EvolutionScheduler, scheduler)
 

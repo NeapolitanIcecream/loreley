@@ -66,7 +66,15 @@ def price_usage_event(
     *,
     settings: Settings | None = None,
 ) -> LLMUsageEventPayload:
-    if event.cost_source != COST_SOURCE_UNPRICED or event.cost_usd is not None:
+    zero_cost_placeholder = (
+        event.source == "kilo_cli"
+        and event.cost_usd == Decimal("0")
+        and event.total_tokens > 0
+    )
+    if (
+        event.cost_source != COST_SOURCE_UNPRICED
+        or event.cost_usd is not None
+    ) and not zero_cost_placeholder:
         return event
     table = load_pricing_table(settings=settings)
     rule = match_price_rule(table, event)

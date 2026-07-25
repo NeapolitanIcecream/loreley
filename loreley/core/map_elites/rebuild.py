@@ -1,23 +1,35 @@
-"""Projection-driven archive rebuild helpers."""
+"""Projection-driven Pareto archive rebuild helpers."""
 
 from __future__ import annotations
 
-import math
+from dataclasses import dataclass
 import time
 from typing import Callable, Mapping, Sequence
 
 import numpy as np
 from loguru import logger
-from ribs.archives import GridArchive
 from sqlalchemy.orm import Session
 
-from loreley.config import Settings
-
-from .dimension_reduction import FinalEmbedding, PCAProjection, PcaHistoryEntry, align_pca_projection
-from .snapshot import purge_island_commit_mappings
-from .types import IslandState, MapElitesRecord, Vector
+from .dimension_reduction import (
+    FinalEmbedding,
+    PCAProjection,
+    align_pca_projection,
+)
+from .objectives import ResolvedObjectives
+from .pareto_archive import ParetoGridArchive
+from .types import IslandState, MapElitesRecord
 
 log = logger.bind(module="map_elites.rebuild")
+
+
+@dataclass(slots=True, frozen=True)
+class _ArchiveRebuildBatch:
+    commit_hashes: Sequence[str]
+    objective_values: Sequence[Sequence[float]]
+    objective_scores: Sequence[Sequence[float]]
+    measures: Sequence[np.ndarray] | np.ndarray
+    timestamps: Sequence[float]
+
 
 __all__ = [
     "pad_or_trim",
@@ -27,14 +39,17 @@ __all__ = [
 ]
 
 
-def pad_or_trim(vector: Sequence[float], *, target_dims: int) -> tuple[float, ...]:
-    if not vector:
-        return tuple(0.0 for _ in range(target_dims))
+def pad_or_trim(
+    vector: Sequence[float],
+    *,
+    target_dims: int,
+) -> tuple[float, ...]:
     if len(vector) >= target_dims:
-        return tuple(float(v) for v in vector[:target_dims])
-    padded = [float(v) for v in vector]
-    padded.extend(0.0 for _ in range(target_dims - len(padded)))
-    return tuple(padded)
+        return tuple(float(value) for value in vector[:target_dims])
+    return (
+        *tuple(float(value) for value in vector),
+        *tuple(0.0 for _ in range(target_dims - len(vector))),
+    )
 
 
 def recompute_final_embedding(
@@ -58,36 +73,38 @@ def recompute_final_embedding(
     )
 
 
-def _rebuild_archive_from_batch(
+def _replace_archive_from_batch(
     *,
     state: IslandState,
     island_id: str,
-    candidate_commits: Sequence[str],
-    candidate_fitnesses: Sequence[float],
-    candidate_measures: Sequence[np.ndarray] | np.ndarray,
-    candidate_timestamps: Sequence[float],
-    commit_to_island: dict[str, str],
-    build_archive: Callable[[], GridArchive],
+    batch: _ArchiveRebuildBatch,
+    build_archive: Callable[[], ParetoGridArchive],
     add_batch: Callable[..., tuple[np.ndarray, np.ndarray]],
 ) -> int:
-    purge_island_commit_mappings(commit_to_island, island_id)
-    state.archive = build_archive()
-    state.index_to_commit.clear()
-    state.commit_to_index.clear()
-
-    if not candidate_commits:
-        return 0
-
-    statuses = add_batch(
-        state=state,
-        island_id=island_id,
-        commit_hashes=candidate_commits,
-        objectives=candidate_fitnesses,
-        measures=candidate_measures,
-        timestamps=candidate_timestamps,
-        commit_to_island=commit_to_island,
-    )[0]
-    return int(np.count_nonzero(statuses > 0))
+    replacement = IslandState(
+        archive=build_archive(),
+        lower_bounds=state.lower_bounds,
+        upper_bounds=state.upper_bounds,
+        history=state.history,
+        projection=state.projection,
+        samples_since_fit=state.samples_since_fit,
+    )
+    retained = 0
+    if batch.commit_hashes:
+        statuses, _ = add_batch(
+            state=replacement,
+            island_id=island_id,
+            commit_hashes=batch.commit_hashes,
+            objective_values=batch.objective_values,
+            objective_scores=batch.objective_scores,
+            measures=batch.measures,
+            timestamps=batch.timestamps,
+        )
+        retained = int(np.count_nonzero(statuses > 0))
+    state.archive = replacement.archive
+    state.commit_to_index = replacement.commit_to_index
+    state.index_to_commits = replacement.index_to_commits
+    return retained
 
 
 def seed_after_initial_fit(
@@ -97,114 +114,59 @@ def seed_after_initial_fit(
     projection: PCAProjection,
     skip_commit_hash: str,
     snapshot_session: Session | None,
-    settings: Settings,
     target_dims: int,
-    commit_to_island: dict[str, str],
-    load_commit_fitnesses: Callable[[Sequence[str], Session | None], Mapping[str, float]],
+    load_commit_objectives: Callable[
+        [Sequence[str], Session | None],
+        Mapping[str, ResolvedObjectives],
+    ],
     clip_vector: Callable[[Sequence[float] | np.ndarray, IslandState], np.ndarray],
-    build_archive: Callable[[], GridArchive],
+    build_archive: Callable[[], ParetoGridArchive],
     add_batch: Callable[..., tuple[np.ndarray, np.ndarray]],
 ) -> None:
-    """Populate the archive once the first PCA projection becomes available."""
-
     skip = str(skip_commit_hash or "").strip()
-    candidates = [
+    candidates = tuple(
         entry
         for entry in state.history
         if str(entry.commit_hash or "").strip()
         and str(entry.commit_hash or "").strip() != skip
-    ]
-    if not candidates:
+    )
+    commit_hashes = tuple(str(entry.commit_hash).strip() for entry in candidates)
+    objective_by_commit = dict(load_commit_objectives(commit_hashes, snapshot_session))
+    eligible = tuple(
+        entry
+        for entry in candidates
+        if str(entry.commit_hash).strip() in objective_by_commit
+        and len(entry.vector) == projection.feature_count
+    )
+    if not eligible:
         return
 
-    commit_hashes = [str(entry.commit_hash).strip() for entry in candidates]
-    fitnesses = dict(load_commit_fitnesses(commit_hashes, snapshot_session))
-
-    inserted = 0
-    skipped = 0
-    timestamp = time.time()
-    candidate_commits: list[str] = []
-    candidate_fitnesses: list[float] = []
-    candidate_measures: np.ndarray = np.asarray([], dtype=np.float64).reshape(0, int(target_dims))
-    candidate_timestamps: list[float] = []
-
-    def _fitness_key(entry: PcaHistoryEntry) -> float:
-        commit = str(entry.commit_hash or "").strip()
-        value = fitnesses.get(commit)
-        if value is None:
-            value = float(settings.mapelites_fitness_floor)
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return float(settings.mapelites_fitness_floor)
-
-    candidate_vectors: list[tuple[float, ...]] = []
-    for entry in sorted(candidates, key=_fitness_key, reverse=True):
-        commit = str(entry.commit_hash or "").strip()
-        if not commit:
-            continue
-
-        fitness = fitnesses.get(commit)
-        if fitness is None:
-            fitness = float(settings.mapelites_fitness_floor)
-        try:
-            fitness_value = float(fitness)
-        except (TypeError, ValueError):
-            skipped += 1
-            continue
-        if not math.isfinite(fitness_value):
-            skipped += 1
-            continue
-
-        if len(entry.vector) != projection.feature_count:
-            skipped += 1
-            continue
-        candidate_vectors.append(entry.vector)
-        candidate_commits.append(commit)
-        candidate_fitnesses.append(fitness_value)
-
-    reduced_matrix = np.asarray([], dtype=np.float64).reshape(0, int(target_dims))
-    if candidate_vectors:
-        try:
-            vector_matrix = np.asarray(candidate_vectors, dtype=np.float64)
-            projected = projection.transform_batch(vector_matrix)
-        except ValueError:
-            skipped += len(candidate_vectors)
-            candidate_commits.clear()
-            candidate_fitnesses.clear()
-            candidate_vectors.clear()
-            projected = np.asarray([], dtype=np.float64).reshape(0, int(projection.dimensions))
-
-        if projected.size:
-            projected_dims = int(projected.shape[1])
-            if projected_dims >= target_dims:
-                reduced_matrix = projected[:, :target_dims]
-            else:
-                reduced_matrix = np.zeros((projected.shape[0], target_dims), dtype=np.float64)
-                reduced_matrix[:, :projected_dims] = projected
-
-    if reduced_matrix.size:
-        candidate_timestamps = [timestamp] * int(reduced_matrix.shape[0])
-        candidate_measures = clip_vector(reduced_matrix, state)
-
-    inserted = _rebuild_archive_from_batch(
+    vector_matrix = np.asarray([entry.vector for entry in eligible], dtype=np.float64)
+    projected = projection.transform_batch(vector_matrix)
+    reduced = _fit_dimensions(projected, target_dims=target_dims)
+    measures = clip_vector(reduced, state)
+    commits = tuple(str(entry.commit_hash).strip() for entry in eligible)
+    resolved = tuple(objective_by_commit[commit] for commit in commits)
+    inserted = _replace_archive_from_batch(
         state=state,
         island_id=island_id,
-        candidate_commits=candidate_commits,
-        candidate_fitnesses=candidate_fitnesses,
-        candidate_measures=candidate_measures,
-        candidate_timestamps=candidate_timestamps,
-        commit_to_island=commit_to_island,
+        batch=_ArchiveRebuildBatch(
+            commit_hashes=commits,
+            objective_values=tuple(item.values for item in resolved),
+            objective_scores=tuple(item.scores for item in resolved),
+            measures=measures,
+            timestamps=(time.time(),) * len(commits),
+        ),
         build_archive=build_archive,
         add_batch=add_batch,
     )
-
     log.info(
-        "Seeded MAP-Elites archive after initial PCA fit (island={} inserted={} candidates={} skipped={})",
+        "Seeded Pareto archive after initial PCA fit "
+        "(island={} retained={} eligible={} skipped={})",
         island_id,
         inserted,
-        len(candidates),
-        skipped,
+        len(eligible),
+        len(candidates) - len(eligible),
     )
 
 
@@ -218,97 +180,95 @@ def rebuild_after_refit(
     previous_records: Sequence[MapElitesRecord],
     snapshot_session: Session | None,
     target_dims: int,
-    commit_to_island: dict[str, str],
     load_commit_vectors: Callable[
         [str, Sequence[str], IslandState, Session | None],
         Mapping[str, tuple[float, ...]],
     ],
     clip_vector: Callable[[Sequence[float] | np.ndarray, IslandState], np.ndarray],
-    build_archive: Callable[[], GridArchive],
+    build_archive: Callable[[], ParetoGridArchive],
     add_batch: Callable[..., tuple[np.ndarray, np.ndarray]],
 ) -> FinalEmbedding:
-    """Align the new PCA projection and rebuild the archive in the new coordinates."""
-
     if not previous_records:
         return recompute_final_embedding(
             current=current,
             projection=new_projection,
             target_dims=target_dims,
         )
-
-    commit_hashes = tuple(
-        str(record.commit_hash or "").strip()
-        for record in previous_records
-        if str(record.commit_hash or "").strip()
+    commit_hashes = tuple(record.commit_hash for record in previous_records)
+    vectors = dict(
+        load_commit_vectors(
+            island_id,
+            commit_hashes,
+            state,
+            snapshot_session,
+        )
     )
-    vectors = dict(load_commit_vectors(island_id, commit_hashes, state, snapshot_session))
-    anchors = [vectors[h] for h in commit_hashes if h in vectors]
+    missing_commits = tuple(
+        commit_hash for commit_hash in commit_hashes if commit_hash not in vectors
+    )
+    if missing_commits:
+        raise ValueError(
+            "Cannot rebuild Pareto archive after PCA refit; stored vectors are "
+            f"missing (island={island_id} commits={missing_commits})."
+        )
+    for commit_hash in commit_hashes:
+        vector = vectors[commit_hash]
+        if len(vector) != new_projection.feature_count:
+            raise ValueError(
+                "Stored commit vector dimensionality mismatch "
+                f"(commit={commit_hash} expected={new_projection.feature_count} "
+                f"got={len(vector)})."
+            )
     aligned = align_pca_projection(
         projection=new_projection,
         reference=old_projection,
-        anchors=anchors,
+        anchors=[vectors[commit] for commit in commit_hashes],
     )
     state.projection = aligned
-
-    inserted = 0
-    missing = 0
-    candidate_vectors: list[tuple[float, ...]] = []
-    candidate_commits: list[str] = []
-    candidate_fitnesses: list[float] = []
-    candidate_measures: np.ndarray = np.asarray([], dtype=np.float64).reshape(0, int(target_dims))
-    candidate_timestamps: list[float] = []
-    for record in sorted(previous_records, key=lambda item: float(item.fitness), reverse=True):
-        commit = str(record.commit_hash or "").strip()
-        if not commit:
-            continue
-        vec = vectors.get(commit)
-        if not vec:
-            missing += 1
-            continue
-        if len(vec) != aligned.feature_count:
-            raise ValueError(
-                "Stored commit vector dimensionality mismatch "
-                f"(commit={commit} expected={aligned.feature_count} got={len(vec)})."
-            )
-        candidate_vectors.append(vec)
-        candidate_commits.append(commit)
-        candidate_fitnesses.append(float(record.fitness))
-        candidate_timestamps.append(float(record.timestamp))
-
-    reduced_matrix = np.asarray([], dtype=np.float64).reshape(0, int(target_dims))
-    if candidate_vectors:
-        vector_matrix = np.asarray(candidate_vectors, dtype=np.float64)
-        projected = aligned.transform_batch(vector_matrix)
-        projected_dims = int(projected.shape[1])
-        if projected_dims >= target_dims:
-            reduced_matrix = projected[:, :target_dims]
-        else:
-            reduced_matrix = np.zeros((projected.shape[0], target_dims), dtype=np.float64)
-            reduced_matrix[:, :projected_dims] = projected
-
-    if reduced_matrix.size:
-        candidate_measures = clip_vector(reduced_matrix, state)
-
-    inserted = _rebuild_archive_from_batch(
+    projected = aligned.transform_batch(
+        np.asarray(
+            [vectors[record.commit_hash] for record in previous_records],
+            dtype=np.float64,
+        )
+    )
+    measures = clip_vector(
+        _fit_dimensions(projected, target_dims=target_dims),
+        state,
+    )
+    inserted = _replace_archive_from_batch(
         state=state,
         island_id=island_id,
-        candidate_commits=candidate_commits,
-        candidate_fitnesses=candidate_fitnesses,
-        candidate_measures=candidate_measures,
-        candidate_timestamps=candidate_timestamps,
-        commit_to_island=commit_to_island,
+        batch=_ArchiveRebuildBatch(
+            commit_hashes=tuple(record.commit_hash for record in previous_records),
+            objective_values=tuple(
+                record.objective_values for record in previous_records
+            ),
+            objective_scores=tuple(
+                record.objective_scores for record in previous_records
+            ),
+            measures=measures,
+            timestamps=tuple(record.timestamp for record in previous_records),
+        ),
         build_archive=build_archive,
         add_batch=add_batch,
     )
-
     log.info(
-        "Rebuilt MAP-Elites archive after PCA refit (island={} kept={} missing_vectors={})",
+        "Rebuilt Pareto archive after PCA refit "
+        "(island={} retained={} previous={})",
         island_id,
         inserted,
-        missing,
+        len(previous_records),
     )
     return recompute_final_embedding(
         current=current,
         projection=aligned,
         target_dims=target_dims,
     )
+
+
+def _fit_dimensions(matrix: np.ndarray, *, target_dims: int) -> np.ndarray:
+    if matrix.shape[1] >= target_dims:
+        return matrix[:, :target_dims]
+    padded = np.zeros((matrix.shape[0], target_dims), dtype=np.float64)
+    padded[:, : matrix.shape[1]] = matrix
+    return padded

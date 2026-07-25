@@ -69,7 +69,7 @@ When `MAPELITES_EXPERIMENT_ROOT_COMMIT` is set, `EvolutionScheduler` asks
 2. `_ensure_root_commit_metadata(...)` creates or updates a `CommitCard`
    row with:
    - the commit's parent, author, and message,
-   - a default island id (from `MAPELITES_DEFAULT_ISLAND_ID` or `"main"`),
+   - no archive island assignment, because the root commit is shared campaign metadata rather than an island candidate,
    - bounded commit-card fields (`subject`, `change_summary`, `highlights`).
 3. `_ensure_root_commit_repo_state_bootstrap(...)` bootstraps the root
    repo-state aggregate for incremental-only ingestion by computing and
@@ -93,7 +93,9 @@ pipeline:
    them with ingestion state.
 2. Later, when all jobs have finished and the global job limit has been
    reached, `EvolutionScheduler` uses MAP-Elites metrics and commit metadata
-   to create a dedicated git branch for the current best-fitness commit.
+   to create a dedicated git branch for the best retained value of the configured
+   primary objective. This is an operational projection, not a scalarization of
+   Pareto admission.
 
 Separating this logic into `MapElitesIngestion` keeps the main scheduler loop
 small and clarifies the boundary between **job lifecycle** and **archive

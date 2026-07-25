@@ -3,6 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 import hashlib
 import json
+import os
 import uuid
 from pathlib import Path
 from typing import Any, Literal
@@ -13,10 +14,13 @@ from pydantic import AliasChoices, Field, PositiveInt, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from rich.console import Console
 
+from loreley.core.map_elites.objectives import ObjectiveContract, ObjectiveSpec
+
 console = Console()
 log = logger.bind(module="config")
 
 _LARGE_REPO_PROFILE_ALIASES = {"large-repo-1m-30k", "large_repo_1m_30k"}
+_MAX_ISLAND_ID_LENGTH = 64
 _LARGE_REPO_PROFILE_DEFAULTS: dict[str, object] = {
     "scheduler_poll_interval_seconds": 15.0,
     "tasks_worker_time_limit_seconds": 0,
@@ -827,37 +831,26 @@ class Settings(BaseSettings):
         default=32,
         alias="MAPELITES_ARCHIVE_CELLS_PER_DIM",
     )
-    mapelites_archive_learning_rate: float = Field(
-        default=1.0,
-        alias="MAPELITES_ARCHIVE_LEARNING_RATE",
+    mapelites_islands: tuple[str, ...] = Field(
+        default=("main",),
+        alias="MAPELITES_ISLANDS",
     )
-    mapelites_archive_threshold_min: float = Field(
-        default=float("-inf"),
-        alias="MAPELITES_ARCHIVE_THRESHOLD_MIN",
+    mapelites_objectives: tuple[ObjectiveSpec, ...] = Field(
+        default=(ObjectiveSpec(name="composite_score", direction="max"),),
+        alias="MAPELITES_OBJECTIVES",
     )
-    mapelites_archive_epsilon: float = Field(
-        default=1e-6,
-        alias="MAPELITES_ARCHIVE_EPSILON",
+    mapelites_pareto_front_max_size: PositiveInt = Field(
+        default=8,
+        alias="MAPELITES_PARETO_FRONT_MAX_SIZE",
     )
-    mapelites_archive_qd_score_offset: float = Field(
-        default=0.0,
-        alias="MAPELITES_ARCHIVE_QD_SCORE_OFFSET",
+    mapelites_pareto_epsilon: float = Field(
+        default=1.0e-9,
+        alias="MAPELITES_PARETO_EPSILON",
     )
-    mapelites_default_island_id: str = Field(
-        default="main",
-        alias="MAPELITES_DEFAULT_ISLAND_ID",
-    )
-    mapelites_fitness_metric: str = Field(
-        default="composite_score",
-        alias="MAPELITES_FITNESS_METRIC",
-    )
-    mapelites_fitness_higher_is_better: bool = Field(
-        default=True,
-        alias="MAPELITES_FITNESS_HIGHER_IS_BETTER",
-    )
-    mapelites_fitness_floor: float = Field(
-        default=-1.0e6,
-        alias="MAPELITES_FITNESS_FLOOR",
+    mapelites_migration_interval_jobs: int = Field(
+        default=50,
+        ge=0,
+        alias="MAPELITES_MIGRATION_INTERVAL_JOBS",
     )
     mapelites_feature_clip: bool = Field(
         default=True,
@@ -901,48 +894,10 @@ class Settings(BaseSettings):
     def model_post_init(self, __context: Any) -> None:
         """Apply derived defaults that depend on other fields."""
 
-        def _set_if_unset(field: str, value: object) -> None:
-            if field in self.model_fields_set:
-                return
-            object.__setattr__(self, field, value)
-
-        for field, value in _profile_derived_defaults(self.profile).items():
-            _set_if_unset(field, value)
-
-        if self.worker_repo_worktree_randomize:
-            suffix_len = int(self.worker_repo_worktree_random_suffix_len or 0)
-            suffix_len = max(1, min(32, suffix_len))
-            suffix = uuid.uuid4().hex[:suffix_len]
-            base = Path(self.worker_repo_worktree).expanduser()
-            randomized = base.parent / f"{base.name}-{suffix}"
-            object.__setattr__(self, "worker_repo_worktree", str(randomized))
-
-        if (
-            "mapelites_dimensionality_min_fit_samples" not in self.model_fields_set
-            and getattr(self, "mapelites_seed_population_size", 0) is not None
-        ):
-            seed_population = int(getattr(self, "mapelites_seed_population_size", 0) or 0)
-            if seed_population > 0:
-                object.__setattr__(
-                    self,
-                    "mapelites_dimensionality_min_fit_samples",
-                    max(2, seed_population),
-                )
-
-        min_fit = int(self.mapelites_dimensionality_min_fit_samples)
-        warmup = int(self.mapelites_feature_normalization_warmup_samples or 0)
-        if warmup <= 0:
-            warmup = min_fit
-        warmup = max(min_fit, warmup)
-        object.__setattr__(
-            self,
-            "mapelites_feature_normalization_warmup_samples",
-            warmup,
-        )
-        truncation_k = float(self.mapelites_feature_truncation_k)
-        if truncation_k <= 0.0:
-            truncation_k = 3.0
-        object.__setattr__(self, "mapelites_feature_truncation_k", truncation_k)
+        _apply_profile_defaults(self)
+        _validate_map_elites_contract(self)
+        _randomize_worker_repo_worktree(self)
+        _apply_map_elites_projection_defaults(self)
 
     @computed_field(return_type=str)
     @property
@@ -968,6 +923,80 @@ class Settings(BaseSettings):
         payload = self.export_safe(mask_secrets=True)
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
+
+
+def _apply_profile_defaults(settings: Settings) -> None:
+    for field, value in _profile_derived_defaults(settings.profile).items():
+        if field not in settings.model_fields_set:
+            object.__setattr__(settings, field, value)
+
+
+def _validate_map_elites_contract(settings: Settings) -> None:
+    island_ids = tuple(
+        str(island_id or "").strip()
+        for island_id in settings.mapelites_islands
+    )
+    if not island_ids or any(not island_id for island_id in island_ids):
+        raise ValueError("MAPELITES_ISLANDS must contain at least one non-empty island ID.")
+    if any(len(island_id) > _MAX_ISLAND_ID_LENGTH for island_id in island_ids):
+        raise ValueError(
+            "MAPELITES_ISLANDS island IDs cannot exceed "
+            f"{_MAX_ISLAND_ID_LENGTH} characters."
+        )
+    if len(set(island_ids)) != len(island_ids):
+        raise ValueError("MAPELITES_ISLANDS island IDs must be unique.")
+    object.__setattr__(settings, "mapelites_islands", island_ids)
+
+    # Construction performs the cross-entry validation that Pydantic's
+    # element validation cannot express (non-empty and unique names).
+    ObjectiveContract(settings.mapelites_objectives)
+    pareto_epsilon = float(settings.mapelites_pareto_epsilon)
+    if not 0.0 <= pareto_epsilon < float("inf"):
+        raise ValueError("MAPELITES_PARETO_EPSILON must be finite and non-negative.")
+
+
+def _randomize_worker_repo_worktree(settings: Settings) -> None:
+    if not settings.worker_repo_worktree_randomize:
+        return
+    suffix_len = max(
+        1,
+        min(32, int(settings.worker_repo_worktree_random_suffix_len or 0)),
+    )
+    suffix = uuid.uuid4().hex[:suffix_len]
+    base = Path(settings.worker_repo_worktree).expanduser()
+    object.__setattr__(
+        settings,
+        "worker_repo_worktree",
+        str(base.parent / f"{base.name}-pid-{os.getpid()}-{suffix}"),
+    )
+
+
+def _apply_map_elites_projection_defaults(settings: Settings) -> None:
+    if "mapelites_dimensionality_min_fit_samples" not in settings.model_fields_set:
+        seed_population = int(settings.mapelites_seed_population_size or 0)
+        if seed_population > 0:
+            object.__setattr__(
+                settings,
+                "mapelites_dimensionality_min_fit_samples",
+                max(2, seed_population),
+            )
+
+    min_fit = int(settings.mapelites_dimensionality_min_fit_samples)
+    warmup = max(
+        min_fit,
+        int(settings.mapelites_feature_normalization_warmup_samples or 0),
+    )
+    object.__setattr__(
+        settings,
+        "mapelites_feature_normalization_warmup_samples",
+        warmup,
+    )
+    truncation_k = float(settings.mapelites_feature_truncation_k)
+    object.__setattr__(
+        settings,
+        "mapelites_feature_truncation_k",
+        truncation_k if truncation_k > 0.0 else 3.0,
+    )
 
 
 def _safe_export_secret(value: str | None, *, mask_secrets: bool) -> str | None:
@@ -1138,8 +1167,11 @@ def _build_safe_export_payload(settings: Settings, *, mask_secrets: bool) -> dic
         ),
         "mapelites_dimensionality_target_dims": settings.mapelites_dimensionality_target_dims,
         "mapelites_archive_cells_per_dim": settings.mapelites_archive_cells_per_dim,
-        "mapelites_fitness_metric": settings.mapelites_fitness_metric,
-        "mapelites_fitness_higher_is_better": settings.mapelites_fitness_higher_is_better,
+        "mapelites_islands": list(settings.mapelites_islands),
+        "mapelites_objectives": resolve_objective_contract(settings).as_payload(),
+        "mapelites_pareto_front_max_size": settings.mapelites_pareto_front_max_size,
+        "mapelites_pareto_epsilon": settings.mapelites_pareto_epsilon,
+        "mapelites_migration_interval_jobs": settings.mapelites_migration_interval_jobs,
         "scheduler_max_unfinished_jobs": settings.scheduler_max_unfinished_jobs,
         "scheduler_dispatch_batch_size": settings.scheduler_dispatch_batch_size,
         "scheduler_schedule_batch_size": settings.scheduler_schedule_batch_size,
@@ -1200,8 +1232,17 @@ def get_settings() -> Settings:
 
 
 def resolve_default_island_id(settings: Settings | None = None) -> str:
-    """Return the effective default island ID with a shared fallback."""
+    """Return the first configured island, used by single-island call sites."""
 
     base_settings = settings or get_settings()
-    value = str(getattr(base_settings, "mapelites_default_island_id", "") or "").strip()
-    return value or "main"
+    island_ids = tuple(base_settings.mapelites_islands)
+    if not island_ids:
+        raise ValueError("MAPELITES_ISLANDS must contain at least one island ID.")
+    return island_ids[0]
+
+
+def resolve_objective_contract(settings: Settings | None = None) -> ObjectiveContract:
+    """Return the validated ordered optimization objective contract."""
+
+    base_settings = settings or get_settings()
+    return ObjectiveContract(base_settings.mapelites_objectives)

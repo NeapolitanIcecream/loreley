@@ -2,7 +2,12 @@
 
 Date: 2026-05-07
 
-Status: Draft
+Status: Superseded by
+[ADR 0052](0052-multi-island-pareto-archive-and-worker-processes.md).
+
+ADR 0052 replaces the single-elite niche language below with bounded Pareto
+front admission and retention. The lifecycle distinction introduced here
+remains useful, but the original labels are historical terminology.
 
 Related: [ADR 0036](0036-single-source-of-truth-for-worker-commits.md),
 [ADR 0040](0040-delay-map-elites-archive-until-initial-pca-fit.md),
@@ -51,15 +56,16 @@ elite_inserted:
   The candidate passed evaluation and entered an empty archive niche.
 
 elite_replaced:
-  The candidate passed evaluation and replaced the previous elite in its
-  archive niche.
+  The candidate passed evaluation, entered its archive niche's Pareto front,
+  and removed one or more dominated or capacity-pruned members.
 
 elite_retained:
   The candidate is currently retained as an archive elite.
 
 valid_not_elite:
   The candidate passed evaluation but did not enter the archive, usually
-  because the current elite in the same niche had better fitness.
+  because it was dominated by the retained Pareto front in the same niche or
+  lost the deterministic bounded-front capacity rule.
 
 valid_not_considered:
   The candidate passed evaluation but was not considered for archive insertion,
@@ -91,8 +97,8 @@ new source of truth and do not replace the lower-level lifecycle fields.
 In Loreley, `keep` means "retained for the QD search process", not merely "the
 git commit still exists".
 
-A candidate is kept for QD purposes when it is a current archive elite, when it
-has just inserted or replaced an elite, or when an explicit campaign policy
+A candidate is kept for QD purposes when it is a current archive member, when
+it has just entered a Pareto front, or when an explicit campaign policy
 retains it for repair, audit, or a labelled sampling strategy.
 
 In Loreley, `discard` means "not eligible for default future sampling under the
@@ -120,8 +126,8 @@ current_archive_membership:
 ```
 
 For example, a candidate can historically be `elite_inserted` and later be
-superseded by another candidate in the same cell. Operator summaries should
-not erase either fact.
+removed when another candidate dominates it or the bounded front prunes it.
+Operator summaries should not erase either fact.
 
 This ADR defines the vocabulary and the distinction. It does not require a
 specific schema for archive ingestion events.

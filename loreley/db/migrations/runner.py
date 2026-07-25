@@ -48,7 +48,6 @@ _CURRENT_SCHEMA_TABLES = (*_LORELEY_TABLES, _AUDIT_TABLE)
 _CURRENT_SCHEMA_INDEXES = (
     "ix_evolution_jobs_ingestion_sort_expr",
     "ix_evolution_jobs_ui_sort_expr",
-    "ix_map_elites_archive_cells_island_commit",
     "ix_evolution_jobs_campaign_program_hash",
     "ix_candidate_commits_campaign_program_hash",
     "ix_evaluation_attempts_campaign_program_hash",
@@ -66,6 +65,7 @@ _CURRENT_SCHEMA_CONSTRAINTS = (
     ("candidate_commits", "uq_candidate_commits_commit_hash"),
     ("campaign_baselines", "uq_campaign_baselines_key_hash"),
     ("embedding_cache_manifests", "uq_embedding_cache_manifests_cache_kind"),
+    ("map_elites_archive_cells", "uq_map_elites_archive_island_commit"),
 )
 
 log = logger.bind(module="db.migrations")

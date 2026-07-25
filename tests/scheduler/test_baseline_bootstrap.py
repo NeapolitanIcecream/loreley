@@ -213,8 +213,7 @@ def _install_baseline_eval_sequence(
 def _settings(*, policy: str = "required") -> TestSettings:
     return TestSettings(
         MAPELITES_EXPERIMENT_ROOT_COMMIT="root123",
-        MAPELITES_FITNESS_METRIC="score",
-        MAPELITES_FITNESS_HIGHER_IS_BETTER=True,
+        MAPELITES_OBJECTIVES=[{"name": "score", "direction": "max"}],
         WORKER_EVALUATOR_PLUGIN="tests.support:plugin",
         BASELINE_BOOTSTRAP_POLICY=policy,
     )

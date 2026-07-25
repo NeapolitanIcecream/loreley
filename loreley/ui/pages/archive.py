@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any
 
 import streamlit as st
 
@@ -28,7 +28,6 @@ def render() -> None:
         return
 
     try:
-        import numpy as np
         import pandas as pd
     except Exception as exc:  # pragma: no cover
         st.error(f"Missing dependency: {exc}")
@@ -106,22 +105,9 @@ def render() -> None:
     records_df = _decorate_archive_df(records_df)
 
     visualization_df = pd.DataFrame(visualization_records)
-
-    metric_name = None
-    higher_is_better = True
-    if isinstance(islands, list):
-        for entry in islands:
-            if not isinstance(entry, dict):
-                continue
-            if str(entry.get("island_id") or "") != str(island_id):
-                continue
-            metric_name = entry.get("metric_name")
-            if entry.get("higher_is_better") is not None:
-                higher_is_better = bool(entry.get("higher_is_better"))
-            break
-
-    value_key = "metric_value" if "metric_value" in records_df.columns and records_df["metric_value"].notna().any() else "fitness"
-    value_label = metric_name or ("Metric" if value_key == "metric_value" else "Fitness")
+    metric_name, higher_is_better = _primary_projection(islands, island_id)
+    value_key = "primary_metric_value"
+    value_label = metric_name or "Primary objective"
 
     # Visualization
     st.subheader("Visualization")
@@ -132,21 +118,14 @@ def render() -> None:
         return
 
     if dims == 2 and cells_per_dim > 0 and "cell_index" in visualization_df.columns:
-        grid = np.full((cells_per_dim, cells_per_dim), np.nan, dtype=float)
-        for _, row in visualization_df.iterrows():
-            raw_idx = row.get("cell_index")
-            if raw_idx is None:
-                continue
-            raw_fitness = row.get("fitness", 0.0)
-            try:
-                idx = int(cast(Any, raw_idx))
-                coords = np.unravel_index(idx, (cells_per_dim, cells_per_dim))
-                grid[coords] = float(cast(Any, row.get(value_key, raw_fitness)))
-            except Exception:
-                continue
+        grid = _build_primary_grid(
+            visualization_records,
+            cells_per_dim=cells_per_dim,
+            higher_is_better=higher_is_better,
+        )
         fig = px.imshow(
             grid,
-            title=f"Cell {value_label.lower()} heatmap (2D)",
+            title=f"Best cell {value_label.lower()} heatmap (2D)",
             aspect="auto",
             origin="lower",
         )
@@ -199,6 +178,52 @@ def render() -> None:
             )
             with st.expander("Selected commit detail", expanded=False):
                 st.json(detail)
+
+
+def _primary_projection(
+    islands: object,
+    island_id: object,
+) -> tuple[str | None, bool]:
+    if not isinstance(islands, list):
+        return None, True
+    for entry in islands:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("island_id") or "") != str(island_id):
+            continue
+        name = entry.get("primary_metric_name")
+        direction = entry.get("primary_metric_higher_is_better")
+        return (
+            str(name) if name else None,
+            bool(direction) if direction is not None else True,
+        )
+    return None, True
+
+
+def _build_primary_grid(
+    records: list[dict[str, Any]],
+    *,
+    cells_per_dim: int,
+    higher_is_better: bool,
+):
+    """Aggregate a multi-member front to its best primary display value."""
+
+    import numpy as np
+
+    grid = np.full((cells_per_dim, cells_per_dim), np.nan, dtype=float)
+    for row in records:
+        try:
+            index = int(row["cell_index"])
+            value = float(row["primary_metric_value"])
+            coords = np.unravel_index(index, grid.shape)
+        except (KeyError, TypeError, ValueError):
+            continue
+        current = float(grid[coords])
+        if np.isnan(current) or (higher_is_better and value > current):
+            grid[coords] = value
+        elif not higher_is_better and value < current:
+            grid[coords] = value
+    return grid
 
 
 def _load_visualization_records(api_base_url: str, island_id: str) -> list[dict[str, Any]]:

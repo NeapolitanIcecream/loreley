@@ -21,7 +21,7 @@ def _build_overview_kpis(
     job_rows = _job_rows(jobs)
     island_rows = _island_rows(islands)
     status_counts = _job_status_counts(job_rows)
-    metric_name, best_fitness = _overview_metric_summary(island_rows)
+    metric_name, best_primary_value = _overview_metric_summary(island_rows)
     selected_stats = _selected_island_stats(island_rows, island_id)
     usage_summary = _dict_value(usage)
 
@@ -31,11 +31,11 @@ def _build_overview_kpis(
         "succeeded": int(status_counts.get("succeeded", 0)),
         "failed": int(status_counts.get("failed", 0)),
         "running": int(status_counts.get("running", 0)),
-        "metric_name": metric_name,
-        "best_fitness": best_fitness,
+        "primary_metric_name": metric_name,
+        "best_primary_value": best_primary_value,
         "coverage": selected_stats.get("coverage") if selected_stats else None,
-        "qd_score": selected_stats.get("qd_score") if selected_stats else None,
-        "norm_qd_score": selected_stats.get("norm_qd_score") if selected_stats else None,
+        "elites": selected_stats.get("elites") if selected_stats else None,
+        "objective_count": selected_stats.get("objective_count") if selected_stats else None,
         "occupied": selected_stats.get("occupied") if selected_stats else None,
         "cells": selected_stats.get("cells") if selected_stats else None,
         "usage_cost_usd": usage_summary.get("cost_usd"),
@@ -70,9 +70,9 @@ def _overview_metric_summary(island_rows: list[dict[str, Any]]) -> tuple[str | N
     higher_is_better = _first_higher_is_better(island_rows)
     try:
         values = [
-            float(row.get("best_fitness", 0.0))
+            float(row.get("best_primary_value", 0.0))
             for row in island_rows
-            if row.get("best_fitness") is not None
+            if row.get("best_primary_value") is not None
         ]
     except Exception:
         return metric_name, None
@@ -83,15 +83,15 @@ def _overview_metric_summary(island_rows: list[dict[str, Any]]) -> tuple[str | N
 
 def _first_island_metric_name(island_rows: list[dict[str, Any]]) -> str | None:
     for row in island_rows:
-        if row.get("metric_name"):
-            return str(row.get("metric_name"))
+        if row.get("primary_metric_name"):
+            return str(row.get("primary_metric_name"))
     return None
 
 
 def _first_higher_is_better(island_rows: list[dict[str, Any]]) -> bool:
     for row in island_rows:
-        if row.get("higher_is_better") is not None:
-            return bool(row.get("higher_is_better"))
+        if row.get("primary_metric_higher_is_better") is not None:
+            return bool(row.get("primary_metric_higher_is_better"))
     return True
 
 
@@ -163,55 +163,10 @@ def render() -> None:
         usage=usage,
     )
     status_counts = kpis["status_counts"]
-    total_jobs = kpis["total_jobs"]
-    succeeded = kpis["succeeded"]
-    failed = kpis["failed"]
-    metric_name = kpis["metric_name"]
-    best_fitness = kpis["best_fitness"]
-    coverage = kpis["coverage"]
-    qd_score = kpis["qd_score"]
-    norm_qd_score = kpis["norm_qd_score"]
-    occupied = kpis["occupied"]
-    cells = kpis["cells"]
-    usage_cost_usd = kpis["usage_cost_usd"]
-    usage_total_tokens = kpis["usage_total_tokens"]
-    usage_unpriced_events = kpis["usage_unpriced_events"]
-    usage_unavailable_events = kpis["usage_unavailable_events"]
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Jobs (loaded)", f"{total_jobs}")
-    c2.metric("Succeeded", f"{succeeded}")
-    c3.metric("Failed", f"{failed}")
-    c4.metric(
-        f"Best {metric_name or 'metric'}",
-        f"{best_fitness:.6f}" if isinstance(best_fitness, (int, float)) else "n/a",
-    )
-
-    c5, c6, c7, c8 = st.columns(4)
-    c5.metric(
-        "Coverage",
-        f"{float(coverage) * 100:.2f}%" if isinstance(coverage, (int, float)) else "n/a",
-    )
-    c6.metric(
-        "Objective norm QD",
-        f"{float(norm_qd_score):.6f}" if isinstance(norm_qd_score, (int, float)) else "n/a",
-    )
-    c7.metric(
-        "Objective QD",
-        f"{float(qd_score):.6f}" if isinstance(qd_score, (int, float)) else "n/a",
-    )
-    c8.metric(
-        "Occupied cells",
-        f"{int(occupied)}/{int(cells)}"
-        if isinstance(occupied, (int, float)) and isinstance(cells, (int, float))
-        else "n/a",
-    )
-
-    u1, u2, u3, u4 = st.columns(4)
-    u1.metric("LLM cost", _format_usd(usage_cost_usd))
-    u2.metric("LLM tokens", _format_int(usage_total_tokens))
-    u3.metric("Unpriced usage", _format_int(usage_unpriced_events))
-    u4.metric("Unavailable usage", _format_int(usage_unavailable_events))
+    metric_name = kpis["primary_metric_name"]
+    _render_job_kpis(kpis)
+    _render_archive_kpis(kpis)
+    _render_usage_kpis(kpis)
 
     _render_operator_status_band(operator)
 
@@ -248,18 +203,22 @@ def render() -> None:
                 )
                 st.plotly_chart(fig, width="stretch")
 
-    # Fitness over time (from graph nodes)
+    # Primary objective over time (from graph nodes)
     nodes = graph.get("nodes") if isinstance(graph, dict) else None
     if isinstance(nodes, list) and nodes:
         nodes_df: Any = pd.DataFrame([n for n in nodes if isinstance(n, dict)])
-        value_column = "metric_value" if "metric_value" in nodes_df.columns else "fitness"
+        value_column = "primary_metric_value"
         if not nodes_df.empty and {"created_at", value_column} <= set(nodes_df.columns):
             nodes_df = nodes_df.copy()
             nodes_df["created_at"] = pd.to_datetime(nodes_df["created_at"], errors="coerce", utc=True)
             nodes_df[value_column] = pd.to_numeric(nodes_df[value_column], errors="coerce")
             nodes_df = nodes_df.dropna(subset=["created_at", value_column]).sort_values("created_at")
             if not nodes_df.empty:
-                graph_higher_is_better = bool(graph.get("higher_is_better", True)) if isinstance(graph, dict) else True
+                graph_higher_is_better = (
+                    bool(graph.get("primary_metric_higher_is_better", True))
+                    if isinstance(graph, dict)
+                    else True
+                )
                 if graph_higher_is_better:
                     nodes_df["best_so_far"] = nodes_df[value_column].cummax()
                 else:
@@ -274,6 +233,55 @@ def render() -> None:
 
     st.subheader("Islands")
     st.dataframe(islands or [], width="stretch")
+
+
+def _render_job_kpis(kpis: dict[str, Any]) -> None:
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Jobs (loaded)", f"{kpis['total_jobs']}")
+    c2.metric("Succeeded", f"{kpis['succeeded']}")
+    c3.metric("Failed", f"{kpis['failed']}")
+    metric_name = kpis["primary_metric_name"]
+    value = kpis["best_primary_value"]
+    display = f"{value:.6f}" if isinstance(value, (int, float)) else "n/a"
+    c4.metric(f"Best {metric_name or 'metric'}", display)
+
+
+def _render_archive_kpis(kpis: dict[str, Any]) -> None:
+    coverage = kpis["coverage"]
+    elites = kpis["elites"]
+    objective_count = kpis["objective_count"]
+    occupied = kpis["occupied"]
+    cells = kpis["cells"]
+
+    c5, c6, c7, c8 = st.columns(4)
+    coverage_display = (
+        f"{float(coverage) * 100:.2f}%"
+        if isinstance(coverage, (int, float))
+        else "n/a"
+    )
+    c5.metric("Coverage", coverage_display)
+    c6.metric(
+        "Retained elites",
+        f"{int(elites)}" if isinstance(elites, (int, float)) else "n/a",
+    )
+    c7.metric(
+        "Objectives",
+        f"{int(objective_count)}" if isinstance(objective_count, (int, float)) else "n/a",
+    )
+    occupied_display = (
+        f"{int(occupied)}/{int(cells)}"
+        if isinstance(occupied, (int, float)) and isinstance(cells, (int, float))
+        else "n/a"
+    )
+    c8.metric("Occupied cells", occupied_display)
+
+
+def _render_usage_kpis(kpis: dict[str, Any]) -> None:
+    u1, u2, u3, u4 = st.columns(4)
+    u1.metric("LLM cost", _format_usd(kpis["usage_cost_usd"]))
+    u2.metric("LLM tokens", _format_int(kpis["usage_total_tokens"]))
+    u3.metric("Unpriced usage", _format_int(kpis["usage_unpriced_events"]))
+    u4.metric("Unavailable usage", _format_int(kpis["usage_unavailable_events"]))
 
 
 def _render_operator_status_band(operator: object) -> None:

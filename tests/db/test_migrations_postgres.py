@@ -402,7 +402,7 @@ def test_v5_fixture_migrates_to_current_preserves_rows_and_backfills_candidates(
     )
 
     assert result.from_version == 5
-    assert result.applied_versions == (6, 7, 8, 9, 10, 11, 12, 13, 14)
+    assert result.applied_versions == (6, 7, 8, 9, 10, 11, 12, 13, 14, 15)
     validate_database_schema(
         engine=postgres_engine,
         settings=migration_settings,
@@ -416,10 +416,23 @@ def test_v5_fixture_migrates_to_current_preserves_rows_and_backfills_candidates(
         assert conn.execute(text("SELECT count(*) FROM commit_cards")).scalar_one() == 2
         assert conn.execute(text("SELECT count(*) FROM metrics")).scalar_one() == 1
         assert conn.execute(text("SELECT count(*) FROM evolution_jobs")).scalar_one() == 3
-        assert conn.execute(text("SELECT count(*) FROM map_elites_archive_cells")).scalar_one() == 1
+        # v15 intentionally discards the old scalar-per-cell archive. Durable
+        # successful jobs are marked for reingestion into Pareto fronts.
+        assert conn.execute(text("SELECT count(*) FROM map_elites_archive_cells")).scalar_one() == 0
         job_kinds = {
             str(row["id"]): row["job_kind"]
             for row in conn.execute(text("SELECT id, job_kind FROM evolution_jobs")).mappings()
+        }
+        migrated_jobs = {
+            str(row["id"]): row
+            for row in conn.execute(
+                text(
+                    """
+                    SELECT id, result_commit_hash, ingestion_status
+                    FROM evolution_jobs
+                    """
+                )
+            ).mappings()
         }
         candidates = {
             row["commit_hash"]: row
@@ -453,9 +466,13 @@ def test_v5_fixture_migrates_to_current_preserves_rows_and_backfills_candidates(
     assert job_kinds[str(ids["seed_job"])] == "seed"
     assert job_kinds[str(ids["evolution_job"])] == "evolution"
     assert job_kinds[str(ids["failed_job"])] == "evolution"
+    assert migrated_jobs[str(ids["seed_job"])]["result_commit_hash"] == "commit-a"
+    assert migrated_jobs[str(ids["seed_job"])]["ingestion_status"] is None
+    assert migrated_jobs[str(ids["evolution_job"])]["result_commit_hash"] == "commit-b"
+    assert migrated_jobs[str(ids["evolution_job"])]["ingestion_status"] is None
     assert set(candidates) == {"commit-a", "commit-b"}
     assert candidates["commit-a"]["evaluation_status"] == "passed"
-    assert candidates["commit-a"]["archive_status"] == "member"
+    assert candidates["commit-a"]["archive_status"] == "not_considered"
     assert candidates["commit-a"]["commit_card_id"] is not None
     assert candidates["commit-b"]["archive_status"] == "not_considered"
     assert candidates["commit-b"]["git_parent_commit_hash"] == "commit-a"
@@ -463,7 +480,7 @@ def test_v5_fixture_migrates_to_current_preserves_rows_and_backfills_candidates(
     assert candidates["commit-b"]["repair_state"] == "audit_only"
     assert candidates["commit-b"]["repair_source_candidate_id"] is None
     assert candidates["commit-b"]["campaign_program_hash"] is None
-    assert audit_versions == [6, 7, 8, 9, 10, 11, 12, 13, 14]
+    assert audit_versions == [6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 
 
 def test_migration_is_idempotent_after_v5_upgrade(

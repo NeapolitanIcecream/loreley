@@ -15,7 +15,6 @@ dependencies = [
     "pydantic>=2.12.4",
     "pydantic-settings>=2.12.0",
     "pyyaml>=6.0.3",
-    "ribs>=0.8.3",
     "rich>=14.2.0",
     "scikit-learn>=1.7.2",
     "sqlalchemy>=2.0.44",
@@ -115,11 +114,12 @@ testpaths = ["tests"]
 
 [tool.coverage.run]
 branch = true
-source = ["loreley", "tests", "benchmarks", "examples"]
+source = ["loreley", "tests", "benchmarks", "examples", "tools"]
 
 [tool.cremona]
-targets = ["loreley", "tests", "benchmarks", "examples"]
+targets = ["loreley", "tests", "benchmarks", "examples", "tools"]
 exclude = [
+    ".codex-workflows",
     ".git",
     ".venv",
     ".pytest_cache",
@@ -130,11 +130,13 @@ exclude = [
     ".uv_cache_sandbox",
     "dist",
     "examples/circle-packing",
+    "loreley/db/migrations/versions/__init__.py",
     "loreley/net/__init__.py",
     "logs",
     "output",
     "site",
     "tests/__init__.py",
+    "tools/__init__.py",
     "uv_cache",
     "uv_cache_tmp",
     "*/__pycache__/*",

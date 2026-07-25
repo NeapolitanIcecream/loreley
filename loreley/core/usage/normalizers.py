@@ -249,8 +249,6 @@ def kilo_usage_event_from_messages(
         raw_usage=_kilo_raw_usage(totals=totals, title=title, session_id=session_id),
         external_usage_id=metadata.external_usage_id or (f"kilo:{session_id}" if session_id else ""),
     )
-    if totals.cost_seen:
-        return event
     return price_usage_event(event, settings=settings)  # type: ignore[arg-type]
 
 

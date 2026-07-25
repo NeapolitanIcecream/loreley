@@ -7,18 +7,19 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Mapping
 
 from git import Repo
 from git.exc import GitCommandError, InvalidGitRepositoryError, NoSuchPathError
 from loguru import logger
 from rich.console import Console
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, case, func, select
 
-from loreley.config import Settings, get_settings, resolve_default_island_id
+from loreley.config import Settings, get_settings, resolve_objective_contract
 from loreley.core.experiments import ExperimentError, bootstrap_instance
 from loreley.core.git import RepositoryError, require_commit, wrap_git_error
-from loreley.core.map_elites.map_elites import MapElitesManager
+from loreley.core.job_state import pending_ingestion_job_conditions
+from loreley.core.map_elites.manager import MapElitesManager
 from loreley.core.map_elites.sampler import MapElitesSampler
 from loreley.core.repo_lock import repo_lock
 from loreley.db.base import ensure_database_schema, get_engine, session_scope
@@ -28,7 +29,7 @@ from loreley.db.locks import (
     try_acquire_pg_advisory_lock,
     uuid_to_pg_bigint_lock_key,
 )
-from loreley.db.models import CommitCard, Metric
+from loreley.db.models import CommitCard, MapElitesArchiveCell, Metric
 from loreley.scheduler.baselines import BaselineBootstrapResult, BaselineBootstrapService
 from loreley.naming import resolve_experiment_namespace, resolve_experiment_uuid
 from loreley.scheduler.ingestion import MapElitesIngestion
@@ -65,6 +66,73 @@ class _SeedWarmupJobCounts:
     seed_jobs: int
     unfinished_seed_jobs: int
     pending_ingestion_seed_jobs: int
+
+
+@dataclass(frozen=True, slots=True)
+class _SeedSchedulingBudget:
+    root_commit_hash: str
+    target_samples: int
+    available_slots: int
+    unfinished_jobs: int
+    ordered_islands: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _SeedIslandDemand:
+    island_id: str
+    warmup_samples: int
+    remaining_samples: int
+
+
+@dataclass(frozen=True, slots=True)
+class _SeedIslandAllocation:
+    demand: _SeedIslandDemand
+    count: int
+
+
+def _remaining_seed_demand(
+    *,
+    warmup_samples: int,
+    target_samples: int,
+    counts: _SeedWarmupJobCounts,
+) -> int:
+    pending = counts.unfinished_seed_jobs + counts.pending_ingestion_seed_jobs
+    if warmup_samples < target_samples:
+        return max(0, target_samples - warmup_samples - pending)
+    return max(0, 1 - pending)
+
+
+def _allocate_seed_slots(
+    demands: tuple[_SeedIslandDemand, ...],
+    available_slots: int,
+) -> tuple[_SeedIslandAllocation, ...]:
+    """Allocate global capacity one slot per island per round."""
+
+    allocations = [0 for _ in demands]
+    slots = max(0, int(available_slots))
+    while slots > 0:
+        made_progress = False
+        for index, demand in enumerate(demands):
+            if allocations[index] >= demand.remaining_samples:
+                continue
+            allocations[index] += 1
+            slots -= 1
+            made_progress = True
+            if slots <= 0:
+                break
+        if not made_progress:
+            break
+    return tuple(
+        _SeedIslandAllocation(demand=demand, count=count)
+        for demand, count in zip(demands, allocations)
+        if count > 0
+    )
+
+
+def _pending_ingestion_log_suffix(pending_ingestion: int | None) -> str:
+    if pending_ingestion is None:
+        return ""
+    return f" pending_ingestion={pending_ingestion}"
 
 
 class EvolutionScheduler:
@@ -104,10 +172,17 @@ class EvolutionScheduler:
             self.close()
             raise
 
-        self.manager = MapElitesManager(
-            settings=self.settings,
-            repo_root=self.repo_root,
-        )
+        try:
+            self.manager = MapElitesManager(
+                settings=self.settings,
+                repo_root=self.repo_root,
+            )
+            self.manager.validate_configured_islands()
+        except Exception as exc:
+            self.close()
+            raise SchedulerError(
+                f"MAP-Elites startup validation failed: {exc}",
+            ) from exc
         self.sampler = MapElitesSampler(manager=self.manager, settings=self.settings)
         self.job_scheduler = JobScheduler(
             settings=self.settings,
@@ -212,6 +287,13 @@ class EvolutionScheduler:
         else:
             total_jobs_after = total_jobs
 
+        pending_ingestion = self._terminal_pending_ingestion(
+            total_jobs=total_jobs_after,
+            unfinished_jobs=stats["unfinished"],
+        )
+        if pending_ingestion is not None:
+            stats["pending_ingestion"] = pending_ingestion
+
         remaining_total_str = ""
         max_total = self._max_total_jobs
         remaining_total = max(0, max_total - total_jobs_after)
@@ -220,14 +302,18 @@ class EvolutionScheduler:
         self.console.log(
             "[bold magenta]Scheduler tick[/] ingested={ingested} reclaimed_pending={reclaimed_pending} "
             "reclaimed_failed={reclaimed_failed} dispatched={dispatched} seed_scheduled={seed_scheduled} "
-            "scheduled={scheduled} unfinished={unfinished}{remaining_total}".format(
+            "scheduled={scheduled} unfinished={unfinished}{remaining_total}"
+            "{pending_ingestion_suffix}".format(
                 **stats,
                 remaining_total=remaining_total_str,
+                pending_ingestion_suffix=_pending_ingestion_log_suffix(
+                    pending_ingestion
+                ),
             ),
         )
 
-        if total_jobs_after >= max_total and stats["unfinished"] == 0:
-            self._create_best_fitness_branch_if_possible()
+        if pending_ingestion == 0:
+            self._create_primary_objective_branch_if_possible()
             self.console.log(
                 "[bold yellow]Scheduler reached max total jobs and all jobs finished; shutting down[/] "
                 f"limit={max_total}",
@@ -239,6 +325,16 @@ class EvolutionScheduler:
             )
             self.stop()
         return stats
+
+    def _terminal_pending_ingestion(
+        self,
+        *,
+        total_jobs: int,
+        unfinished_jobs: int,
+    ) -> int | None:
+        if total_jobs < self._max_total_jobs or unfinished_jobs > 0:
+            return None
+        return self.ingestion.count_pending_ingestion_jobs()
 
     def stop(self) -> None:
         """Signal the scheduler loop to exit."""
@@ -482,74 +578,82 @@ class EvolutionScheduler:
             return Repo(self.repo_root)
         except (NoSuchPathError, InvalidGitRepositoryError) as exc:  # pragma: no cover - filesystem
             raise SchedulerError(f"Scheduler repo {self.repo_root} is not a git repository.") from exc
-    # Best-branch helpers ----------------------------------------------------
+    # Primary-objective deliverable -----------------------------------------
 
-    def _create_best_fitness_branch_if_possible(self) -> None:
-        """Create the best-fitness branch deliverable and fail fast on errors."""
+    def _create_primary_objective_branch_if_possible(self) -> bool:
+        """Create the primary-objective branch when a retained candidate exists."""
 
-        best_commit, meta = self._resolve_best_fitness_commit()
+        best_commit, meta = self._resolve_best_primary_commit()
         if not best_commit:
-            raise SchedulerError(
-                "No best-fitness commit found; cannot create the best-fitness branch deliverable. "
-                "Check MAPELITES_FITNESS_METRIC and ensure at least one commit has metrics."
+            self.console.log(
+                "[bold yellow]Primary-objective branch not created[/] "
+                "reason=no retained candidate with the configured primary objective"
             )
+            log.warning(
+                "Primary-objective branch not created because no retained "
+                "candidate has the configured primary objective"
+            )
+            return False
 
         root_commit = meta.get("root_commit_hash")
-        metric_name = meta.get("fitness_metric") or self.settings.mapelites_fitness_metric
-        fitness_value = meta.get("fitness_value")
+        primary = resolve_objective_contract(self.settings).primary
+        metric_name = meta.get("primary_metric_name") or primary.name
+        metric_value = meta.get("primary_metric_value")
         island_id = meta.get("island_id")
-        branch_name = self._create_best_fitness_branch(
+        branch_name = self._create_primary_objective_branch(
             best_commit_hash=best_commit,
             root_commit_hash=root_commit,
         )
 
-        # Log a concise, human-friendly summary with the key attributes.
-        fitness_str: str
+        metric_value_str: str
         try:
-            fitness_str = f"{float(fitness_value):.6f}" if fitness_value is not None else "n/a"
+            metric_value_str = (
+                f"{float(metric_value):.6f}" if metric_value is not None else "n/a"
+            )
         except (TypeError, ValueError):
-            fitness_str = str(fitness_value)
+            metric_value_str = str(metric_value)
 
         self.console.log(
-            "[bold green]Best-fitness branch updated[/] "
-            "branch={} commit={} root_commit={} island={} metric={} fitness={}".format(
+            "[bold green]Primary-objective branch updated[/] "
+            "branch={} commit={} root_commit={} island={} metric={} value={}".format(
                 branch_name,
                 best_commit,
                 root_commit or "n/a",
                 island_id or "n/a",
                 metric_name or "n/a",
-                fitness_str,
+                metric_value_str,
             ),
         )
         log.info(
-            "Best-fitness branch updated "
-            "(branch={} commit={} root_commit={} island_id={} metric={} fitness={})",
+            "Primary-objective branch updated "
+            "(branch={} commit={} root_commit={} island_id={} metric={} value={})",
             branch_name,
             best_commit,
             root_commit,
             island_id,
             metric_name,
-            fitness_value,
+            metric_value,
         )
+        return True
 
-    def _resolve_best_fitness_commit(self) -> tuple[str | None, dict[str, Any]]:
-        """Return the commit hash with the best fitness for the current experiment.
+    def _resolve_best_primary_commit(self) -> tuple[str | None, dict[str, Any]]:
+        """Return the retained commit with the best raw primary-objective value."""
 
-        The search is scoped to the scheduler's experiment and uses the
-        configured MAP-Elites fitness metric and direction.
-        """
-
-        metric_name = self.settings.mapelites_fitness_metric
-        if not metric_name:
-            return None, {}
-
-        is_higher_better = bool(self.settings.mapelites_fitness_higher_is_better)
+        primary = resolve_objective_contract(self.settings).primary
+        metric_name = primary.name
 
         with session_scope() as session:
-            order_column = Metric.value.desc() if is_higher_better else Metric.value.asc()
+            order_column = (
+                Metric.value.desc()
+                if primary.higher_is_better
+                else Metric.value.asc()
+            )
 
             conditions: list[Any] = [
                 Metric.name == metric_name,
+                MapElitesArchiveCell.island_id.in_(
+                    tuple(self.settings.mapelites_islands)
+                ),
             ]
             if self._root_commit_hash:
                 conditions.append(CommitCard.commit_hash != self._root_commit_hash)
@@ -557,12 +661,16 @@ class EvolutionScheduler:
             stmt = (
                 select(
                     CommitCard.commit_hash,
-                    CommitCard.island_id,
+                    MapElitesArchiveCell.island_id,
                     Metric.value,
                 )
                 .join(Metric, Metric.commit_card_id == CommitCard.id)
+                .join(
+                    MapElitesArchiveCell,
+                    MapElitesArchiveCell.commit_hash == CommitCard.commit_hash,
+                )
                 .where(*conditions)
-                .order_by(order_column)
+                .order_by(order_column, CommitCard.commit_hash.asc())
                 .limit(1)
             )
 
@@ -572,7 +680,7 @@ class EvolutionScheduler:
 
             best_commit_hash: str = row[0]
             island_id: str | None = row[1]
-            fitness_value: float | None = float(row[2]) if row[2] is not None else None
+            primary_value: float | None = float(row[2]) if row[2] is not None else None
 
             root_commit_hash = self._find_root_commit_for_experiment_chain(
                 session=session,
@@ -581,45 +689,23 @@ class EvolutionScheduler:
 
         meta: dict[str, Any] = {
             "island_id": island_id,
-            "fitness_metric": metric_name,
-            "fitness_value": fitness_value,
+            "primary_metric_name": metric_name,
+            "primary_metric_value": primary_value,
             "root_commit_hash": root_commit_hash,
         }
         return best_commit_hash, meta
 
     def _maybe_schedule_seed_jobs(self, *, unfinished_jobs: int) -> int:
-        """Optionally schedule cold-start seed jobs from the experiment root.
+        """Fairly schedule cold-start seed jobs for every empty configured island."""
 
-        Seed jobs are created only when:
-        - a root commit is configured,
-        - the MAP-Elites archive is still empty for the default island, and
-        - the number of existing seed jobs is below the configured population size.
-
-        Once non-seed jobs exist for the experiment, or the population size has
-        been reached, this helper becomes a no-op even across scheduler restarts.
-        """
-
-        root_hash = self._root_commit_hash
-        if not root_hash:
+        budget = self._seed_scheduling_budget(unfinished_jobs=unfinished_jobs)
+        if budget is None:
             return 0
+        demands = self._seed_island_demands(budget)
+        allocations = _allocate_seed_slots(demands, budget.available_slots)
+        return self._create_seed_allocations(budget, allocations)
 
-        default_island = resolve_default_island_id(self.settings)
-
-        # Skip when the archive already contains any elites for the default island.
-        records = self.manager.get_records(default_island)
-        if records:
-            return 0
-
-        seed_counts = self._count_seed_warmup_job_counts()
-        seed_count = seed_counts.seed_jobs
-        unfinished_seed_jobs = seed_counts.unfinished_seed_jobs
-        pending_ingestion_seed_jobs = seed_counts.pending_ingestion_seed_jobs
-        total_jobs = self._get_total_jobs_count()
-        non_seed_jobs_exist = total_jobs > seed_count
-
-        if non_seed_jobs_exist:
-            return 0
-
+    def _seed_population_target(self) -> int:
         configured_seed_population = max(
             0,
             int(getattr(self.settings, "mapelites_seed_population_size", 0)),
@@ -630,78 +716,121 @@ class EvolutionScheduler:
             0,
             int(getattr(self.settings, "mapelites_feature_normalization_warmup_samples", 0) or 0),
         )
-        seed_population_size = max(configured_seed_population, warmup_required)
-        if seed_population_size <= 0:
-            return 0
-        warmup_sample_count = self.manager.count_pca_history_samples(default_island)
-        if warmup_sample_count >= seed_population_size:
-            return 0
+        return max(configured_seed_population, warmup_required)
 
+    def _seed_scheduling_budget(
+        self,
+        *,
+        unfinished_jobs: int,
+    ) -> _SeedSchedulingBudget | None:
+        root_hash = self._root_commit_hash
+        target_samples = self._seed_population_target()
+        if not root_hash or target_samples <= 0:
+            return None
         max_jobs = max(0, int(self.settings.scheduler_max_unfinished_jobs))
         if max_jobs == 0:
-            return 0
-
+            return None
         capacity = max(0, max_jobs - unfinished_jobs)
         if capacity <= 0:
-            return 0
-
+            return None
+        total_jobs = self._get_total_jobs_count()
         remaining_total = self._max_total_jobs - total_jobs
         if remaining_total <= 0:
-            return 0
-
-        pending_warmup_samples = (
-            warmup_sample_count + unfinished_seed_jobs + pending_ingestion_seed_jobs
+            return None
+        islands = tuple(self.settings.mapelites_islands)
+        if not islands:
+            return None
+        start = total_jobs % len(islands)
+        ordered_islands = (*islands[start:], *islands[:start])
+        return _SeedSchedulingBudget(
+            root_commit_hash=root_hash,
+            target_samples=target_samples,
+            available_slots=min(capacity, remaining_total),
+            unfinished_jobs=unfinished_jobs,
+            ordered_islands=ordered_islands,
         )
-        remaining_seed = seed_population_size - pending_warmup_samples
-        to_create_candidates = [remaining_seed, capacity]
-        to_create_candidates.append(remaining_total)
-        to_create = max(0, min(to_create_candidates))
-        if to_create <= 0:
-            return 0
 
-        created = self.job_scheduler.create_seed_jobs(
-            base_commit_hash=root_hash,
-            count=to_create,
-            island_id=default_island,
-            refresh_campaign_program=False,
-        )
-        if created:
-            self.console.log(
-                "[bold green]Scheduled seed jobs[/] count={} root={} island={} warmup_samples={}/{}".format(
+    def _seed_island_demands(
+        self,
+        budget: _SeedSchedulingBudget,
+    ) -> tuple[_SeedIslandDemand, ...]:
+        demands: list[_SeedIslandDemand] = []
+        for island_id in budget.ordered_islands:
+            if self.manager.get_records(island_id):
+                continue
+            warmup_samples = self.manager.count_pca_history_samples(island_id)
+            seed_counts = self._count_seed_warmup_job_counts(island_id=island_id)
+            remaining = _remaining_seed_demand(
+                warmup_samples=warmup_samples,
+                target_samples=budget.target_samples,
+                counts=seed_counts,
+            )
+            if remaining:
+                demands.append(
+                    _SeedIslandDemand(
+                        island_id=island_id,
+                        warmup_samples=warmup_samples,
+                        remaining_samples=remaining,
+                    )
+                )
+        return tuple(demands)
+
+    def _create_seed_allocations(
+        self,
+        budget: _SeedSchedulingBudget,
+        allocations: tuple[_SeedIslandAllocation, ...],
+    ) -> int:
+        created_total = 0
+        for allocation in allocations:
+            demand = allocation.demand
+            seed_phase = (
+                "warmup"
+                if demand.warmup_samples < budget.target_samples
+                else "readiness"
+            )
+            created = self.job_scheduler.create_seed_jobs(
+                base_commit_hash=budget.root_commit_hash,
+                count=allocation.count,
+                island_id=demand.island_id,
+                refresh_campaign_program=False,
+            )
+            created_total += created
+            if created:
+                self.console.log(
+                    "[bold green]Scheduled seed jobs[/] "
+                    "count={} root={} island={} phase={} warmup_samples={}/{}".format(
+                        created,
+                        budget.root_commit_hash,
+                        demand.island_id,
+                        seed_phase,
+                        demand.warmup_samples,
+                        budget.target_samples,
+                    ),
+                )
+                log.info(
+                    "Scheduled {} seed jobs from root {} on island {} "
+                    "(phase={} unfinished_jobs={} warmup_samples={} target_samples={})",
                     created,
-                    root_hash,
-                    default_island,
-                    warmup_sample_count,
-                    seed_population_size,
-                ),
-            )
-            log.info(
-                "Scheduled {} seed jobs from root {} on island {} "
-                "(unfinished_jobs={} warmup_samples={} target_samples={})",
-                created,
-                root_hash,
-                default_island,
-                unfinished_jobs,
-                warmup_sample_count,
-                seed_population_size,
-            )
-        return created
+                    budget.root_commit_hash,
+                    demand.island_id,
+                    seed_phase,
+                    budget.unfinished_jobs,
+                    demand.warmup_samples,
+                    budget.target_samples,
+                )
+        return created_total
 
-    def _count_seed_warmup_job_counts(self) -> _SeedWarmupJobCounts:
+    def _count_seed_warmup_job_counts(self, *, island_id: str) -> _SeedWarmupJobCounts:
         from loreley.db.models import EvolutionJob, JobStatus  # Local import to avoid cycles.
 
         unfinished_seed_statuses = (JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING)
-        pending_ingestion_status = or_(
-            EvolutionJob.ingestion_status.is_(None),
-            EvolutionJob.ingestion_status == "",
-            EvolutionJob.ingestion_status.not_in(("failed", "succeeded", "skipped")),
-        )
         succeeded_seed_requiring_ingestion = and_(
             EvolutionJob.is_seed_job.is_(True),
-            EvolutionJob.status == JobStatus.SUCCEEDED,
-            EvolutionJob.result_commit_hash.is_not(None),
-            EvolutionJob.result_commit_hash != "",
-            pending_ingestion_status,
+            *pending_ingestion_job_conditions(
+                EvolutionJob=EvolutionJob,
+                JobStatus=JobStatus,
+                func=func,
+            ),
         )
         stmt = select(
             func.coalesce(
@@ -727,7 +856,7 @@ class EvolutionScheduler:
                 func.sum(case((succeeded_seed_requiring_ingestion, 1), else_=0)),
                 0,
             ),
-        )
+        ).where(EvolutionJob.island_id == island_id)
         with session_scope() as session:
             row = session.execute(stmt).one()
         return _SeedWarmupJobCounts(
@@ -778,16 +907,16 @@ class EvolutionScheduler:
 
         return root
 
-    def _create_best_fitness_branch(
+    def _create_primary_objective_branch(
         self,
         *,
         best_commit_hash: str,
         root_commit_hash: str | None,
     ) -> str:
-        """Create or update a stable branch pointing at the best-fitness commit."""
+        """Create or update a stable branch for the declared primary objective."""
 
         experiment_suffix = resolve_experiment_namespace(self.settings.experiment_id)
-        branch_name = f"evolution/best/{experiment_suffix}"
+        branch_name = f"evolution/primary/{experiment_suffix}"
 
         try:
             with repo_lock(self.repo_root):
@@ -797,11 +926,14 @@ class EvolutionScheduler:
         except RepositoryError as exc:
             raise SchedulerError(str(exc)) from exc
         except GitCommandError as exc:
-            wrapped = wrap_git_error(exc, f"Failed to update best-fitness branch {branch_name}")
+            wrapped = wrap_git_error(
+                exc,
+                f"Failed to update primary-objective branch {branch_name}",
+            )
             raise SchedulerError(str(wrapped)) from exc
 
         log.info(
-            "Updated best-fitness branch {} -> {} (root_commit={})",
+            "Updated primary-objective branch {} -> {} (root_commit={})",
             branch_name,
             canonical,
             root_commit_hash,

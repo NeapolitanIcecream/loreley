@@ -142,9 +142,6 @@ class CommitPlanningContext:
     evaluation_summary: str | None = None
     metrics: Sequence[CommitMetric] = field(default_factory=tuple)
     evaluation_artifacts: Sequence[CommitEvaluationArtifactFeedback] = field(default_factory=tuple)
-    map_elites_cell_index: int | None = None
-    map_elites_objective: float | None = None
-    map_elites_measures: Sequence[float] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         self.subject = " ".join((self.subject or "").split()).strip() or f"Commit {self.commit_hash}"
@@ -154,7 +151,6 @@ class CommitPlanningContext:
         self.highlights = tuple(self.highlights or ())
         self.metrics = tuple(self.metrics or ())
         self.evaluation_artifacts = tuple(self.evaluation_artifacts or ())
-        self.map_elites_measures = tuple(self.map_elites_measures or ())
 
 
 @dataclass(slots=True)

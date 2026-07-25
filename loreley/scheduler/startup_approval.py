@@ -71,7 +71,7 @@ def require_repo_writable(
 
     The scheduler requires write access to the git directory to:
     - fetch missing commits (object database updates), and
-    - update the best-fitness branch deliverable at the end of a bounded run.
+    - update the primary-objective branch deliverable at the end of a bounded run.
     """
 
     c = console or Console()
@@ -90,7 +90,7 @@ def require_repo_writable(
         repo_root_resolved = Path(repo_root).expanduser().resolve()
         message = (
             "Scheduler repository is not writable. "
-            "Write access is required for git fetch and the best-fitness branch deliverable. "
+            "Write access is required for git fetch and the primary-objective branch deliverable. "
             f"(repo_root={repo_root_resolved} git_dir={git_dir} common_dir={common_dir} failing_path={target})"
         )
         c.print(f"[bold red]{message}[/]")
@@ -173,5 +173,4 @@ def require_interactive_repo_state_root_approval(
     approved = Confirm.ask("Start scheduler main loop now?", default=False, console=c)
     if not approved:
         raise ValueError("Startup approval rejected by operator.")
-
 

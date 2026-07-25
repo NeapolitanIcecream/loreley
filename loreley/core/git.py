@@ -174,42 +174,65 @@ def require_commit(
     if not commit:
         raise RepositoryError("Commit reference must be provided.")
 
-    try:
-        resolved = repo.commit(commit)
-    except (BadName, GitCommandError, ValueError):
-        resolved = None
-    if resolved is not None:
-        return str(getattr(resolved, "hexsha", "") or "").strip()
+    resolved_hash = _resolve_commit_hash(repo, commit)
+    if resolved_hash is not None:
+        return resolved_hash
 
     remote_name = (remote or "").strip() or "origin"
-    if console is not None:
-        console.log(f"[yellow]Fetching missing commit[/] {commit}")
-    log.info("Commit {} missing locally; fetching from {}", commit, remote_name)
-
+    _announce_commit_fetch(commit, remote_name=remote_name, console=console)
     fetch_origin(repo, remote=remote_name, fetch_depth=fetch_depth)
-    try:
-        resolved = repo.commit(commit)
-    except (BadName, GitCommandError, ValueError):
-        resolved = None
-    if resolved is not None:
-        return str(getattr(resolved, "hexsha", "") or "").strip()
+    resolved_hash = _resolve_commit_hash(repo, commit)
+    if resolved_hash is not None:
+        return resolved_hash
 
     if is_shallow_repository(repo):
-        if console is not None:
-            console.log(f"[yellow]Repository is shallow; unshallowing[/] remote={remote_name}")
-        log.info("Repository is shallow; unshallowing to retrieve {}", commit)
-        try:
-            repo.git.fetch("--unshallow", remote_name)
-        except GitCommandError as exc:
-            raise wrap_git_error(exc, "Failed to unshallow repository") from exc
-        try:
-            resolved = repo.commit(commit)
-        except (BadName, GitCommandError, ValueError):
-            resolved = None
-        if resolved is not None:
-            return str(getattr(resolved, "hexsha", "") or "").strip()
+        _unshallow_repository(
+            repo,
+            remote_name=remote_name,
+            commit=commit,
+            console=console,
+        )
+        resolved_hash = _resolve_commit_hash(repo, commit)
+        if resolved_hash is not None:
+            return resolved_hash
 
     raise RepositoryError(
         f"Commit {commit} is not available locally after fetching from {remote_name}.",
     )
 
+
+def _resolve_commit_hash(repo: Repo, commit_ref: str) -> str | None:
+    try:
+        resolved = repo.commit(commit_ref)
+    except (BadName, GitCommandError, ValueError):
+        return None
+    return str(getattr(resolved, "hexsha", "") or "").strip()
+
+
+def _announce_commit_fetch(
+    commit: str,
+    *,
+    remote_name: str,
+    console: Console | None,
+) -> None:
+    if console is not None:
+        console.log(f"[yellow]Fetching missing commit[/] {commit}")
+    log.info("Commit {} missing locally; fetching from {}", commit, remote_name)
+
+
+def _unshallow_repository(
+    repo: Repo,
+    *,
+    remote_name: str,
+    commit: str,
+    console: Console | None,
+) -> None:
+    if console is not None:
+        console.log(
+            f"[yellow]Repository is shallow; unshallowing[/] remote={remote_name}"
+        )
+    log.info("Repository is shallow; unshallowing to retrieve {}", commit)
+    try:
+        repo.git.fetch("--unshallow", remote_name)
+    except GitCommandError as exc:
+        raise wrap_git_error(exc, "Failed to unshallow repository") from exc

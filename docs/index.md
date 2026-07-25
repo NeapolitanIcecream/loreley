@@ -110,6 +110,8 @@ cp env.example .env
 - `OPENAI_API_KEY` or (`OPENAI_DYNAMIC_API_KEY_PROVIDER` + `OPENAI_DYNAMIC_API_KEY_TTL_SECONDS`)
 - `MAPELITES_CODE_EMBEDDING_DIMENSIONS`
 - `MAPELITES_EXPERIMENT_ROOT_COMMIT`
+- `MAPELITES_OBJECTIVES` (ordered objective names and `max`/`min` directions)
+- `MAPELITES_ISLANDS` (ordered island IDs; the first is the CLI/API default)
 - `SCHEDULER_MAX_TOTAL_JOBS`, `SCHEDULER_REPO_ROOT`, `WORKER_REPO_REMOTE_URL`
 - `WORKER_EVALUATOR_PLUGIN`
 - (recommended) `WORKER_EVOLUTION_GLOBAL_GOAL`
@@ -130,7 +132,7 @@ Note: on first start the scheduler performs a repo-state root scan at `MAPELITES
 
 ```bash
 uv run loreley scheduler
-uv run loreley worker
+uv run loreley worker --processes 4
 uv run loreley status
 ```
 
@@ -150,7 +152,8 @@ Repository-scale evolution has been demonstrated in the literature (for example,
 
 Loreley is designed to be **QD-native at repository scale**:
 
-- it keeps a MAP-Elites archive of **multiple elites** across behavioural niches (not a single champion line),
+- it keeps a bounded Pareto front of **multiple elites** in every occupied behavioural niche,
+- it schedules independent configured islands fairly and periodically injects a donor elite as a cross-island inspiration,
 - it samples from those niches as inspirations for new jobs,
 - and it uses evaluator gates + repository semantics as the primary source of constraints, minimising dependence on domain-specific rulebases.
 
@@ -162,7 +165,10 @@ Quality-diversity methods require a behaviour space. Hand-crafted behaviour desc
 
 Loreley derives behaviour descriptors from **repo-state code embeddings** (file-level embeddings cached by git blob SHA and aggregated into a commit vector), optionally reduced with PCA.
 
-Under similar fitness, the archive can preserve structurally different improvements (refactors vs micro-optimisations vs feature shifts) as distinct behavioural niches, enabling exploration without collapsing to a single style of change.
+Across similar primary-objective values or different Pareto trade-offs, the
+archive can preserve structurally different improvements (refactors vs
+micro-optimisations vs feature shifts) as distinct behavioural niches, enabling
+exploration without collapsing to a single style of change.
 
 ### Production-grade distributed loop
 
@@ -173,7 +179,7 @@ Loreley runs a long-lived loop with:
 - a scheduler that ingests completed jobs, samples base commits, and enqueues new jobs,
 - a Redis/Dramatiq worker fleet that runs planning/coding/evaluation per job,
 - a PostgreSQL-backed store for experiments, commits, metrics, and archive state,
-- explicit lifecycle controls (max unfinished jobs, required total job cap, seed population, best-candidate branch export).
+- explicit lifecycle controls (max unfinished jobs, required total job cap, seed population, primary-objective branch export).
 
 You can run a long optimisation campaign on a repository, scaling workers horizontally, while keeping the evolution process reproducible and observable.
 
@@ -217,7 +223,8 @@ jobs_per_day ≈ workers * 24 / E[t_job]
 ```
 
 - `p_valid` (valid-job rate): fraction of jobs that pass correctness gates and produce usable metrics.
-- improvement distribution `Δ`: fitness(new) − fitness(base) across valid jobs.
+- primary-objective improvement distribution `Δ`: value(new) − value(base)
+  across valid jobs, interpreted using the configured direction.
 
 From these, you can forecast:
 

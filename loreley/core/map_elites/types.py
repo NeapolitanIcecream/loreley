@@ -6,7 +6,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import numpy as np
-from ribs.archives import GridArchive
+
+from .pareto_archive import ParetoGridArchive
 
 if TYPE_CHECKING:
     from .code_embedding import CommitCodeEmbedding
@@ -16,8 +17,6 @@ if TYPE_CHECKING:
 
 __all__ = [
     "Vector",
-    "compact_solution",
-    "materialize_solution",
     "CommitEmbeddingArtifacts",
     "MapElitesRecord",
     "MapElitesInsertionResult",
@@ -25,31 +24,6 @@ __all__ = [
 ]
 
 Vector = tuple[float, ...]
-
-
-def _to_vector(values: object) -> Vector:
-    if values is None:
-        return ()
-    return tuple(float(v) for v in np.asarray(values).ravel())
-
-
-def compact_solution(*, measures: object, solution: object) -> Vector:
-    """Drop persisted solution payloads when they duplicate archive measures."""
-
-    measures_vector = _to_vector(measures)
-    solution_vector = _to_vector(solution)
-    if solution_vector and solution_vector != measures_vector:
-        return solution_vector
-    return ()
-
-
-def materialize_solution(*, measures: object, solution: object) -> Vector:
-    """Return a concrete solution vector, falling back to measures when compacted."""
-
-    solution_vector = _to_vector(solution)
-    if solution_vector:
-        return solution_vector
-    return _to_vector(measures)
 
 
 @dataclass(slots=True, frozen=True)
@@ -75,19 +49,18 @@ class CommitEmbeddingArtifacts:
 
 @dataclass(slots=True, frozen=True)
 class MapElitesRecord:
-    """Snapshot of a single elite stored inside an archive cell."""
+    """Snapshot of one Pareto elite retained in a behavior cell."""
 
     commit_hash: str
     island_id: str
     cell_index: int
-    fitness: float
+    objective_values: Vector
+    objective_scores: Vector
     measures: Vector
-    solution: Vector
     timestamp: float
-    objective: float | None = None
-    metric_value: float | None = None
-    metric_name: str | None = None
-    higher_is_better: bool | None = None
+    primary_metric_value: float | None = None
+    primary_metric_name: str | None = None
+    primary_metric_higher_is_better: bool | None = None
     campaign_baseline_id: str | None = None
     baseline_key_hash: str | None = None
     baseline_status: str | None = None
@@ -99,10 +72,18 @@ class MapElitesRecord:
     def dimensions(self) -> int:
         return len(self.measures)
 
+    @property
+    def primary_objective_value(self) -> float:
+        return float(self.objective_values[0])
+
+    @property
+    def primary_objective_score(self) -> float:
+        return float(self.objective_scores[0])
+
 
 @dataclass(slots=True, frozen=True)
 class MapElitesInsertionResult:
-    """Wraps the outcome of adding a commit to the archive."""
+    """Outcome of attempting Pareto admission for one commit."""
 
     status: int
     delta: float
@@ -117,22 +98,13 @@ class MapElitesInsertionResult:
 
 @dataclass(slots=True)
 class IslandState:
-    """Mutable bookkeeping attached to each island.
+    """Mutable projection and Pareto-archive state for one independent island."""
 
-    Invariants:
-    - `archive` is the source of truth for occupied cells and elite payload.
-    - `index_to_commit` and `commit_to_index` are inverse mappings for occupied
-      cells maintained by manager/archive helpers.
-    - Manager-level `commit_to_island` must agree with per-island mappings.
-    - Any archive replace/clear operation must keep archive payload and mappings
-      consistent before the next read path (`get_records/get_cell_commits`).
-    """
-
-    archive: GridArchive
+    archive: ParetoGridArchive
     lower_bounds: np.ndarray
     upper_bounds: np.ndarray
     history: tuple[PcaHistoryEntry, ...] = field(default_factory=tuple)
     projection: PCAProjection | None = None
     samples_since_fit: int = 0
     commit_to_index: dict[str, int] = field(default_factory=dict)
-    index_to_commit: dict[int, str] = field(default_factory=dict)
+    index_to_commits: dict[int, tuple[str, ...]] = field(default_factory=dict)

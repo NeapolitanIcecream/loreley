@@ -15,6 +15,8 @@ Central orchestration loop that keeps the Loreley evolution pipeline moving by c
   - counts total jobs in the database so the global cap can be enforced cheaply,
   - reclaims stale or malformed `RUNNING` rows before dispatch,
   - enforces `SCHEDULER_MAX_UNFINISHED_JOBS` and the required `SCHEDULER_MAX_TOTAL_JOBS` cap,
+  - rotates fairly across every configured island for seed and normal work,
+  - periodically selects a non-duplicate elite from another ready island as a persisted migration inspiration,
   - calls `MapElitesSampler.schedule_job()` to produce new work, and
   - sends job messages to the `run_evolution_job` actor and only then marks the corresponding rows as `QUEUED`, which avoids stuck-`QUEUED` rows when broker submission fails, and redispatches stale `QUEUED` rows after the worker lease TTL to recover broker-loss or restart cases.
 - **MAP-Elites maintenance**: ingestion of succeeded jobs is handled by `loreley.scheduler.ingestion.MapElitesIngestion`, which:
@@ -28,16 +30,19 @@ Central orchestration loop that keeps the Loreley evolution pipeline moving by c
 The scheduler consumes the following `Settings` fields (all exposed as environment variables):
 
 - `EXPERIMENT_ID`: required experiment id (UUID or slug) used for task queue naming and the scheduler advisory lock. The database itself is single-tenant and identified by `DATABASE_URL` plus `InstanceMetadata`.
-- `SCHEDULER_REPO_ROOT`: optional path to a writable clone of the evolved repository; defaults to `WORKER_REPO_WORKTREE`. If it points at the worker base clone, the scheduler shares the worker's cross-process repo lock for git fetches and best-branch updates.
+- `SCHEDULER_REPO_ROOT`: optional path to a writable clone of the evolved repository; defaults to `WORKER_REPO_WORKTREE`. If it points at the worker base clone, the scheduler shares the worker's cross-process repo lock for git fetches and primary-objective branch updates.
 - `SCHEDULER_POLL_INTERVAL_SECONDS`: delay between scheduler ticks (default: `30` seconds).
 - `SCHEDULER_MAX_UNFINISHED_JOBS`: hard cap on the number of jobs that are not yet finished (`pending`, `queued`, `running`).
-- `SCHEDULER_MAX_TOTAL_JOBS`: **required** cap on the total number of `EvolutionJob` rows in the database. The scheduler stops once the cap is reached and all jobs are finished, then updates the best-fitness branch deliverable.
+- `SCHEDULER_MAX_TOTAL_JOBS`: **required** cap on the total number of `EvolutionJob` rows in the database. The scheduler stops once the cap is reached and all jobs are finished, then updates the explicitly named primary-objective branch deliverable.
 - `SCHEDULER_SCHEDULE_BATCH_SIZE`: maximum number of new jobs sampled from MAP-Elites per tick (bounded by the unused capacity).
 - `SCHEDULER_DISPATCH_BATCH_SIZE`: number of eligible jobs sent to Dramatiq per tick. Eligible jobs include `PENDING` rows and stale `QUEUED` rows older than `WORKER_JOB_LEASE_TTL_SECONDS`.
 - `SCHEDULER_INGEST_BATCH_SIZE`: number of newly succeeded jobs ingested into MAP-Elites per tick.
 - `SCHEDULER_STALE_RUNNING_RECLAIM_BATCH_SIZE`: maximum number of stale or malformed `RUNNING` jobs reclaimed per tick. When set to `0`, automatic reclaim is disabled.
 - `SCHEDULER_STALE_RUNNING_MAX_RECOVERY_ATTEMPTS`: number of automatic recoveries allowed before a reclaimed job is marked `FAILED`.
 - `MAPELITES_EXPERIMENT_ROOT_COMMIT`: required git commit identifier used as the logical root for repo-state bootstrap, campaign baseline identity, and incremental-only ingestion. The scheduler resolves it to a canonical full hash, pins root ignore rules for repo-state embeddings by reading `.gitignore` + `.loreleyignore` at that root commit, and bootstraps the repo-state aggregate. `BaselineBootstrapService` separately evaluates or loads the matching `campaign_baselines` row for the active campaign program, evaluator identity, primary metric, runtime profile, and settings fingerprint. Valid baselines can be shown in status and archive records as `delta_from_root_baseline`; degraded warn-policy baselines remain visible but keep deltas unavailable. During cold-start, when the archive is empty and no jobs exist yet, the scheduler generates seed evolution jobs from this root commit to provide warmup data for PCA. While PCA is warming up, `MapElitesManager` persists PCA history but keeps the archive empty; once PCA is fitted, it seeds the archive from the warmup commits and the scheduler transitions to regular MAP-Elites sampling. Seed scheduling targets `max(MAPELITES_SEED_POPULATION_SIZE, MAPELITES_FEATURE_NORMALIZATION_WARMUP_SAMPLES)` valid PCA history samples so failed seed jobs can be replaced before PCA fitting.
+- `MAPELITES_ISLANDS`: ordered independent island IDs. The first is the default for commands that omit an island. Global seed/normal capacity is allocated fairly across the list.
+- `MAPELITES_OBJECTIVES`: ordered, strict optimization contract. Every successful candidate must provide every metric with the configured direction; Pareto admission uses the complete vector.
+- `MAPELITES_MIGRATION_INTERVAL_JOBS`: per-island interval between cross-island donor inspirations. This avoids cadence aliases that repeatedly target only one island.
 
 Startup approval: before entering the main loop, the scheduler prints the observed eligible repo-state file count (and filter knobs) at `MAPELITES_EXPERIMENT_ROOT_COMMIT` and asks the operator to confirm with a y/n question. In non-interactive environments, pass `--yes` or set `SCHEDULER_STARTUP_APPROVE=true`; otherwise the scheduler refuses to start (fail fast).
 

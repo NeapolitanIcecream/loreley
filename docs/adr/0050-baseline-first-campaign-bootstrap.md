@@ -9,7 +9,12 @@ Related: [ADR 0030](0030-db-only-repo-state-embeddings-and-explicit-bootstrap.md
 [ADR 0045](0045-config-profiles-for-large-repo-campaigns.md),
 [ADR 0046](0046-agent-visible-evaluation-artifacts.md),
 [ADR 0048](0048-failed-candidate-repair-pool.md),
-[ADR 0049](0049-campaign-program-contract.md)
+[ADR 0049](0049-campaign-program-contract.md), and
+[ADR 0052](0052-multi-island-pareto-archive-and-worker-processes.md).
+
+ADR 0052 supersedes the scalar fitness terminology in this draft. Baseline
+comparability now uses the ordered objective contract and its explicit primary
+projection.
 
 ## Context
 
@@ -314,7 +319,7 @@ worker_evaluator_plugin identity
 WORKER_EVALUATOR_VERSION / evaluator config fingerprint
 evaluation timeout or budget
 LORELEY_PROFILE
-MAPELITES_FITNESS_* values that affect interpretation
+MAPELITES_OBJECTIVES ordered contract and fingerprint
 benchmark/runtime profile fields the evaluator actually uses
 ```
 

@@ -11,36 +11,34 @@ class _RecordingManager:
     def __init__(self) -> None:
         self.calls: list[str | None] = []
 
-    def get_cell_commits(self, island_id: str | None = None) -> dict[int, str]:
+    def get_cell_fronts(
+        self,
+        island_id: str | None = None,
+    ) -> dict[int, tuple[str, ...]]:
         self.calls.append(island_id)
-        return {0: "c1"}
+        return {0: ("c1",)}
 
 
-def test_resolve_default_island_falls_back_to_main_for_blank_setting(settings) -> None:
-    """Blank island config should not fork behavior away from the configured default."""
+def test_resolve_default_island_uses_first_configured_island(settings) -> None:
+    settings.mapelites_islands = ("explore", "main")
 
-    settings.mapelites_default_island_id = ""
-
-    assert resolve_default_island_id(settings) == "main"
+    assert resolve_default_island_id(settings) == "explore"
 
 
-def test_sampler_uses_main_when_default_island_setting_is_blank(settings) -> None:
-    """Regression: sampler should not fall back to the legacy `default` island name."""
-
-    settings.mapelites_default_island_id = ""
+def test_sampler_uses_first_configured_island(settings) -> None:
+    settings.mapelites_islands = ("explore", "main")
     manager = _RecordingManager()
 
     sampler = MapElitesSampler(manager, settings=settings)
-    snapshot = sampler.get_cell_commits_snapshot()
+    snapshot = sampler.get_cell_fronts_snapshot()
 
-    assert snapshot == ("main", {0: "c1"})
-    assert manager.calls == ["main"]
+    assert snapshot == ("explore", {0: ("c1",)})
+    assert manager.calls == ["explore"]
 
 
-def test_manager_uses_main_when_default_island_setting_is_blank(settings) -> None:
-    """Regression: manager should resolve blank default-island settings to `main`."""
+def test_manager_uses_first_configured_island(settings) -> None:
+    settings.mapelites_islands = ("explore", "main")
 
-    settings.mapelites_default_island_id = ""
     manager = MapElitesManager(settings=settings, repo_root=Path("."))
     manager._snapshot_store = type(  # type: ignore[attr-defined]
         "_StubSnapshotStore",
@@ -50,4 +48,4 @@ def test_manager_uses_main_when_default_island_setting_is_blank(settings) -> Non
 
     description = manager.describe_island()
 
-    assert description["island_id"] == "main"
+    assert description["island_id"] == "explore"

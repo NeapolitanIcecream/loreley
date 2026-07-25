@@ -8,14 +8,15 @@ from typing import Any
 
 import pytest
 
-from loreley.cli import _status_response_payload, main
+from loreley.cli import _load_best_commit_status_payload, _status_response_payload, main
 from loreley.core.campaign_program import parse_campaign_program
+from loreley.core.map_elites.objectives import ObjectiveSpec
+from loreley.db.models import CommitCard, MapElitesArchiveCell, Metric
 from tests.support import TestSettings
 
 
 def _make_settings() -> TestSettings:
     return TestSettings(
-        MAPELITES_FITNESS_METRIC="",
         WORKER_JOB_LEASE_TTL_SECONDS=1800,
         WORKER_JOB_HEARTBEAT_INTERVAL_SECONDS=60,
         SCHEDULER_STALE_RUNNING_MAX_RECOVERY_ATTEMPTS=3,
@@ -45,6 +46,7 @@ def test_status_json_includes_job_lease_health(
     monkeypatch.setattr("loreley.cli._configure_logging_or_exit", lambda **_kwargs: None)
     _patch_cli_db_now(monkeypatch)
     _patch_no_baseline_resolution(monkeypatch)
+    monkeypatch.setattr("loreley.cli._load_best_commit_status_payload", lambda **_kwargs: None)
     monkeypatch.setattr(
         "loreley.cli._load_archive_stats_or_exit",
         lambda **_kwargs: {"island_id": "main", "occupied": 1, "cells": 4, "coverage": 0.25},
@@ -115,6 +117,39 @@ def test_status_response_payload_preserves_nested_sections() -> None:
     }
 
 
+def test_best_commit_status_query_ignores_retired_islands() -> None:
+    settings = _make_settings()
+    settings.mapelites_islands = ("alpha", "beta")
+    settings.mapelites_objectives = (ObjectiveSpec(name="score", direction="max"),)
+    statements: list[Any] = []
+
+    class DummyResult:
+        def first(self) -> None:
+            return None
+
+    class DummySession:
+        def execute(self, stmt: Any) -> DummyResult:
+            statements.append(stmt)
+            return DummyResult()
+
+    payload = _load_best_commit_status_payload(
+        session=DummySession(),
+        settings=settings,
+        instance=SimpleNamespace(root_commit_hash="root"),
+        CommitCard=CommitCard,
+        MapElitesArchiveCell=MapElitesArchiveCell,
+        Metric=Metric,
+    )
+
+    assert payload is None
+    assert len(statements) == 1
+    statement = statements[0]
+    parameter_values = statement.compile().params.values()
+    assert ["alpha", "beta"] in parameter_values
+    selected_island = list(statement.selected_columns)[2]
+    assert selected_island.table is MapElitesArchiveCell.__table__
+
+
 def test_status_table_prints_job_lease_health_section(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -124,6 +159,7 @@ def test_status_table_prints_job_lease_health_section(
     monkeypatch.setattr("loreley.cli._configure_logging_or_exit", lambda **_kwargs: None)
     _patch_cli_db_now(monkeypatch)
     _patch_no_baseline_resolution(monkeypatch)
+    monkeypatch.setattr("loreley.cli._load_best_commit_status_payload", lambda **_kwargs: None)
     monkeypatch.setattr(
         "loreley.cli._load_archive_stats_or_exit",
         lambda **_kwargs: {"island_id": "main", "occupied": 1, "cells": 4, "coverage": 0.25},
@@ -183,7 +219,7 @@ def test_status_json_scopes_baseline_to_current_campaign_program(
     ).raw_sha256
     settings = _make_settings()
     settings.mapelites_experiment_root_commit = "root123"
-    settings.mapelites_fitness_metric = "score"
+    settings.mapelites_objectives = (ObjectiveSpec(name="score", direction="max"),)
     settings.scheduler_repo_root = str(tmp_path)
     monkeypatch.setattr("loreley.cli.get_settings", lambda: settings)
     monkeypatch.setattr("loreley.cli._configure_logging_or_exit", lambda **_kwargs: None)
@@ -269,7 +305,7 @@ def test_status_json_uses_persisted_scheduler_campaign_program(
     disk_program_hash = "b" * 64
     settings = _make_settings()
     settings.mapelites_experiment_root_commit = "root123"
-    settings.mapelites_fitness_metric = "score"
+    settings.mapelites_objectives = (ObjectiveSpec(name="score", direction="max"),)
     monkeypatch.setattr("loreley.cli.get_settings", lambda: settings)
     monkeypatch.setattr("loreley.cli._configure_logging_or_exit", lambda **_kwargs: None)
     monkeypatch.setattr(

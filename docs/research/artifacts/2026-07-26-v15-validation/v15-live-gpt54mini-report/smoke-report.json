@@ -1,0 +1,451 @@
+{
+  "phase": "smoke",
+  "experiment_id": "circle-packing-codex-gpt54-smoke-4w",
+  "generated_at": "2026-07-25T17:43:52.308008+00:00",
+  "jobs": {
+    "total": 4,
+    "succeeded": 4,
+    "failed": 0,
+    "seed_total": 4,
+    "non_seed_total": 0,
+    "seed_success_rate": 1.0,
+    "non_seed_success_rate": null,
+    "failure_rate": 0.0
+  },
+  "timing": {
+    "total_duration_seconds": {
+      "count": 4,
+      "mean": 152.86497431993484,
+      "p50": 151.06133151054382,
+      "p90": 207.7492292404175,
+      "min": 85.38339304924011,
+      "max": 223.95384120941162
+    },
+    "planning_duration_seconds": {
+      "count": 4,
+      "mean": 11.949506353994366,
+      "p50": 11.491377041500527,
+      "p90": 13.99948072489351,
+      "min": 10.16070770798251,
+      "max": 14.654563624993898
+    },
+    "coding_duration_seconds": {
+      "count": 4,
+      "mean": 136.21876265626634,
+      "p50": 134.68891372950748,
+      "p90": 192.78335906249706,
+      "min": 66.42703079106286,
+      "max": 209.07019237498753
+    },
+    "evaluator_duration_seconds": {
+      "count": 4,
+      "mean": 0.179028750048019,
+      "p50": 0.1778435205342248,
+      "p90": 0.1830770125496201,
+      "min": 0.1756704590516165,
+      "max": 0.18475750007200986
+    },
+    "runtime_p50_ms": {
+      "count": 4,
+      "mean": 0.030780996894463897,
+      "p50": 0.004687521141022444,
+      "p90": 0.07969558937475087,
+      "min": 0.002415967173874378,
+      "max": 0.11133297812193632
+    },
+    "planning_attempts": {
+      "count": 4,
+      "mean": 1.0,
+      "p50": 1.0,
+      "p90": 1.0,
+      "min": 1.0,
+      "max": 1.0
+    },
+    "coding_attempts": {
+      "count": 4,
+      "mean": 1.0,
+      "p50": 1.0,
+      "p90": 1.0,
+      "min": 1.0,
+      "max": 1.0
+    }
+  },
+  "best": {
+    "job_id": "161930d6-20f9-4f74-b696-46211b2c10ec",
+    "commit_hash": "12ce3d5032238c88c5b02e8dd783fb24c5c5f232",
+    "sum_radii": 2.5,
+    "packing_density": 0.7723081940074908,
+    "runtime_p50_ms": 0.002415967173874378,
+    "worker_instance_id": "pid-98414"
+  },
+  "archive": {
+    "occupied_cells": 4,
+    "retained_elites": 4,
+    "best_primary_value": 2.5,
+    "best_commit_hash": "12ce3d5032238c88c5b02e8dd783fb24c5c5f232"
+  },
+  "first_above_baseline": {
+    "index": 1,
+    "job_id": "d94ae65e-284f-4060-a0c2-18c75c47776a",
+    "commit_hash": "6e1435c2f1a7cc40a2adf1a655e889df2d8fc4bf",
+    "worker_instance_id": "pid-98414",
+    "is_seed_job": true,
+    "sum_radii": 2.4389662673771957,
+    "packing_density": 0.7187669712876036,
+    "total_duration_seconds": 132.1841950416565,
+    "completed_at": "2026-07-25T17:39:24.820287+00:00",
+    "elapsed_minutes_from_start": 2.204
+  },
+  "worker_throughput": [
+    {
+      "worker_instance_id": "pid-98414",
+      "jobs_total": 2,
+      "jobs_succeeded": 2,
+      "jobs_failed": 0,
+      "best_sum_radii": 2.5,
+      "total_duration_seconds": {
+        "count": 2,
+        "mean": 108.7837940454483,
+        "p50": 108.7837940454483,
+        "p90": 127.50411484241485,
+        "min": 85.38339304924011,
+        "max": 132.1841950416565
+      }
+    },
+    {
+      "worker_instance_id": "pid-98415",
+      "jobs_total": 2,
+      "jobs_succeeded": 2,
+      "jobs_failed": 0,
+      "best_sum_radii": 2.5,
+      "total_duration_seconds": {
+        "count": 2,
+        "mean": 196.9461545944214,
+        "p50": 196.9461545944214,
+        "p90": 218.55230388641357,
+        "min": 169.93846797943115,
+        "max": 223.95384120941162
+      }
+    }
+  ],
+  "trajectory": [
+    {
+      "index": 1,
+      "job_id": "d94ae65e-284f-4060-a0c2-18c75c47776a",
+      "commit_hash": "6e1435c2f1a7cc40a2adf1a655e889df2d8fc4bf",
+      "worker_instance_id": "pid-98414",
+      "is_seed_job": true,
+      "sum_radii": 2.4389662673771957,
+      "packing_density": 0.7187669712876036,
+      "total_duration_seconds": 132.1841950416565,
+      "completed_at": "2026-07-25T17:39:24.820287+00:00",
+      "elapsed_minutes_from_start": 2.204
+    },
+    {
+      "index": 2,
+      "job_id": "291eef23-0f2f-40cb-bc4f-feff48dd15e6",
+      "commit_hash": "e277ccb3a94b3813f60b595ab80e3506fa8c63b9",
+      "worker_instance_id": "pid-98415",
+      "is_seed_job": true,
+      "sum_radii": 2.4389662673796346,
+      "packing_density": 0.718766971289041,
+      "total_duration_seconds": 169.93846797943115,
+      "completed_at": "2026-07-25T17:40:02.576837+00:00",
+      "elapsed_minutes_from_start": 2.833
+    },
+    {
+      "index": 3,
+      "job_id": "161930d6-20f9-4f74-b696-46211b2c10ec",
+      "commit_hash": "12ce3d5032238c88c5b02e8dd783fb24c5c5f232",
+      "worker_instance_id": "pid-98414",
+      "is_seed_job": true,
+      "sum_radii": 2.5,
+      "packing_density": 0.7723081940074908,
+      "total_duration_seconds": 85.38339304924011,
+      "completed_at": "2026-07-25T17:40:51.636639+00:00",
+      "elapsed_minutes_from_start": 3.651
+    },
+    {
+      "index": 4,
+      "job_id": "f442b17e-b7aa-4c19-ad29-922468e294ad",
+      "commit_hash": "1f8c02f99b2657d4463130c2bbd93088a6a28f8e",
+      "worker_instance_id": "pid-98415",
+      "is_seed_job": true,
+      "sum_radii": 2.5,
+      "packing_density": 0.7592182246175334,
+      "total_duration_seconds": 223.95384120941162,
+      "completed_at": "2026-07-25T17:43:47.272926+00:00",
+      "elapsed_minutes_from_start": 6.578
+    }
+  ],
+  "references": [
+    {
+      "repo_root": "/private/var/folders/my/gymbb9t12mb4tf91rnc9yzjc0000gn/T/circle-packing-report-93ze94rc",
+      "target_n": 26,
+      "runs": 7,
+      "samples": {
+        "1": {
+          "sum_radii": 0.5,
+          "packing_density": 0.7853981633974483,
+          "min_gap": 0.0,
+          "min_boundary_margin": 0.0
+        },
+        "2": {
+          "sum_radii": 0.25,
+          "packing_density": 0.09817477042468103,
+          "min_gap": 0.8106601717798212,
+          "min_boundary_margin": 0.0
+        },
+        "5": {
+          "sum_radii": 0.25,
+          "packing_density": 0.039269908169872414,
+          "min_gap": 0.21819805153394636,
+          "min_boundary_margin": 0.0
+        },
+        "26": {
+          "sum_radii": 0.2499999999999999,
+          "packing_density": 0.007551905417283154,
+          "min_gap": 0.036249916677713497,
+          "min_boundary_margin": 0.0
+        }
+      },
+      "target_metrics": {
+        "sum_radii": 0.2499999999999999,
+        "packing_density": 0.007551905417283154,
+        "min_gap": 0.036249916677713497,
+        "min_boundary_margin": 0.0
+      },
+      "repeated_runs": {
+        "deterministic": true,
+        "time_ms": {
+          "count": 7,
+          "mean": 0.0029104495687144144,
+          "p50": 0.0025420449674129486,
+          "p90": 0.0037496211007237434,
+          "p99": 0.0038624624721705914,
+          "min": 0.002540997229516506,
+          "max": 0.0038750004023313522
+        },
+        "sum_radii": {
+          "count": 7,
+          "mean": 0.24999999999999986,
+          "p50": 0.2499999999999999,
+          "p90": 0.2499999999999999,
+          "p99": 0.2499999999999999,
+          "min": 0.2499999999999999,
+          "max": 0.2499999999999999
+        },
+        "packing_density": {
+          "count": 7,
+          "mean": 0.0075519054172831545,
+          "p50": 0.007551905417283154,
+          "p90": 0.007551905417283154,
+          "p99": 0.007551905417283154,
+          "min": 0.007551905417283154,
+          "max": 0.007551905417283154
+        },
+        "min_gap": {
+          "count": 7,
+          "mean": 0.036249916677713497,
+          "p50": 0.036249916677713497,
+          "p90": 0.036249916677713497,
+          "p99": 0.036249916677713497,
+          "min": 0.036249916677713497,
+          "max": 0.036249916677713497
+        },
+        "min_boundary_margin": {
+          "count": 7,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p90": 0.0,
+          "p99": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        }
+      },
+      "label": "root",
+      "commit_hash": "6dab191",
+      "status": "available",
+      "error": null
+    },
+    {
+      "repo_root": "/private/var/folders/my/gymbb9t12mb4tf91rnc9yzjc0000gn/T/circle-packing-report-56rqzslx",
+      "target_n": 26,
+      "runs": 7,
+      "samples": {
+        "1": {
+          "sum_radii": 0.5,
+          "packing_density": 0.7853981633974483,
+          "min_gap": 0.0,
+          "min_boundary_margin": 0.0
+        },
+        "2": {
+          "sum_radii": 0.5278625486149799,
+          "packing_density": 0.43768491386003827,
+          "min_gap": 3.1691569202241254e-06,
+          "min_boundary_margin": 1.0657252857981803e-10
+        },
+        "5": {
+          "sum_radii": 0.9545367367593516,
+          "packing_density": 0.5815274902647514,
+          "min_gap": 1.4550588511852425e-10,
+          "min_boundary_margin": 7.2380851312559e-11
+        },
+        "26": {
+          "sum_radii": 2.0035698039793197,
+          "packing_density": 0.48569511038584745,
+          "min_gap": 6.22767948321723e-11,
+          "min_boundary_margin": 3.1038421832718655e-11
+        }
+      },
+      "target_metrics": {
+        "sum_radii": 2.0035698039793197,
+        "packing_density": 0.48569511038584745,
+        "min_gap": 6.22767948321723e-11,
+        "min_boundary_margin": 3.1038421832718655e-11
+      },
+      "repeated_runs": {
+        "deterministic": true,
+        "time_ms": {
+          "count": 7,
+          "mean": 77.16213687256511,
+          "p50": 77.13329198304564,
+          "p90": 77.57708278950304,
+          "p99": 77.80140797840431,
+          "min": 76.64920901879668,
+          "max": 77.82633299939334
+        },
+        "sum_radii": {
+          "count": 7,
+          "mean": 2.0035698039793197,
+          "p50": 2.0035698039793197,
+          "p90": 2.0035698039793197,
+          "p99": 2.0035698039793197,
+          "min": 2.0035698039793197,
+          "max": 2.0035698039793197
+        },
+        "packing_density": {
+          "count": 7,
+          "mean": 0.48569511038584745,
+          "p50": 0.48569511038584745,
+          "p90": 0.48569511038584745,
+          "p99": 0.48569511038584745,
+          "min": 0.48569511038584745,
+          "max": 0.48569511038584745
+        },
+        "min_gap": {
+          "count": 7,
+          "mean": 6.22767948321723e-11,
+          "p50": 6.22767948321723e-11,
+          "p90": 6.22767948321723e-11,
+          "p99": 6.22767948321723e-11,
+          "min": 6.22767948321723e-11,
+          "max": 6.22767948321723e-11
+        },
+        "min_boundary_margin": {
+          "count": 7,
+          "mean": 3.1038421832718655e-11,
+          "p50": 3.1038421832718655e-11,
+          "p90": 3.1038421832718655e-11,
+          "p99": 3.1038421832718655e-11,
+          "min": 3.1038421832718655e-11,
+          "max": 3.1038421832718655e-11
+        }
+      },
+      "label": "historical_best",
+      "commit_hash": "62d15a3",
+      "status": "available",
+      "error": null
+    },
+    {
+      "repo_root": "/private/var/folders/my/gymbb9t12mb4tf91rnc9yzjc0000gn/T/circle-packing-report-bjdz4dvl",
+      "target_n": 26,
+      "runs": 7,
+      "samples": {
+        "1": {
+          "sum_radii": 0.5,
+          "packing_density": 0.7853981633974483,
+          "min_gap": 0.0,
+          "min_boundary_margin": 0.0
+        },
+        "2": {
+          "sum_radii": 0.5,
+          "packing_density": 0.39269908169872414,
+          "min_gap": 0.0,
+          "min_boundary_margin": 0.0
+        },
+        "5": {
+          "sum_radii": 0.8333333333333333,
+          "packing_density": 0.4363323129985824,
+          "min_gap": 5.551115123125783e-17,
+          "min_boundary_margin": 0.0
+        },
+        "26": {
+          "sum_radii": 2.5000000000000013,
+          "packing_density": 0.7723081940074908,
+          "min_gap": -5.551115123125783e-17,
+          "min_boundary_margin": 0.0
+        }
+      },
+      "target_metrics": {
+        "sum_radii": 2.5000000000000013,
+        "packing_density": 0.7723081940074908,
+        "min_gap": -5.551115123125783e-17,
+        "min_boundary_margin": 0.0
+      },
+      "repeated_runs": {
+        "deterministic": true,
+        "time_ms": {
+          "count": 7,
+          "mean": 0.0027084523545844214,
+          "p50": 0.0025420449674129486,
+          "p90": 0.0031920382753014565,
+          "p99": 0.0033945241011679173,
+          "min": 0.002374988980591297,
+          "max": 0.0034170225262641907
+        },
+        "sum_radii": {
+          "count": 7,
+          "mean": 2.5000000000000013,
+          "p50": 2.5000000000000013,
+          "p90": 2.5000000000000013,
+          "p99": 2.5000000000000013,
+          "min": 2.5000000000000013,
+          "max": 2.5000000000000013
+        },
+        "packing_density": {
+          "count": 7,
+          "mean": 0.7723081940074908,
+          "p50": 0.7723081940074908,
+          "p90": 0.7723081940074908,
+          "p99": 0.7723081940074908,
+          "min": 0.7723081940074908,
+          "max": 0.7723081940074908
+        },
+        "min_gap": {
+          "count": 7,
+          "mean": -5.551115123125783e-17,
+          "p50": -5.551115123125783e-17,
+          "p90": -5.551115123125783e-17,
+          "p99": -5.551115123125783e-17,
+          "min": -5.551115123125783e-17,
+          "max": -5.551115123125783e-17
+        },
+        "min_boundary_margin": {
+          "count": 7,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p90": 0.0,
+          "p99": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        }
+      },
+      "label": "current_best",
+      "commit_hash": "12ce3d5032238c88c5b02e8dd783fb24c5c5f232",
+      "status": "available",
+      "error": null
+    }
+  ],
+  "failures": []
+}

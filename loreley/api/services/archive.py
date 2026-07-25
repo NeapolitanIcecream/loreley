@@ -5,13 +5,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 
 from loreley.api.pagination import PaginationCursorError, decode_cursor, encode_cursor, normalize_pagination
-from loreley.config import Settings, get_settings, resolve_default_island_id
+from loreley.config import Settings, get_settings, resolve_objective_contract
 from loreley.core.candidate_fate import derive_candidate_fate
-from loreley.core.map_elites.types import MapElitesRecord, materialize_solution
-from loreley.core.map_elites.snapshot import ensure_supported_snapshot_meta
+from loreley.core.map_elites.objectives import ObjectiveContract
+from loreley.core.map_elites.types import MapElitesRecord
+from loreley.core.map_elites.snapshot import (
+    ensure_supported_snapshot_meta,
+    validate_snapshot_contract,
+)
 from loreley.db.base import session_scope
 from loreley.db.models import (
     CandidateCommit,
@@ -20,7 +24,6 @@ from loreley.db.models import (
     MapElitesArchiveCell,
     MapElitesPcaHistory,
     MapElitesState,
-    Metric,
 )
 from loreley.scheduler.baselines import improvement_from_baseline, load_latest_matching_baseline
 
@@ -43,31 +46,15 @@ class ArchiveRecordPage:
 @dataclass(frozen=True, slots=True)
 class ArchiveRecordBuildContext:
     island_id: str
-    metric_values_by_commit: dict[str, float]
-    metric_name: str | None
-    higher_is_better: bool
+    objective_contract: ObjectiveContract
     baseline_by_commit: dict[str, Any | None] | None = None
     baseline: Any | None = None
 
 
-def _fitness_metric_name(settings: Settings) -> str | None:
-    metric_name = str(getattr(settings, "mapelites_fitness_metric", "") or "").strip()
-    return metric_name or None
+def list_islands(*, settings: Settings | None = None) -> list[str]:
+    """Return the configured island contract in scheduling order."""
 
-
-def list_islands() -> list[str]:
-    """Return known island IDs for the instance."""
-
-    with session_scope() as session:
-        stmt = select(MapElitesState.island_id)
-        values = [str(v) for v in session.execute(stmt).scalars().all() if v]
-    # Deterministic order for UI.
-    values = sorted(set(values))
-    if values:
-        return values
-
-    base_settings = get_settings()
-    return [resolve_default_island_id(base_settings)]
+    return list((settings or get_settings()).mapelites_islands)
 
 
 def describe_island(
@@ -81,54 +68,47 @@ def describe_island(
     dims = max(1, int(base_settings.mapelites_dimensionality_target_dims))
     cells_per_dim = max(2, int(base_settings.mapelites_archive_cells_per_dim))
     cells = int(cells_per_dim**dims)
-    metric_name = _fitness_metric_name(base_settings)
-    higher_is_better = bool(base_settings.mapelites_fitness_higher_is_better)
+    contract = resolve_objective_contract(base_settings)
+    primary = contract.primary
+    primary_value_column = MapElitesArchiveCell.objective_values[1]
+    best_primary = (
+        func.max(primary_value_column)
+        if primary.higher_is_better
+        else func.min(primary_value_column)
+    )
 
     with session_scope() as session:
-        occupied, qd_score, best_objective = session.execute(
+        _validate_persisted_objective_contract(
+            session=session,
+            island_id=island_id,
+            objective_contract=contract,
+        )
+        occupied, elites, best_primary_value = session.execute(
             select(
-                func.count(MapElitesArchiveCell.cell_index),
-                func.coalesce(func.sum(MapElitesArchiveCell.objective), 0.0),
-                func.max(MapElitesArchiveCell.objective),
+                func.count(func.distinct(MapElitesArchiveCell.cell_index)),
+                func.count(),
+                best_primary,
             ).where(
                 MapElitesArchiveCell.island_id == island_id,
             )
         ).one()
-        best_metric_value = None
-        if metric_name:
-            order_column = Metric.value.desc() if higher_is_better else Metric.value.asc()
-            best_metric_value = session.execute(
-                select(Metric.value)
-                .join(CommitCard, CommitCard.id == Metric.commit_card_id)
-                .join(
-                    MapElitesArchiveCell,
-                    MapElitesArchiveCell.commit_hash == CommitCard.commit_hash,
-                )
-                .where(
-                    MapElitesArchiveCell.island_id == island_id,
-                    Metric.name == metric_name,
-                )
-                .order_by(order_column)
-                .limit(1)
-            ).scalar_one_or_none()
 
     occupied_value = int(occupied or 0)
-    qd_score_value = float(qd_score or 0.0)
-    best_objective_value = float(best_objective) if best_objective is not None else 0.0
-    best_value = float(best_metric_value) if best_metric_value is not None else best_objective_value
+    elites_value = int(elites or 0)
     coverage = (occupied_value / cells) if cells else 0.0
-    norm_qd_score = (qd_score_value / cells) if cells else 0.0
     return {
         "island_id": island_id,
         "occupied": occupied_value,
+        "elites": elites_value,
         "cells": cells,
         "coverage": coverage,
-        "qd_score": qd_score_value,
-        "norm_qd_score": norm_qd_score,
-        "best_fitness": best_value,
-        "best_objective": best_objective_value,
-        "metric_name": metric_name,
-        "higher_is_better": higher_is_better,
+        "objective_count": len(contract.specs),
+        "front_max_size": int(base_settings.mapelites_pareto_front_max_size),
+        "best_primary_value": (
+            float(best_primary_value) if best_primary_value is not None else None
+        ),
+        "primary_metric_name": primary.name,
+        "primary_metric_higher_is_better": primary.higher_is_better,
     }
 
 
@@ -141,38 +121,31 @@ def list_records(
 ) -> list[MapElitesRecord]:
     """Return all elite records for an island from persisted archive cells."""
     base_settings = settings or get_settings()
-    metric_name = _fitness_metric_name(base_settings)
-    higher_is_better = bool(base_settings.mapelites_fitness_higher_is_better)
+    contract = resolve_objective_contract(base_settings)
     limit, offset = normalize_pagination(limit, offset)
 
     with session_scope() as session:
+        _validate_persisted_objective_contract(
+            session=session,
+            island_id=island_id,
+            objective_contract=contract,
+        )
         rows = list(
             session.execute(
                 select(MapElitesArchiveCell)
                 .where(MapElitesArchiveCell.island_id == island_id)
-                .order_by(MapElitesArchiveCell.cell_index.asc())
+                .order_by(
+                    MapElitesArchiveCell.cell_index.asc(),
+                    MapElitesArchiveCell.commit_hash.asc(),
+                )
                 .limit(limit)
                 .offset(offset)
             ).scalars().all()
         )
-        metric_values_by_commit: dict[str, float] = {}
         baseline_by_commit: dict[str, Any | None] = {}
-        if metric_name and rows:
+        if rows:
             commit_hashes = _commit_hashes_from_rows(rows)
-            metric_stmt = (
-                select(CommitCard.commit_hash, Metric.value)
-                .join(Metric, Metric.commit_card_id == CommitCard.id)
-                .where(
-                    CommitCard.commit_hash.in_(commit_hashes),
-                    Metric.name == metric_name,
-                )
-            )
-            metric_values_by_commit = {
-                str(commit_hash): float(value)
-                for commit_hash, value in session.execute(metric_stmt).all()
-                if commit_hash and value is not None
-            }
-            if _baseline_lookup_configured(settings=base_settings, metric_name=metric_name):
+            if _baseline_lookup_configured(settings=base_settings):
                 baseline_by_commit = _load_baselines_by_commit(
                     session=session,
                     settings=base_settings,
@@ -183,9 +156,7 @@ def list_records(
         rows=rows,
         context=ArchiveRecordBuildContext(
             island_id=island_id,
-            metric_values_by_commit=metric_values_by_commit,
-            metric_name=metric_name,
-            higher_is_better=higher_is_better,
+            objective_contract=contract,
             baseline_by_commit=baseline_by_commit,
         ),
     )
@@ -201,44 +172,48 @@ def list_records_page(
     """Return a cursor-paginated page of archive records for an island."""
 
     base_settings = settings or get_settings()
-    metric_name = _fitness_metric_name(base_settings)
-    higher_is_better = bool(base_settings.mapelites_fitness_higher_is_better)
+    contract = resolve_objective_contract(base_settings)
     limit, _ = normalize_pagination(limit, 0)
 
     with session_scope() as session:
+        _validate_persisted_objective_contract(
+            session=session,
+            island_id=island_id,
+            objective_contract=contract,
+        )
         stmt = (
             select(MapElitesArchiveCell)
             .where(MapElitesArchiveCell.island_id == island_id)
-            .order_by(MapElitesArchiveCell.cell_index.asc())
+            .order_by(
+                MapElitesArchiveCell.cell_index.asc(),
+                MapElitesArchiveCell.commit_hash.asc(),
+            )
         )
         if cursor:
             try:
                 payload = decode_cursor(cursor)
                 last_cell_index = int(payload.get("cell_index"))
+                last_commit_hash = str(payload.get("commit_hash") or "")
+                if not last_commit_hash:
+                    raise ValueError("missing commit hash")
             except (PaginationCursorError, TypeError, ValueError) as exc:
                 raise PaginationCursorError("Archive records cursor is invalid.") from exc
-            stmt = stmt.where(MapElitesArchiveCell.cell_index > last_cell_index)
+            stmt = stmt.where(
+                or_(
+                    MapElitesArchiveCell.cell_index > last_cell_index,
+                    and_(
+                        MapElitesArchiveCell.cell_index == last_cell_index,
+                        MapElitesArchiveCell.commit_hash > last_commit_hash,
+                    ),
+                )
+            )
         stmt = stmt.limit(limit + 1)
         rows = list(session.execute(stmt).scalars().all())
         items_rows = rows[:limit]
-        metric_values_by_commit: dict[str, float] = {}
         baseline_by_commit: dict[str, Any | None] = {}
-        if metric_name and items_rows:
+        if items_rows:
             commit_hashes = _commit_hashes_from_rows(items_rows)
-            metric_stmt = (
-                select(CommitCard.commit_hash, Metric.value)
-                .join(Metric, Metric.commit_card_id == CommitCard.id)
-                .where(
-                    CommitCard.commit_hash.in_(commit_hashes),
-                    Metric.name == metric_name,
-                )
-            )
-            metric_values_by_commit = {
-                str(commit_hash): float(value)
-                for commit_hash, value in session.execute(metric_stmt).all()
-                if commit_hash and value is not None
-            }
-            if _baseline_lookup_configured(settings=base_settings, metric_name=metric_name):
+            if _baseline_lookup_configured(settings=base_settings):
                 baseline_by_commit = _load_baselines_by_commit(
                     session=session,
                     settings=base_settings,
@@ -249,13 +224,20 @@ def list_records_page(
         rows=items_rows,
         context=ArchiveRecordBuildContext(
             island_id=island_id,
-            metric_values_by_commit=metric_values_by_commit,
-            metric_name=metric_name,
-            higher_is_better=higher_is_better,
+            objective_contract=contract,
             baseline_by_commit=baseline_by_commit,
         ),
     )
-    next_cursor = encode_cursor({"cell_index": records[-1].cell_index}) if len(rows) > limit and records else None
+    next_cursor = (
+        encode_cursor(
+            {
+                "cell_index": records[-1].cell_index,
+                "commit_hash": records[-1].commit_hash,
+            }
+        )
+        if len(rows) > limit and records
+        else None
+    )
     return ArchiveRecordPage(items=records, next_cursor=next_cursor)
 
 
@@ -268,9 +250,7 @@ def _build_records_from_rows(
         _record_from_archive_row(
             row=row,
             island_id=context.island_id,
-            metric_value=context.metric_values_by_commit.get(str(row.commit_hash or "")),
-            metric_name=context.metric_name,
-            higher_is_better=context.higher_is_better,
+            objective_contract=context.objective_contract,
             baseline=_baseline_for_archive_row(
                 row=row,
                 baseline_by_commit=context.baseline_by_commit,
@@ -285,13 +265,13 @@ def _record_from_archive_row(
     *,
     row: MapElitesArchiveCell,
     island_id: str,
-    metric_value: float | None,
-    metric_name: str | None,
-    higher_is_better: bool,
+    objective_contract: ObjectiveContract,
     baseline: Any | None,
 ) -> MapElitesRecord:
     commit_hash = str(row.commit_hash or "")
-    objective = float(row.objective or 0.0)
+    objectives = objective_contract.resolve_values(row.objective_values or ())
+    primary = objective_contract.primary
+    primary_value = objectives.values[0]
     fate = derive_candidate_fate(
         current_archive_cell_index=int(row.cell_index),
         current_archive_member=True,
@@ -300,25 +280,21 @@ def _record_from_archive_row(
         commit_hash=commit_hash,
         island_id=str(row.island_id or island_id),
         cell_index=int(row.cell_index),
-        fitness=float(metric_value) if metric_value is not None else objective,
-        objective=objective,
-        metric_value=float(metric_value) if metric_value is not None else None,
-        metric_name=metric_name,
-        higher_is_better=higher_is_better,
+        objective_values=objectives.values,
+        objective_scores=objectives.scores,
+        primary_metric_value=primary_value,
+        primary_metric_name=primary.name,
+        primary_metric_higher_is_better=primary.higher_is_better,
         campaign_baseline_id=_baseline_id(baseline),
         baseline_key_hash=getattr(baseline, "baseline_key_hash", None),
         baseline_status=getattr(baseline, "status", None),
         delta_from_root_baseline=improvement_from_baseline(
-            candidate_value=metric_value,
+            candidate_value=primary_value,
             baseline=baseline,
         ),
         candidate_fate_label=fate.label,
         candidate_fate_reason=fate.reason,
         measures=tuple(float(v) for v in (row.measures or ())),
-        solution=materialize_solution(
-            measures=row.measures or (),
-            solution=row.solution or (),
-        ),
         timestamp=float(row.timestamp or 0.0),
     )
 
@@ -339,6 +315,28 @@ def _baseline_id(baseline: Any | None) -> str | None:
     return str(baseline_id) if baseline_id else None
 
 
+def _validate_persisted_objective_contract(
+    *,
+    session: Any,
+    island_id: str,
+    objective_contract: ObjectiveContract,
+) -> None:
+    snapshot = session.execute(
+        select(MapElitesState.snapshot).where(
+            MapElitesState.island_id == island_id,
+        )
+    ).scalar_one_or_none()
+    if snapshot is None:
+        return
+    meta = dict(snapshot or {})
+    ensure_supported_snapshot_meta(meta, island_id=island_id)
+    validate_snapshot_contract(
+        meta,
+        island_id=island_id,
+        objective_contract=objective_contract,
+    )
+
+
 def _commit_hashes_from_rows(rows: list[Any]) -> list[str]:
     values: list[str] = []
     seen: set[str] = set()
@@ -351,9 +349,9 @@ def _commit_hashes_from_rows(rows: list[Any]) -> list[str]:
     return values
 
 
-def _baseline_lookup_configured(*, settings: Settings, metric_name: str | None) -> bool:
+def _baseline_lookup_configured(*, settings: Settings) -> bool:
     root_commit = str(getattr(settings, "mapelites_experiment_root_commit", "") or "").strip()
-    return bool(root_commit and metric_name)
+    return bool(root_commit)
 
 
 def _load_baselines_by_commit(
@@ -477,6 +475,7 @@ def snapshot_meta(
 
     base_settings = settings or get_settings()
     dims = max(1, int(base_settings.mapelites_dimensionality_target_dims))
+    contract = resolve_objective_contract(base_settings)
 
     with session_scope() as session:
         stmt = select(MapElitesState).where(
@@ -485,6 +484,12 @@ def snapshot_meta(
         row = session.execute(stmt).scalar_one_or_none()
         snapshot = dict(row.snapshot or {}) if row and row.snapshot else {}
         ensure_supported_snapshot_meta(snapshot, island_id=island_id)
+        if row is not None:
+            validate_snapshot_contract(
+                snapshot,
+                island_id=island_id,
+                objective_contract=contract,
+            )
         entry_count = int(
             session.execute(
                 select(func.count())

@@ -6,7 +6,7 @@ The public API here is intentionally small so that ``loreley.scheduler.main``
 can delegate all ingestion responsibilities to this module.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Sequence
@@ -15,13 +15,14 @@ from uuid import UUID
 from git import Repo
 from loguru import logger
 from rich.console import Console
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from loreley.config import Settings, resolve_default_island_id
 from loreley.core.contracts import clamp_text, normalize_single_line
 from loreley.core.git import RepositoryError as GitRepositoryError, require_commit
-from loreley.core.map_elites.map_elites import MapElitesManager
+from loreley.core.job_state import pending_ingestion_job_conditions
+from loreley.core.map_elites.manager import MapElitesManager
 from loreley.core.repo_lock import repo_lock
 from loreley.core.worker.evaluator import EvaluationContext, EvaluationError, EvaluationResult, Evaluator
 from loreley.core.worker.repository import RepositoryError, WorkerRepository
@@ -39,6 +40,7 @@ log = logger.bind(module="scheduler.ingestion")
 
 _INGESTION_REASON_MAX_CHARS = 4096
 _INGESTION_MESSAGE_MAX_CHARS = 4096
+_INGESTION_MAX_FAILED_ATTEMPTS = 5
 
 
 class IngestionError(RuntimeError):
@@ -166,6 +168,19 @@ class MapElitesIngestion:
             self._prefetched_metrics_payload_by_commit = None
             self._prefetched_metrics_errors_by_commit = None
         return ingested
+
+    def count_pending_ingestion_jobs(self) -> int:
+        """Return succeeded jobs whose result ingestion is not terminal."""
+
+        with session_scope() as session:
+            stmt = select(func.count(EvolutionJob.id)).where(
+                *pending_ingestion_job_conditions(
+                    EvolutionJob=EvolutionJob,
+                    JobStatus=JobStatus,
+                    func=func,
+                )
+            )
+            return int(session.execute(stmt).scalar_one())
 
     def _canonicalize_prefetch_commit_hashes(self, snapshots: Sequence[JobSnapshot]) -> list[str]:
         """Best-effort canonicalization to improve metrics prefetch hit ratio."""
@@ -595,12 +610,38 @@ class MapElitesIngestion:
             snapshot.job_id,
             reason_display,
         )
+        self._reload_island_after_ingest_error(
+            snapshot,
+            snapshot_session=snapshot_session,
+        )
         self._record_ingestion_state(
             snapshot,
             status="failed",
             reason=reason_display,
             session=snapshot_session,
         )
+
+    def _reload_island_after_ingest_error(
+        self,
+        snapshot: JobSnapshot,
+        *,
+        snapshot_session: Session | None,
+    ) -> None:
+        reload_island = getattr(self.manager, "reload_island", None)
+        if not callable(reload_island):
+            return
+        island_id = snapshot.island_id or resolve_default_island_id(self.settings)
+        try:
+            reload_island(
+                island_id,
+                snapshot_session=snapshot_session,
+            )
+        except Exception as exc:  # pragma: no cover - best-effort recovery
+            log.exception(
+                "Failed to reload island {} after ingest error: {}",
+                island_id,
+                exc,
+            )
 
     def _log_ingestion_result(
         self,
@@ -812,21 +853,59 @@ class MapElitesIngestion:
         job = session.get(EvolutionJob, snapshot.job_id)
         if not job:
             return
-        job.ingestion_attempts = int(getattr(job, "ingestion_attempts", 0) or 0) + 1
-        job.ingestion_status = payload.status
+        attempts = int(getattr(job, "ingestion_attempts", 0) or 0) + 1
+        effective_payload = self._terminalize_failed_ingestion(
+            snapshot,
+            payload=payload,
+            attempts=attempts,
+        )
+        job.ingestion_attempts = attempts
+        job.ingestion_status = effective_payload.status
         job.ingestion_last_attempt_at = datetime.now(timezone.utc)
-        job.ingestion_reason = payload.reason
-        job.ingestion_delta = payload.delta
-        job.ingestion_status_code = payload.status_code
-        job.ingestion_message = payload.message
-        job.ingestion_cell_index = self._ingestion_record_cell_index(payload.record)
+        job.ingestion_reason = effective_payload.reason
+        job.ingestion_delta = effective_payload.delta
+        job.ingestion_status_code = effective_payload.status_code
+        job.ingestion_message = effective_payload.message
+        job.ingestion_cell_index = self._ingestion_record_cell_index(
+            effective_payload.record
+        )
         result_commit_hash = getattr(job, "result_commit_hash", None) or snapshot.result_commit_hash
         if result_commit_hash and hasattr(session, "execute"):
             self._apply_candidate_archive_state(
                 session=session,
                 commit_hash=result_commit_hash,
-                payload=payload,
+                payload=effective_payload,
             )
+
+    def _terminalize_failed_ingestion(
+        self,
+        snapshot: JobSnapshot,
+        *,
+        payload: _IngestionStatePayload,
+        attempts: int,
+    ) -> _IngestionStatePayload:
+        if (
+            payload.status != "failed"
+            or attempts < _INGESTION_MAX_FAILED_ATTEMPTS
+        ):
+            return payload
+        reason = self._clamp_ingestion_text(
+            "Ingestion retry limit reached after "
+            f"{attempts} attempts: {payload.reason or 'unknown ingestion failure'}",
+            max_chars=_INGESTION_REASON_MAX_CHARS,
+        )
+        self.console.log(
+            "[bold yellow]Ingestion retry limit reached[/] "
+            f"job={snapshot.job_id} commit={snapshot.result_commit_hash} "
+            f"attempts={attempts}",
+        )
+        log.warning(
+            "Ingestion retry limit reached job={} commit={} attempts={}",
+            snapshot.job_id,
+            snapshot.result_commit_hash,
+            attempts,
+        )
+        return replace(payload, status="skipped", reason=reason)
 
     @staticmethod
     def _apply_candidate_archive_state(

@@ -22,16 +22,17 @@ def commit_lineage(
     nodes: list[CommitGraphNodeOut] = []
     for n in graph.nodes:
         node = CommitGraphNodeOut.model_validate(n)
-        node.metric_name = graph.metric_name
+        node.primary_metric_name = graph.primary_metric_name
         nodes.append(node)
     edges = [CommitGraphEdgeOut.model_validate(e) for e in graph.edges]
     return CommitGraphOut(
-        metric_name=graph.metric_name,
-        higher_is_better=bool(graph.higher_is_better),
+        primary_metric_name=graph.primary_metric_name,
+        primary_metric_higher_is_better=bool(
+            graph.primary_metric_higher_is_better
+        ),
         mode=mode,
         max_nodes=int(max_nodes),
         truncated=bool(graph.truncated),
         nodes=nodes,
         edges=edges,
     )
-

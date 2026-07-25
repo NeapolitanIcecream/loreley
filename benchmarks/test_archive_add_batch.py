@@ -21,7 +21,7 @@ def test_archive_add_batch(benchmark, settings: Settings) -> None:
 
     rng = np.random.default_rng(0)
     measures = rng.random((batch_size, target_dims), dtype=np.float64)
-    objectives = rng.standard_normal(batch_size).astype(np.float64).tolist()
+    objectives = rng.standard_normal((batch_size, 1)).astype(np.float64)
     timestamps = np.linspace(0.0, 1.0, batch_size, dtype=np.float64).tolist()
     commit_hashes = tuple(f"c{i:04d}" for i in range(batch_size))
 
@@ -40,18 +40,16 @@ def test_archive_add_batch(benchmark, settings: Settings) -> None:
             lower_bounds=lower.copy(),
             upper_bounds=upper.copy(),
         )
-        commit_to_island: dict[str, str] = {}
         return (), {
             "state": state,
             "island_id": "main",
             "commit_hashes": commit_hashes,
-            "objectives": objectives,
+            "objective_values": objectives,
+            "objective_scores": objectives,
             "measures": measures,
             "timestamps": timestamps,
-            "commit_to_island": commit_to_island,
         }
 
     statuses, values = benchmark.pedantic(add_batch, setup=_setup, rounds=5, iterations=1)
     assert statuses.shape == (batch_size,)
     assert values.shape == (batch_size,)
-

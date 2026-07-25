@@ -2,7 +2,11 @@
 
 Date: 2026-02-14
 
-Status: Accepted
+Status: Superseded in part by ADR 0052
+
+ADR 0052 removes the compatibility re-export module. Callers now import
+`MapElitesManager` from `loreley.core.map_elites.manager` and record types from
+`loreley.core.map_elites.types`.
 
 Decision
 

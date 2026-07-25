@@ -9,19 +9,19 @@ This module intentionally contains no business logic beyond:
 """
 
 import logging
+import multiprocessing
 import os
 import signal
 import subprocess
 import sys
 import threading
 import time
-import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
-from dramatiq import Worker
+from dramatiq import Broker, Worker
 from loguru import logger
 from rich.console import Console
 
@@ -145,7 +145,7 @@ def configure_process_logging(
 
     logs_dir = _resolve_logs_dir(settings, role=role)
     log_timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    log_file = logs_dir / f"{role}-{log_timestamp}.log"
+    log_file = logs_dir / f"{role}-{log_timestamp}-pid-{os.getpid()}.log"
     logger.add(
         log_file,
         level=level,
@@ -258,27 +258,24 @@ def run_worker(
     *,
     settings: Settings,
     console: Console,
+    processes: int = 1,
     preflight: bool = True,
     preflight_timeout_seconds: float = 2.0,
 ) -> int:
-    """Run the Loreley evolution worker as a single Dramatiq consumer process."""
+    """Run one or more single-threaded Dramatiq worker processes."""
+    process_count = int(processes)
+    if process_count < 1:
+        console.log("[bold red]Worker refused to start[/] reason=processes must be at least 1.")
+        return 2
     attached_experiment = getattr(settings, "experiment_id", None)
     attached_raw = str(attached_experiment).strip() if attached_experiment is not None else ""
 
-    if preflight:
-        results = preflight_worker(settings, timeout_seconds=preflight_timeout_seconds)
-        if has_failures(results):
-            render_results(console, results, title="Loreley worker preflight")
-            ok, warn, fail = (0, 0, 0)
-            try:
-                from loreley.preflight import summarize
-
-                ok, warn, fail = summarize(results)
-            except Exception:
-                pass
-            console.log(f"[bold red]Preflight failed[/] ok={ok} warn={warn} fail={fail}")
-            console.log("Hint: copy `env.example` to `.env`, fill required values, then retry.")
-            return 1
+    if preflight and not _worker_preflight_passes(
+        settings=settings,
+        console=console,
+        timeout_seconds=preflight_timeout_seconds,
+    ):
+        return 1
 
     if not attached_raw:
         console.log(
@@ -296,20 +293,26 @@ def run_worker(
     console.log(
         "[bold green]Loreley worker online[/] "
         f"experiment={identity.raw} experiment_uuid={identity.uuid} queue={queue!r} "
-        f"worktree={settings.worker_repo_worktree!r}",
+        f"processes={process_count} worktree={settings.worker_repo_worktree!r}",
     )
 
     try:
-        # Lazily import the broker and worker actors after logging is configured so
-        # that any configuration errors are surfaced cleanly to the user.
-        from loreley.tasks.broker import setup_broker
         from loreley.db.base import ensure_database_schema
-        from loreley.tasks.workers import build_evolution_job_worker_actor
 
-        dramatiq_broker = setup_broker(settings=settings)
         ensure_database_schema(settings=settings)
-        # Register the experiment-attached actor bound to the derived queue.
-        build_evolution_job_worker_actor(settings=settings, broker=dramatiq_broker)
+        if process_count > 1:
+            if int(settings.scheduler_max_unfinished_jobs) < process_count:
+                console.log(
+                    "[yellow]Worker capacity exceeds scheduler supply[/] "
+                    f"processes={process_count} "
+                    f"scheduler_max_unfinished={settings.scheduler_max_unfinished_jobs}",
+                )
+            return _run_dramatiq_worker_pool(
+                processes=process_count,
+                console=console,
+            )
+
+        dramatiq_broker = _build_single_worker_broker(settings)
     except Exception as exc:  # pragma: no cover - defensive
         console.log(
             "[bold red]Failed to initialise worker dependencies[/] "
@@ -318,8 +321,54 @@ def run_worker(
         log.exception("Worker bootstrap failed")
         return 1
 
+    return _run_single_worker(
+        settings=settings,
+        console=console,
+        broker=dramatiq_broker,
+    )
+
+
+def _worker_preflight_passes(
+    *,
+    settings: Settings,
+    console: Console,
+    timeout_seconds: float,
+) -> bool:
+    results = preflight_worker(settings, timeout_seconds=timeout_seconds)
+    if not has_failures(results):
+        return True
+
+    render_results(console, results, title="Loreley worker preflight")
+    ok, warn, fail = (0, 0, 0)
+    try:
+        from loreley.preflight import summarize
+
+        ok, warn, fail = summarize(results)
+    except Exception:
+        pass
+    console.log(f"[bold red]Preflight failed[/] ok={ok} warn={warn} fail={fail}")
+    console.log("Hint: copy `env.example` to `.env`, fill required values, then retry.")
+    return False
+
+
+def _build_single_worker_broker(settings: Settings) -> Broker:
+    # Import after logging is configured so bootstrap failures remain user-visible.
+    from loreley.tasks.broker import setup_broker
+    from loreley.tasks.workers import build_evolution_job_worker_actor
+
+    broker = setup_broker(settings=settings)
+    build_evolution_job_worker_actor(settings=settings, broker=broker)
+    return broker
+
+
+def _run_single_worker(
+    *,
+    settings: Settings,
+    console: Console,
+    broker: Broker,
+) -> int:
     _apply_dramatiq_prefetch_settings(settings=settings, console=console)
-    worker = Worker(dramatiq_broker, worker_threads=1)  # single-threaded worker
+    worker = Worker(broker, worker_threads=1)
     stop_event = threading.Event()
     _install_worker_signal_handlers(worker, console=console, stop_event=stop_event)
 
@@ -340,6 +389,48 @@ def run_worker(
         console.log("[bold yellow]Loreley worker stopped[/]")
         log.info("Loreley worker stopped")
     return 0
+
+
+def _run_dramatiq_worker_pool(*, processes: int, console: Console) -> int:
+    """Delegate process lifecycle and signal propagation to Dramatiq's master."""
+
+    from dramatiq.cli import main as dramatiq_main
+    from dramatiq.cli import make_argument_parser
+
+    start_method = multiprocessing.get_start_method(allow_none=True)
+    argv = [
+        "--processes",
+        str(processes),
+        "--threads",
+        "1",
+        "loreley.tasks.worker_runtime:broker",
+    ]
+    args = make_argument_parser().parse_args(argv)
+    replace_start_method = start_method != "spawn"
+    # Each spawned worker must own a distinct base clone. The per-job worktree
+    # boundary is not sufficient because clone/fetch maintenance also mutates
+    # the base repository. Keep the override scoped to the native master call
+    # so embedding Loreley in a longer-lived Python process does not leak it.
+    variable = "WORKER_REPO_WORKTREE_RANDOMIZE"
+    previous = os.environ.get(variable)
+    os.environ[variable] = "true"
+    context_replaced = False
+    try:
+        if replace_start_method:
+            multiprocessing.set_start_method("spawn", force=True)
+            context_replaced = True
+        console.log(
+            "[bold green]Starting Dramatiq worker pool[/] "
+            f"processes={processes} threads_per_process=1 start_method=spawn",
+        )
+        return int(dramatiq_main(args))
+    finally:
+        if previous is None:
+            os.environ.pop(variable, None)
+        else:
+            os.environ[variable] = previous
+        if context_replaced:
+            multiprocessing.set_start_method(start_method, force=True)
 
 
 def run_api(

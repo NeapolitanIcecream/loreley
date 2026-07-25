@@ -201,10 +201,16 @@ def test_scheduler_bootstrap_runs_before_repo_open_for_shared_repo_initializatio
         "_startup_scan_and_validate_repo_state_approval",
         lambda self: None,
     )
+    startup_events: list[str] = []
+
+    class _FakeManager:
+        def validate_configured_islands(self) -> None:
+            startup_events.append("validate_islands")
+
     monkeypatch.setattr(
         scheduler_main,
         "MapElitesManager",
-        lambda **_kwargs: cast(Any, object()),
+        lambda **_kwargs: _FakeManager(),
     )
     monkeypatch.setattr(
         scheduler_main,
@@ -216,10 +222,14 @@ def test_scheduler_bootstrap_runs_before_repo_open_for_shared_repo_initializatio
         def count_total_jobs(self) -> int:
             return 0
 
+    def _build_job_scheduler(**_kwargs: Any) -> _FakeJobScheduler:
+        startup_events.append("build_job_scheduler")
+        return _FakeJobScheduler()
+
     monkeypatch.setattr(
         scheduler_main,
         "JobScheduler",
-        lambda **_kwargs: _FakeJobScheduler(),
+        _build_job_scheduler,
     )
     monkeypatch.setattr(
         scheduler_main,
@@ -232,14 +242,15 @@ def test_scheduler_bootstrap_runs_before_repo_open_for_shared_repo_initializatio
     assert bootstrap_started is True
     assert scheduler.repo_root == repo_root
     assert scheduler._repo is fake_repo
+    assert startup_events == ["validate_islands", "build_job_scheduler"]
 
 
-def test_best_fitness_branch_update_waits_for_shared_worker_repo_lock(
+def test_primary_objective_branch_update_waits_for_shared_worker_repo_lock(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     settings: Any,
 ) -> None:
-    """Regression: best-fitness branch updates must share the worker base-repo lock."""
+    """Primary-objective branch updates must share the worker base-repo lock."""
 
     repo_root = tmp_path / "shared-repo"
     fake_repo = _FakeRepo()
@@ -256,11 +267,13 @@ def test_best_fitness_branch_update_waits_for_shared_worker_repo_lock(
     )
 
     def _run() -> None:
-        branch_name = scheduler._create_best_fitness_branch(
+        branch_name = scheduler._create_primary_objective_branch(
             best_commit_hash="deadbeef",
             root_commit_hash=None,
         )
-        expected_branch = f"evolution/best/{resolve_experiment_namespace(settings.experiment_id)}"
+        expected_branch = (
+            f"evolution/primary/{resolve_experiment_namespace(settings.experiment_id)}"
+        )
         assert branch_name == expected_branch
         assert fake_repo.git.branch_calls == [("-f", branch_name, "c" * 40)]
 
