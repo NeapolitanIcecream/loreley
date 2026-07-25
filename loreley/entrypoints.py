@@ -9,6 +9,7 @@ This module intentionally contains no business logic beyond:
 """
 
 import logging
+import multiprocessing
 import os
 import signal
 import subprocess
@@ -396,18 +397,21 @@ def _run_dramatiq_worker_pool(*, processes: int, console: Console) -> int:
     from dramatiq.cli import main as dramatiq_main
     from dramatiq.cli import make_argument_parser
 
+    start_method = multiprocessing.get_start_method(allow_none=True)
     argv = [
         "--processes",
         str(processes),
         "--threads",
         "1",
-        "--use-spawn",
         "loreley.tasks.worker_runtime:broker",
     ]
+    if start_method is None:
+        argv.insert(-1, "--use-spawn")
+        start_method = "spawn"
     args = make_argument_parser().parse_args(argv)
     console.log(
         "[bold green]Starting Dramatiq worker pool[/] "
-        f"processes={processes} threads_per_process=1 start_method=spawn",
+        f"processes={processes} threads_per_process=1 start_method={start_method}",
     )
     # Each spawned worker must own a distinct base clone. The per-job worktree
     # boundary is not sufficient because clone/fetch maintenance also mutates

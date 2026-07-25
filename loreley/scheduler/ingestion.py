@@ -595,12 +595,38 @@ class MapElitesIngestion:
             snapshot.job_id,
             reason_display,
         )
+        self._reload_island_after_ingest_error(
+            snapshot,
+            snapshot_session=snapshot_session,
+        )
         self._record_ingestion_state(
             snapshot,
             status="failed",
             reason=reason_display,
             session=snapshot_session,
         )
+
+    def _reload_island_after_ingest_error(
+        self,
+        snapshot: JobSnapshot,
+        *,
+        snapshot_session: Session | None,
+    ) -> None:
+        reload_island = getattr(self.manager, "reload_island", None)
+        if not callable(reload_island):
+            return
+        island_id = snapshot.island_id or resolve_default_island_id(self.settings)
+        try:
+            reload_island(
+                island_id,
+                snapshot_session=snapshot_session,
+            )
+        except Exception as exc:  # pragma: no cover - best-effort recovery
+            log.exception(
+                "Failed to reload island {} after ingest error: {}",
+                island_id,
+                exc,
+            )
 
     def _log_ingestion_result(
         self,

@@ -116,35 +116,55 @@ class DatabaseSnapshotStore:
         island_id: str,
         *,
         history_limit: int | None = None,
+        session: Session | None = None,
     ) -> dict[str, Any] | None:
         try:
+            if session is not None:
+                return self._load_in_session(
+                    session,
+                    island_id=island_id,
+                    history_limit=history_limit,
+                )
             with session_scope() as session:
-                state = session.execute(
-                    select(MapElitesState).where(MapElitesState.island_id == island_id)
-                ).scalar_one_or_none()
-                if state is None:
-                    return None
-                meta = dict(state.snapshot or {})
-                ensure_supported_snapshot_meta(meta, island_id=island_id)
-                return {
-                    **meta,
-                    "island_id": island_id,
-                    "history": self._load_history_entries(
-                        session,
-                        island_id=island_id,
-                        limit=history_limit,
-                    ),
-                    "archive": self._load_archive_entries(
-                        session,
-                        island_id=island_id,
-                    ),
-                }
+                return self._load_in_session(
+                    session,
+                    island_id=island_id,
+                    history_limit=history_limit,
+                )
         except ValueError:
             raise
         except SQLAlchemyError as exc:
             self._raise_store_error(action="load", island_id=island_id, exc=exc)
         except Exception as exc:  # pragma: no cover - defensive
             self._raise_store_error(action="loading", island_id=island_id, exc=exc)
+
+    def _load_in_session(
+        self,
+        session: Session,
+        *,
+        island_id: str,
+        history_limit: int | None,
+    ) -> dict[str, Any] | None:
+        state = session.execute(
+            select(MapElitesState).where(MapElitesState.island_id == island_id)
+        ).scalar_one_or_none()
+        if state is None:
+            return None
+        meta = dict(state.snapshot or {})
+        ensure_supported_snapshot_meta(meta, island_id=island_id)
+        return {
+            **meta,
+            "island_id": island_id,
+            "history": self._load_history_entries(
+                session,
+                island_id=island_id,
+                limit=history_limit,
+            ),
+            "archive": self._load_archive_entries(
+                session,
+                island_id=island_id,
+            ),
+        }
 
     def apply_update(
         self,

@@ -348,6 +348,61 @@ def test_schedule_jobs_round_robins_across_configured_islands(
     ]
 
 
+def test_schedule_jobs_waits_until_every_configured_island_is_ready(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    sender = DummySenderActor()
+    monkeypatch.setattr(
+        job_scheduler,
+        "build_evolution_job_sender_actor",
+        lambda **_kwargs: sender,
+    )
+    settings.mapelites_islands = ("alpha", "beta")
+    settings.scheduler_max_unfinished_jobs = 2
+    settings.scheduler_schedule_batch_size = 2
+
+    class DummySampler:
+        def __init__(self) -> None:
+            self.snapshot_calls: list[str] = []
+            self.schedule_calls = 0
+
+        def get_sampling_snapshot(
+            self,
+            island_id: str | None = None,
+        ) -> SamplingSnapshot | None:
+            assert island_id is not None
+            self.snapshot_calls.append(island_id)
+            if island_id == "beta":
+                return None
+            return SamplingSnapshot(
+                island_id=island_id,
+                cell_fronts={0: ("alpha-base",)},
+                items=((0, "alpha-base"),),
+                neighbor_cell_indices=None,
+                neighbor_commits=(),
+                neighbor_coords=None,
+            )
+
+        def schedule_job(self, _request: ScheduleJobRequest) -> None:
+            self.schedule_calls += 1
+            return None
+
+    sampler = DummySampler()
+    scheduler = cast(Any, JobScheduler)(
+        settings=settings,
+        console=Console(record=True),
+        sampler=cast(MapElitesSampler, sampler),
+    )
+    monkeypatch.setattr(JobScheduler, "_enqueue_jobs", lambda _self, ids: len(list(ids)))
+
+    scheduled = scheduler.schedule_jobs(unfinished_jobs=0, total_jobs=0)
+
+    assert scheduled == 0
+    assert sampler.snapshot_calls == ["alpha", "beta"]
+    assert sampler.schedule_calls == 0
+
+
 def test_schedule_jobs_records_periodic_cross_island_migration(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,
@@ -406,13 +461,13 @@ def test_schedule_jobs_records_periodic_cross_island_migration(
     )
     monkeypatch.setattr(JobScheduler, "_enqueue_jobs", lambda _self, ids: len(list(ids)))
 
-    assert scheduler.schedule_jobs(unfinished_jobs=0, total_jobs=0) == 2
+    assert scheduler.schedule_jobs(unfinished_jobs=0, total_jobs=3) == 2
     assert sampler.schedule_calls == [
         {
             "island_id": "alpha",
             "base_commit_hash": "alpha-elite",
-            "migration_source_island_id": None,
-            "migration_commit_hash": None,
+            "migration_source_island_id": "beta",
+            "migration_commit_hash": "beta-elite",
         },
         {
             "island_id": "beta",

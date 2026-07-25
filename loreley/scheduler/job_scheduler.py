@@ -645,8 +645,13 @@ class JobScheduler:
         snapshots: list[SamplingSnapshot] = []
         for island_id in ordered_islands:
             snapshot = self.sampler.get_sampling_snapshot(island_id)
-            if snapshot is not None and snapshot.cell_fronts:
-                snapshots.append(snapshot)
+            if snapshot is None or not snapshot.cell_fronts:
+                self.console.log(
+                    "[yellow]Waiting for every configured island before normal "
+                    f"scheduling[/] island={island_id}",
+                )
+                return ()
+            snapshots.append(snapshot)
         return tuple(snapshots)
 
     def _migration_for_job(
@@ -657,9 +662,14 @@ class JobScheduler:
         global_job_number: int,
     ) -> tuple[str | None, str | None]:
         interval = max(0, int(self.settings.mapelites_migration_interval_jobs))
+        target_job_number = self._target_island_job_number(
+            island_id=target_snapshot.island_id,
+            global_job_number=global_job_number,
+        )
         if (
             interval <= 0
-            or global_job_number % interval != 0
+            or target_job_number is None
+            or target_job_number % interval != 0
             or len(sampling_snapshots) < 2
         ):
             return None, None
@@ -673,16 +683,35 @@ class JobScheduler:
             *sampling_snapshots[target_position + 1 :],
             *sampling_snapshots[:target_position],
         )
-        donor = donors[(global_job_number // interval - 1) % len(donors)]
+        migration_round = target_job_number // interval
+        donor = donors[(migration_round - 1) % len(donors)]
         cell_indices = sorted(donor.cell_fronts)
         if not cell_indices:
             return None, None
-        cell_index = cell_indices[global_job_number % len(cell_indices)]
+        cell_index = cell_indices[target_job_number % len(cell_indices)]
         members = tuple(sorted(donor.cell_fronts[cell_index]))
         if not members:
             return None, None
-        commit_hash = members[(global_job_number // interval - 1) % len(members)]
+        commit_hash = members[(migration_round - 1) % len(members)]
         return donor.island_id, commit_hash
+
+    def _target_island_job_number(
+        self,
+        *,
+        island_id: str,
+        global_job_number: int,
+    ) -> int | None:
+        islands = tuple(self.settings.mapelites_islands)
+        if not islands:
+            return None
+        try:
+            island_position = islands.index(island_id)
+        except ValueError:
+            return None
+        preceding_slots = int(global_job_number) - 1 - island_position
+        if preceding_slots < 0:
+            return None
+        return preceding_slots // len(islands) + 1
 
     def _available_repair_slots(self, *, capacity: int) -> int:
         if capacity > 0 and bool(self.settings.failed_candidate_repair_enabled):

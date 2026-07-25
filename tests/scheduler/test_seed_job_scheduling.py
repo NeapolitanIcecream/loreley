@@ -503,3 +503,21 @@ def test_tick_accounts_for_seed_jobs_before_sampler_scheduling(settings: Setting
     assert stats["seed_scheduled"] == 2
     assert stats["scheduled"] == 1
     assert scheduler._total_jobs_count == 7
+
+
+def test_missing_primary_candidate_is_a_clean_terminal_state(
+    settings: Settings,
+) -> None:
+    scheduler = cast(Any, EvolutionScheduler.__new__(EvolutionScheduler))
+    scheduler.settings = settings
+    scheduler.console = Console(record=True)
+    scheduler._resolve_best_primary_commit = lambda: (None, {})
+
+    created = EvolutionScheduler._create_primary_objective_branch_if_possible(
+        cast(EvolutionScheduler, scheduler)
+    )
+
+    assert created is False
+    output = scheduler.console.export_text()
+    assert "Primary-objective branch not created" in output
+    assert "candidate with the configured primary objective" in output

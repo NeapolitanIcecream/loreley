@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import math
 from typing import Sequence
 
 import numpy as np
@@ -209,6 +211,38 @@ def test_fit_projection_respects_min_samples_and_target_dims(settings: Settings)
     assert 1 <= projection.dimensions <= settings.mapelites_dimensionality_target_dims
 
 
+def test_fit_projection_sanitizes_zero_variance_diagnostics(
+    settings: Settings,
+) -> None:
+    settings.mapelites_dimensionality_target_dims = 1
+    settings.mapelites_dimensionality_min_fit_samples = 2
+    settings.mapelites_feature_normalization_warmup_samples = 2
+    settings.mapelites_dimensionality_penultimate_normalize = False
+    reducer = DimensionReducer(settings=settings)
+    reducer._record_history(  # type: ignore[attr-defined]
+        _make_entry((1.0, 0.0), commit_hash="a")
+    )
+    reducer._record_history(  # type: ignore[attr-defined]
+        _make_entry((1.0, 0.0), commit_hash="b")
+    )
+
+    projection = reducer._fit_projection()  # type: ignore[attr-defined]
+
+    assert projection is not None
+    assert all(math.isfinite(value) for value in projection.explained_variance)
+    assert all(
+        math.isfinite(value) for value in projection.explained_variance_ratio
+    )
+    assert projection.explained_variance_ratio == (0.0,)
+    json.dumps(
+        {
+            "explained_variance": projection.explained_variance,
+            "explained_variance_ratio": projection.explained_variance_ratio,
+        },
+        allow_nan=False,
+    )
+
+
 def test_reduce_commit_embeddings_end_to_end(settings: Settings) -> None:
     settings.mapelites_dimensionality_target_dims = 2
     settings.mapelites_dimensionality_min_fit_samples = 1
@@ -306,5 +340,4 @@ def test_reduce_commit_embeddings_refits_after_interval_across_calls(
     assert projection is not None
     assert projection.epoch == first_epoch + 1
     assert samples_since_fit == 0
-
 

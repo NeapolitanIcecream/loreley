@@ -412,6 +412,53 @@ def test_ingest_snapshot_records_failed_when_manager_raises(monkeypatch, tmp_pat
     assert recorded == [("failed", "manager failed")]
 
 
+def test_ingest_snapshot_reloads_island_after_manager_mutation_fails(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    ingestion = _make_ingestion(tmp_path)
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_ensure_commit_available",
+        lambda _self, commit_hash: commit_hash,
+    )
+    reloads: list[tuple[str, Any | None]] = []
+
+    class DummyManager:
+        def ingest(self, *args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("snapshot persist failed")
+
+        def reload_island(
+            self,
+            island_id: str,
+            *,
+            snapshot_session: Any | None = None,
+        ) -> None:
+            reloads.append((island_id, snapshot_session))
+
+    ingestion.manager = DummyManager()  # type: ignore[assignment]
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_record_ingestion_state",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_load_metrics_payload_for_commit",
+        lambda *_args, **_kwargs: [],
+    )
+    snapshot = JobSnapshot(
+        job_id=uuid4(),
+        base_commit_hash=None,
+        island_id="beta",
+        result_commit_hash="cafebabe",
+        completed_at=None,
+    )
+
+    assert ingestion._ingest_snapshot(snapshot, snapshot_session=None) is False
+    assert reloads == [("beta", None)]
+
+
 def test_ingest_snapshot_falls_back_when_canonical_prefetch_payload_is_missing(
     monkeypatch,
     tmp_path,

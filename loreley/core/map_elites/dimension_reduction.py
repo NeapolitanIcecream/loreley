@@ -6,6 +6,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field, replace
 import time
 from typing import Sequence
+import warnings
 
 from loguru import logger
 import numpy as np
@@ -253,10 +254,12 @@ class PCAProjection:
         )
         mean = tuple(float(value) for value in model.mean_)
         explained_variance = tuple(
-            float(value) for value in getattr(model, "explained_variance_", [])
+            _finite_or_zero(value)
+            for value in getattr(model, "explained_variance_", [])
         )
         explained = tuple(
-            float(value) for value in getattr(model, "explained_variance_ratio_", [])
+            _finite_or_zero(value)
+            for value in getattr(model, "explained_variance_ratio_", [])
         )
         return cls(
             feature_count=len(mean),
@@ -270,6 +273,11 @@ class PCAProjection:
             whiten=bool(getattr(model, "whiten", False)),
             rotation=None,
         )
+
+
+def _finite_or_zero(value: float) -> float:
+    parsed = float(value)
+    return parsed if np.isfinite(parsed) else 0.0
 
 
 def align_pca_projection(
@@ -677,7 +685,14 @@ class DimensionReducer:
             sample_matrix = sample_matrix[:sample_count, :]
 
         try:
-            model.fit(sample_matrix)
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message="invalid value encountered in divide",
+                    category=RuntimeWarning,
+                    module=r"sklearn\.decomposition\._pca",
+                )
+                model.fit(sample_matrix)
         except ValueError as exc:
             log.error("Unable to fit PCA: {}", exc)
             return None
@@ -766,4 +781,3 @@ def reduce_commit_embeddings(
 
     reduced = reducer.reduce(entry)
     return reduced, reducer.history, reducer.projection, reducer.samples_since_fit
-

@@ -99,16 +99,18 @@ Every configured island has independent PCA history, projection, and Pareto
 archive state. A PCA refit is fail-closed: every retained elite must have a
 complete source vector of the expected dimensionality, and a failed rebuild
 leaves the prior projection and archive intact. Seed and normal scheduling use
-a global round-robin position
-derived from the database-wide job count, preserving global capacity and job
-budget while avoiding a first-island restart bias. Empty or warming islands are
-skipped for normal jobs without blocking ready islands.
+a global round-robin position derived from the database-wide job count,
+preserving global capacity and job budget while avoiding a first-island restart
+bias. Normal scheduling starts only after every configured island has a usable
+archive, so a faster cold start cannot consume another island's fixed budget.
 
-Every `MAPELITES_MIGRATION_INTERVAL_JOBS` normal jobs, the target job receives
-one non-duplicate elite from another ready island as an inspiration when at
-least one inspiration slot is configured. The target base remains local and
-the resulting candidate remains in the target island. The job records the donor
-island and migrant commit. Setting the interval to zero disables migration.
+Every `MAPELITES_MIGRATION_INTERVAL_JOBS` jobs in each island, the target job
+receives one non-duplicate elite from another ready island as an inspiration
+when at least one inspiration slot is configured. A per-island cadence prevents
+the global interval from aliasing with round-robin scheduling and repeatedly
+targeting only one island. The target base remains local and the resulting
+candidate remains in the target island. The job records the donor island and
+migrant commit. Setting the interval to zero disables migration.
 
 This is the smallest island-model gene flow for Loreley's variation mechanism:
 the coding agent synthesizes the target base and inspiration histories. Directly
@@ -121,7 +123,9 @@ and extra archive mutation without creating a new candidate. It is not included.
 
 - `N=1` uses the existing programmatic worker path.
 - `N>1` runs preflight and schema preparation once, then delegates lifecycle to
-  Dramatiq's native master with `--processes N --threads 1 --use-spawn`.
+  Dramatiq's native master with `--processes N --threads 1`. It requests spawn
+  when multiprocessing has not been initialized and otherwise reuses the
+  already initialized context.
 - Every child imports one narrow Loreley bootstrap that loads settings,
   configures process-unique logging, creates the experiment broker, and
   registers the actor.

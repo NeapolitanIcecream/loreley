@@ -71,6 +71,9 @@ def test_worker_pool_uses_spawned_single_threaded_dramatiq_processes(
     captured: list[object] = []
     child_environment: list[str | None] = []
 
+    def no_start_method(*, allow_none: bool) -> None:
+        assert allow_none is True
+
     def fake_main(args: object) -> int:
         captured.append(args)
         child_environment.append(
@@ -79,6 +82,11 @@ def test_worker_pool_uses_spawned_single_threaded_dramatiq_processes(
         return 7
 
     monkeypatch.setattr("dramatiq.cli.main", fake_main)
+    monkeypatch.setattr(
+        entrypoints.multiprocessing,
+        "get_start_method",
+        no_start_method,
+    )
     monkeypatch.setenv("WORKER_REPO_WORKTREE_RANDOMIZE", "false")
 
     rc = entrypoints._run_dramatiq_worker_pool(  # noqa: SLF001 - process contract
@@ -95,6 +103,35 @@ def test_worker_pool_uses_spawned_single_threaded_dramatiq_processes(
     assert getattr(args, "broker") == "loreley.tasks.worker_runtime:broker"
     assert child_environment == ["true"]
     assert entrypoints.os.environ["WORKER_REPO_WORKTREE_RANDOMIZE"] == "false"
+
+
+def test_worker_pool_reuses_logging_initialized_spawn_context(
+    monkeypatch,
+) -> None:
+    captured: list[object] = []
+
+    def initialized_start_method(*, allow_none: bool) -> str:
+        assert allow_none is True
+        return "spawn"
+
+    monkeypatch.setattr(
+        "dramatiq.cli.main",
+        lambda args: captured.append(args) or 0,
+    )
+    monkeypatch.setattr(
+        entrypoints.multiprocessing,
+        "get_start_method",
+        initialized_start_method,
+    )
+
+    rc = entrypoints._run_dramatiq_worker_pool(  # noqa: SLF001
+        processes=2,
+        console=Console(record=True),
+    )
+
+    assert rc == 0
+    assert len(captured) == 1
+    assert getattr(captured[0], "use_spawn") is False
 
 
 def test_run_worker_delegates_multi_process_lifecycle_to_dramatiq(
@@ -160,7 +197,9 @@ def test_run_ui_starts_streamlit_with_api_environment_when_api_is_reachable(
         popen_calls.append((cmd, kwargs))
         return streamlit_proc
 
-    monkeypatch.setattr(entrypoints, "_is_ui_api_reachable", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        entrypoints, "_is_ui_api_reachable", lambda *args, **kwargs: True
+    )
     monkeypatch.setattr(entrypoints.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(entrypoints.signal, "signal", lambda *args, **kwargs: None)
 
@@ -179,7 +218,9 @@ def test_run_ui_starts_streamlit_with_api_environment_when_api_is_reachable(
     assert len(popen_calls) == 1
     cmd, kwargs = popen_calls[0]
     expected_ui_script = str(
-        (entrypoints.Path(entrypoints.__file__).resolve().parent / "ui" / "app.py").resolve()
+        (
+            entrypoints.Path(entrypoints.__file__).resolve().parent / "ui" / "app.py"
+        ).resolve()
     )
     assert cmd == [
         sys.executable,
@@ -207,12 +248,16 @@ def test_run_ui_preflight_warning_blocks_startup_before_spawning_processes(
 ) -> None:
     timeouts: list[float] = []
 
-    def fake_preflight_ui(_settings: object, *, timeout_seconds: float) -> list[CheckResult]:
+    def fake_preflight_ui(
+        _settings: object, *, timeout_seconds: float
+    ) -> list[CheckResult]:
         timeouts.append(timeout_seconds)
         return [CheckResult("streamlit_deps", "warn", "missing optional dependency")]
 
     def fail_popen(*args: object, **kwargs: object) -> None:
-        raise AssertionError("run_ui should not spawn processes when preflight blocks startup")
+        raise AssertionError(
+            "run_ui should not spawn processes when preflight blocks startup"
+        )
 
     monkeypatch.setattr(entrypoints, "preflight_ui", fake_preflight_ui)
     monkeypatch.setattr(entrypoints.subprocess, "Popen", fail_popen)
@@ -339,7 +384,9 @@ def test_run_ui_autostarts_local_api_before_streamlit_when_api_is_unreachable(
         popen_calls.append((cmd, kwargs, proc))
         return proc
 
-    def fake_stop_proc(proc: _FakeProcess, *, console: Console, first_signal: int) -> None:
+    def fake_stop_proc(
+        proc: _FakeProcess, *, console: Console, first_signal: int
+    ) -> None:
         stop_calls.append((proc, first_signal))
 
     monkeypatch.setattr(entrypoints, "_is_ui_api_reachable", fake_is_reachable)

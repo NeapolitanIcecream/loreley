@@ -540,15 +540,20 @@ class EvolutionScheduler:
             raise SchedulerError(f"Scheduler repo {self.repo_root} is not a git repository.") from exc
     # Primary-objective deliverable -----------------------------------------
 
-    def _create_primary_objective_branch_if_possible(self) -> None:
-        """Create the explicitly primary-objective branch and fail fast on errors."""
+    def _create_primary_objective_branch_if_possible(self) -> bool:
+        """Create the primary-objective branch when a retained candidate exists."""
 
         best_commit, meta = self._resolve_best_primary_commit()
         if not best_commit:
-            raise SchedulerError(
-                "No retained commit has the configured primary objective; "
-                "check MAPELITES_OBJECTIVES and evaluator output."
+            self.console.log(
+                "[bold yellow]Primary-objective branch not created[/] "
+                "reason=no retained candidate with the configured primary objective"
             )
+            log.warning(
+                "Primary-objective branch not created because no retained "
+                "candidate has the configured primary objective"
+            )
+            return False
 
         root_commit = meta.get("root_commit_hash")
         primary = resolve_objective_contract(self.settings).primary
@@ -589,6 +594,7 @@ class EvolutionScheduler:
             metric_name,
             metric_value,
         )
+        return True
 
     def _resolve_best_primary_commit(self) -> tuple[str | None, dict[str, Any]]:
         """Return the retained commit with the best raw primary-objective value."""

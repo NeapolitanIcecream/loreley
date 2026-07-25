@@ -304,6 +304,22 @@ class MapElitesManager:
         for island_id in self.settings.mapelites_islands:
             self._ensure_island(island_id)
 
+    def reload_island(
+        self,
+        island_id: str,
+        *,
+        snapshot_session: Session | None = None,
+    ) -> None:
+        """Discard possibly mutated cache state and restore the durable snapshot."""
+
+        effective_island = island_id or self._default_island
+        self._archives.pop(effective_island, None)
+        self._reducers.pop(effective_island, None)
+        self._ensure_island(
+            effective_island,
+            snapshot_session=snapshot_session,
+        )
+
     def count_pca_history_samples(self, island_id: str | None = None) -> int:
         """Return the number of non-empty PCA history samples for an island."""
         effective_island = island_id or self._default_island
@@ -1014,15 +1030,22 @@ class MapElitesManager:
             island_id=island_id,
         )
 
-    def _ensure_island(self, island_id: str) -> IslandState:
+    def _ensure_island(
+        self,
+        island_id: str,
+        *,
+        snapshot_session: Session | None = None,
+    ) -> IslandState:
         state = self._archives.get(island_id)
         if state:
             return state
 
-        snapshot = self._snapshot_store.load(
-            island_id,
-            history_limit=resolve_pca_history_limit(self.settings),
-        )
+        load_kwargs: dict[str, Any] = {
+            "history_limit": resolve_pca_history_limit(self.settings),
+        }
+        if snapshot_session is not None:
+            load_kwargs["session"] = snapshot_session
+        snapshot = self._snapshot_store.load(island_id, **load_kwargs)
         snapshot_dims = self._infer_snapshot_target_dims(snapshot) if snapshot else None
         if snapshot_dims and snapshot_dims != self._target_dims:
             raise ValueError(
