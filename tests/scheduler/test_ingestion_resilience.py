@@ -729,6 +729,7 @@ def test_record_ingestion_state_reuses_provided_session(monkeypatch, tmp_path) -
 
     assert session.begin_nested_calls == 1
     assert dummy_job.ingestion_attempts == 1
+    assert dummy_job.ingestion_status == "failed"
     assert dummy_job.ingestion_reason == "boom"
 
 
@@ -787,6 +788,52 @@ def test_record_ingestion_state_records_result_payload(monkeypatch, tmp_path) ->
     assert dummy_job.ingestion_status_code == 3
     assert dummy_job.ingestion_message == "Inserted into archive"
     assert dummy_job.ingestion_cell_index == 7
+
+
+def test_failed_ingestion_becomes_terminal_after_retry_budget(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    ingestion = _make_ingestion(tmp_path)
+    job_id = uuid4()
+    snapshot = JobSnapshot(
+        job_id=job_id,
+        base_commit_hash=None,
+        island_id="alpha",
+        result_commit_hash="abc123",
+        completed_at=None,
+    )
+    dummy_job = SimpleNamespace(
+        ingestion_attempts=10_000,
+        ingestion_status="failed",
+        ingestion_last_attempt_at=None,
+        ingestion_reason="old reason",
+        ingestion_delta=None,
+        ingestion_status_code=None,
+        ingestion_message=None,
+        ingestion_cell_index=None,
+        result_commit_hash="abc123",
+    )
+
+    class DummySession:
+        def get(self, _model: Any, key: Any) -> Any:
+            return dummy_job if key == job_id else None
+
+    @contextmanager
+    def fake_scope():
+        yield DummySession()
+
+    monkeypatch.setattr(ingestion_mod, "session_scope", fake_scope)
+
+    ingestion._record_ingestion_state(
+        snapshot,
+        status="failed",
+        reason="commit remains unavailable",
+    )
+
+    assert dummy_job.ingestion_status == "skipped"
+    assert "retry limit reached" in dummy_job.ingestion_reason.lower()
+    assert "Ingestion retry limit reached" in ingestion.console.export_text()
 
 
 class _ScalarOneOrNone:

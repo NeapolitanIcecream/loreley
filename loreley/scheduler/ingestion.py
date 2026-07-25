@@ -6,7 +6,7 @@ The public API here is intentionally small so that ``loreley.scheduler.main``
 can delegate all ingestion responsibilities to this module.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Sequence
@@ -40,6 +40,7 @@ log = logger.bind(module="scheduler.ingestion")
 
 _INGESTION_REASON_MAX_CHARS = 4096
 _INGESTION_MESSAGE_MAX_CHARS = 4096
+_INGESTION_MAX_FAILED_ATTEMPTS = 5
 
 
 class IngestionError(RuntimeError):
@@ -852,21 +853,59 @@ class MapElitesIngestion:
         job = session.get(EvolutionJob, snapshot.job_id)
         if not job:
             return
-        job.ingestion_attempts = int(getattr(job, "ingestion_attempts", 0) or 0) + 1
-        job.ingestion_status = payload.status
+        attempts = int(getattr(job, "ingestion_attempts", 0) or 0) + 1
+        effective_payload = self._terminalize_failed_ingestion(
+            snapshot,
+            payload=payload,
+            attempts=attempts,
+        )
+        job.ingestion_attempts = attempts
+        job.ingestion_status = effective_payload.status
         job.ingestion_last_attempt_at = datetime.now(timezone.utc)
-        job.ingestion_reason = payload.reason
-        job.ingestion_delta = payload.delta
-        job.ingestion_status_code = payload.status_code
-        job.ingestion_message = payload.message
-        job.ingestion_cell_index = self._ingestion_record_cell_index(payload.record)
+        job.ingestion_reason = effective_payload.reason
+        job.ingestion_delta = effective_payload.delta
+        job.ingestion_status_code = effective_payload.status_code
+        job.ingestion_message = effective_payload.message
+        job.ingestion_cell_index = self._ingestion_record_cell_index(
+            effective_payload.record
+        )
         result_commit_hash = getattr(job, "result_commit_hash", None) or snapshot.result_commit_hash
         if result_commit_hash and hasattr(session, "execute"):
             self._apply_candidate_archive_state(
                 session=session,
                 commit_hash=result_commit_hash,
-                payload=payload,
+                payload=effective_payload,
             )
+
+    def _terminalize_failed_ingestion(
+        self,
+        snapshot: JobSnapshot,
+        *,
+        payload: _IngestionStatePayload,
+        attempts: int,
+    ) -> _IngestionStatePayload:
+        if (
+            payload.status != "failed"
+            or attempts < _INGESTION_MAX_FAILED_ATTEMPTS
+        ):
+            return payload
+        reason = self._clamp_ingestion_text(
+            "Ingestion retry limit reached after "
+            f"{attempts} attempts: {payload.reason or 'unknown ingestion failure'}",
+            max_chars=_INGESTION_REASON_MAX_CHARS,
+        )
+        self.console.log(
+            "[bold yellow]Ingestion retry limit reached[/] "
+            f"job={snapshot.job_id} commit={snapshot.result_commit_hash} "
+            f"attempts={attempts}",
+        )
+        log.warning(
+            "Ingestion retry limit reached job={} commit={} attempts={}",
+            snapshot.job_id,
+            snapshot.result_commit_hash,
+            attempts,
+        )
+        return replace(payload, status="skipped", reason=reason)
 
     @staticmethod
     def _apply_candidate_archive_state(
