@@ -4,6 +4,7 @@ import signal
 import sys
 from types import SimpleNamespace
 
+import pytest
 from rich.console import Console
 
 import loreley.entrypoints as entrypoints
@@ -70,11 +71,13 @@ def test_worker_pool_uses_spawned_single_threaded_dramatiq_processes(
 ) -> None:
     captured: list[object] = []
     child_environment: list[str | None] = []
+    context_changes: list[tuple[str | None, bool]] = []
 
     def no_start_method(*, allow_none: bool) -> None:
         assert allow_none is True
 
     def fake_main(args: object) -> int:
+        assert context_changes == [("spawn", True)]
         captured.append(args)
         child_environment.append(
             entrypoints.os.environ.get("WORKER_REPO_WORKTREE_RANDOMIZE")
@@ -86,6 +89,11 @@ def test_worker_pool_uses_spawned_single_threaded_dramatiq_processes(
         entrypoints.multiprocessing,
         "get_start_method",
         no_start_method,
+    )
+    monkeypatch.setattr(
+        entrypoints.multiprocessing,
+        "set_start_method",
+        lambda method, *, force: context_changes.append((method, force)),
     )
     monkeypatch.setenv("WORKER_REPO_WORKTREE_RANDOMIZE", "false")
 
@@ -99,9 +107,10 @@ def test_worker_pool_uses_spawned_single_threaded_dramatiq_processes(
     args = captured[0]
     assert getattr(args, "processes") == 3
     assert getattr(args, "threads") == 1
-    assert getattr(args, "use_spawn") is True
+    assert getattr(args, "use_spawn") is False
     assert getattr(args, "broker") == "loreley.tasks.worker_runtime:broker"
     assert child_environment == ["true"]
+    assert context_changes == [("spawn", True), (None, True)]
     assert entrypoints.os.environ["WORKER_REPO_WORKTREE_RANDOMIZE"] == "false"
 
 
@@ -132,6 +141,85 @@ def test_worker_pool_reuses_logging_initialized_spawn_context(
     assert rc == 0
     assert len(captured) == 1
     assert getattr(captured[0], "use_spawn") is False
+
+
+def test_worker_pool_temporarily_replaces_an_initialized_fork_context(
+    monkeypatch,
+) -> None:
+    captured: list[object] = []
+    child_environment: list[str | None] = []
+    context_changes: list[tuple[str | None, bool]] = []
+
+    monkeypatch.setattr(
+        entrypoints.multiprocessing,
+        "get_start_method",
+        lambda *, allow_none: "fork",
+    )
+    monkeypatch.setattr(
+        entrypoints.multiprocessing,
+        "set_start_method",
+        lambda method, *, force: context_changes.append((method, force)),
+    )
+
+    def fake_main(args: object) -> int:
+        assert context_changes == [("spawn", True)]
+        captured.append(args)
+        child_environment.append(
+            entrypoints.os.environ.get("WORKER_REPO_WORKTREE_RANDOMIZE")
+        )
+        return 0
+
+    monkeypatch.setattr("dramatiq.cli.main", fake_main)
+    monkeypatch.setenv("WORKER_REPO_WORKTREE_RANDOMIZE", "false")
+
+    rc = entrypoints._run_dramatiq_worker_pool(  # noqa: SLF001
+        processes=2,
+        console=Console(record=True),
+    )
+
+    assert rc == 0
+    assert len(captured) == 1
+    assert getattr(captured[0], "use_spawn") is False
+    assert child_environment == ["true"]
+    assert context_changes == [("spawn", True), ("fork", True)]
+    assert entrypoints.os.environ["WORKER_REPO_WORKTREE_RANDOMIZE"] == "false"
+
+
+def test_worker_pool_restores_context_and_environment_when_master_fails(
+    monkeypatch,
+) -> None:
+    context_changes: list[tuple[str | None, bool]] = []
+
+    monkeypatch.setattr(
+        entrypoints.multiprocessing,
+        "get_start_method",
+        lambda *, allow_none: "fork",
+    )
+    monkeypatch.setattr(
+        entrypoints.multiprocessing,
+        "set_start_method",
+        lambda method, *, force: context_changes.append((method, force)),
+    )
+
+    def fail_main(_args: object) -> int:
+        assert context_changes == [("spawn", True)]
+        assert (
+            entrypoints.os.environ["WORKER_REPO_WORKTREE_RANDOMIZE"]
+            == "true"
+        )
+        raise RuntimeError("worker master failed")
+
+    monkeypatch.setattr("dramatiq.cli.main", fail_main)
+    monkeypatch.setenv("WORKER_REPO_WORKTREE_RANDOMIZE", "false")
+
+    with pytest.raises(RuntimeError, match="worker master failed"):
+        entrypoints._run_dramatiq_worker_pool(  # noqa: SLF001
+            processes=2,
+            console=Console(record=True),
+        )
+
+    assert context_changes == [("spawn", True), ("fork", True)]
+    assert entrypoints.os.environ["WORKER_REPO_WORKTREE_RANDOMIZE"] == "false"
 
 
 def test_run_worker_delegates_multi_process_lifecycle_to_dramatiq(

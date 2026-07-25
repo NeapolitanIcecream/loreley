@@ -7,9 +7,13 @@ These notes cover changes merged after `v0.8.4-alpha`.
 - Replaced scalar-per-cell MAP-Elites storage with bounded Pareto fronts using
   every ordered objective and its explicit `max`/`min` direction.
 - Added fair seed and normal scheduling across `MAPELITES_ISLANDS`, with
-  periodic, persisted cross-island migration inspirations.
+  periodic, persisted cross-island migration inspirations. An empty island
+  retains one bounded readiness probe after PCA warmup instead of stalling.
 - Added `loreley worker --processes N`, backed by Dramatiq's spawn-based native
-  process master and isolated randomized worker base clones.
+  process master and isolated randomized worker base clones, even when the
+  caller previously initialized a `fork` context.
+- Constant objectives no longer create arbitrary crowding-distance boundaries
+  when a Pareto cell exceeds its configured capacity.
 - Removed the `ribs` adapter/dependency and obsolete scalar archive fields.
 - Removed the MAP-Elites re-export shim and the runtime discovery of
   unconfigured persisted islands. Import `MapElitesManager` from

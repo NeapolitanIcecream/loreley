@@ -347,6 +347,87 @@ def test_seed_scheduling_counts_uningested_succeeded_seed_jobs_as_warmup_candida
     assert len(executed) == 1
 
 
+def test_seed_scheduling_keeps_one_readiness_probe_after_warmup(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    settings = settings.model_copy(
+        update={
+            "mapelites_experiment_root_commit": "deadbeef",
+            "mapelites_seed_population_size": 10,
+            "mapelites_feature_normalization_warmup_samples": 10,
+            "scheduler_max_unfinished_jobs": 4,
+        }
+    )
+    scheduler = _make_scheduler(settings=settings, records=[])
+    scheduler._total_jobs_count = 10
+    cast(Any, scheduler.manager).history_count = 10
+    cast(Any, scheduler.job_scheduler).created_return = 1
+    fake_session = _FakeSession(total_jobs=10, seed_count=10, executed=[])
+
+    @contextmanager
+    def _session_scope() -> Iterator[_FakeSession]:
+        yield fake_session
+
+    monkeypatch.setattr(scheduler_main, "session_scope", _session_scope)
+
+    created = scheduler._maybe_schedule_seed_jobs(unfinished_jobs=0)
+
+    assert created == 1
+    assert cast(Any, scheduler.job_scheduler).created_calls == [
+        {
+            "base_commit_hash": "deadbeef",
+            "count": 1,
+            "island_id": "main",
+            "refresh_campaign_program": False,
+        }
+    ]
+    assert "phase=readiness" in scheduler.console.export_text()
+
+
+@pytest.mark.parametrize(
+    ("unfinished_seed_jobs", "pending_ingestion_seed_jobs"),
+    [(1, 0), (0, 1)],
+)
+def test_seed_scheduling_does_not_duplicate_a_post_warmup_readiness_probe(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+    unfinished_seed_jobs: int,
+    pending_ingestion_seed_jobs: int,
+) -> None:
+    settings = settings.model_copy(
+        update={
+            "mapelites_experiment_root_commit": "deadbeef",
+            "mapelites_seed_population_size": 10,
+            "mapelites_feature_normalization_warmup_samples": 10,
+            "scheduler_max_unfinished_jobs": 4,
+        }
+    )
+    scheduler = _make_scheduler(settings=settings, records=[])
+    scheduler._total_jobs_count = 10
+    cast(Any, scheduler.manager).history_count = 10
+    fake_session = _FakeSession(
+        total_jobs=10,
+        seed_count=10,
+        unfinished_seed_count=unfinished_seed_jobs,
+        pending_ingestion_seed_count=pending_ingestion_seed_jobs,
+        executed=[],
+    )
+
+    @contextmanager
+    def _session_scope() -> Iterator[_FakeSession]:
+        yield fake_session
+
+    monkeypatch.setattr(scheduler_main, "session_scope", _session_scope)
+
+    created = scheduler._maybe_schedule_seed_jobs(
+        unfinished_jobs=unfinished_seed_jobs
+    )
+
+    assert created == 0
+    assert cast(Any, scheduler.job_scheduler).created_calls == []
+
+
 def test_seed_scheduling_distributes_capacity_across_empty_islands(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,

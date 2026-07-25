@@ -237,8 +237,16 @@ in a distinct worktree.
 
 The first four-process attempt also exposed a multiprocessing-context collision:
 queued logging initialized `spawn` before Dramatiq unconditionally requested
-`--use-spawn`. The worker entrypoint now requests it only when no start method
-is initialized.
+`--use-spawn`. Reusing an initialized context avoided that collision but left a
+`fork` caller able to copy cached, non-randomized worker settings. The final
+entrypoint temporarily forces `spawn` for the Dramatiq master without asking
+Dramatiq to set it a second time, then restores the caller's prior context.
+A bounded regression smoke explicitly initialized the worker parent to `fork`
+before launching the real two-process master. Four jobs completed 2/2 across
+the islands using two PIDs and four distinct coding workspaces, with no
+duplicate phase event, in 10.125 seconds wall time. The compact record is
+[`fork-parent-worker-pool-regression.json`](artifacts/2026-07-26-v15-validation/fork-parent-worker-pool-regression.json);
+its first invalid database-endpoint attempt remains in the incident ledger.
 
 ### Selected-model end-to-end campaign
 
@@ -268,20 +276,27 @@ failed, the scheduler crashed while creating a primary-objective branch.
 Absence of a retained candidate is now a logged, clean terminal state; genuine
 branch creation errors still fail.
 
-## Implementation decisions changed by evidence
+## Implementation decisions changed by evidence and review
 
-The experiments caused seven product changes that were not justified by the
-original unit suite alone:
+The experiments and current-head review caused nine product changes that were
+not justified by the original unit suite alone:
 
 1. sanitize non-finite PCA diagnostics before JSON persistence;
 2. restore an island manager from the durable snapshot when ingestion rolls
    back;
 3. wait for every configured island before normal cold-start scheduling;
 4. apply migration cadence per target island;
-5. reuse an initialized multiprocessing start method;
+5. temporarily force a spawn multiprocessing context for the worker pool;
 6. make Kilo gateway/headless execution and timeout usage recovery reliable;
 7. price Kilo zero-cost placeholders with explicit rules and terminate cleanly
-   when a campaign retains no candidate.
+   when a campaign retains no candidate;
+8. keep one bounded seed probe after PCA warmup until an island archive is
+   usable; and
+9. ignore zero-span objectives when assigning crowding-distance boundaries.
+
+The same review also aligned configured island IDs with their persisted
+64-character boundary and preserved the legacy `main` fallback for blank
+default-island values in the one-shot migration tool.
 
 The implementation did not add a compatibility layer for legacy scalar or
 single-island semantics. Existing configuration is handled by the committed
@@ -289,9 +304,9 @@ one-shot migration command documented in the architecture work.
 
 ## Final verification and structural-debt gate
 
-The final suite ran with the PostgreSQL migration tests enabled: **856 passed,
-0 failed, 0 skipped** in 43.34 seconds. Coverage.py measured 82.60% statement
-coverage and 57.23% branch coverage (78.64% combined).
+The final suite ran with the PostgreSQL migration tests enabled: **862 passed,
+0 failed, 0 skipped** in 40.56 seconds. Coverage.py measured 82.64% statement
+coverage and 57.27% branch coverage (78.69% combined).
 
 Cremona then scanned 278 Python files against the committed refactor baseline
 using that coverage report and git history. Signal health was `full`; the
@@ -360,7 +375,7 @@ uv run python tools/run_v15_system_experiment.py \
 - Selected Kilo/Mini end-to-end path: supported, with observed timeout risk.
 - Migration quality benefit: bounded inconclusive.
 - Algorithm, debt, and parallelism audits reported no blocker or major finding.
-- Final verification: 856 tests passed; structural audit found no regression
+- Final verification: 862 tests passed; structural audit found no regression
   and resolved 22 baseline signals.
 - All failed and superseded experiments remain in the incident ledger.
 - No credential was written to an artifact.

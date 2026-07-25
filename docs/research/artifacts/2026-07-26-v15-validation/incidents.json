@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-26T01:50:00+08:00",
+  "generated_at": "2026-07-26T03:24:00+08:00",
   "policy": {
     "failed_runs_are_evidence": true,
     "replacement_runs_do_not_erase_incidents": true,
@@ -48,14 +48,27 @@
     },
     {
       "id": "worker-spawn-context",
-      "stage": "first processes=4 system run",
-      "symptom": "Dramatiq --use-spawn raised RuntimeError: context has already been set.",
-      "cause": "Queued Loguru logging initialized the multiprocessing context before the worker pool unconditionally requested --use-spawn.",
-      "decision": "Request --use-spawn only when no start method exists; otherwise reuse the initialized context.",
+      "stage": "processes=4 system run and current-head review",
+      "symptom": "Dramatiq --use-spawn initially raised RuntimeError when spawn was already selected; reusing an ambient fork context could instead copy cached, non-randomized worker settings.",
+      "cause": "The pool delegated context selection to ambient process state, but both selecting spawn twice and accepting fork were unsafe.",
+      "decision": "Temporarily force the Dramatiq master to spawn without passing --use-spawn, then restore the caller's prior context.",
       "status": "fixed",
       "decisive_evidence": [
         "tests/test_entrypoints.py",
-        "docs/research/artifacts/2026-07-26-v15-validation/system-parallel-p4.json"
+        "docs/research/artifacts/2026-07-26-v15-validation/system-parallel-p4.json",
+        "docs/research/artifacts/2026-07-26-v15-validation/fork-parent-worker-pool-regression.json"
+      ],
+      "api_cost_usd": 0.0
+    },
+    {
+      "id": "fork-spawn-validation-database-endpoint",
+      "stage": "current-head fork-parent regression smoke",
+      "symptom": "The first isolated run failed before scheduler startup because its database existed in the Docker PostgreSQL container but not on the localhost endpoint used by Loreley.",
+      "cause": "The environment exposed a separate host PostgreSQL server on localhost:5432.",
+      "decision": "Repeat against a dedicated schema on the exact application endpoint, verify four terminal jobs across two spawned workers, then remove both temporary database targets.",
+      "status": "superseded_by_valid_run",
+      "decisive_evidence": [
+        "docs/research/artifacts/2026-07-26-v15-validation/fork-parent-worker-pool-regression.json"
       ],
       "api_cost_usd": 0.0
     },

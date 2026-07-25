@@ -405,14 +405,8 @@ def _run_dramatiq_worker_pool(*, processes: int, console: Console) -> int:
         "1",
         "loreley.tasks.worker_runtime:broker",
     ]
-    if start_method is None:
-        argv.insert(-1, "--use-spawn")
-        start_method = "spawn"
     args = make_argument_parser().parse_args(argv)
-    console.log(
-        "[bold green]Starting Dramatiq worker pool[/] "
-        f"processes={processes} threads_per_process=1 start_method={start_method}",
-    )
+    replace_start_method = start_method != "spawn"
     # Each spawned worker must own a distinct base clone. The per-job worktree
     # boundary is not sufficient because clone/fetch maintenance also mutates
     # the base repository. Keep the override scoped to the native master call
@@ -420,13 +414,23 @@ def _run_dramatiq_worker_pool(*, processes: int, console: Console) -> int:
     variable = "WORKER_REPO_WORKTREE_RANDOMIZE"
     previous = os.environ.get(variable)
     os.environ[variable] = "true"
+    context_replaced = False
     try:
+        if replace_start_method:
+            multiprocessing.set_start_method("spawn", force=True)
+            context_replaced = True
+        console.log(
+            "[bold green]Starting Dramatiq worker pool[/] "
+            f"processes={processes} threads_per_process=1 start_method=spawn",
+        )
         return int(dramatiq_main(args))
     finally:
         if previous is None:
             os.environ.pop(variable, None)
         else:
             os.environ[variable] = previous
+        if context_replaced:
+            multiprocessing.set_start_method(start_method, force=True)
 
 
 def run_api(

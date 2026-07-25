@@ -74,7 +74,8 @@ Loreley owns a small Pareto grid instead of adapting the scalar
 - Equivalent objective vectors keep one deterministic representative.
 - If the non-dominated set exceeds capacity, standard crowding distance keeps
   boundary trade-offs and the most isolated interior points. Crowding is only a
-  bounded-front diversity rule, not an optimization scalar.
+  bounded-front diversity rule, not an optimization scalar. Objectives whose
+  span is within epsilon contribute neither boundary markers nor distance.
 - Base sampling first chooses a behavior cell, then chooses one Pareto member,
   so cells with larger fronts do not silently receive more probability.
 
@@ -103,6 +104,10 @@ a global round-robin position derived from the database-wide job count,
 preserving global capacity and job budget while avoiding a first-island restart
 bias. Normal scheduling starts only after every configured island has a usable
 archive, so a faster cold start cannot consume another island's fixed budget.
+After PCA warmup, an empty island schedules another seed only when no unfinished
+or pending-ingestion probe remains, until an objective-valid candidate reaches
+its archive. The global unfinished-job and total-job limits remain
+authoritative.
 
 Every `MAPELITES_MIGRATION_INTERVAL_JOBS` jobs in each island, the target job
 receives one non-duplicate elite from another ready island as an inspiration
@@ -123,9 +128,9 @@ and extra archive mutation without creating a new candidate. It is not included.
 
 - `N=1` uses the existing programmatic worker path.
 - `N>1` runs preflight and schema preparation once, then delegates lifecycle to
-  Dramatiq's native master with `--processes N --threads 1`. It requests spawn
-  when multiprocessing has not been initialized and otherwise reuses the
-  already initialized context.
+  Dramatiq's native master with `--processes N --threads 1`. The master
+  temporarily forces the multiprocessing context to `spawn`, even if embedding
+  code initialized `fork`, and restores the caller's prior context on return.
 - Every child imports one narrow Loreley bootstrap that loads settings,
   configures process-unique logging, creates the experiment broker, and
   registers the actor.

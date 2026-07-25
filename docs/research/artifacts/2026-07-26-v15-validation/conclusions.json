@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-26T02:00:00+08:00",
+  "generated_at": "2026-07-26T03:24:00+08:00",
   "scope": "Deterministic 26-circle packing campaign, PostgreSQL 18, Redis 8, Python 3.12/3.13, Kilo 7.3.1, local Apple Silicon host.",
   "claims": [
     {
@@ -20,10 +20,11 @@
       "id": "one-command-worker-parallelism",
       "state": "supported_within_tested_scope",
       "result": "For the same deterministic 8-job workload, processes=1 used a 25.701889 s execution window and processes=4 used 8.452003 s: 3.041× speedup. Wall time improved from 29.694509 s to 15.068000 s: 1.970×.",
-      "countercheck": "The processes=4 run used 4 PIDs and 8 distinct coding workspaces, completed every planning/coding phase exactly once, and had no failed or duplicate jobs.",
+      "countercheck": "The processes=4 run used 4 PIDs and 8 distinct coding workspaces with no failed or duplicate jobs. A separate regression smoke initialized the worker parent to fork; the real two-process master still ran under spawn, used two PIDs and four workspaces, and completed 4/4 jobs exactly once.",
       "evidence": [
         "system-parallel-p1.json",
-        "system-parallel-p4.json"
+        "system-parallel-p4.json",
+        "fork-parent-worker-pool-regression.json"
       ]
     },
     {
@@ -76,7 +77,7 @@
     "resource_ledger": "resource-ledger.json",
     "structural_audit": {
       "evidence": "structural-audit.json",
-      "tests_passed": 850,
+      "tests_passed": 862,
       "new_debt_signals": 0,
       "worsened_debt_signals": 0,
       "resolved_debt_signals": 22

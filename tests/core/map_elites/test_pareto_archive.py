@@ -8,11 +8,15 @@ import numpy as np
 from loreley.core.map_elites.pareto_archive import ParetoCandidate, ParetoGridArchive
 
 
-def _archive(*, capacity: int = 8) -> ParetoGridArchive:
+def _archive(
+    *,
+    capacity: int = 8,
+    objective_count: int = 2,
+) -> ParetoGridArchive:
     return ParetoGridArchive(
         dims=(4, 4),
         ranges=((0.0, 1.0), (0.0, 1.0)),
-        objective_count=2,
+        objective_count=objective_count,
         max_front_size=capacity,
         epsilon=1.0e-9,
     )
@@ -20,7 +24,7 @@ def _archive(*, capacity: int = 8) -> ParetoGridArchive:
 
 def _candidate(
     commit_hash: str,
-    objectives: tuple[float, float],
+    objectives: tuple[float, ...],
     *,
     measures: tuple[float, float] = (0.2, 0.2),
     timestamp: float = 1.0,
@@ -78,6 +82,23 @@ def test_crowding_capacity_preserves_two_objective_boundaries() -> None:
     assert {entry.commit_hash for entry in archive.records()} == {
         "quality-boundary",
         "latency-boundary",
+    }
+
+
+def test_crowding_ignores_constant_objectives_when_selecting_boundaries() -> None:
+    archive = _archive(capacity=2, objective_count=3)
+
+    archive.add_many(
+        (
+            _candidate("z-left", (1.0, 0.0, 10.0)),
+            _candidate("a-middle", (1.0, 6.0, 6.0)),
+            _candidate("y-right", (1.0, 10.0, 0.0)),
+        )
+    )
+
+    assert {entry.commit_hash for entry in archive.records()} == {
+        "z-left",
+        "y-right",
     }
 
 

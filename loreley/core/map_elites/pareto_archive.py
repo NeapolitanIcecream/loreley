@@ -445,11 +445,11 @@ class ParetoGridArchive:
             )
             low = ordered[0].objective_scores[objective_index]
             high = ordered[-1].objective_scores[objective_index]
-            distances[ordered[0].commit_hash] = math.inf
-            distances[ordered[-1].commit_hash] = math.inf
             span = high - low
             if span <= self.epsilon:
                 continue
+            distances[ordered[0].commit_hash] = math.inf
+            distances[ordered[-1].commit_hash] = math.inf
             for index in range(1, len(ordered) - 1):
                 commit_hash = ordered[index].commit_hash
                 if math.isinf(distances[commit_hash]):

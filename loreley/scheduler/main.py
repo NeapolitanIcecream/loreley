@@ -89,6 +89,18 @@ class _SeedIslandAllocation:
     count: int
 
 
+def _remaining_seed_demand(
+    *,
+    warmup_samples: int,
+    target_samples: int,
+    counts: _SeedWarmupJobCounts,
+) -> int:
+    pending = counts.unfinished_seed_jobs + counts.pending_ingestion_seed_jobs
+    if warmup_samples < target_samples:
+        return max(0, target_samples - warmup_samples - pending)
+    return max(0, 1 - pending)
+
+
 def _allocate_seed_slots(
     demands: tuple[_SeedIslandDemand, ...],
     available_slots: int,
@@ -719,15 +731,12 @@ class EvolutionScheduler:
             if self.manager.get_records(island_id):
                 continue
             warmup_samples = self.manager.count_pca_history_samples(island_id)
-            if warmup_samples >= budget.target_samples:
-                continue
             seed_counts = self._count_seed_warmup_job_counts(island_id=island_id)
-            pending_samples = (
-                warmup_samples
-                + seed_counts.unfinished_seed_jobs
-                + seed_counts.pending_ingestion_seed_jobs
+            remaining = _remaining_seed_demand(
+                warmup_samples=warmup_samples,
+                target_samples=budget.target_samples,
+                counts=seed_counts,
             )
-            remaining = max(0, budget.target_samples - pending_samples)
             if remaining:
                 demands.append(
                     _SeedIslandDemand(
@@ -746,6 +755,11 @@ class EvolutionScheduler:
         created_total = 0
         for allocation in allocations:
             demand = allocation.demand
+            seed_phase = (
+                "warmup"
+                if demand.warmup_samples < budget.target_samples
+                else "readiness"
+            )
             created = self.job_scheduler.create_seed_jobs(
                 base_commit_hash=budget.root_commit_hash,
                 count=allocation.count,
@@ -756,20 +770,22 @@ class EvolutionScheduler:
             if created:
                 self.console.log(
                     "[bold green]Scheduled seed jobs[/] "
-                    "count={} root={} island={} warmup_samples={}/{}".format(
+                    "count={} root={} island={} phase={} warmup_samples={}/{}".format(
                         created,
                         budget.root_commit_hash,
                         demand.island_id,
+                        seed_phase,
                         demand.warmup_samples,
                         budget.target_samples,
                     ),
                 )
                 log.info(
                     "Scheduled {} seed jobs from root {} on island {} "
-                    "(unfinished_jobs={} warmup_samples={} target_samples={})",
+                    "(phase={} unfinished_jobs={} warmup_samples={} target_samples={})",
                     created,
                     budget.root_commit_hash,
                     demand.island_id,
+                    seed_phase,
                     budget.unfinished_jobs,
                     demand.warmup_samples,
                     budget.target_samples,
