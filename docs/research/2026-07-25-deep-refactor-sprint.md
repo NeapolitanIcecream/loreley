@@ -348,13 +348,13 @@ Adversarial losses and corrections:
 Final evidence:
 
 - `LORELEY_POSTGRES_TEST_DSN=... uv run coverage run -m pytest -q`:
-  **865 passed**, no skips, against a disposable PostgreSQL instance.
+  **866 passed**, no skips, against a disposable PostgreSQL instance.
 - The PostgreSQL v15 migration tests cover the real v5-to-v15 chain, schema
   validation, candidate-hash backfill, and an idempotent second migration run.
 - `uv lock --check`, `git diff --check`, changed/new Python Ruff
   `--select F,E9`, `loreley worker --help`, and `mkdocs build --strict` pass.
 - Cremona reports signal health `full`, **0 new**, **0 worsened**, and
-  **17 resolved** hotspots against the stored baseline. The repository verdict
+  **22 resolved** hotspots against the stored baseline. The repository verdict
   remains `strained` because pre-existing debt outside this sprint remains; the
   current scope does not regress it.
 - The independent final audit reports **0 blocker** and **0 major** findings

@@ -6,10 +6,12 @@ from typing import Any, Iterator, cast
 
 import pytest
 from rich.console import Console
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 
 import loreley.scheduler.main as scheduler_main
 from loreley.config import Settings
-from loreley.db.models import EvolutionJob
+from loreley.db.models import EvolutionJob, JobStatus
 from loreley.scheduler.main import EvolutionScheduler
 
 
@@ -345,6 +347,50 @@ def test_seed_scheduling_counts_uningested_succeeded_seed_jobs_as_warmup_candida
     assert created == 0
     assert cast(Any, scheduler.job_scheduler).created_calls == []
     assert len(executed) == 1
+
+
+def test_seed_scheduling_treats_failed_ingestion_as_a_pending_retry(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    settings = settings.model_copy(
+        update={
+            "mapelites_experiment_root_commit": "deadbeef",
+            "mapelites_seed_population_size": 10,
+            "mapelites_feature_normalization_warmup_samples": 10,
+            "scheduler_max_unfinished_jobs": 4,
+        }
+    )
+    scheduler = _make_scheduler(settings=settings, records=[])
+    scheduler._total_jobs_count = 10
+    cast(Any, scheduler.manager).history_count = 10
+
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE evolution_jobs ("
+            "island_id VARCHAR, is_seed_job BOOLEAN NOT NULL, status VARCHAR NOT NULL, "
+            "result_commit_hash VARCHAR, ingestion_status VARCHAR)"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO evolution_jobs VALUES (?, ?, ?, ?, ?)",
+            ("main", True, JobStatus.SUCCEEDED.name, "candidate-commit", "failed"),
+        )
+
+    @contextmanager
+    def _session_scope() -> Iterator[Session]:
+        with Session(engine) as session:
+            yield session
+
+    monkeypatch.setattr(scheduler_main, "session_scope", _session_scope)
+
+    try:
+        created = scheduler._maybe_schedule_seed_jobs(unfinished_jobs=0)
+    finally:
+        engine.dispose()
+
+    assert created == 0
+    assert cast(Any, scheduler.job_scheduler).created_calls == []
 
 
 def test_seed_scheduling_keeps_one_readiness_probe_after_warmup(

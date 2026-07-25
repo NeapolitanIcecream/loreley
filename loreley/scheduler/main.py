@@ -13,11 +13,12 @@ from git import Repo
 from git.exc import GitCommandError, InvalidGitRepositoryError, NoSuchPathError
 from loguru import logger
 from rich.console import Console
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, case, func, select
 
 from loreley.config import Settings, get_settings, resolve_objective_contract
 from loreley.core.experiments import ExperimentError, bootstrap_instance
 from loreley.core.git import RepositoryError, require_commit, wrap_git_error
+from loreley.core.job_state import pending_ingestion_job_conditions
 from loreley.core.map_elites.manager import MapElitesManager
 from loreley.core.map_elites.sampler import MapElitesSampler
 from loreley.core.repo_lock import repo_lock
@@ -823,17 +824,13 @@ class EvolutionScheduler:
         from loreley.db.models import EvolutionJob, JobStatus  # Local import to avoid cycles.
 
         unfinished_seed_statuses = (JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING)
-        pending_ingestion_status = or_(
-            EvolutionJob.ingestion_status.is_(None),
-            EvolutionJob.ingestion_status == "",
-            EvolutionJob.ingestion_status.not_in(("failed", "succeeded", "skipped")),
-        )
         succeeded_seed_requiring_ingestion = and_(
             EvolutionJob.is_seed_job.is_(True),
-            EvolutionJob.status == JobStatus.SUCCEEDED,
-            EvolutionJob.result_commit_hash.is_not(None),
-            EvolutionJob.result_commit_hash != "",
-            pending_ingestion_status,
+            *pending_ingestion_job_conditions(
+                EvolutionJob=EvolutionJob,
+                JobStatus=JobStatus,
+                func=func,
+            ),
         )
         stmt = select(
             func.coalesce(

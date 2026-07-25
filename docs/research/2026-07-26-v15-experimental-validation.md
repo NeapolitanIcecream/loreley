@@ -278,7 +278,7 @@ branch creation errors still fail.
 
 ## Implementation decisions changed by evidence and review
 
-The experiments and current-head review caused nine product changes that were
+The experiments and current-head review caused product changes that were
 not justified by the original unit suite alone:
 
 1. sanitize non-finite PCA diagnostics before JSON persistence;
@@ -291,8 +291,13 @@ not justified by the original unit suite alone:
 7. price Kilo zero-cost placeholders with explicit rules and terminate cleanly
    when a campaign retains no candidate;
 8. keep one bounded seed probe after PCA warmup until an island archive is
-   usable; and
-9. ignore zero-span objectives when assigning crowding-distance boundaries.
+   usable;
+9. ignore zero-span objectives when assigning crowding-distance boundaries;
+10. derive migration cadence from persisted per-island job counts;
+11. drain terminal ingestion, cap failed-ingestion retries, and mark exhausted
+    results terminal; and
+12. count retryable failed seed ingestion as pending so backoff cannot create
+    duplicate readiness probes.
 
 The same review also aligned configured island IDs with their persisted
 64-character boundary and preserved the legacy `main` fallback for blank
@@ -304,9 +309,9 @@ one-shot migration command documented in the architecture work.
 
 ## Final verification and structural-debt gate
 
-The final suite ran with the PostgreSQL migration tests enabled: **865 passed,
-0 failed, 0 skipped** in 40.92 seconds. Coverage.py measured 82.70% statement
-coverage and 57.36% branch coverage (78.76% combined).
+The final suite ran with the PostgreSQL migration tests enabled: **866 passed,
+0 failed, 0 skipped** in 42.21 seconds. Coverage.py measured 82.72% statement
+coverage and 57.38% branch coverage (78.78% combined).
 
 Cremona then scanned 279 Python files against the committed refactor baseline
 using that coverage report and git history. Signal health was `full`; the

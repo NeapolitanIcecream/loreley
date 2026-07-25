@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-26T03:24:00+08:00",
+  "generated_at": "2026-07-26T04:44:04+08:00",
   "scope": "Deterministic 26-circle packing campaign, PostgreSQL 18, Redis 8, Python 3.12/3.13, Kilo 7.3.1, local Apple Silicon host.",
   "claims": [
     {
@@ -77,7 +77,7 @@
     "resource_ledger": "resource-ledger.json",
     "structural_audit": {
       "evidence": "structural-audit.json",
-      "tests_passed": 862,
+      "tests_passed": 866,
       "new_debt_signals": 0,
       "worsened_debt_signals": 0,
       "resolved_debt_signals": 22
