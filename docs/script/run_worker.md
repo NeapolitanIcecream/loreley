@@ -8,8 +8,15 @@ the planning/coding/evaluation pipeline for jobs dispatched by the scheduler.
 Recommended usage with `uv`:
 
 ```bash
-uv run loreley worker
+uv run loreley worker --processes 4
 ```
+
+`--processes N` starts one Dramatiq master and `N` isolated worker processes,
+each with one worker thread and a PID-plus-random base repository path. `N=1` keeps
+the direct single-process path. The master propagates shutdown signals and
+returns non-zero when a child fails. Make
+`SCHEDULER_MAX_UNFINISHED_JOBS >= N` if you want all processes to stay supplied;
+Loreley warns when the configured scheduler capacity is smaller.
 
 Minimum required settings for a functional worker are:
 
@@ -48,6 +55,7 @@ For schema inspection and validation, see [Database schema commands](db.md).
 
 - `--no-preflight`: skip preflight validation.
 - `--preflight-timeout-seconds`: network timeout used for DB/Redis connectivity checks.
+- `--processes`, `-p`: number of isolated worker processes (default `1`).
 - `--log-level`: global option (pass before the subcommand) that overrides `LOG_LEVEL` for this invocation.
 
 ## Queue naming
@@ -64,7 +72,7 @@ and the derived `experiment_namespace` is stable across processes.
 
 Logs are written to:
 
-- `logs/{experiment_namespace}/worker/worker-YYYYMMDD-HHMMSS.log`
+- `logs/{experiment_namespace}/worker/worker-YYYYMMDD-HHMMSS-pid-{pid}.log`
 
 If a worker loses its lease or dies mid-job, the scheduler will eventually reclaim that `RUNNING` row. Use `uv run loreley status` and the [Job lease recovery](job_leases.md) runbook to inspect the current state and recover stuck jobs.
 

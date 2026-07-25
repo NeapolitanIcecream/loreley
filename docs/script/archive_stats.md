@@ -9,15 +9,18 @@ uv run loreley archive stats
 ```
 
 It outputs key metrics about the learned behaviour space for the target island:
+
 - `island_id`
-- `occupied`
+- `occupied` (behaviour cells with at least one retained member)
+- `elites` (all retained Pareto members)
 - `cells` (total cell capacity)
 - `coverage`
-- `qd_score`
-- `norm_qd_score`
-- `best_fitness`
+- `objective_count`
+- `front_max_size`
+- `primary_metric_name` / `primary_metric_direction`
+- `best_primary_value` (an explicit operational projection, not archive admission)
 
 ## Options
 
-- `--island-id`: Inspect a specific island. If omitted, uses the default island.
+- `--island-id`: Inspect a specific island. If omitted, uses the first ID in `MAPELITES_ISLANDS`.
 - `--json`: Print stats as JSON.

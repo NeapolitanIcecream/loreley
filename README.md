@@ -2,7 +2,7 @@
 
 > Whole-repository Quality-Diversity optimization for real git codebases.
 
-Loreley is a distributed system that **evolves entire git repositories** (the unit of search is a git commit). It continuously samples base commits, asks external planning and coding agents to implement repo-wide changes, evaluates the result with your evaluator, and stores metrics plus a MAP-Elites archive in Postgres for later sampling and reuse.
+Loreley is a distributed system that **evolves entire git repositories** (the unit of search is a git commit). It continuously samples base commits, asks external planning and coding agents to implement repo-wide changes, evaluates the result with your evaluator, and stores metrics plus bounded per-cell Pareto fronts in Postgres for later sampling and reuse.
 
 ![](./docs/assets/loreley.svg)
 
@@ -10,6 +10,7 @@ Loreley is a distributed system that **evolves entire git repositories** (the un
 
 - **Whole-repo evolution**: cross-module refactors and “production-style” changes are first-class.
 - **QD-native (MAP-Elites)**: keeps multiple high-performing but *different* solutions instead of a single champion line.
+- **Multi-objective and multi-island**: retains non-dominated trade-offs in each behaviour niche and fairly schedules independent islands with periodic migration inspirations.
 - **Learned behaviour space**: behaviour descriptors come from repo-state code embeddings (cached by git blob SHA), not hand-crafted heuristics.
 - **Production loop**: scheduler + Redis/Dramatiq workers + Postgres, with preflight checks, logs, and reproducible git history.
 
@@ -49,6 +50,8 @@ cp env.example .env
 #
 # Recommended to customize:
 # - WORKER_EVOLUTION_GLOBAL_GOAL="..."
+# - MAPELITES_OBJECTIVES=[{"name":"quality","direction":"max"},{"name":"latency_ms","direction":"min"}]
+# - MAPELITES_ISLANDS=["exploit","explore"]
 #
 # Optional:
 # - SCHEDULER_REPO_ROOT=/abs/path/to/your/target-git-checkout
@@ -59,9 +62,12 @@ cp env.example .env
 
 uv run loreley doctor --role all
 uv run loreley scheduler
-uv run loreley worker
+uv run loreley worker --processes 4
 uv run loreley status
 ```
+
+Use `--processes 1` for the original single-worker mode. Multi-process mode
+uses one thread and an isolated PID-plus-random base clone per worker process.
 
 ### Optional UI and operator console
 

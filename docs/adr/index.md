@@ -42,7 +42,7 @@ ADR numbers are unique and chronological. `ADR 0029` resolves an earlier duplica
 - [ADR 0025: Explicit experiment ID; remove derived config identity and legacy snapshots](0025-explicit-experiment-id-env-only-and-drop-legacy-snapshot.md)
 - [ADR 0026: Experiment ID as operational naming namespace](0026-experiment-id-as-naming-namespace.md)
 - [ADR 0027: Single-tenant DB and instance metadata marker](0027-single-tenant-db-and-instance-metadata.md)
-- [ADR 0028: Unify git commit availability and fail-fast best-fitness branch](0028-unify-git-commit-availability-and-fail-fast-best-branch.md)
+- [ADR 0028: Unify git commit availability and fail-fast best-fitness branch (branch semantics superseded by ADR 0052)](0028-unify-git-commit-availability-and-fail-fast-best-branch.md)
 - [ADR 0029: Use Pydantic `from_attributes` for UI API response schemas](0029-pydantic-from-attributes-ui-api-schemas.md)
 
 ## 0030-0039
@@ -54,7 +54,7 @@ ADR numbers are unique and chronological. `ADR 0029` resolves an earlier duplica
 - [ADR 0034: Kilocode CLI agent backend](0034-kilocode-cli-agent-backend.md)
 - [ADR 0035: Default planning/coding backend is Kilocode](0035-default-agent-backend-kilocode.md)
 - [ADR 0036: Single source of truth for worker commits](0036-single-source-of-truth-for-worker-commits.md)
-- [ADR 0037: Sampler lightweight cell/commit sampling](0037-sampler-lightweight-cell-commit-sampling.md)
+- [ADR 0037: Sampler lightweight cell/commit sampling (superseded by ADR 0052)](0037-sampler-lightweight-cell-commit-sampling.md)
 - [ADR 0038: Worker planning context batch DB loading](0038-worker-planning-context-batch-db-loading.md)
 - [ADR 0039: PCA epochs and archive rebuild on refit](0039-pca-epochs-and-archive-rebuild-on-refit.md)
 
@@ -75,3 +75,4 @@ ADR numbers are unique and chronological. `ADR 0029` resolves an earlier duplica
 
 - [ADR 0050: Baseline-first campaign comparability contract](0050-baseline-first-campaign-bootstrap.md)
 - [ADR 0051: QD keep/discard candidate semantics](0051-qd-keep-discard-semantics.md)
+- [ADR 0052: Multi-island Pareto archives and native worker processes](0052-multi-island-pareto-archive-and-worker-processes.md)

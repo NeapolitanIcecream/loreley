@@ -2,7 +2,9 @@
 
 Date: 2026-02-11
 
-Status: Accepted
+Status: Superseded by
+[ADR 0052](0052-multi-island-pareto-archive-and-worker-processes.md), which
+samples bounded Pareto fronts instead of one commit per cell.
 
 Decision
 
@@ -10,4 +12,3 @@ Decision
 - `MapElitesManager.get_cell_commits(island_id)` provides a lightweight cell→commit map without materializing full archive records.
 - `MapElitesSampler.schedule_job()` uses `get_cell_commits()` directly and persists `EvolutionJob` rows using only commit hashes.
 - Full archive records remain available via `get_records()` for UI and inspection use cases.
-

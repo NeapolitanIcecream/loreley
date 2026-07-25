@@ -2,7 +2,10 @@
 
 Date: 2026-01-23
 
-Status: Accepted
+Status: Partially superseded by
+[ADR 0052](0052-multi-island-pareto-archive-and-worker-processes.md). Commit
+availability remains accepted; the scalar best-fitness branch is replaced by
+an explicitly named primary-objective projection.
 
 Decision
 
@@ -11,4 +14,3 @@ Decision
 - Treat missing commits and git fetch/unshallow failures as fatal errors (fail fast) to avoid silent drift across components.
 - Make the best-fitness branch a first-class deliverable: scheduler must fail fast if it cannot resolve the best commit or update the branch.
 - Use a stable branch name `evolution/best/<experiment>` and force-update it to the best commit to keep the deliverable deterministic across restarts.
-

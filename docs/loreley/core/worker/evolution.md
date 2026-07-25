@@ -50,5 +50,8 @@ Autonomous evolution worker that orchestrates planning, coding, evaluation, repo
 
 ## Data extraction and normalisation
 
-- **`_load_commit_planning_contexts(commit_hashes, ...)`**: fetches `CommitCard`, `Metric`, and optional `MapElitesArchiveCell` rows in batch for all requested commit hashes, then rebuilds bounded `CommitPlanningContext` instances in input order.
-- **`_load_commit_planning_context(commit_hash, ...)`**: compatibility wrapper for single-commit call sites, delegating to the batch loader.
+- **`_load_commit_planning_contexts(commit_hashes)`**: fetches `CommitCard`,
+  `Metric`, and agent-visible evaluation-artifact rows in batch for the base and
+  all inspirations, then rebuilds bounded `CommitPlanningContext` instances in
+  input order. Planning does not query or expose archive-internal scalar/cell
+  fields.
