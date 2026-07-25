@@ -22,6 +22,7 @@ from loreley.core.campaign_program import (
 )
 from loreley.core.contracts import clamp_text, normalize_single_line
 from loreley.core.job_retry import db_utc_now, failed_stale_job_conditions
+from loreley.core.job_state import pending_ingestion_job_conditions
 from loreley.db.base import session_scope
 from loreley.db.models import (
     EvolutionJob,
@@ -531,14 +532,15 @@ def _job_health_from_session(
             EvolutionJob.status.in_((JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING))
         ),
     )
-    status_norm = func.lower(func.trim(func.coalesce(EvolutionJob.ingestion_status, "")))
-    commit_norm = func.trim(func.coalesce(EvolutionJob.result_commit_hash, ""))
     pending_ingestion = _count(
         session,
-        select(func.count(EvolutionJob.id))
-        .where(EvolutionJob.status == JobStatus.SUCCEEDED)
-        .where(status_norm.not_in(("succeeded", "skipped")))
-        .where(commit_norm != ""),
+        select(func.count(EvolutionJob.id)).where(
+            *pending_ingestion_job_conditions(
+                EvolutionJob=EvolutionJob,
+                JobStatus=JobStatus,
+                func=func,
+            )
+        ),
     )
     running = _count(
         session,

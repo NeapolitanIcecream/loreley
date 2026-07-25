@@ -586,6 +586,60 @@ def test_tick_accounts_for_seed_jobs_before_sampler_scheduling(settings: Setting
     assert scheduler._total_jobs_count == 7
 
 
+def test_tick_at_job_limit_waits_for_pending_ingestion(settings: Settings) -> None:
+    scheduler = cast(Any, EvolutionScheduler.__new__(EvolutionScheduler))
+    scheduler.settings = settings
+    scheduler.console = Console(record=True)
+    scheduler._max_total_jobs = 10
+    scheduler._stop_requested = False
+    scheduler._total_jobs_count = 10
+
+    class _DummyIngestion:
+        def ingest_completed_jobs(self) -> int:
+            return 2
+
+        def count_pending_ingestion_jobs(self) -> int:
+            return 3
+
+    class _DummyJobScheduler:
+        def reclaim_stale_running_jobs(self) -> object:
+            return object()
+
+        def dispatch_pending_jobs(self) -> int:
+            return 0
+
+        def count_unfinished_jobs(self) -> int:
+            return 0
+
+        def schedule_jobs(
+            self,
+            unfinished_jobs: int,
+            *,
+            total_jobs: int,
+            refresh_campaign_program: bool = True,
+        ) -> int:
+            assert unfinished_jobs == 0
+            assert total_jobs == 10
+            assert refresh_campaign_program is False
+            return 0
+
+    scheduler.ingestion = _DummyIngestion()
+    scheduler.job_scheduler = _DummyJobScheduler()
+    scheduler._ensure_campaign_baseline_ready = lambda: None
+    scheduler._maybe_schedule_seed_jobs = lambda unfinished_jobs: 0
+    branch_updates: list[object] = []
+    scheduler._create_primary_objective_branch_if_possible = lambda: branch_updates.append(
+        object()
+    )
+
+    stats = EvolutionScheduler.tick(cast(EvolutionScheduler, scheduler))
+
+    assert stats["pending_ingestion"] == 3
+    assert scheduler._stop_requested is False
+    assert branch_updates == []
+    assert "pending_ingestion=3" in scheduler.console.export_text()
+
+
 def test_missing_primary_candidate_is_a_clean_terminal_state(
     settings: Settings,
 ) -> None:

@@ -348,7 +348,7 @@ Adversarial losses and corrections:
 Final evidence:
 
 - `LORELEY_POSTGRES_TEST_DSN=... uv run coverage run -m pytest -q`:
-  **863 passed**, no skips, against a disposable PostgreSQL instance.
+  **864 passed**, no skips, against a disposable PostgreSQL instance.
 - The PostgreSQL v15 migration tests cover the real v5-to-v15 chain, schema
   validation, candidate-hash backfill, and an idempotent second migration run.
 - `uv lock --check`, `git diff --check`, changed/new Python Ruff

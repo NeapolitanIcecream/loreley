@@ -128,6 +128,12 @@ def _allocate_seed_slots(
     )
 
 
+def _pending_ingestion_log_suffix(pending_ingestion: int | None) -> str:
+    if pending_ingestion is None:
+        return ""
+    return f" pending_ingestion={pending_ingestion}"
+
+
 class EvolutionScheduler:
     """Orchestrate job sampling, dispatching, and MAP-Elites maintenance."""
 
@@ -280,6 +286,13 @@ class EvolutionScheduler:
         else:
             total_jobs_after = total_jobs
 
+        pending_ingestion = self._terminal_pending_ingestion(
+            total_jobs=total_jobs_after,
+            unfinished_jobs=stats["unfinished"],
+        )
+        if pending_ingestion is not None:
+            stats["pending_ingestion"] = pending_ingestion
+
         remaining_total_str = ""
         max_total = self._max_total_jobs
         remaining_total = max(0, max_total - total_jobs_after)
@@ -288,13 +301,17 @@ class EvolutionScheduler:
         self.console.log(
             "[bold magenta]Scheduler tick[/] ingested={ingested} reclaimed_pending={reclaimed_pending} "
             "reclaimed_failed={reclaimed_failed} dispatched={dispatched} seed_scheduled={seed_scheduled} "
-            "scheduled={scheduled} unfinished={unfinished}{remaining_total}".format(
+            "scheduled={scheduled} unfinished={unfinished}{remaining_total}"
+            "{pending_ingestion_suffix}".format(
                 **stats,
                 remaining_total=remaining_total_str,
+                pending_ingestion_suffix=_pending_ingestion_log_suffix(
+                    pending_ingestion
+                ),
             ),
         )
 
-        if total_jobs_after >= max_total and stats["unfinished"] == 0:
+        if pending_ingestion == 0:
             self._create_primary_objective_branch_if_possible()
             self.console.log(
                 "[bold yellow]Scheduler reached max total jobs and all jobs finished; shutting down[/] "
@@ -307,6 +324,16 @@ class EvolutionScheduler:
             )
             self.stop()
         return stats
+
+    def _terminal_pending_ingestion(
+        self,
+        *,
+        total_jobs: int,
+        unfinished_jobs: int,
+    ) -> int | None:
+        if total_jobs < self._max_total_jobs or unfinished_jobs > 0:
+            return None
+        return self.ingestion.count_pending_ingestion_jobs()
 
     def stop(self) -> None:
         """Signal the scheduler loop to exit."""

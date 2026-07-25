@@ -1,31 +1,31 @@
 {
-  "generated_at": "2026-07-26T03:50:59+08:00",
+  "generated_at": "2026-07-26T04:12:46+08:00",
   "test_suite": {
     "command": "LORELEY_POSTGRES_TEST_DSN=postgresql+psycopg://loreley:loreley@localhost:5432/loreley uv run coverage run -m pytest -q",
-    "passed": 863,
+    "passed": 864,
     "failed": 0,
     "skipped": 0,
-    "duration_seconds": 43.51,
+    "duration_seconds": 41.86,
     "postgresql_tests_enabled": true
   },
   "coverage": {
     "coverage_py_version": "7.13.5",
     "statements": {
-      "covered": 32109,
-      "total": 38847,
-      "percent": 82.65503127654645
+      "covered": 32164,
+      "total": 38902,
+      "percent": 82.67955375044986
     },
     "branches": {
-      "covered": 4099,
-      "total": 7156,
-      "percent": 57.28060368921185
+      "covered": 4106,
+      "total": 7162,
+      "percent": 57.33035464953924
     },
-    "combined_percent": 78.70791035367259
+    "combined_percent": 78.73827717957624
   },
   "cremona": {
     "signal_health": "full",
     "debt_status": "strained",
-    "files_scanned": 278,
+    "files_scanned": 279,
     "baseline_available": true,
     "baseline_updated": false,
     "new_regressions": 0,

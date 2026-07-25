@@ -36,6 +36,7 @@ from loreley.core.job_retry import (
     retry_failed_stale_jobs_payload,
     retry_job_row,
 )
+from loreley.core.job_state import pending_ingestion_job_conditions
 from loreley.entrypoints import configure_process_logging, reset_database, run_api, run_scheduler, run_ui, run_worker
 from loreley.preflight import (
     CheckResult,
@@ -343,13 +344,15 @@ def _count_pending_ingestion_jobs(
     select: Any,
     func: Any,
 ) -> int:
-    status_norm = func.lower(func.trim(func.coalesce(EvolutionJob.ingestion_status, "")))
-    commit_norm = func.trim(func.coalesce(EvolutionJob.result_commit_hash, ""))
     stmt = (
         select(func.count(EvolutionJob.id))
-        .where(EvolutionJob.status == JobStatus.SUCCEEDED)
-        .where(status_norm.not_in(("succeeded", "skipped")))
-        .where(commit_norm != "")
+        .where(
+            *pending_ingestion_job_conditions(
+                EvolutionJob=EvolutionJob,
+                JobStatus=JobStatus,
+                func=func,
+            )
+        )
     )
     return _count_status_rows(session, stmt)
 

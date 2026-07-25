@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from loreley.config import Settings, resolve_default_island_id
 from loreley.core.contracts import clamp_text, normalize_single_line
 from loreley.core.git import RepositoryError as GitRepositoryError, require_commit
+from loreley.core.job_state import pending_ingestion_job_conditions
 from loreley.core.map_elites.manager import MapElitesManager
 from loreley.core.repo_lock import repo_lock
 from loreley.core.worker.evaluator import EvaluationContext, EvaluationError, EvaluationResult, Evaluator
@@ -166,6 +167,19 @@ class MapElitesIngestion:
             self._prefetched_metrics_payload_by_commit = None
             self._prefetched_metrics_errors_by_commit = None
         return ingested
+
+    def count_pending_ingestion_jobs(self) -> int:
+        """Return succeeded jobs whose result ingestion is not terminal."""
+
+        with session_scope() as session:
+            stmt = select(func.count(EvolutionJob.id)).where(
+                *pending_ingestion_job_conditions(
+                    EvolutionJob=EvolutionJob,
+                    JobStatus=JobStatus,
+                    func=func,
+                )
+            )
+            return int(session.execute(stmt).scalar_one())
 
     def _canonicalize_prefetch_commit_hashes(self, snapshots: Sequence[JobSnapshot]) -> list[str]:
         """Best-effort canonicalization to improve metrics prefetch hit ratio."""
