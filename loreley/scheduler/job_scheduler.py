@@ -569,13 +569,16 @@ class JobScheduler:
             snapshot.island_id: set()
             for snapshot in sampling_snapshots
         }
+        island_job_counts = self._load_island_job_counts(
+            tuple(snapshot.island_id for snapshot in sampling_snapshots)
+        )
         if sampling_snapshots:
             scheduled_ids.extend(
                 self._schedule_normal_jobs(
                     capacity=normal_target,
                     sampling_snapshots=sampling_snapshots,
                     selected_base_commits=selected_base_commits,
-                    total_jobs=total_jobs,
+                    island_job_counts=island_job_counts,
                 )
             )
         else:
@@ -590,7 +593,7 @@ class JobScheduler:
                     capacity=max(0, target - len(scheduled_ids)),
                     sampling_snapshots=sampling_snapshots,
                     selected_base_commits=selected_base_commits,
-                    total_jobs=total_jobs + len(scheduled_ids),
+                    island_job_counts=island_job_counts,
                 )
             )
         if scheduled_ids:
@@ -603,7 +606,7 @@ class JobScheduler:
         capacity: int,
         sampling_snapshots: Sequence[SamplingSnapshot],
         selected_base_commits: dict[str, set[str]],
-        total_jobs: int,
+        island_job_counts: dict[str, int],
     ) -> list[UUID]:
         if capacity <= 0 or not sampling_snapshots:
             return []
@@ -613,10 +616,11 @@ class JobScheduler:
         cursor = 0
         while active_snapshots and len(scheduled_ids) < capacity:
             snapshot = active_snapshots[cursor]
+            target_job_number = island_job_counts.get(snapshot.island_id, 0) + 1
             migration_source, migration_commit = self._migration_for_job(
                 target_snapshot=snapshot,
                 sampling_snapshots=sampling_snapshots,
-                global_job_number=total_jobs + len(scheduled_ids) + 1,
+                target_job_number=target_job_number,
             )
             island_bases = selected_base_commits.setdefault(snapshot.island_id, set())
             job = self._schedule_single_job(
@@ -632,9 +636,29 @@ class JobScheduler:
                     cursor %= len(active_snapshots)
                 continue
             scheduled_ids.append(job.job_id)
+            island_job_counts[snapshot.island_id] = target_job_number
             island_bases.add(str(job.base_commit_hash))
             cursor = (cursor + 1) % len(active_snapshots)
         return scheduled_ids
+
+    def _load_island_job_counts(
+        self,
+        island_ids: Sequence[str],
+    ) -> dict[str, int]:
+        islands = tuple(dict.fromkeys(island_ids))
+        counts = dict.fromkeys(islands, 0)
+        if not islands:
+            return counts
+        with session_scope() as session:
+            rows = session.execute(
+                select(EvolutionJob.island_id, func.count(EvolutionJob.id))
+                .where(EvolutionJob.island_id.in_(islands))
+                .group_by(EvolutionJob.island_id)
+            ).all()
+        for island_id, count in rows:
+            if island_id in counts:
+                counts[island_id] = int(count)
+        return counts
 
     def _load_sampling_snapshots(self, *, total_jobs: int) -> tuple[SamplingSnapshot, ...]:
         islands = tuple(self.settings.mapelites_islands)
@@ -659,16 +683,11 @@ class JobScheduler:
         *,
         target_snapshot: SamplingSnapshot,
         sampling_snapshots: Sequence[SamplingSnapshot],
-        global_job_number: int,
+        target_job_number: int,
     ) -> tuple[str | None, str | None]:
         interval = max(0, int(self.settings.mapelites_migration_interval_jobs))
-        target_job_number = self._target_island_job_number(
-            island_id=target_snapshot.island_id,
-            global_job_number=global_job_number,
-        )
         if (
             interval <= 0
-            or target_job_number is None
             or target_job_number % interval != 0
             or len(sampling_snapshots) < 2
         ):
@@ -694,24 +713,6 @@ class JobScheduler:
             return None, None
         commit_hash = members[(migration_round - 1) % len(members)]
         return donor.island_id, commit_hash
-
-    def _target_island_job_number(
-        self,
-        *,
-        island_id: str,
-        global_job_number: int,
-    ) -> int | None:
-        islands = tuple(self.settings.mapelites_islands)
-        if not islands:
-            return None
-        try:
-            island_position = islands.index(island_id)
-        except ValueError:
-            return None
-        preceding_slots = int(global_job_number) - 1 - island_position
-        if preceding_slots < 0:
-            return None
-        return preceding_slots // len(islands) + 1
 
     def _available_repair_slots(self, *, capacity: int) -> int:
         if capacity > 0 and bool(self.settings.failed_candidate_repair_enabled):

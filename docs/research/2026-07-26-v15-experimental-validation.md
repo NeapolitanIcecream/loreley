@@ -304,9 +304,9 @@ one-shot migration command documented in the architecture work.
 
 ## Final verification and structural-debt gate
 
-The final suite ran with the PostgreSQL migration tests enabled: **862 passed,
-0 failed, 0 skipped** in 40.56 seconds. Coverage.py measured 82.64% statement
-coverage and 57.27% branch coverage (78.69% combined).
+The final suite ran with the PostgreSQL migration tests enabled: **863 passed,
+0 failed, 0 skipped** in 43.51 seconds. Coverage.py measured 82.65% statement
+coverage and 57.28% branch coverage (78.71% combined).
 
 Cremona then scanned 278 Python files against the committed refactor baseline
 using that coverage report and git history. Signal health was `full`; the

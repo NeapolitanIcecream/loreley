@@ -8,9 +8,10 @@ from typing import Any
 
 import pytest
 
-from loreley.cli import _status_response_payload, main
+from loreley.cli import _load_best_commit_status_payload, _status_response_payload, main
 from loreley.core.campaign_program import parse_campaign_program
 from loreley.core.map_elites.objectives import ObjectiveSpec
+from loreley.db.models import CommitCard, MapElitesArchiveCell, Metric
 from tests.support import TestSettings
 
 
@@ -114,6 +115,39 @@ def test_status_response_payload_preserves_nested_sections() -> None:
         "best_commit": {"commit_hash": "abc123"},
         "baseline": None,
     }
+
+
+def test_best_commit_status_query_ignores_retired_islands() -> None:
+    settings = _make_settings()
+    settings.mapelites_islands = ("alpha", "beta")
+    settings.mapelites_objectives = (ObjectiveSpec(name="score", direction="max"),)
+    statements: list[Any] = []
+
+    class DummyResult:
+        def first(self) -> None:
+            return None
+
+    class DummySession:
+        def execute(self, stmt: Any) -> DummyResult:
+            statements.append(stmt)
+            return DummyResult()
+
+    payload = _load_best_commit_status_payload(
+        session=DummySession(),
+        settings=settings,
+        instance=SimpleNamespace(root_commit_hash="root"),
+        CommitCard=CommitCard,
+        MapElitesArchiveCell=MapElitesArchiveCell,
+        Metric=Metric,
+    )
+
+    assert payload is None
+    assert len(statements) == 1
+    statement = statements[0]
+    parameter_values = statement.compile().params.values()
+    assert ["alpha", "beta"] in parameter_values
+    selected_island = list(statement.selected_columns)[2]
+    assert selected_island.table is MapElitesArchiveCell.__table__
 
 
 def test_status_table_prints_job_lease_health_section(

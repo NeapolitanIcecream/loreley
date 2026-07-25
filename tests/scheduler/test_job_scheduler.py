@@ -260,6 +260,11 @@ def test_schedule_jobs_reuses_single_sampling_snapshot_and_avoids_duplicate_base
         sampler=cast(MapElitesSampler, sampler),
     )
     monkeypatch.setattr(JobScheduler, "_enqueue_jobs", lambda _self, ids: len(list(ids)))
+    monkeypatch.setattr(
+        JobScheduler,
+        "_load_island_job_counts",
+        lambda _self, _island_ids: {"main": 0},
+    )
 
     scheduled = scheduler.schedule_jobs(unfinished_jobs=0, total_jobs=0)
 
@@ -333,6 +338,11 @@ def test_schedule_jobs_round_robins_across_configured_islands(
         sampler=cast(MapElitesSampler, sampler),
     )
     monkeypatch.setattr(JobScheduler, "_enqueue_jobs", lambda _self, ids: len(list(ids)))
+    monkeypatch.setattr(
+        JobScheduler,
+        "_load_island_job_counts",
+        lambda _self, island_ids: dict.fromkeys(island_ids, 0),
+    )
 
     scheduled = scheduler.schedule_jobs(unfinished_jobs=0, total_jobs=0)
 
@@ -413,7 +423,7 @@ def test_schedule_jobs_records_periodic_cross_island_migration(
         "build_evolution_job_sender_actor",
         lambda **_kwargs: sender,
     )
-    settings.mapelites_islands = ("alpha", "beta", "gamma")
+    settings.mapelites_islands = ("alpha", "beta")
     settings.mapelites_migration_interval_jobs = 2
     settings.scheduler_max_unfinished_jobs = 2
     settings.scheduler_schedule_batch_size = 2
@@ -461,19 +471,33 @@ def test_schedule_jobs_records_periodic_cross_island_migration(
     )
     monkeypatch.setattr(JobScheduler, "_enqueue_jobs", lambda _self, ids: len(list(ids)))
 
+    class DummyCountResult:
+        def all(self) -> list[tuple[str, int]]:
+            return [("alpha", 1), ("beta", 2)]
+
+    class DummyCountSession:
+        def execute(self, _stmt: Any) -> DummyCountResult:
+            return DummyCountResult()
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummyCountSession()
+
+    monkeypatch.setattr(job_scheduler, "session_scope", fake_scope)
+
     assert scheduler.schedule_jobs(unfinished_jobs=0, total_jobs=3) == 2
     assert sampler.schedule_calls == [
+        {
+            "island_id": "beta",
+            "base_commit_hash": "beta-elite",
+            "migration_source_island_id": None,
+            "migration_commit_hash": None,
+        },
         {
             "island_id": "alpha",
             "base_commit_hash": "alpha-elite",
             "migration_source_island_id": "beta",
             "migration_commit_hash": "beta-elite",
-        },
-        {
-            "island_id": "beta",
-            "base_commit_hash": "beta-elite",
-            "migration_source_island_id": "gamma",
-            "migration_commit_hash": "gamma-elite",
         },
     ]
 
@@ -941,6 +965,11 @@ def test_schedule_jobs_does_not_reserve_repair_slot_after_deprecation(
         JobScheduler,
         "_enqueue_jobs",
         lambda _self, ids: enqueued.extend(list(ids)) or len(list(ids)),
+    )
+    monkeypatch.setattr(
+        JobScheduler,
+        "_load_island_job_counts",
+        lambda _self, _island_ids: {"main": 0},
     )
 
     scheduled = scheduler.schedule_jobs(unfinished_jobs=0, total_jobs=0)

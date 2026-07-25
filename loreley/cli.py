@@ -515,7 +515,10 @@ def _load_best_commit_status_payload(
         if primary.higher_is_better
         else Metric.value.asc()
     )
-    conditions = [Metric.name == metric_name]
+    conditions = [
+        Metric.name == metric_name,
+        MapElitesArchiveCell.island_id.in_(tuple(settings.mapelites_islands)),
+    ]
     root_commit = str(getattr(instance, "root_commit_hash", "") or "").strip()
     if root_commit:
         conditions.append(CommitCard.commit_hash != root_commit)
@@ -523,7 +526,7 @@ def _load_best_commit_status_payload(
         select(
             CommitCard.commit_hash,
             CommitCard.subject,
-            CommitCard.island_id,
+            MapElitesArchiveCell.island_id,
             Metric.value,
             CommitCard.created_at,
         )
