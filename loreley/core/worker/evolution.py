@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import threading
 from time import monotonic
@@ -470,12 +470,25 @@ class EvolutionWorker:
             heartbeat.raise_if_lease_lost()
             state.candidate_commit = None
             state.evaluation_outcome = None
-            state.coding_response = self._run_coding(
+            previous_usage = (
+                state.coding_response.usage_events
+                if state.coding_response is not None
+                else ()
+            )
+            coding_response = self._run_coding(
                 job_ctx,
                 _required(state.plan_response, "plan_response"),
                 checkout,
                 prompt_context,
                 rework_feedback=rework_feedback,
+                invocation=attempt,
+            )
+            state.coding_response = replace(
+                coding_response,
+                usage_events=(
+                    *previous_usage,
+                    *coding_response.usage_events,
+                ),
             )
             heartbeat.raise_if_lease_lost()
             self._create_and_evaluate_local_attempt(job_ctx, checkout, heartbeat, state)
@@ -976,6 +989,7 @@ class EvolutionWorker:
         prompt_context: WorkerPromptContext,
         *,
         rework_feedback: str | None = None,
+        invocation: int = 1,
     ) -> CodingAgentResponse:
         request = CodingAgentRequest(
             goal=job_ctx.goal,
@@ -988,6 +1002,7 @@ class EvolutionWorker:
             iteration_context=prompt_context.iteration_context,
             additional_notes=(*job_ctx.notes, *self._repair_coding_notes(job_ctx)),
             rework_feedback=rework_feedback,
+            invocation=invocation,
             job_id=job_ctx.job_id,
             run_token=job_ctx.run_token,
         )

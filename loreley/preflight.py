@@ -619,10 +619,12 @@ def _check_agent_backend(
             agent=settings.worker_kilocode_agent or settings.worker_kilocode_mode,
             model=settings.worker_kilocode_model,
             variant=settings.worker_kilocode_variant,
+            pure=bool(settings.worker_kilocode_pure),
             json_output=bool(settings.worker_kilocode_json_output),
             settings=settings,
             usage_tracking_enabled=bool(settings.llm_usage_tracking_enabled),
             usage_db_path=settings.worker_kilocode_usage_db_path,
+            state_root=settings.worker_kilocode_state_root,
         )
         return _check_kilocode_backend(
             kind=kind,
@@ -794,6 +796,8 @@ def _required_kilocode_run_flags(
     selected_variant = getattr(backend, "variant", None) or settings.worker_kilocode_variant or ""
     if str(selected_variant).strip():
         flags.add("--variant")
+    if bool(getattr(backend, "pure", settings.worker_kilocode_pure)):
+        flags.add("--pure")
     if _kilocode_usage_tracking_enabled(backend=backend, settings=settings):
         flags.add("--title")
     return flags

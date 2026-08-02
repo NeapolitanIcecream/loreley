@@ -14,6 +14,13 @@ Loreley is a distributed system that **evolves entire git repositories** (the un
 - **Learned behaviour space**: behaviour descriptors come from repo-state code embeddings (cached by git blob SHA), not hand-crafted heuristics.
 - **Production loop**: scheduler + Redis/Dramatiq workers + Postgres, with preflight checks, logs, and reproducible git history.
 
+### Evidence
+
+In a preregistered 64-job `markdown-it-py` case study, Loreley combined eight
+small optimization seeds with Kilo/DeepSeek search and found a candidate that
+was 6.75% faster on a separate 28-document corpus, without correctness,
+release, scope, or allocation regressions. [Read the case study](docs/research/2026-08-02-markdown-it-py-deepseek-case-study.md).
+
 ### Quick start (local)
 
 **Requirements**: Python 3.11+, [`uv`](https://github.com/astral-sh/uv), Git (worktrees), PostgreSQL, Redis, and an OpenAI-compatible API for embeddings and some summaries. Configure either a static `OPENAI_API_KEY` or a dynamic provider via `OPENAI_DYNAMIC_API_KEY_PROVIDER` plus `OPENAI_DYNAMIC_API_KEY_TTL_SECONDS`. You also need:

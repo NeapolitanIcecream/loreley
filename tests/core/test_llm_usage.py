@@ -204,7 +204,7 @@ def test_kilo_usage_parser_extracts_tokens_cache_and_provider_cost() -> None:
     assert event.cache_write_tokens == 50
     assert event.output_tokens == 50
     assert event.reasoning_output_tokens == 8
-    assert event.total_tokens == 1520
+    assert event.total_tokens == 1528
     assert str(event.cost_usd) == "0.03"
     assert event.cost_source == "provider_reported"
 

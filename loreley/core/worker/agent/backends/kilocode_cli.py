@@ -33,6 +33,12 @@ KiloProviderConfigMode = Literal["auto", "config", "legacy_env", "none"]
 
 _KILO_RUN_FLAG_PATTERN = re.compile(r"(?<![\w-])--[A-Za-z0-9][A-Za-z0-9-]*")
 _KILO_VERSION_PATTERN = re.compile(r"\b(\d+(?:\.\d+){1,3}(?:[-+][0-9A-Za-z.]+)?)\b")
+_KILO_FAILURE_REASON_CODES = frozenset(
+    {
+        "job_token_budget_exhausted",
+        "request_limit_reached",
+    }
+)
 _KILO_USAGE_REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
     "session": frozenset({"id", "title", "directory", "time_created", "time_updated"}),
     "message": frozenset({"id", "session_id", "time_created", "data"}),
@@ -79,6 +85,10 @@ class KiloCliCapabilities:
     @property
     def supports_dir(self) -> bool:
         return "--dir" in self.run_flags
+
+    @property
+    def supports_pure(self) -> bool:
+        return "--pure" in self.run_flags
 
     @property
     def supports_format_json(self) -> bool:
@@ -215,6 +225,7 @@ class KilocodeCliBackend:
     agent: str | None = None
     model: str | None = None
     variant: str | None = None
+    pure: bool = False
     timeout_seconds: int = DEFAULT_KILOCODE_TIMEOUT_SECONDS
     extra_env: dict[str, str] = field(default_factory=dict)
     json_output: bool = False
@@ -222,6 +233,7 @@ class KilocodeCliBackend:
     settings: Settings | None = None
     usage_tracking_enabled: bool = True
     usage_db_path: str | None = None
+    state_root: str | None = None
 
     def run(
         self,
@@ -239,7 +251,7 @@ class KilocodeCliBackend:
         command = self._build_command(task.prompt, title=usage_title, worktree=worktree)
         command_for_log = command[:-1] + [f"<prompt:{len(task.prompt)} chars>"]
 
-        env = self._build_env()
+        env = self._build_env(task=task)
         try:
             result, duration = self._run_cli(
                 command=command,
@@ -295,10 +307,11 @@ class KilocodeCliBackend:
             working_directory=str(worktree),
         )
 
-    def _build_env(self) -> dict[str, str]:
+    def _build_env(self, *, task: AgentTask | None = None) -> dict[str, str]:
         explicit_extra_env = self.extra_env or {}
         env = os.environ.copy()
         env.update(explicit_extra_env)
+        env.update(self._isolated_state_env(task))
         if _has_explicit_kilocode_api_key(explicit_extra_env):
             return env
         runtime_api_key_env = _runtime_api_key_env_name(explicit_extra_env)
@@ -308,6 +321,30 @@ class KilocodeCliBackend:
         if runtime_api_key:
             env[runtime_api_key_env] = runtime_api_key
         return env
+
+    def _isolated_state_env(self, task: AgentTask | None) -> dict[str, str]:
+        configured = str(self.state_root or "").strip()
+        if not configured:
+            return {}
+        if task is None or task.job_id is None or task.run_token is None:
+            raise self.error_cls(
+                "Per-job Kilo state isolation requires job_id and run_token.",
+            )
+        state_dir = (
+            Path(configured).expanduser().resolve()
+            / f"{task.job_id}-{task.run_token}"
+        )
+        paths = {
+            "HOME": state_dir / "home",
+            "XDG_DATA_HOME": state_dir / "data",
+            "XDG_CONFIG_HOME": state_dir / "config",
+            "XDG_CACHE_HOME": state_dir / "cache",
+            "TMPDIR": state_dir / "tmp",
+        }
+        for path in paths.values():
+            path.mkdir(parents=True, exist_ok=True, mode=0o700)
+            path.chmod(0o700)
+        return {name: str(path) for name, path in paths.items()}
 
     def _resolved_runtime_api_key(self) -> str | None:
         try:
@@ -357,6 +394,10 @@ class KilocodeCliBackend:
         stderr: str,
         usage_events: tuple,
     ) -> None:
+        failure_reason_code = _kilo_failure_reason_code(
+            stdout=stdout,
+            stderr=stderr,
+        )
         if result.returncode == 0:
             error_detail = _kilo_json_error_detail(stdout)
             if error_detail is None:
@@ -365,13 +406,21 @@ class KilocodeCliBackend:
                 "kilo run reported an error event despite exit code 0. "
                 f"stdout: {error_detail}",
             )
+            if failure_reason_code:
+                setattr(error, "failure_reason_code", failure_reason_code)
             if usage_events:
                 setattr(error, "usage_events", usage_events)
             raise error
         detail_suffix = self._failure_detail_suffix(stdout=stdout, stderr=stderr)
-        error = self.error_cls(
-            f"kilo run failed with exit code {result.returncode}.{detail_suffix}",
+        reason_suffix = (
+            f" reason_code={failure_reason_code}." if failure_reason_code else ""
         )
+        error = self.error_cls(
+            f"kilo run failed with exit code {result.returncode}."
+            f"{reason_suffix}{detail_suffix}",
+        )
+        if failure_reason_code:
+            setattr(error, "failure_reason_code", failure_reason_code)
         if usage_events:
             setattr(error, "usage_events", usage_events)
         raise error
@@ -397,6 +446,9 @@ class KilocodeCliBackend:
         worktree: Path | None = None,
     ) -> list[str]:
         command: list[str] = [self.bin, "run", "--auto"]
+
+        if self.pure:
+            command.append("--pure")
 
         if worktree is not None:
             command.extend(["--dir", str(worktree)])
@@ -429,6 +481,8 @@ class KilocodeCliBackend:
         if task.job_id is None or task.run_token is None or not phase:
             return None
         title = f"loreley:{task.job_id}:{task.run_token}:{phase}"
+        if task.invocation is not None:
+            title = f"{title}:invocation:{max(1, int(task.invocation))}"
         if task.attempt is not None:
             title = f"{title}:attempt:{max(1, int(task.attempt))}"
         return title
@@ -484,7 +538,7 @@ class KilocodeCliBackend:
         task: AgentTask,
         external_usage_id: str,
     ):
-        db_path = self._resolved_usage_db_path()
+        db_path = self._resolved_usage_db_path(task)
         if not db_path.is_file():
             raise KiloUsageUnavailableError(f"kilo usage DB not found: {db_path}")
         uri = f"file:{db_path.as_posix()}?mode=ro"
@@ -506,19 +560,47 @@ class KilocodeCliBackend:
             if session_row is None:
                 return None
             session_id = str(session_row["id"])
-            assert_kilo_session_directory(
-                expected_worktree=worktree,
-                actual_directory=str(session_row["directory"] or ""),
-                settings=self.settings or get_settings(),
-            )
+            session_columns = {
+                str(row[1])
+                for row in conn.execute("PRAGMA table_info(session)").fetchall()
+            }
+            if "parent_id" in session_columns:
+                session_rows = conn.execute(
+                    """
+                    WITH RECURSIVE session_tree(id, directory) AS (
+                        SELECT id, directory
+                        FROM session
+                        WHERE id = ?
+                        UNION
+                        SELECT child.id, child.directory
+                        FROM session AS child
+                        JOIN session_tree AS parent
+                          ON child.parent_id = parent.id
+                    )
+                    SELECT id, directory
+                    FROM session_tree
+                    """,
+                    (session_id,),
+                ).fetchall()
+            else:
+                session_rows = [session_row]
+            session_ids = [str(row["id"]) for row in session_rows]
+            settings = self.settings or get_settings()
+            for row in session_rows:
+                assert_kilo_session_directory(
+                    expected_worktree=worktree,
+                    actual_directory=str(row["directory"] or ""),
+                    settings=settings,
+                )
+            placeholders = ", ".join("?" for _ in session_ids)
             rows = conn.execute(
-                """
+                f"""
                 SELECT data
                 FROM message
-                WHERE session_id = ?
+                WHERE session_id IN ({placeholders})
                 ORDER BY time_created ASC, id ASC
                 """,
-                (session_id,),
+                session_ids,
             ).fetchall()
         messages: list[dict[str, object]] = []
         for row in rows:
@@ -549,11 +631,25 @@ class KilocodeCliBackend:
         if task.job_id is None or task.run_token is None or not phase:
             return ""
         external_id = f"kilo:{task.job_id}:{task.run_token}:{phase}"
+        if task.invocation is not None:
+            external_id = f"{external_id}:invocation:{max(1, int(task.invocation))}"
         if task.attempt is not None:
             external_id = f"{external_id}:attempt:{max(1, int(task.attempt))}"
         return external_id
 
-    def _resolved_usage_db_path(self) -> Path:
+    def _resolved_usage_db_path(self, task: AgentTask | None = None) -> Path:
+        if self.state_root:
+            if task is None or task.job_id is None or task.run_token is None:
+                raise KiloUsageUnavailableError(
+                    "Per-job Kilo usage lookup requires job_id and run_token."
+                )
+            return (
+                Path(self.state_root).expanduser().resolve()
+                / f"{task.job_id}-{task.run_token}"
+                / "data"
+                / "kilo"
+                / "kilo.db"
+            )
         settings = self.settings or get_settings()
         return resolved_kilo_usage_db_path(
             kilo_bin=self.bin,
@@ -817,6 +913,20 @@ def _kilo_json_error_detail(stdout: str) -> str | None:
     return None
 
 
+def _kilo_failure_reason_code(*, stdout: str, stderr: str) -> str | None:
+    """Return an allowlisted, non-sensitive reason code from Kilo output."""
+
+    combined = f"{stdout}\n{stderr}"
+    return next(
+        (
+            reason
+            for reason in sorted(_KILO_FAILURE_REASON_CODES)
+            if reason in combined
+        ),
+        None,
+    )
+
+
 def _kilo_json_object(candidate: str) -> dict[str, object] | None:
     try:
         payload = json.loads(candidate)
@@ -977,6 +1087,7 @@ def kilocode_backend() -> KilocodeCliBackend:
     mode_value = getattr(settings, "worker_kilocode_mode", None)
     agent_value = getattr(settings, "worker_kilocode_agent", None) or mode_value
     variant_value = getattr(settings, "worker_kilocode_variant", None)
+    pure_value = getattr(settings, "worker_kilocode_pure", False)
     json_output_value = getattr(settings, "worker_kilocode_json_output", False)
     extra_env = _build_kilocode_openai_env(settings)
     model_value = _kilocode_backend_model(settings, extra_env)
@@ -986,12 +1097,14 @@ def kilocode_backend() -> KilocodeCliBackend:
         agent=str(agent_value) if agent_value else None,
         model=str(model_value) if model_value else None,
         variant=str(variant_value) if variant_value else None,
+        pure=bool(pure_value),
         timeout_seconds=DEFAULT_KILOCODE_TIMEOUT_SECONDS,
         json_output=bool(json_output_value),
         extra_env=extra_env,
         settings=settings,
         usage_tracking_enabled=bool(settings.llm_usage_tracking_enabled),
         usage_db_path=settings.worker_kilocode_usage_db_path,
+        state_root=settings.worker_kilocode_state_root,
     )
 
 
@@ -1009,6 +1122,7 @@ def kilocode_planning_backend() -> KilocodeCliBackend:
     mode_value = getattr(settings, "worker_kilocode_mode", None)
     agent_value = getattr(settings, "worker_kilocode_agent", None) or mode_value
     variant_value = getattr(settings, "worker_kilocode_variant", None)
+    pure_value = getattr(settings, "worker_kilocode_pure", False)
     json_output_value = getattr(settings, "worker_kilocode_json_output", False)
     extra_env = _build_kilocode_openai_env(settings)
     model_value = _kilocode_backend_model(settings, extra_env)
@@ -1018,6 +1132,7 @@ def kilocode_planning_backend() -> KilocodeCliBackend:
         agent=str(agent_value) if agent_value else None,
         model=str(model_value) if model_value else None,
         variant=str(variant_value) if variant_value else None,
+        pure=bool(pure_value),
         timeout_seconds=settings.worker_planning_timeout_seconds,
         json_output=bool(json_output_value),
         extra_env=extra_env,
@@ -1025,6 +1140,7 @@ def kilocode_planning_backend() -> KilocodeCliBackend:
         settings=settings,
         usage_tracking_enabled=bool(settings.llm_usage_tracking_enabled),
         usage_db_path=settings.worker_kilocode_usage_db_path,
+        state_root=settings.worker_kilocode_state_root,
     )
 
 
@@ -1042,6 +1158,7 @@ def kilocode_coding_backend() -> KilocodeCliBackend:
     mode_value = getattr(settings, "worker_kilocode_mode", None)
     agent_value = getattr(settings, "worker_kilocode_agent", None) or mode_value
     variant_value = getattr(settings, "worker_kilocode_variant", None)
+    pure_value = getattr(settings, "worker_kilocode_pure", False)
     json_output_value = getattr(settings, "worker_kilocode_json_output", False)
     extra_env = _build_kilocode_openai_env(settings)
     model_value = _kilocode_backend_model(settings, extra_env)
@@ -1051,6 +1168,7 @@ def kilocode_coding_backend() -> KilocodeCliBackend:
         agent=str(agent_value) if agent_value else None,
         model=str(model_value) if model_value else None,
         variant=str(variant_value) if variant_value else None,
+        pure=bool(pure_value),
         timeout_seconds=settings.worker_coding_timeout_seconds,
         json_output=bool(json_output_value),
         extra_env=extra_env,
@@ -1058,6 +1176,7 @@ def kilocode_coding_backend() -> KilocodeCliBackend:
         settings=settings,
         usage_tracking_enabled=bool(settings.llm_usage_tracking_enabled),
         usage_db_path=settings.worker_kilocode_usage_db_path,
+        state_root=settings.worker_kilocode_state_root,
     )
 
 

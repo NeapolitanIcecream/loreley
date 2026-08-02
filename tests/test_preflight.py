@@ -197,6 +197,7 @@ def test_kilocode_preflight_uses_default_backend_settings_when_ref_is_blank(monk
         WORKER_KILOCODE_AGENT="architect",
         WORKER_KILOCODE_MODEL="openai/gpt-5.4",
         WORKER_KILOCODE_VARIANT="high",
+        WORKER_KILOCODE_PURE=True,
     )
 
     results = _check_agent_backend(kind="planning", settings=settings)
@@ -207,6 +208,7 @@ def test_kilocode_preflight_uses_default_backend_settings_when_ref_is_blank(monk
     assert "--agent" in cli_result.details
     assert "--model" in cli_result.details
     assert "--variant" in cli_result.details
+    assert "--pure" in cli_result.details
     assert "--dir" in cli_result.details
 
 

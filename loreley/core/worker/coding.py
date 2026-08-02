@@ -93,6 +93,7 @@ class CodingAgentRequest:
     iteration_context: IterationContext | None = None
     additional_notes: Sequence[str] = field(default_factory=tuple)
     rework_feedback: str | None = None
+    invocation: int = 1
     job_id: UUID | None = None
     run_token: UUID | None = None
 
@@ -105,6 +106,7 @@ class CodingAgentRequest:
         )
         self.additional_notes = tuple(self.additional_notes or ())
         self.rework_feedback = (self.rework_feedback or "").strip() or None
+        self.invocation = max(1, int(self.invocation))
 
 
 @dataclass(slots=True)
@@ -173,6 +175,7 @@ class CodingAgent(TruncationMixin):
             job_id=request.job_id,
             run_token=request.run_token,
             phase="coding",
+            invocation=request.invocation,
         )
 
         def _debug_hook(
