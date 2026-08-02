@@ -167,6 +167,7 @@ def require_commit(
     - resolve locally
     - fetch from origin
     - if still missing and the repo is shallow, unshallow and retry
+    - fetch the requested ref explicitly when the configured refspec excludes it
     - raise RepositoryError when the commit cannot be resolved
     """
 
@@ -195,6 +196,26 @@ def require_commit(
         resolved_hash = _resolve_commit_hash(repo, commit)
         if resolved_hash is not None:
             return resolved_hash
+
+    log.info(
+        "Default fetch did not expose {}; fetching it explicitly from {}",
+        commit,
+        remote_name,
+    )
+    try:
+        fetch_origin(
+            repo,
+            remote=remote_name,
+            fetch_depth=fetch_depth,
+            refspecs=(commit,),
+        )
+    except RepositoryError:
+        # Preserve the stable not-available error below. The targeted fetch is
+        # a best-effort fallback for narrow clone refspecs.
+        pass
+    resolved_hash = _resolve_commit_hash(repo, commit)
+    if resolved_hash is not None:
+        return resolved_hash
 
     raise RepositoryError(
         f"Commit {commit} is not available locally after fetching from {remote_name}.",

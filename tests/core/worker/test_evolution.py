@@ -24,6 +24,7 @@ from loreley.core.worker.evolution import EvolutionWorker, JobContext
 from loreley.core.worker.planning import PlanDocument, PlanningAgentResponse
 from loreley.core.worker.repository import CheckoutContext
 from loreley.core.worker.scope_gate import ScopeGateResult
+from loreley.core.usage import LLMUsageEventPayload
 from loreley.db.models import CommitCard, EvaluationArtifactRecord, MapElitesArchiveCell, Metric
 
 
@@ -87,6 +88,21 @@ class _FakeCodingAgent:
             attempts=1,
             duration_seconds=0.1,
         )
+
+
+class _UsageFakeCodingAgent(_FakeCodingAgent):
+    def implement(self, request: Any, *, working_dir: Path) -> CodingAgentResponse:
+        response = super().implement(request, working_dir=working_dir)
+        invocation = int(request.invocation)
+        response.usage_events = (
+            LLMUsageEventPayload(
+                source="fake",
+                phase="coding",
+                total_tokens=invocation,
+                external_usage_id=f"coding-invocation-{invocation}",
+            ),
+        )
+        return response
 
 
 class _SecondPassFailingCodingAgent(_FakeCodingAgent):
@@ -929,7 +945,7 @@ def test_run_reworks_candidate_failure_and_publishes_only_final_pass(
         events=events,
         campaign_program_hash=program.raw_sha256,
     )
-    coding_agent = _FakeCodingAgent()
+    coding_agent = _UsageFakeCodingAgent()
     evaluator = _SequenceEvaluator(
         [
             EvalFail(kind="typecheck", summary="typecheck failed in src/foo.py"),
@@ -978,8 +994,13 @@ def test_run_reworks_candidate_failure_and_publishes_only_final_pass(
     assert cleanup_indexes[0] < rework_reset_index
     assert cleanup_indexes[-1] < events.index("store.record_candidate[published=False]")
     assert len(coding_agent.requests) == 2
+    assert [request.invocation for request, _worktree in coding_agent.requests] == [1, 2]
     second_request, _worktree = coding_agent.requests[1]
     assert "typecheck failed in src/foo.py" in str(second_request.rework_feedback)
+    persisted_coding = store.success_calls[0]["coding"]
+    assert [
+        event.external_usage_id for event in persisted_coding.usage_events
+    ] == ["coding-invocation-1", "coding-invocation-2"]
     success_outcome = store.success_calls[0]["evaluation_outcome"]
     assert success_outcome.artifacts[-1].key == "evaluator_rework_attempts"
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import threading
 from time import monotonic
@@ -191,6 +191,12 @@ class _EvolutionRunState:
     commit_message: str | None = None
     candidate_commit: str | None = None
     failure_persisted: bool = False
+
+
+@dataclass(slots=True, frozen=True)
+class _CodingInvocationContext:
+    number: int = 1
+    rework_feedback: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -470,12 +476,27 @@ class EvolutionWorker:
             heartbeat.raise_if_lease_lost()
             state.candidate_commit = None
             state.evaluation_outcome = None
-            state.coding_response = self._run_coding(
+            previous_usage = (
+                state.coding_response.usage_events
+                if state.coding_response is not None
+                else ()
+            )
+            coding_response = self._run_coding(
                 job_ctx,
                 _required(state.plan_response, "plan_response"),
                 checkout,
                 prompt_context,
-                rework_feedback=rework_feedback,
+                invocation_context=_CodingInvocationContext(
+                    number=attempt,
+                    rework_feedback=rework_feedback,
+                ),
+            )
+            state.coding_response = replace(
+                coding_response,
+                usage_events=(
+                    *previous_usage,
+                    *coding_response.usage_events,
+                ),
             )
             heartbeat.raise_if_lease_lost()
             self._create_and_evaluate_local_attempt(job_ctx, checkout, heartbeat, state)
@@ -975,21 +996,14 @@ class EvolutionWorker:
         checkout: CheckoutContext,
         prompt_context: WorkerPromptContext,
         *,
-        rework_feedback: str | None = None,
+        invocation_context: _CodingInvocationContext | None = None,
     ) -> CodingAgentResponse:
-        request = CodingAgentRequest(
-            goal=job_ctx.goal,
-            plan=plan.plan,
-            base_commit=job_ctx.base_commit_hash,
-            base=prompt_context.base,
-            inspirations=prompt_context.inspirations,
-            constraints=job_ctx.constraints,
-            acceptance_criteria=job_ctx.acceptance_criteria,
-            iteration_context=prompt_context.iteration_context,
-            additional_notes=(*job_ctx.notes, *self._repair_coding_notes(job_ctx)),
-            rework_feedback=rework_feedback,
-            job_id=job_ctx.job_id,
-            run_token=job_ctx.run_token,
+        invocation_context = invocation_context or _CodingInvocationContext()
+        request = self._build_coding_request(
+            job_ctx=job_ctx,
+            plan=plan,
+            prompt_context=prompt_context,
+            invocation_context=invocation_context,
         )
         try:
             with usage_context(
@@ -1004,6 +1018,30 @@ class EvolutionWorker:
                 events=(*plan.usage_events, *self._usage_events_from_exception(exc)),
             )
             raise EvolutionWorkerError(f"Coding agent failed for job {job_ctx.job_id}: {exc}") from exc
+
+    def _build_coding_request(
+        self,
+        *,
+        job_ctx: JobContext,
+        plan: PlanningAgentResponse,
+        prompt_context: WorkerPromptContext,
+        invocation_context: _CodingInvocationContext,
+    ) -> CodingAgentRequest:
+        return CodingAgentRequest(
+            goal=job_ctx.goal,
+            plan=plan.plan,
+            base_commit=job_ctx.base_commit_hash,
+            base=prompt_context.base,
+            inspirations=prompt_context.inspirations,
+            constraints=job_ctx.constraints,
+            acceptance_criteria=job_ctx.acceptance_criteria,
+            iteration_context=prompt_context.iteration_context,
+            additional_notes=(*job_ctx.notes, *self._repair_coding_notes(job_ctx)),
+            rework_feedback=invocation_context.rework_feedback,
+            invocation=invocation_context.number,
+            job_id=job_ctx.job_id,
+            run_token=job_ctx.run_token,
+        )
 
     @staticmethod
     def _repair_coding_notes(job_ctx: JobContext) -> tuple[str, ...]:

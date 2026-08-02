@@ -656,6 +656,7 @@ def test_kilocode_cli_backend_builds_run_command_with_passthrough_flags(
         model="openai/gpt-5.4",
         agent="architect",
         variant="high",
+        pure=True,
         timeout_seconds=60,
         extra_env={"KEY": "val"},
         json_output=True,
@@ -668,6 +669,7 @@ def test_kilocode_cli_backend_builds_run_command_with_passthrough_flags(
     command_list = list(invocation.command)
     assert command_list[:3] == ["kilo", "run", "--auto"]
     assert "--auto" in command_list
+    assert "--pure" in command_list
     assert command_list[command_list.index("--dir") + 1] == str(repo_dir.resolve())
     assert "--format" in command_list and "json" in command_list
     assert "--agent" in command_list and "architect" in command_list
@@ -724,18 +726,37 @@ def test_kilocode_capability_parser_recognizes_current_run_flags() -> None:
       --agent       agent to use
       -m, --model   model to use
       --auto        auto-approve all permissions
+      --pure        run without external plugins
     """
 
     flags = kilocode_cli.parse_kilo_run_flags(help_output)
 
-    assert {"--auto", "--agent", "--model", "--format", "--title", "--variant", "--dir"} <= flags
+    assert {
+        "--auto",
+        "--agent",
+        "--model",
+        "--format",
+        "--title",
+        "--variant",
+        "--dir",
+        "--pure",
+    } <= flags
 
 
 def test_kilocode_capabilities_expose_supported_features() -> None:
     capabilities = kilocode_cli.KiloCliCapabilities(
         version="7.3.16",
         run_flags=frozenset(
-            {"--auto", "--agent", "--model", "--format", "--title", "--variant", "--dir"}
+            {
+                "--auto",
+                "--agent",
+                "--model",
+                "--format",
+                "--title",
+                "--variant",
+                "--dir",
+                "--pure",
+            }
         ),
         supports_db_path=True,
     )
@@ -747,6 +768,7 @@ def test_kilocode_capabilities_expose_supported_features() -> None:
     assert capabilities.supports_title is True
     assert capabilities.supports_variant is True
     assert capabilities.supports_dir is True
+    assert capabilities.supports_pure is True
     assert capabilities.supports_db_path is True
 
 
@@ -894,6 +916,7 @@ def test_kilocode_cli_backend_titles_session_and_reads_usage_db(
             job_id=job_id,
             run_token=run_token,
             phase="coding",
+            invocation=2,
             attempt=4,
         ),
         working_dir=repo_dir,
@@ -903,7 +926,7 @@ def test_kilocode_cli_backend_titles_session_and_reads_usage_db(
     assert "--title" in command_list
     assert (
         command_list[command_list.index("--title") + 1]
-        == f"loreley:{job_id}:{run_token}:coding:attempt:4"
+        == f"loreley:{job_id}:{run_token}:coding:invocation:2:attempt:4"
     )
     assert len(invocation.usage_events) == 1
     event = invocation.usage_events[0]
@@ -914,7 +937,209 @@ def test_kilocode_cli_backend_titles_session_and_reads_usage_db(
     assert event.cache_write_tokens == 5
     assert event.cost_source == "provider_reported"
     assert str(event.cost_usd) == "0.025"
-    assert event.external_usage_id == f"kilo:{job_id}:{run_token}:coding:attempt:4"
+    assert (
+        event.external_usage_id
+        == f"kilo:{job_id}:{run_token}:coding:invocation:2:attempt:4"
+    )
+
+
+def test_kilocode_cli_backend_includes_descendant_session_usage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+    usage_db = tmp_path / "kilo.db"
+    with sqlite3.connect(usage_db) as conn:
+        conn.execute(
+            """
+            CREATE TABLE session (
+                id TEXT PRIMARY KEY,
+                parent_id TEXT,
+                title TEXT,
+                directory TEXT,
+                time_created INTEGER,
+                time_updated INTEGER
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE message (
+                id TEXT PRIMARY KEY,
+                session_id TEXT,
+                time_created INTEGER,
+                data TEXT
+            )
+            """
+        )
+
+    def assistant_message(
+        *,
+        input_tokens: int,
+        output_tokens: int,
+        reasoning_tokens: int,
+        cached_tokens: int,
+        cost: float,
+    ) -> str:
+        return json.dumps(
+            {
+                "role": "assistant",
+                "providerID": "loreley-openai-compatible",
+                "modelID": "deepseek-v4-flash",
+                "cost": cost,
+                "tokens": {
+                    "input": input_tokens,
+                    "output": output_tokens,
+                    "reasoning": reasoning_tokens,
+                    "cache": {"read": cached_tokens, "write": 0},
+                },
+            }
+        )
+
+    def fake_run(command, **kwargs):  # noqa: ANN001
+        title = command[command.index("--title") + 1]
+        cwd = kwargs["cwd"]
+        with sqlite3.connect(usage_db) as conn:
+            conn.executemany(
+                """
+                INSERT INTO session
+                    (id, parent_id, title, directory, time_created, time_updated)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    ("parent", None, title, cwd, 1, 2),
+                    ("child", "parent", "explore subagent", cwd, 3, 4),
+                ),
+            )
+            conn.executemany(
+                """
+                INSERT INTO message (id, session_id, time_created, data)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    (
+                        "parent-message",
+                        "parent",
+                        2,
+                        assistant_message(
+                            input_tokens=10,
+                            output_tokens=20,
+                            reasoning_tokens=3,
+                            cached_tokens=100,
+                            cost=0.01,
+                        ),
+                    ),
+                    (
+                        "child-message",
+                        "child",
+                        4,
+                        assistant_message(
+                            input_tokens=7,
+                            output_tokens=5,
+                            reasoning_tokens=2,
+                            cached_tokens=50,
+                            cost=0.02,
+                        ),
+                    ),
+                ),
+            )
+        return types.SimpleNamespace(stdout="done", stderr="", returncode=0)
+
+    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    backend = KilocodeCliBackend(
+        bin="kilo",
+        timeout_seconds=30,
+        extra_env={},
+        error_cls=RuntimeError,
+        usage_db_path=str(usage_db),
+    )
+
+    invocation = backend.run(
+        AgentTask(
+            name="coding",
+            prompt="do it",
+            job_id=uuid4(),
+            run_token=uuid4(),
+            phase="coding",
+        ),
+        working_dir=repo_dir,
+    )
+
+    assert len(invocation.usage_events) == 1
+    event = invocation.usage_events[0]
+    assert event.input_tokens == 17
+    assert event.cached_input_tokens == 150
+    assert event.output_tokens == 25
+    assert event.reasoning_output_tokens == 5
+    assert event.total_tokens == 197
+    assert str(event.cost_usd) == "0.03"
+
+
+def test_kilocode_cli_backend_rejects_descendant_session_outside_worktree(
+    tmp_path: Path,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    outside_dir = tmp_path / "outside"
+    (repo_dir / ".git").mkdir(parents=True)
+    outside_dir.mkdir()
+    usage_db = tmp_path / "kilo.db"
+    title = "loreley:test-job:test-token:coding"
+    with sqlite3.connect(usage_db) as conn:
+        conn.execute(
+            """
+            CREATE TABLE session (
+                id TEXT PRIMARY KEY,
+                parent_id TEXT,
+                title TEXT,
+                directory TEXT,
+                time_created INTEGER,
+                time_updated INTEGER
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE message (
+                id TEXT PRIMARY KEY,
+                session_id TEXT,
+                time_created INTEGER,
+                data TEXT
+            )
+            """
+        )
+        conn.executemany(
+            """
+            INSERT INTO session
+                (id, parent_id, title, directory, time_created, time_updated)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                ("parent", None, title, str(repo_dir), 1, 2),
+                ("child", "parent", "explore subagent", str(outside_dir), 3, 4),
+            ),
+        )
+    backend = KilocodeCliBackend(
+        bin="kilo",
+        timeout_seconds=30,
+        extra_env={},
+        error_cls=RuntimeError,
+        usage_db_path=str(usage_db),
+    )
+
+    with pytest.raises(kilocode_cli.KiloWorkspaceIsolationError):
+        backend._read_usage_event(  # noqa: SLF001
+            title=title,
+            worktree=repo_dir,
+            task=AgentTask(
+                name="coding",
+                prompt="do it",
+                job_id=uuid4(),
+                run_token=uuid4(),
+                phase="coding",
+            ),
+            external_usage_id="kilo:test-job:test-token:coding",
+        )
 
 
 def test_kilocode_cli_backend_rejects_mismatched_usage_session_directory(
@@ -1089,6 +1314,46 @@ def test_kilocode_cli_backend_raises_on_nonzero_exit_with_stdout_and_stderr_cont
     message = str(exc_info.value)
     assert "stderr: connection failed" in message
     assert 'stdout: {"event":"error","message":"permission denied"}' in message
+
+
+@pytest.mark.parametrize(
+    "reason_code",
+    ("job_token_budget_exhausted", "request_limit_reached"),
+)
+def test_kilocode_cli_backend_surfaces_allowlisted_failure_reason_code(
+    tmp_path: Path,
+    monkeypatch,
+    reason_code: str,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+
+    def fake_run(*_args, **_kwargs):  # noqa: ANN001, ANN002
+        return types.SimpleNamespace(
+            stdout="",
+            stderr=f"provider failed: {reason_code}",
+            returncode=1,
+        )
+
+    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+
+    backend = KilocodeCliBackend(
+        bin="kilo",
+        timeout_seconds=10,
+        extra_env={},
+        error_cls=RuntimeError,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match=f"reason_code={reason_code}",
+    ) as exc_info:
+        backend.run(
+            AgentTask(name="coding", prompt="run"),
+            working_dir=repo_dir,
+        )
+
+    assert exc_info.value.failure_reason_code == reason_code
 
 
 def test_kilocode_cli_backend_raises_on_error_event_with_zero_exit(
@@ -1505,6 +1770,78 @@ def test_kilocode_backend_config_mode_resolves_api_key_at_run_time(
     assert [env["LORELEY_KILO_OPENAI_API_KEY"] for env in captured_envs] == ["dyn-1", "dyn-2"]
     assert all("KILO_OPENAI_API_KEY" not in env for env in captured_envs)
     assert all("dyn-" not in env["KILO_CONFIG_CONTENT"] for env in captured_envs)
+
+
+def test_kilocode_backend_isolates_state_per_job(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+    captured_envs: list[dict[str, str]] = []
+
+    def fake_run(_command, **kwargs):  # noqa: ANN001
+        captured_envs.append(kwargs["env"])
+        return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
+
+    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    backend = KilocodeCliBackend(
+        bin="kilo",
+        timeout_seconds=30,
+        extra_env={},
+        error_cls=RuntimeError,
+        state_root=str(tmp_path / "state"),
+        usage_tracking_enabled=False,
+    )
+    first_job = uuid4()
+    second_job = uuid4()
+    run_token = uuid4()
+
+    backend.run(
+        AgentTask(
+            name="planning",
+            prompt="plan",
+            job_id=first_job,
+            run_token=run_token,
+        ),
+        working_dir=repo_dir,
+    )
+    backend.run(
+        AgentTask(
+            name="planning",
+            prompt="plan",
+            job_id=second_job,
+            run_token=run_token,
+        ),
+        working_dir=repo_dir,
+    )
+
+    first, second = captured_envs
+    assert first["HOME"] != second["HOME"]
+    for env, job_id in ((first, first_job), (second, second_job)):
+        state_dir = (tmp_path / "state" / f"{job_id}-{run_token}").resolve()
+        assert Path(env["HOME"]) == state_dir / "home"
+        assert Path(env["XDG_DATA_HOME"]) == state_dir / "data"
+        assert Path(env["XDG_CONFIG_HOME"]) == state_dir / "config"
+        assert Path(env["XDG_CACHE_HOME"]) == state_dir / "cache"
+        assert Path(env["TMPDIR"]) == state_dir / "tmp"
+        assert all(Path(env[name]).is_dir() for name in (
+            "HOME",
+            "XDG_DATA_HOME",
+            "XDG_CONFIG_HOME",
+            "XDG_CACHE_HOME",
+            "TMPDIR",
+        ))
+        assert all(
+            Path(env[name]).stat().st_mode & 0o077 == 0
+            for name in (
+                "HOME",
+                "XDG_DATA_HOME",
+                "XDG_CONFIG_HOME",
+                "XDG_CACHE_HOME",
+                "TMPDIR",
+            )
+        )
 
 
 def test_kilocode_backend_config_mode_does_not_resolve_api_key_without_config_reference(
@@ -1948,6 +2285,38 @@ def test_run_agent_task_exhausted_error_carries_attempt_usage(tmp_path: Path) ->
     usage_events = exc_info.value.usage_events
     assert [event.external_usage_id for event in usage_events] == ["dummy:1", "dummy:2"]
     assert [event.input_tokens for event in usage_events] == [1, 2]
+
+
+@pytest.mark.parametrize(
+    "reason_code",
+    ("job_token_budget_exhausted", "request_limit_reached"),
+)
+def test_run_agent_task_exhausted_error_preserves_failure_reason_code(
+    tmp_path: Path,
+    reason_code: str,
+) -> None:
+    class DummyBackend:
+        def run(self, task: AgentTask, *, working_dir: Path) -> AgentInvocation:  # noqa: ARG002
+            error = RuntimeError("provider request failed")
+            error.failure_reason_code = reason_code
+            raise error
+
+    with pytest.raises(
+        RuntimeError,
+        match=f"Failure reason: {reason_code}",
+    ) as exc_info:
+        run_agent_task(
+            backend=DummyBackend(),
+            task=AgentTask(name="test", prompt="hi"),
+            working_dir=tmp_path,
+            max_attempts=1,
+            coerce_result=lambda inv: inv.stdout,
+            retryable_exceptions=(RuntimeError,),
+            error_cls=RuntimeError,
+            error_message="all attempts failed",
+        )
+
+    assert exc_info.value.failure_reason_code == reason_code
 
 
 def _usage_event(

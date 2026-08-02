@@ -29,6 +29,7 @@ class AgentTask:
     job_id: UUID | None = None
     run_token: UUID | None = None
     phase: str | None = None
+    invocation: int | None = None
     attempt: int | None = None
 
 

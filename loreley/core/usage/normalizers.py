@@ -122,6 +122,7 @@ class _KiloUsageTotals:
             + self.cached_input_tokens
             + self.cache_write_tokens
             + self.output_tokens
+            + self.reasoning_output_tokens
         )
 
 

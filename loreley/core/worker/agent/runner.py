@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from pathlib import Path
-from typing import Callable, Sequence, TypeVar
+from typing import Callable, NoReturn, Sequence, TypeVar
 
 from loreley.core.worker.agent.contracts import (
     AgentBackend,
@@ -11,6 +12,7 @@ from loreley.core.worker.agent.contracts import (
 )
 
 ParsedT = TypeVar("ParsedT")
+_FAILURE_REASON_CODE_PATTERN = re.compile(r"^[a-z0-9_]{1,64}$")
 
 
 def run_agent_task(
@@ -84,7 +86,27 @@ def run_agent_task(
                 on_attempt_retry(attempt, attempts, exc)
             continue
 
+    _raise_agent_task_error(
+        error_cls=error_cls,
+        error_message=error_message,
+        last_error=last_error,
+        usage_events=usage_events,
+    )
+
+
+def _raise_agent_task_error(
+    *,
+    error_cls: type[RuntimeError],
+    error_message: str,
+    last_error: Exception | None,
+    usage_events: Sequence[object],
+) -> NoReturn:
+    failure_reason_code = _failure_reason_code(last_error)
+    if failure_reason_code:
+        error_message = f"{error_message} Failure reason: {failure_reason_code}."
     error = error_cls(error_message)
+    if failure_reason_code:
+        setattr(error, "failure_reason_code", failure_reason_code)
     if usage_events:
         setattr(error, "usage_events", tuple(usage_events))
     raise error from last_error
@@ -118,6 +140,13 @@ def _exception_usage_events(exc: Exception) -> tuple[object, ...]:
     if isinstance(value, list):
         return tuple(value)
     return ()
+
+
+def _failure_reason_code(exc: Exception | None) -> str | None:
+    value = str(getattr(exc, "failure_reason_code", "") or "").strip()
+    if not _FAILURE_REASON_CODE_PATTERN.fullmatch(value):
+        return None
+    return value
 
 
 __all__ = [

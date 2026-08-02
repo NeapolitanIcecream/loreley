@@ -55,3 +55,47 @@ def test_require_commit_unshallows_shallow_clone(tmp_path: Path) -> None:
     assert has_object(repo, commit1)
     assert not is_shallow_repository(repo)
 
+
+def test_require_commit_fetches_hash_outside_single_branch_refspec(
+    tmp_path: Path,
+) -> None:
+    """Worker commits remain fetchable from a single-branch scheduler clone."""
+
+    source = tmp_path / "source"
+    source.mkdir(parents=True)
+    _git(source, "init", "-b", "experiment-root")
+    _git(source, "config", "user.email", "test@example.com")
+    _git(source, "config", "user.name", "Test User")
+    (source / "file.txt").write_text("root\n", encoding="utf-8")
+    _git(source, "add", "file.txt")
+    _git(source, "commit", "-m", "root")
+
+    remote = tmp_path / "target.git"
+    _git(tmp_path, "clone", "--bare", str(source), str(remote))
+    scheduler = tmp_path / "scheduler"
+    _git(
+        tmp_path,
+        "clone",
+        "--single-branch",
+        "--branch",
+        "experiment-root",
+        str(remote),
+        str(scheduler),
+    )
+    worker = tmp_path / "worker"
+    _git(tmp_path, "clone", str(remote), str(worker))
+    _git(worker, "config", "user.email", "test@example.com")
+    _git(worker, "config", "user.name", "Test User")
+    _git(worker, "switch", "-c", "candidate")
+    (worker / "file.txt").write_text("candidate\n", encoding="utf-8")
+    _git(worker, "commit", "-am", "candidate")
+    candidate_commit = _rev_parse(worker)
+    _git(worker, "push", "origin", "candidate")
+
+    repo = Repo(scheduler)
+    assert not has_object(repo, candidate_commit)
+
+    resolved = require_commit(repo, candidate_commit)
+
+    assert resolved == candidate_commit
+    assert has_object(repo, candidate_commit)

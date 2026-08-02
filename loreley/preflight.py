@@ -619,10 +619,12 @@ def _check_agent_backend(
             agent=settings.worker_kilocode_agent or settings.worker_kilocode_mode,
             model=settings.worker_kilocode_model,
             variant=settings.worker_kilocode_variant,
+            pure=bool(settings.worker_kilocode_pure),
             json_output=bool(settings.worker_kilocode_json_output),
             settings=settings,
             usage_tracking_enabled=bool(settings.llm_usage_tracking_enabled),
             usage_db_path=settings.worker_kilocode_usage_db_path,
+            state_root=settings.worker_kilocode_state_root,
         )
         return _check_kilocode_backend(
             kind=kind,
@@ -777,8 +779,6 @@ def _required_kilocode_run_flags(
 ) -> set[str]:
     del kind
     flags = {"--auto", "--dir"}
-    if bool(getattr(backend, "json_output", settings.worker_kilocode_json_output)):
-        flags.add("--format")
     selected_agent = (
         getattr(backend, "agent", None)
         or getattr(backend, "mode", None)
@@ -786,17 +786,17 @@ def _required_kilocode_run_flags(
         or settings.worker_kilocode_mode
         or ""
     )
-    if str(selected_agent).strip():
-        flags.add("--agent")
     selected_model = getattr(backend, "model", None) or settings.worker_kilocode_model or ""
-    if str(selected_model).strip():
-        flags.add("--model")
     selected_variant = getattr(backend, "variant", None) or settings.worker_kilocode_variant or ""
-    if str(selected_variant).strip():
-        flags.add("--variant")
-    if _kilocode_usage_tracking_enabled(backend=backend, settings=settings):
-        flags.add("--title")
-    return flags
+    optional_flags = (
+        ("--format", bool(getattr(backend, "json_output", settings.worker_kilocode_json_output))),
+        ("--agent", bool(str(selected_agent).strip())),
+        ("--model", bool(str(selected_model).strip())),
+        ("--variant", bool(str(selected_variant).strip())),
+        ("--pure", bool(getattr(backend, "pure", settings.worker_kilocode_pure))),
+        ("--title", _kilocode_usage_tracking_enabled(backend=backend, settings=settings)),
+    )
+    return flags | {flag for flag, enabled in optional_flags if enabled}
 
 
 def _check_kilocode_provider_config(

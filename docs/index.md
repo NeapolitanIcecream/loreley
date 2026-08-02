@@ -8,6 +8,15 @@ Use this page as a high-level overview and a navigation hub into the focused mod
 
 ---
 
+## Evidence
+
+In a preregistered 64-job `markdown-it-py` case study, Loreley combined eight
+small optimization seeds with Kilo/DeepSeek search and found a candidate that
+was 6.75% faster on a separate 28-document corpus, without correctness,
+release, scope, or allocation regressions. [Read the case study](research/2026-08-02-markdown-it-py-deepseek-case-study.md).
+
+---
+
 ## Challenges and core ideas
 
 Loreley is built around three core ideas, each designed to address a concrete challenge in real-world code evolution:

@@ -210,6 +210,7 @@ __marimo__/
 # Loreley
 logs/
 output/refactor-audit/
+output/markdown-it-*/
 .cursor
 .playwright-mcp/
 .wrangler/
