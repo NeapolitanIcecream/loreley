@@ -194,6 +194,12 @@ class _EvolutionRunState:
 
 
 @dataclass(slots=True, frozen=True)
+class _CodingInvocationContext:
+    number: int = 1
+    rework_feedback: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
 class _ReworkAttemptRecord:
     attempt: int
     candidate_commit_hash: str
@@ -480,8 +486,10 @@ class EvolutionWorker:
                 _required(state.plan_response, "plan_response"),
                 checkout,
                 prompt_context,
-                rework_feedback=rework_feedback,
-                invocation=attempt,
+                invocation_context=_CodingInvocationContext(
+                    number=attempt,
+                    rework_feedback=rework_feedback,
+                ),
             )
             state.coding_response = replace(
                 coding_response,
@@ -988,23 +996,14 @@ class EvolutionWorker:
         checkout: CheckoutContext,
         prompt_context: WorkerPromptContext,
         *,
-        rework_feedback: str | None = None,
-        invocation: int = 1,
+        invocation_context: _CodingInvocationContext | None = None,
     ) -> CodingAgentResponse:
-        request = CodingAgentRequest(
-            goal=job_ctx.goal,
-            plan=plan.plan,
-            base_commit=job_ctx.base_commit_hash,
-            base=prompt_context.base,
-            inspirations=prompt_context.inspirations,
-            constraints=job_ctx.constraints,
-            acceptance_criteria=job_ctx.acceptance_criteria,
-            iteration_context=prompt_context.iteration_context,
-            additional_notes=(*job_ctx.notes, *self._repair_coding_notes(job_ctx)),
-            rework_feedback=rework_feedback,
-            invocation=invocation,
-            job_id=job_ctx.job_id,
-            run_token=job_ctx.run_token,
+        invocation_context = invocation_context or _CodingInvocationContext()
+        request = self._build_coding_request(
+            job_ctx=job_ctx,
+            plan=plan,
+            prompt_context=prompt_context,
+            invocation_context=invocation_context,
         )
         try:
             with usage_context(
@@ -1019,6 +1018,30 @@ class EvolutionWorker:
                 events=(*plan.usage_events, *self._usage_events_from_exception(exc)),
             )
             raise EvolutionWorkerError(f"Coding agent failed for job {job_ctx.job_id}: {exc}") from exc
+
+    def _build_coding_request(
+        self,
+        *,
+        job_ctx: JobContext,
+        plan: PlanningAgentResponse,
+        prompt_context: WorkerPromptContext,
+        invocation_context: _CodingInvocationContext,
+    ) -> CodingAgentRequest:
+        return CodingAgentRequest(
+            goal=job_ctx.goal,
+            plan=plan.plan,
+            base_commit=job_ctx.base_commit_hash,
+            base=prompt_context.base,
+            inspirations=prompt_context.inspirations,
+            constraints=job_ctx.constraints,
+            acceptance_criteria=job_ctx.acceptance_criteria,
+            iteration_context=prompt_context.iteration_context,
+            additional_notes=(*job_ctx.notes, *self._repair_coding_notes(job_ctx)),
+            rework_feedback=invocation_context.rework_feedback,
+            invocation=invocation_context.number,
+            job_id=job_ctx.job_id,
+            run_token=job_ctx.run_token,
+        )
 
     @staticmethod
     def _repair_coding_notes(job_ctx: JobContext) -> tuple[str, ...]:

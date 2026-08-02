@@ -547,69 +547,18 @@ class KilocodeCliBackend:
             missing_schema = kilo_usage_schema_missing_reason(conn)
             if missing_schema:
                 raise KiloUsageUnavailableError(missing_schema)
-            session_row = conn.execute(
-                """
-                SELECT id, directory
-                FROM session
-                WHERE title = ?
-                ORDER BY time_updated DESC, time_created DESC
-                LIMIT 1
-                """,
-                (title,),
-            ).fetchone()
+            session_row = _latest_kilo_session(conn, title)
             if session_row is None:
                 return None
             session_id = str(session_row["id"])
-            session_columns = {
-                str(row[1])
-                for row in conn.execute("PRAGMA table_info(session)").fetchall()
-            }
-            if "parent_id" in session_columns:
-                session_rows = conn.execute(
-                    """
-                    WITH RECURSIVE session_tree(id, directory) AS (
-                        SELECT id, directory
-                        FROM session
-                        WHERE id = ?
-                        UNION
-                        SELECT child.id, child.directory
-                        FROM session AS child
-                        JOIN session_tree AS parent
-                          ON child.parent_id = parent.id
-                    )
-                    SELECT id, directory
-                    FROM session_tree
-                    """,
-                    (session_id,),
-                ).fetchall()
-            else:
-                session_rows = [session_row]
-            session_ids = [str(row["id"]) for row in session_rows]
             settings = self.settings or get_settings()
-            for row in session_rows:
-                assert_kilo_session_directory(
-                    expected_worktree=worktree,
-                    actual_directory=str(row["directory"] or ""),
-                    settings=settings,
-                )
-            placeholders = ", ".join("?" for _ in session_ids)
-            rows = conn.execute(
-                f"""
-                SELECT data
-                FROM message
-                WHERE session_id IN ({placeholders})
-                ORDER BY time_created ASC, id ASC
-                """,
-                session_ids,
-            ).fetchall()
-        messages: list[dict[str, object]] = []
-        for row in rows:
-            try:
-                payload = json.loads(str(row["data"] or "{}"))
-            except json.JSONDecodeError:
-                continue
-            if isinstance(payload, dict):
-                messages.append(payload)
+            session_rows = _kilo_session_tree(conn, session_row)
+            _assert_kilo_session_directories(
+                session_rows=session_rows,
+                worktree=worktree,
+                settings=settings,
+            )
+            messages = _kilo_session_messages(conn, session_rows)
         event = kilo_usage_event_from_messages(
             messages,
             phase=task.phase or task.name or "",
@@ -656,6 +605,87 @@ class KilocodeCliBackend:
             configured_path=self.usage_db_path
             or getattr(settings, "worker_kilocode_usage_db_path", None),
         )
+
+
+def _latest_kilo_session(conn: sqlite3.Connection, title: str) -> sqlite3.Row | None:
+    return conn.execute(
+        """
+        SELECT id, directory
+        FROM session
+        WHERE title = ?
+        ORDER BY time_updated DESC, time_created DESC
+        LIMIT 1
+        """,
+        (title,),
+    ).fetchone()
+
+
+def _kilo_session_tree(
+    conn: sqlite3.Connection,
+    session_row: sqlite3.Row,
+) -> list[sqlite3.Row]:
+    session_columns = {
+        str(row[1]) for row in conn.execute("PRAGMA table_info(session)").fetchall()
+    }
+    if "parent_id" not in session_columns:
+        return [session_row]
+    return conn.execute(
+        """
+        WITH RECURSIVE session_tree(id, directory) AS (
+            SELECT id, directory
+            FROM session
+            WHERE id = ?
+            UNION
+            SELECT child.id, child.directory
+            FROM session AS child
+            JOIN session_tree AS parent
+              ON child.parent_id = parent.id
+        )
+        SELECT id, directory
+        FROM session_tree
+        """,
+        (str(session_row["id"]),),
+    ).fetchall()
+
+
+def _assert_kilo_session_directories(
+    *,
+    session_rows: list[sqlite3.Row],
+    worktree: Path,
+    settings: Settings,
+) -> None:
+    for row in session_rows:
+        assert_kilo_session_directory(
+            expected_worktree=worktree,
+            actual_directory=str(row["directory"] or ""),
+            settings=settings,
+        )
+
+
+def _kilo_session_messages(
+    conn: sqlite3.Connection,
+    session_rows: list[sqlite3.Row],
+) -> list[dict[str, object]]:
+    session_ids = [str(row["id"]) for row in session_rows]
+    placeholders = ", ".join("?" for _ in session_ids)
+    rows = conn.execute(
+        f"""
+        SELECT data
+        FROM message
+        WHERE session_id IN ({placeholders})
+        ORDER BY time_created ASC, id ASC
+        """,
+        session_ids,
+    ).fetchall()
+    messages: list[dict[str, object]] = []
+    for row in rows:
+        try:
+            payload = json.loads(str(row["data"] or "{}"))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            messages.append(payload)
+    return messages
 
 
 def _build_kilocode_openai_env(

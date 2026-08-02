@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import replace
 from pathlib import Path
-from typing import Callable, Sequence, TypeVar
+from typing import Callable, NoReturn, Sequence, TypeVar
 
 from loreley.core.worker.agent.contracts import (
     AgentBackend,
@@ -86,13 +86,25 @@ def run_agent_task(
                 on_attempt_retry(attempt, attempts, exc)
             continue
 
-    failure_reason_code = _failure_reason_code(last_error)
-    reason_suffix = (
-        f" Failure reason: {failure_reason_code}."
-        if failure_reason_code
-        else ""
+    _raise_agent_task_error(
+        error_cls=error_cls,
+        error_message=error_message,
+        last_error=last_error,
+        usage_events=usage_events,
     )
-    error = error_cls(f"{error_message}{reason_suffix}")
+
+
+def _raise_agent_task_error(
+    *,
+    error_cls: type[RuntimeError],
+    error_message: str,
+    last_error: Exception | None,
+    usage_events: Sequence[object],
+) -> NoReturn:
+    failure_reason_code = _failure_reason_code(last_error)
+    if failure_reason_code:
+        error_message = f"{error_message} Failure reason: {failure_reason_code}."
+    error = error_cls(error_message)
     if failure_reason_code:
         setattr(error, "failure_reason_code", failure_reason_code)
     if usage_events:
