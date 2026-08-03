@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
+import signal
 import sqlite3
 import subprocess
 import sys
+import time
 import types
 from pathlib import Path
 from typing import Any
@@ -549,11 +552,11 @@ def test_kilocode_planning_backend_is_retryable_in_worker_loop(
 
     calls = {"count": 0}
 
-    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+    def fake_run(command, cwd, env, timeout):  # noqa: ANN001
         calls["count"] += 1
         return types.SimpleNamespace(stdout="", stderr="connection failed", returncode=1)
 
-    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(kilocode_cli, "_run_kilo_process", fake_run)
 
     backend = kilocode_cli.kilocode_planning_backend()
     task = AgentTask(name="planning", prompt="plan")
@@ -645,11 +648,11 @@ def test_kilocode_cli_backend_builds_run_command_with_passthrough_flags(
 
     captured: dict[str, Any] = {}
 
-    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+    def fake_run(command, cwd, env, timeout):  # noqa: ANN001
         captured.update({"command": command, "cwd": cwd, "env": env, "timeout": timeout})
         return types.SimpleNamespace(stdout="done", stderr="", returncode=0)
 
-    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(kilocode_cli, "_run_kilo_process", fake_run)
 
     backend = KilocodeCliBackend(
         bin="kilo",
@@ -689,10 +692,10 @@ def test_kilocode_cli_backend_omits_optional_flags_when_disabled(
     repo_dir = tmp_path / "repo"
     (repo_dir / ".git").mkdir(parents=True)
 
-    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+    def fake_run(command, cwd, env, timeout):  # noqa: ANN001
         return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
 
-    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(kilocode_cli, "_run_kilo_process", fake_run)
 
     backend = KilocodeCliBackend(
         bin="kilo",
@@ -898,7 +901,7 @@ def test_kilocode_cli_backend_titles_session_and_reads_usage_db(
             )
         return types.SimpleNamespace(stdout="done", stderr="", returncode=0)
 
-    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(kilocode_cli, "_run_kilo_process", fake_run)
     job_id = uuid4()
     run_token = uuid4()
     backend = KilocodeCliBackend(
@@ -1046,7 +1049,7 @@ def test_kilocode_cli_backend_includes_descendant_session_usage(
             )
         return types.SimpleNamespace(stdout="done", stderr="", returncode=0)
 
-    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(kilocode_cli, "_run_kilo_process", fake_run)
     backend = KilocodeCliBackend(
         bin="kilo",
         timeout_seconds=30,
@@ -1181,7 +1184,7 @@ def test_kilocode_cli_backend_rejects_mismatched_usage_session_directory(
             )
         return types.SimpleNamespace(stdout="done", stderr="", returncode=0)
 
-    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(kilocode_cli, "_run_kilo_process", fake_run)
     job_id = uuid4()
     run_token = uuid4()
     backend = KilocodeCliBackend(
@@ -1255,7 +1258,7 @@ def test_kilocode_usage_db_schema_mismatch_returns_unavailable_event(
     def fake_run(*_args, **_kwargs):  # noqa: ANN002
         return types.SimpleNamespace(stdout="done", stderr="", returncode=0)
 
-    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(kilocode_cli, "_run_kilo_process", fake_run)
     job_id = uuid4()
     run_token = uuid4()
     backend = KilocodeCliBackend(
@@ -1297,7 +1300,7 @@ def test_kilocode_cli_backend_raises_on_nonzero_exit_with_stdout_and_stderr_cont
             returncode=1,
         )
 
-    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(kilocode_cli, "_run_kilo_process", fake_run)
 
     backend = KilocodeCliBackend(
         bin="kilo",
@@ -1335,7 +1338,7 @@ def test_kilocode_cli_backend_surfaces_allowlisted_failure_reason_code(
             returncode=1,
         )
 
-    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(kilocode_cli, "_run_kilo_process", fake_run)
 
     backend = KilocodeCliBackend(
         bin="kilo",
@@ -1374,7 +1377,7 @@ def test_kilocode_cli_backend_raises_on_error_event_with_zero_exit(
             returncode=0,
         )
 
-    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(kilocode_cli, "_run_kilo_process", fake_run)
 
     backend = KilocodeCliBackend(
         bin="kilo",
@@ -1398,7 +1401,7 @@ def test_kilocode_cli_backend_raises_on_timeout(tmp_path: Path, monkeypatch) -> 
     def fake_run(*_args, **_kwargs):  # noqa: ANN001, ANN002
         raise subprocess.TimeoutExpired(cmd="kilocode", timeout=5)
 
-    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(kilocode_cli, "_run_kilo_process", fake_run)
 
     backend = KilocodeCliBackend(
         bin="kilo",
@@ -1413,6 +1416,49 @@ def test_kilocode_cli_backend_raises_on_timeout(tmp_path: Path, monkeypatch) -> 
         backend.run(task, working_dir=repo_dir)
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX process-group regression")
+def test_kilocode_process_timeout_terminates_descendants(tmp_path: Path) -> None:
+    """A timed-out Kilo process must not leave API-using descendants alive."""
+
+    pid_file = tmp_path / "grandchild.pid"
+    grandchild_code = "import time; time.sleep(60)"
+    child_code = (
+        "import subprocess,sys,time; from pathlib import Path; "
+        f"p=subprocess.Popen([sys.executable,'-c',{grandchild_code!r}]); "
+        f"Path({str(pid_file)!r}).write_text(str(p.pid), encoding='utf-8'); "
+        "time.sleep(60)"
+    )
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        kilocode_cli._run_kilo_process(  # noqa: SLF001 - lifecycle regression
+            [sys.executable, "-c", child_code],
+            cwd=str(tmp_path),
+            env=os.environ.copy(),
+            timeout=1.0,
+        )
+
+    assert pid_file.is_file()
+    grandchild_pid = int(pid_file.read_text(encoding="utf-8"))
+    deadline = time.monotonic() + 3.0
+    state = ""
+    while time.monotonic() < deadline:
+        probe = subprocess.run(
+            ["ps", "-o", "stat=", "-p", str(grandchild_pid)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        state = probe.stdout.strip()
+        if probe.returncode != 0 or not state or state.startswith("Z"):
+            break
+        time.sleep(0.05)
+    try:
+        assert not state or state.startswith("Z")
+    finally:
+        if state and not state.startswith("Z"):
+            os.kill(grandchild_pid, signal.SIGKILL)
+
+
 def test_kilocode_cli_backend_warns_on_empty_stdout(
     tmp_path: Path, monkeypatch, captured_logs
 ) -> None:
@@ -1423,7 +1469,7 @@ def test_kilocode_cli_backend_warns_on_empty_stdout(
     def fake_run(*_args, **_kwargs):  # noqa: ANN001, ANN002
         return types.SimpleNamespace(stdout="", stderr="", returncode=0)
 
-    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(kilocode_cli, "_run_kilo_process", fake_run)
 
     backend = KilocodeCliBackend(
         bin="kilo",
@@ -1534,7 +1580,7 @@ def test_kilocode_coding_backend_timeout_error_uses_configured_timeout(
     monkeypatch.setenv("WORKER_KILOCODE_PROVIDER_CONFIG_MODE", "none")
     monkeypatch.setenv("WORKER_CODING_TIMEOUT_SECONDS", "4321")
     get_settings.cache_clear()
-    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(kilocode_cli, "_run_kilo_process", fake_run)
 
     backend = kilocode_coding_backend()
 
@@ -1702,11 +1748,11 @@ def test_kilocode_backend_resolves_api_key_at_run_time(
 
     captured_keys: list[str] = []
 
-    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+    def fake_run(command, cwd, env, timeout):  # noqa: ANN001
         captured_keys.append(env["KILO_OPENAI_API_KEY"])
         return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
 
-    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(kilocode_cli, "_run_kilo_process", fake_run)
     api_keys = iter(["dyn-1", "dyn-2"])
     monkeypatch.setattr(
         kilocode_cli,
@@ -1741,7 +1787,7 @@ def test_kilocode_backend_config_mode_resolves_api_key_at_run_time(
         captured_envs.append(kwargs["env"])
         return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
 
-    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(kilocode_cli, "_run_kilo_process", fake_run)
     api_keys = iter(["dyn-1", "dyn-2"])
     monkeypatch.setattr(
         kilocode_cli,
@@ -1784,7 +1830,7 @@ def test_kilocode_backend_isolates_state_per_job(
         captured_envs.append(kwargs["env"])
         return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
 
-    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(kilocode_cli, "_run_kilo_process", fake_run)
     backend = KilocodeCliBackend(
         bin="kilo",
         timeout_seconds=30,
@@ -1864,7 +1910,7 @@ def test_kilocode_backend_config_mode_does_not_resolve_api_key_without_config_re
     monkeypatch.delenv("LORELEY_LLM_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_DYNAMIC_API_KEY_PROVIDER", raising=False)
     monkeypatch.delenv("WORKER_KILOCODE_OPENAI_API_KEY", raising=False)
-    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(kilocode_cli, "_run_kilo_process", fake_run)
     monkeypatch.setattr(kilocode_cli, "get_agent_openai_api_key", fail_lookup)
     settings = Settings.model_validate(
         {
@@ -1895,10 +1941,10 @@ def test_kilocode_backend_runtime_api_key_does_not_overwrite_shared_cache(
 
     from loreley.core.openai_auth import DynamicOpenAIKeyManager
 
-    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+    def fake_run(command, cwd, env, timeout):  # noqa: ANN001
         return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
 
-    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(kilocode_cli, "_run_kilo_process", fake_run)
 
     values = iter(["shared-token", "agent-token"])
     manager = DynamicOpenAIKeyManager(
@@ -1937,11 +1983,11 @@ def test_kilocode_backend_preserves_explicit_extra_env_api_key(
 
     captured_keys: list[str] = []
 
-    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+    def fake_run(command, cwd, env, timeout):  # noqa: ANN001
         captured_keys.append(env["KILO_OPENAI_API_KEY"])
         return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
 
-    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(kilocode_cli, "_run_kilo_process", fake_run)
     monkeypatch.setattr(
         kilocode_cli,
         "get_agent_openai_api_key",
@@ -1973,11 +2019,11 @@ def test_kilocode_backend_skips_runtime_api_key_lookup_when_extra_env_sets_api_k
 
     captured_keys: list[str] = []
 
-    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+    def fake_run(command, cwd, env, timeout):  # noqa: ANN001
         captured_keys.append(env["KILO_OPENAI_API_KEY"])
         return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
 
-    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(kilocode_cli, "_run_kilo_process", fake_run)
 
     def fail_lookup(_settings):  # noqa: ANN001
         raise RuntimeError("dynamic provider unavailable")
@@ -2009,11 +2055,11 @@ def test_kilocode_backend_runtime_api_key_overrides_inherited_process_env(
 
     captured_keys: list[str] = []
 
-    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+    def fake_run(command, cwd, env, timeout):  # noqa: ANN001
         captured_keys.append(env["KILO_OPENAI_API_KEY"])
         return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
 
-    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(kilocode_cli, "_run_kilo_process", fake_run)
     monkeypatch.setattr(
         kilocode_cli,
         "get_agent_openai_api_key",
@@ -2053,13 +2099,13 @@ def test_run_agent_task_retries_when_kilocode_runtime_api_key_lookup_fails(
             raise DynamicOpenAIKeyUnavailableError("provider unavailable")
         return "runtime-key"
 
-    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+    def fake_run(command, cwd, env, timeout):  # noqa: ANN001
         subprocess_calls["count"] += 1
         assert env["KILO_OPENAI_API_KEY"] == "runtime-key"
         return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
 
     monkeypatch.setattr(kilocode_cli, "get_agent_openai_api_key", flaky_lookup)
-    monkeypatch.setattr(kilocode_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(kilocode_cli, "_run_kilo_process", fake_run)
 
     backend = KilocodeCliBackend(
         bin="kilo",

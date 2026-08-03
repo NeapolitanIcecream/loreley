@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import sqlite3
 import subprocess
 from dataclasses import dataclass, field
@@ -29,6 +30,7 @@ KILO_RESPONSES_PROVIDER_ID = "loreley-openai-responses"
 KILO_HEADLESS_AGENT = "loreley-headless"
 KILO_PROVIDER_CONFIG_MODES = ("auto", "config", "legacy_env", "none")
 DEFAULT_KILOCODE_TIMEOUT_SECONDS = 1800
+KILO_TERMINATION_GRACE_SECONDS = 5.0
 KiloProviderConfigMode = Literal["auto", "config", "legacy_env", "none"]
 
 _KILO_RUN_FLAG_PATTERN = re.compile(r"(?<![\w-])--[A-Za-z0-9][A-Za-z0-9-]*")
@@ -210,6 +212,78 @@ def _run_kilo_probe(
         )
 
 
+def _signal_kilo_process_tree(
+    process: subprocess.Popen[str],
+    signum: int,
+) -> None:
+    """Signal Kilo and its descendants when the platform supports groups."""
+
+    if process.poll() is not None:
+        return
+    try:
+        if os.name == "posix":
+            os.killpg(process.pid, signum)
+        elif signum == signal.SIGTERM:
+            process.terminate()
+        else:
+            process.kill()
+    except ProcessLookupError:
+        pass
+
+
+def _collect_kilo_timeout_output(
+    process: subprocess.Popen[str],
+) -> tuple[str | None, str | None]:
+    """Stop a timed-out Kilo process group and collect its final output."""
+
+    _signal_kilo_process_tree(process, signal.SIGTERM)
+    try:
+        return process.communicate(timeout=KILO_TERMINATION_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        _signal_kilo_process_tree(
+            process,
+            getattr(signal, "SIGKILL", signal.SIGTERM),
+        )
+        return process.communicate()
+
+
+def _run_kilo_process(
+    command: list[str],
+    *,
+    cwd: str,
+    env: dict[str, str],
+    timeout: float,
+) -> subprocess.CompletedProcess[str]:
+    """Run Kilo in a process group so timeout cleanup reaches descendants."""
+
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=os.name == "posix",
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        stdout, stderr = _collect_kilo_timeout_output(process)
+        raise subprocess.TimeoutExpired(
+            cmd=command,
+            timeout=timeout,
+            output=stdout,
+            stderr=stderr,
+        ) from exc
+
+    return subprocess.CompletedProcess(
+        command,
+        returncode=process.wait(),
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+
 @dataclass(slots=True)
 class KilocodeCliBackend:
     """AgentBackend implementation that delegates to the Kilocode CLI.
@@ -371,14 +445,11 @@ class KilocodeCliBackend:
             task.name,
         )
         try:
-            result = subprocess.run(
+            result = _run_kilo_process(
                 command,
                 cwd=str(worktree),
                 env=env,
-                text=True,
-                capture_output=True,
                 timeout=self.timeout_seconds,
-                check=False,
             )
         except subprocess.TimeoutExpired as exc:
             raise self.error_cls(
