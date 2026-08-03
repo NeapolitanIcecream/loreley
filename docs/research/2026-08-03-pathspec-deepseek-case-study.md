@@ -32,6 +32,8 @@ replace the registered outcome.
 | Campaign wall time | 3.91 hours |
 | Generation usage | 241.63M tokens, 3,977 requests |
 | Embedding usage | 258,055 tokens |
+| Generation-cost ledger | **$105.57 total; $1.65 per job** |
+| Cost coverage | $0.57 directly observed; $105.00 fallback estimate |
 
 The defensible statement is:
 
@@ -126,8 +128,15 @@ limit was the experiment-design error.
 ## Cost, failures, and request limit
 
 The campaign completed at 16.4 terminal jobs per hour, including the six fast
-seed jobs. Median end-to-end job duration was 10.0 minutes. The proxy recorded
-241,634,477 generation tokens and estimated $105.57 in cost.
+seed jobs. Median end-to-end job duration was 10.0 minutes. Generation used
+241,634,477 tokens. The campaign ledger closed at $105.57, or $1.65 per job.
+
+That dollar figure is a conservative experiment-side estimate, not a provider
+invoice. The proxy attributed $0.5664 to 22 jobs. The other 42 jobs did not
+expose attributable cost, so the ledger settled each at the fixed $2.50
+reservation fallback, adding $105.00. The embedding endpoint recorded 258,055
+tokens but exposed no dollar amount, so embedding fees are not included. The
+exact all-in provider charge is therefore unavailable.
 
 The 19 failures remained part of the result: five failed during planning,
 thirteen produced no effective repository change, and one exceeded the
