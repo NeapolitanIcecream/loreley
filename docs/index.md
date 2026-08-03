@@ -10,10 +10,16 @@ Use this page as a high-level overview and a navigation hub into the focused mod
 
 ## Evidence
 
-In a preregistered 64-job `markdown-it-py` case study, Loreley combined eight
-small optimization seeds with Kilo/DeepSeek search and found a candidate that
-was 6.75% faster on a separate 28-document corpus, without correctness,
-release, scope, or allocation regressions. [Read the case study](research/2026-08-02-markdown-it-py-deepseek-case-study.md).
+Two fixed 64-job Kilo/DeepSeek case studies show Loreley improving human seed
+ideas through multi-generation search:
+
+- [`markdown-it-py`](research/2026-08-02-markdown-it-py-deepseek-case-study.md):
+  a preregistered winner was 6.75% faster on a separate 28-document corpus.
+- [`python-pathspec`](research/2026-08-03-pathspec-deepseek-case-study.md): a
+  four-generation archive lineage produced a qualifying 25.14% speedup. The
+  candidate was selected post-hoc after the registered winner missed its
+  allocation gate, so this is capability evidence rather than a prospective
+  success.
 
 ---
 

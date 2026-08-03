@@ -211,6 +211,7 @@ __marimo__/
 logs/
 output/refactor-audit/
 output/markdown-it-*/
+output/pathspec-*/
 .cursor
 .playwright-mcp/
 .wrangler/
