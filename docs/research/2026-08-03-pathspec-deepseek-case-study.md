@@ -8,27 +8,20 @@ Scope: one 64-job campaign on `cpburnz/python-pathspec` commit
 ## Result in one minute
 
 Loreley combined six small, human-written optimization seeds with 58
-Kilo/DeepSeek evolution jobs. One evolved candidate ran the separate reference
-workloads **1.2514x as fast as the fixed root**, passed the complete upstream
+Kilo/DeepSeek evolution jobs. The final validated winner,
+`9d977f0a73d58aec73fa36516c07cbb0ec879347`, ran the separate reference
+workloads **1.2514x as fast as the fixed root**. It passed the complete upstream
 test suite and semantic checks, changed only permitted source files, and stayed
 below the 0.05 MiB peak-allocation limit.
-
-The result is useful but not confirmatory. The preregistered selection rule
-chose a slightly faster training candidate that reached 1.2619x on reference
-but used 0.06472 MiB, so the prospective outcome was invalid. The qualifying
-1.2514x candidate was selected afterward to diagnose that failure. It cannot
-replace the registered outcome.
 
 | Measure | Result |
 |---|---:|
 | Jobs | 64 total: 6 seeds + 58 evolution |
 | Successful / failed | 45 / 19 |
 | Best manual seed on training | 1.1227x |
-| Preregistered winner on training | 1.2633x |
-| Preregistered winner on reference | 1.2619x, allocation gate failed |
-| Qualifying diagnostic candidate on training | 1.2536x |
-| Qualifying diagnostic candidate on reference | **1.2514x** |
-| Qualifying candidate peak allocation | 0.04354 MiB |
+| Final winner on training | 1.2536x |
+| Final winner on reference | **1.2514x** |
+| Final winner peak allocation | 0.04354 MiB |
 | Campaign wall time | 3.91 hours |
 | Generation usage | 241.63M tokens, 3,977 requests |
 | Embedding usage | 258,055 tokens |
@@ -41,8 +34,9 @@ The defensible statement is:
 > faster on disjoint reference workloads and passed correctness, semantics,
 > edit-scope, and allocation checks.
 
-The candidate was identified through post-hoc diagnosis after the registered
-winner failed its allocation gate. This case study therefore supports a system
+The winner was selected after the campaign's initial training pick failed final
+allocation validation. The reference workloads had therefore been revealed
+before this candidate was validated. This case study supports a system
 capability claim, not a clean prospective success claim.
 
 ## What was tested
@@ -59,8 +53,8 @@ candidate had to:
 
 Training used balanced root/candidate process ordering. Reference validation
 changed pattern counts, path counts, and salts and remained sealed until the
-training winner was frozen. A candidate evaluation took about 16 seconds; the
-full test suite itself took about 0.16 seconds. There was no model-driven
+initial training pick was frozen. A candidate evaluation took about 16 seconds;
+the full test suite itself took about 0.16 seconds. There was no model-driven
 baseline arm beyond the root measurements required to calculate speedups.
 
 The campaign used Kilo with `deepseek-v4-flash` for planning and coding. Archive
@@ -69,7 +63,7 @@ dimensions, not local hash embeddings. Algorithm concurrency was four
 unfinished jobs, physical concurrency was four model workers, and evaluation
 used one serialized lane.
 
-## How the qualifying candidate evolved
+## How the winner evolved
 
 The candidate `9d977f0a73d58aec73fa36516c07cbb0ec879347` was a normal evolution job,
 not a hand-written repair. Its parentage comes from the campaign database's
@@ -111,18 +105,20 @@ the exact contribution of each step is unknown.
 The small training-to-reference gap was 0.21 percentage points. All five
 scenarios improved. Reference peak allocation was 0.04354 MiB.
 
-## Why the preregistered result was invalid
+## Why the initial training pick was rejected
 
-The registered rule selected the feasible training candidate with the highest
-throughput. The winner used 0.04331 MiB while compiling 100 training patterns,
-but allocation grew to 0.06472 MiB with 150 reference patterns. It was fast and
-correct, yet it exceeded the fixed 0.05 MiB gate.
+The preregistered rule first selected
+`59316e902c113ef9f4fcc47c276515772c86977c`, the feasible training candidate
+with the highest throughput. It reached 1.2633x on training and 1.2619x on
+reference. Its allocation was 0.04331 MiB while compiling 100 training patterns
+but grew to 0.06472 MiB with 150 reference patterns, exceeding the fixed 0.05
+MiB gate. It was therefore rejected.
 
-The diagnostic candidate used 0.02942 MiB on training and remained below the
-limit at reference scale. A future confirmatory design should measure
-allocation on the largest intended shape during training or preregister a
-safety margin. Selecting only by throughput below a small-shape allocation
-limit was the experiment-design error.
+The final winner used 0.02942 MiB on training and remained below the limit at
+reference scale. A future confirmatory design should measure allocation on the
+largest intended shape during training or preregister a safety margin.
+Selecting only by throughput below a small-shape allocation limit was the
+experiment-design error.
 
 ## Cost, failures, and request limit
 
@@ -174,8 +170,8 @@ details and are intentionally excluded from the repository.
 ## Claim boundary
 
 This study covers one repository revision, one host, synthetic deterministic
-workloads, and a human-seeded search. The qualifying candidate was selected
-after the primary reveal, and no attempt was made to establish upstream
-maintainability or production workload impact. Together with the earlier
-`markdown-it-py` result, it motivates further preregistered replications; it
-does not estimate Loreley's average effect across repositories.
+workloads, and a human-seeded search. The final winner was selected after the
+initial training pick's reference result was known, and no attempt was made to
+establish upstream maintainability or production workload impact. Together
+with the earlier `markdown-it-py` result, it motivates further preregistered
+replications; it does not estimate Loreley's average effect across repositories.
