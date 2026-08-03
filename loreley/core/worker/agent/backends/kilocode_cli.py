@@ -231,15 +231,28 @@ def _signal_kilo_process_tree(
         pass
 
 
+def _collect_kilo_timeout_output(
+    process: subprocess.Popen[str],
+) -> tuple[str | None, str | None]:
+    """Stop a timed-out Kilo process group and collect its final output."""
+
+    _signal_kilo_process_tree(process, signal.SIGTERM)
+    try:
+        return process.communicate(timeout=KILO_TERMINATION_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        _signal_kilo_process_tree(
+            process,
+            getattr(signal, "SIGKILL", signal.SIGTERM),
+        )
+        return process.communicate()
+
+
 def _run_kilo_process(
     command: list[str],
     *,
     cwd: str,
     env: dict[str, str],
-    text: bool,
-    capture_output: bool,
     timeout: float,
-    check: bool,
 ) -> subprocess.CompletedProcess[str]:
     """Run Kilo in a process group so timeout cleanup reaches descendants."""
 
@@ -247,25 +260,15 @@ def _run_kilo_process(
         command,
         cwd=cwd,
         env=env,
-        text=text,
-        stdout=subprocess.PIPE if capture_output else None,
-        stderr=subprocess.PIPE if capture_output else None,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         start_new_session=os.name == "posix",
     )
     try:
         stdout, stderr = process.communicate(timeout=timeout)
     except subprocess.TimeoutExpired as exc:
-        _signal_kilo_process_tree(process, signal.SIGTERM)
-        try:
-            stdout, stderr = process.communicate(
-                timeout=KILO_TERMINATION_GRACE_SECONDS,
-            )
-        except subprocess.TimeoutExpired:
-            _signal_kilo_process_tree(
-                process,
-                getattr(signal, "SIGKILL", signal.SIGTERM),
-            )
-            stdout, stderr = process.communicate()
+        stdout, stderr = _collect_kilo_timeout_output(process)
         raise subprocess.TimeoutExpired(
             cmd=command,
             timeout=timeout,
@@ -273,15 +276,12 @@ def _run_kilo_process(
             stderr=stderr,
         ) from exc
 
-    result = subprocess.CompletedProcess(
+    return subprocess.CompletedProcess(
         command,
-        returncode=process.returncode,
+        returncode=process.wait(),
         stdout=stdout,
         stderr=stderr,
     )
-    if check:
-        result.check_returncode()
-    return result
 
 
 @dataclass(slots=True)
@@ -449,10 +449,7 @@ class KilocodeCliBackend:
                 command,
                 cwd=str(worktree),
                 env=env,
-                text=True,
-                capture_output=True,
                 timeout=self.timeout_seconds,
-                check=False,
             )
         except subprocess.TimeoutExpired as exc:
             raise self.error_cls(

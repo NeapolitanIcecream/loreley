@@ -552,7 +552,7 @@ def test_kilocode_planning_backend_is_retryable_in_worker_loop(
 
     calls = {"count": 0}
 
-    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+    def fake_run(command, cwd, env, timeout):  # noqa: ANN001
         calls["count"] += 1
         return types.SimpleNamespace(stdout="", stderr="connection failed", returncode=1)
 
@@ -648,7 +648,7 @@ def test_kilocode_cli_backend_builds_run_command_with_passthrough_flags(
 
     captured: dict[str, Any] = {}
 
-    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+    def fake_run(command, cwd, env, timeout):  # noqa: ANN001
         captured.update({"command": command, "cwd": cwd, "env": env, "timeout": timeout})
         return types.SimpleNamespace(stdout="done", stderr="", returncode=0)
 
@@ -692,7 +692,7 @@ def test_kilocode_cli_backend_omits_optional_flags_when_disabled(
     repo_dir = tmp_path / "repo"
     (repo_dir / ".git").mkdir(parents=True)
 
-    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+    def fake_run(command, cwd, env, timeout):  # noqa: ANN001
         return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
 
     monkeypatch.setattr(kilocode_cli, "_run_kilo_process", fake_run)
@@ -1434,10 +1434,7 @@ def test_kilocode_process_timeout_terminates_descendants(tmp_path: Path) -> None
             [sys.executable, "-c", child_code],
             cwd=str(tmp_path),
             env=os.environ.copy(),
-            text=True,
-            capture_output=True,
             timeout=1.0,
-            check=False,
         )
 
     assert pid_file.is_file()
@@ -1751,7 +1748,7 @@ def test_kilocode_backend_resolves_api_key_at_run_time(
 
     captured_keys: list[str] = []
 
-    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+    def fake_run(command, cwd, env, timeout):  # noqa: ANN001
         captured_keys.append(env["KILO_OPENAI_API_KEY"])
         return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
 
@@ -1944,7 +1941,7 @@ def test_kilocode_backend_runtime_api_key_does_not_overwrite_shared_cache(
 
     from loreley.core.openai_auth import DynamicOpenAIKeyManager
 
-    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+    def fake_run(command, cwd, env, timeout):  # noqa: ANN001
         return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
 
     monkeypatch.setattr(kilocode_cli, "_run_kilo_process", fake_run)
@@ -1986,7 +1983,7 @@ def test_kilocode_backend_preserves_explicit_extra_env_api_key(
 
     captured_keys: list[str] = []
 
-    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+    def fake_run(command, cwd, env, timeout):  # noqa: ANN001
         captured_keys.append(env["KILO_OPENAI_API_KEY"])
         return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
 
@@ -2022,7 +2019,7 @@ def test_kilocode_backend_skips_runtime_api_key_lookup_when_extra_env_sets_api_k
 
     captured_keys: list[str] = []
 
-    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+    def fake_run(command, cwd, env, timeout):  # noqa: ANN001
         captured_keys.append(env["KILO_OPENAI_API_KEY"])
         return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
 
@@ -2058,7 +2055,7 @@ def test_kilocode_backend_runtime_api_key_overrides_inherited_process_env(
 
     captured_keys: list[str] = []
 
-    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+    def fake_run(command, cwd, env, timeout):  # noqa: ANN001
         captured_keys.append(env["KILO_OPENAI_API_KEY"])
         return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
 
@@ -2102,7 +2099,7 @@ def test_run_agent_task_retries_when_kilocode_runtime_api_key_lookup_fails(
             raise DynamicOpenAIKeyUnavailableError("provider unavailable")
         return "runtime-key"
 
-    def fake_run(command, cwd, env, text, capture_output, timeout, check):  # noqa: ANN001
+    def fake_run(command, cwd, env, timeout):  # noqa: ANN001
         subprocess_calls["count"] += 1
         assert env["KILO_OPENAI_API_KEY"] == "runtime-key"
         return types.SimpleNamespace(stdout="ok", stderr="", returncode=0)
