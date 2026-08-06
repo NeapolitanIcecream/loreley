@@ -9,6 +9,7 @@ nav:
   - Evidence:
       - markdown-it-py DeepSeek case study: research/2026-08-02-markdown-it-py-deepseek-case-study.md
       - python-pathspec DeepSeek case study: research/2026-08-03-pathspec-deepseek-case-study.md
+      - Zstandard DeepSeek case study: research/2026-08-06-zstandard-reliable-qd-case-study-report.md
   - Releases:
       - Unreleased: releases/unreleased.md
       - v0.9.0-alpha: releases/v0.9.0-alpha.md

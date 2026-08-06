@@ -209,7 +209,7 @@ def test_kilo_usage_parser_extracts_tokens_cache_and_provider_cost() -> None:
     assert event.cost_source == "provider_reported"
 
 
-def test_kilo_usage_parser_estimates_cost_when_provider_cost_is_missing(settings) -> None:
+def test_kilo_usage_parser_does_not_estimate_missing_kilo_cost(settings) -> None:
     settings.llm_usage_pricing_json = json.dumps(
         {
             "version": "kilo-test",
@@ -250,12 +250,12 @@ def test_kilo_usage_parser_estimates_cost_when_provider_cost_is_missing(settings
     assert event is not None
     assert event.input_tokens == 100
     assert event.cached_input_tokens == 120
-    assert event.cost_source == "estimated"
-    assert event.pricing_version == "kilo-test"
-    assert str(event.cost_usd) == "0.00021500"
+    assert event.cost_source == "unpriced"
+    assert event.pricing_version == ""
+    assert event.cost_usd is None
 
 
-def test_kilo_usage_parser_reprices_zero_cost_gateway_placeholder(settings) -> None:
+def test_kilo_usage_parser_rejects_zero_cost_gateway_placeholder(settings) -> None:
     settings.llm_usage_pricing_json = json.dumps(
         {
             "version": "gateway-test",
@@ -280,6 +280,7 @@ def test_kilo_usage_parser_reprices_zero_cost_gateway_placeholder(settings) -> N
             "tokens": {
                 "input": 100,
                 "output": 20,
+                "reasoning": 10,
                 "cache": {"read": 50, "write": 0},
             },
         },
@@ -294,6 +295,80 @@ def test_kilo_usage_parser_reprices_zero_cost_gateway_placeholder(settings) -> N
     )
 
     assert event is not None
-    assert event.cost_source == "estimated"
-    assert event.pricing_version == "gateway-test"
-    assert str(event.cost_usd) == "0.00024300"
+    assert event.cost_source == "unpriced"
+    assert event.pricing_version == ""
+    assert event.cost_usd is None
+
+
+def test_kilo_usage_parser_marks_zero_cost_placeholder_unpriced_without_rule(settings) -> None:
+    settings.llm_usage_pricing_json = json.dumps(
+        {"version": "no-matching-price", "prices": []}
+    )
+    messages = [
+        {
+            "role": "assistant",
+            "providerID": "loreley-openai-compatible",
+            "modelID": "deepseek-v4-flash",
+            "cost": 0,
+            "tokens": {
+                "input": 100,
+                "output": 20,
+                "reasoning": 10,
+                "cache": {"read": 50, "write": 0},
+            },
+        },
+    ]
+
+    event = kilo_usage_event_from_messages(
+        messages,
+        phase="coding",
+        title="loreley:test",
+        session_id="sess-zero-cost-unpriced",
+        settings=settings,
+    )
+
+    assert event is not None
+    assert event.cost_usd is None
+    assert event.cost_source == "unpriced"
+    assert event.pricing_version == ""
+
+
+def test_kilo_session_aggregates_are_authoritative() -> None:
+    messages = [
+        {
+            "role": "assistant",
+            "providerID": "deepseek",
+            "modelID": "deepseek-v4-flash",
+            "cost": "999",
+            "tokens": {"input": 999, "output": 999},
+        }
+    ]
+    sessions = [
+        {
+            "id": "root",
+            "model": '{"providerID":"deepseek","id":"deepseek-v4-flash"}',
+            "cost": 0.02,
+            "tokens_input": 10,
+            "tokens_output": 2,
+            "tokens_reasoning": 1,
+            "tokens_cache_read": 20,
+            "tokens_cache_write": 0,
+        }
+    ]
+
+    event = kilo_usage_event_from_messages(
+        messages,
+        session_rows=sessions,
+        title="loreley:session-authoritative",
+        session_id="root",
+    )
+
+    assert event is not None
+    assert event.input_tokens == 10
+    assert event.cached_input_tokens == 20
+    assert event.output_tokens == 2
+    assert event.reasoning_output_tokens == 1
+    assert event.total_tokens == 33
+    assert str(event.cost_usd) == "0.02"
+    assert event.raw_usage["accounting_source"] == "kilo_session_tree"
+    assert "cost_reconciliation" not in event.raw_usage

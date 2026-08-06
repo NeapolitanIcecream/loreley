@@ -16,8 +16,8 @@ Loreley is a distributed system that **evolves entire git repositories** (the un
 
 ### Evidence
 
-Two fixed 64-job Kilo/DeepSeek case studies show Loreley improving human seed
-ideas through multi-generation search:
+Three fixed Kilo/DeepSeek case studies show Loreley improving human seed ideas
+through multi-generation search:
 
 - [`markdown-it-py`](docs/research/2026-08-02-markdown-it-py-deepseek-case-study.md):
   a preregistered winner was 6.75% faster on a separate 28-document corpus.
@@ -26,6 +26,9 @@ ideas through multi-generation search:
   candidate was selected post-hoc after the registered winner missed its
   allocation gate, so this is capability evidence rather than a prospective
   success.
+- [Zstandard](docs/research/2026-08-06-zstandard-reliable-qd-case-study-report.md):
+  a three-generation lineage improved holdout compression throughput by 1.04%
+  with neutral decompression while passing correctness, size, and memory gates.
 
 ### Quick start (local)
 

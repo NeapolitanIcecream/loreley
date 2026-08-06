@@ -328,7 +328,8 @@ Output requirements:
 - Execute the plan directly.
 - Make the smallest relevant set of source changes that materially improve the task.
 - Do not run Loreley's evaluator or any framework-managed benchmark flow.
-- You may run lightweight local checks only when they are cheap and obviously useful.
+- Run local checks only when the Evolution Goal and Constraints permit them.
+  Campaign restrictions take precedence over validation steps in the plan.
 - Before finishing, ensure the worktree contains meaningful tracked-file changes.
 - Do not create git commits or push branches; leave the repository in a modified state.
 - Return a single Markdown execution report.

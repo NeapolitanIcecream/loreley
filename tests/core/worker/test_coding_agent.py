@@ -342,6 +342,7 @@ def test_coding_prompt_includes_markdown_contract(tmp_path: Path, settings: Sett
     assert "Do not create git commits" in prompt
     assert "Constraints:" in prompt
     assert "Acceptance Criteria:" in prompt
+    assert "Campaign restrictions take precedence" in prompt
     assert "Additional notes:" not in prompt
     assert "Commit message" not in prompt
 

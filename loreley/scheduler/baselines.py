@@ -58,6 +58,7 @@ _BASELINE_RETRYABLE_FAILURE_KINDS = frozenset(
         "evaluation_missing_result",
         "evaluator_error",
         "infrastructure_error",
+        "measurement_precision",
         "service_unavailable",
         "timeout",
         "worker_timeout",
