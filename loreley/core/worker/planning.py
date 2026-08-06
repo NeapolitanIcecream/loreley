@@ -1026,6 +1026,8 @@ Produce the next implementation plan for the coding agent.
 Planning Instructions:
 - Use the base commit and inspiration commits to identify the most promising next move.
 - Optimize for one coherent next step, not a broad rewrite.
+- Every proposed validation step must obey the Evolution Goal and Constraints.
+  Do not propose a command that the campaign forbids.
 - If the context is incomplete, make a reasonable assumption and proceed.
 - Do not restate all context; synthesize it into a concrete plan.
 

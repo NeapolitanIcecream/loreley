@@ -177,6 +177,8 @@ def test_planning_prompt_requests_markdown_deliverable(settings: Settings) -> No
     assert "Constraints:" in prompt
     assert "Acceptance Criteria:" in prompt
     assert "Use these sections" in prompt
+    assert "Every proposed validation step must obey" in prompt
+    assert "Do not propose a command that the campaign forbids" in prompt
 
 
 def test_planning_prompt_projects_bounded_constraints_and_acceptance_criteria(

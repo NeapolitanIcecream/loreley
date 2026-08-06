@@ -794,7 +794,9 @@ def test_kilocode_default_provider_adapter_uses_isolated_config_env_refs() -> No
     assert env["LORELEY_KILO_OPENAI_BASE_URL"] == "https://worker.example.com/v1"
     assert config["default_agent"] == "loreley-headless"
     assert config["permission"]["suggest"] == "deny"
+    assert config["tools"]["suggest"] is False
     assert config["agent"]["loreley-headless"]["permission"]["suggest"] == "deny"
+    assert config["agent"]["loreley-headless"]["tools"]["suggest"] is False
     assert config["model"] == "loreley-openai-responses/gpt-5.4"
     provider = config["provider"]["loreley-openai-responses"]
     assert provider["npm"] == "@ai-sdk/openai"
@@ -819,15 +821,19 @@ def test_kilocode_provider_adapter_supports_legacy_env_mode() -> None:
 
     env = kilocode_cli._build_kilocode_openai_env(settings, api_key="sk-runtime")  # noqa: SLF001
 
+    config = json.loads(env.pop("KILO_CONFIG_CONTENT"))
     assert env == {
         "KILO_PROVIDER_TYPE": "openai",
         "KILO_OPENAI_API_KEY": "sk-runtime",
         "KILO_OPENAI_BASE_URL": "https://worker.example.com/v1",
         "KILO_OPENAI_MODEL_ID": "gpt-5.4",
     }
+    assert config["default_agent"] == "loreley-headless"
+    assert config["permission"]["suggest"] == "deny"
+    assert config["tools"]["suggest"] is False
 
 
-def test_kilocode_provider_adapter_none_mode_disables_injection() -> None:
+def test_kilocode_provider_adapter_none_mode_keeps_headless_profile() -> None:
     settings = Settings.model_validate(
         {
             "WORKER_KILOCODE_PROVIDER_CONFIG_MODE": "none",
@@ -836,7 +842,21 @@ def test_kilocode_provider_adapter_none_mode_disables_injection() -> None:
         }
     )
 
-    assert kilocode_cli._build_kilocode_openai_env(settings) == {}  # noqa: SLF001
+    env = kilocode_cli._build_kilocode_openai_env(settings)  # noqa: SLF001
+    config = json.loads(env["KILO_CONFIG_CONTENT"])
+
+    assert set(env) == {"KILO_CONFIG_CONTENT"}
+    assert config["default_agent"] == "loreley-headless"
+    assert config["tools"]["suggest"] is False
+    assert "provider" not in config
+    assert "model" not in config
+    assert config["permission"] == {
+        "interactive_terminal": "deny",
+        "plan_enter": "deny",
+        "plan_exit": "deny",
+        "question": "deny",
+        "suggest": "deny",
+    }
 
 
 def test_kilocode_cli_backend_titles_session_and_reads_usage_db(
@@ -854,7 +874,14 @@ def test_kilocode_cli_backend_titles_session_and_reads_usage_db(
                 title TEXT,
                 directory TEXT,
                 time_created INTEGER,
-                time_updated INTEGER
+                time_updated INTEGER,
+                model TEXT,
+                cost REAL,
+                tokens_input INTEGER,
+                tokens_output INTEGER,
+                tokens_reasoning INTEGER,
+                tokens_cache_read INTEGER,
+                tokens_cache_write INTEGER
             )
             """
         )
@@ -874,8 +901,29 @@ def test_kilocode_cli_backend_titles_session_and_reads_usage_db(
         title = command[command.index("--title") + 1]
         with sqlite3.connect(usage_db) as conn:
             conn.execute(
-                "INSERT INTO session (id, title, directory, time_created, time_updated) VALUES (?, ?, ?, ?, ?)",
-                ("sess-usage", title, cwd, 1, 2),
+                """
+                INSERT INTO session (
+                    id, title, directory, time_created, time_updated, model,
+                    cost, tokens_input, tokens_output, tokens_reasoning,
+                    tokens_cache_read, tokens_cache_write
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "sess-usage",
+                    title,
+                    cwd,
+                    1,
+                    2,
+                    json.dumps(
+                        {"providerID": "openrouter", "id": "openai/gpt-5.2"}
+                    ),
+                    0.025,
+                    10,
+                    20,
+                    3,
+                    100,
+                    5,
+                ),
             )
             conn.execute(
                 "INSERT INTO message (id, session_id, time_created, data) VALUES (?, ?, ?, ?)",
@@ -888,12 +936,12 @@ def test_kilocode_cli_backend_titles_session_and_reads_usage_db(
                             "role": "assistant",
                             "providerID": "openrouter",
                             "modelID": "openai/gpt-5.2",
-                            "cost": 0.025,
+                            "cost": 999.0,
                             "tokens": {
-                                "input": 10,
-                                "output": 20,
-                                "reasoning": 3,
-                                "cache": {"read": 100, "write": 5},
+                                "input": 999,
+                                "output": 999,
+                                "reasoning": 999,
+                                "cache": {"read": 999, "write": 999},
                             },
                         }
                     ),
@@ -940,6 +988,9 @@ def test_kilocode_cli_backend_titles_session_and_reads_usage_db(
     assert event.cache_write_tokens == 5
     assert event.cost_source == "provider_reported"
     assert str(event.cost_usd) == "0.025"
+    assert event.raw_usage["accounting_source"] == "kilo_session_tree"
+    assert event.raw_usage["message_count"] == 0
+    assert "cost_reconciliation" not in event.raw_usage
     assert (
         event.external_usage_id
         == f"kilo:{job_id}:{run_token}:coding:invocation:2:attempt:4"
@@ -962,7 +1013,14 @@ def test_kilocode_cli_backend_includes_descendant_session_usage(
                 title TEXT,
                 directory TEXT,
                 time_created INTEGER,
-                time_updated INTEGER
+                time_updated INTEGER,
+                model TEXT,
+                cost REAL,
+                tokens_input INTEGER,
+                tokens_output INTEGER,
+                tokens_reasoning INTEGER,
+                tokens_cache_read INTEGER,
+                tokens_cache_write INTEGER
             )
             """
         )
@@ -1007,12 +1065,52 @@ def test_kilocode_cli_backend_includes_descendant_session_usage(
             conn.executemany(
                 """
                 INSERT INTO session
-                    (id, parent_id, title, directory, time_created, time_updated)
-                VALUES (?, ?, ?, ?, ?, ?)
+                    (id, parent_id, title, directory, time_created, time_updated,
+                     model, cost, tokens_input, tokens_output, tokens_reasoning,
+                     tokens_cache_read, tokens_cache_write)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    ("parent", None, title, cwd, 1, 2),
-                    ("child", "parent", "explore subagent", cwd, 3, 4),
+                    (
+                        "parent",
+                        None,
+                        title,
+                        cwd,
+                        1,
+                        2,
+                        json.dumps(
+                            {
+                                "providerID": "deepseek",
+                                "id": "deepseek-v4-flash",
+                            }
+                        ),
+                        0.01,
+                        10,
+                        20,
+                        3,
+                        100,
+                        0,
+                    ),
+                    (
+                        "child",
+                        "parent",
+                        "explore subagent",
+                        cwd,
+                        3,
+                        4,
+                        json.dumps(
+                            {
+                                "providerID": "deepseek",
+                                "id": "deepseek-v4-flash",
+                            }
+                        ),
+                        0.02,
+                        7,
+                        5,
+                        2,
+                        50,
+                        0,
+                    ),
                 ),
             )
             conn.executemany(
@@ -1030,7 +1128,10 @@ def test_kilocode_cli_backend_includes_descendant_session_usage(
                             output_tokens=20,
                             reasoning_tokens=3,
                             cached_tokens=100,
-                            cost=0.01,
+                            # Kilo's root assistant messages include descendant
+                            # session cost; summing every session's messages
+                            # would therefore double-count the child.
+                            cost=0.03,
                         ),
                     ),
                     (
@@ -1077,6 +1178,11 @@ def test_kilocode_cli_backend_includes_descendant_session_usage(
     assert event.reasoning_output_tokens == 5
     assert event.total_tokens == 197
     assert str(event.cost_usd) == "0.03"
+    assert event.provider == "deepseek"
+    assert event.model == "deepseek-v4-flash"
+    assert event.raw_usage["accounting_source"] == "kilo_session_tree"
+    assert event.raw_usage["message_count"] == 0
+    assert "cost_reconciliation" not in event.raw_usage
 
 
 def test_kilocode_cli_backend_rejects_descendant_session_outside_worktree(

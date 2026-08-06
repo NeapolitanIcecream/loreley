@@ -66,15 +66,13 @@ def price_usage_event(
     *,
     settings: Settings | None = None,
 ) -> LLMUsageEventPayload:
-    zero_cost_placeholder = (
-        event.source == "kilo_cli"
-        and event.cost_usd == Decimal("0")
-        and event.total_tokens > 0
-    )
-    if (
-        event.cost_source != COST_SOURCE_UNPRICED
-        or event.cost_usd is not None
-    ) and not zero_cost_placeholder:
+    if event.source == "kilo_cli" or event.api_surface == "kilo_run":
+        if event.cost_usd == Decimal("0") and event.total_tokens > 0:
+            return _unpriced_zero_cost_placeholder(event)
+        # Kilo persists its own model-aware dollar cost. Do not replace missing
+        # or zero database telemetry with a second pricing implementation.
+        return event
+    if event.cost_source != COST_SOURCE_UNPRICED or event.cost_usd is not None:
         return event
     table = load_pricing_table(settings=settings)
     rule = match_price_rule(table, event)
@@ -141,6 +139,19 @@ def estimate_cost_usd(event: LLMUsageEventPayload, rule: PriceRule) -> Decimal |
     if output_rate is not None:
         total += Decimal(event.output_tokens) * output_rate
     return (total / _ONE_MILLION).quantize(_COST_QUANT, rounding=ROUND_HALF_UP)
+
+
+def _unpriced_zero_cost_placeholder(event: LLMUsageEventPayload) -> LLMUsageEventPayload:
+    """Do not present Kilo gateway placeholders as provider-reported spend."""
+
+    return LLMUsageEventPayload(
+        **{
+            **event.as_record_dict(),
+            "cost_usd": None,
+            "cost_source": COST_SOURCE_UNPRICED,
+            "pricing_version": "",
+        }
+    )
 
 
 def _billable_regular_input_tokens(event: LLMUsageEventPayload) -> int:

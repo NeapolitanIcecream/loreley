@@ -634,17 +634,19 @@ def test_retryable_baseline_attempt_is_reused_during_cooldown(
         ("warn", BASELINE_STATUS_DEGRADED),
     ],
 )
+@pytest.mark.parametrize("failure_kind", ("evaluator_error", "measurement_precision"))
 def test_retryable_baseline_attempt_retries_after_cooldown_and_updates_same_row(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
     captured_logs: list[dict[str, Any]],
     policy: str,
     expected_first_status: str,
+    failure_kind: str,
 ) -> None:
     store = _BaselineStore()
     contexts: list[object] = []
     outcomes = [
-        _failed_outcome(failure_kind="evaluator_error", summary="temporary evaluator failure"),
+        _failed_outcome(failure_kind=failure_kind, summary="temporary evaluator failure"),
         _passed_outcome(metrics=(EvaluationMetric(name="score", value=2.5),)),
     ]
     _install_session(monkeypatch, store)
@@ -675,7 +677,7 @@ def test_retryable_baseline_attempt_retries_after_cooldown_and_updates_same_row(
     assert any(
         record["module"] == "scheduler.baselines"
         and "Campaign baseline retrying" in record["message"]
-        and "failure_kind=evaluator_error" in record["message"]
+        and f"failure_kind={failure_kind}" in record["message"]
         for record in captured_logs
     )
 

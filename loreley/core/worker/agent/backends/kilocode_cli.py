@@ -43,7 +43,6 @@ _KILO_FAILURE_REASON_CODES = frozenset(
 )
 _KILO_USAGE_REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
     "session": frozenset({"id", "title", "directory", "time_created", "time_updated"}),
-    "message": frozenset({"id", "session_id", "time_created", "data"}),
 }
 
 
@@ -629,9 +628,9 @@ class KilocodeCliBackend:
                 worktree=worktree,
                 settings=settings,
             )
-            messages = _kilo_session_messages(conn, session_rows)
         event = kilo_usage_event_from_messages(
-            messages,
+            (),
+            session_rows=tuple(dict(row) for row in session_rows),
             phase=task.phase or task.name or "",
             job_id=task.job_id,
             run_token=task.run_token,
@@ -681,7 +680,7 @@ class KilocodeCliBackend:
 def _latest_kilo_session(conn: sqlite3.Connection, title: str) -> sqlite3.Row | None:
     return conn.execute(
         """
-        SELECT id, directory
+        SELECT *
         FROM session
         WHERE title = ?
         ORDER BY time_updated DESC, time_created DESC
@@ -702,18 +701,19 @@ def _kilo_session_tree(
         return [session_row]
     return conn.execute(
         """
-        WITH RECURSIVE session_tree(id, directory) AS (
-            SELECT id, directory
+        WITH RECURSIVE session_tree(id) AS (
+            SELECT id
             FROM session
             WHERE id = ?
             UNION
-            SELECT child.id, child.directory
+            SELECT child.id
             FROM session AS child
             JOIN session_tree AS parent
               ON child.parent_id = parent.id
         )
-        SELECT id, directory
-        FROM session_tree
+        SELECT session.*
+        FROM session
+        JOIN session_tree ON session.id = session_tree.id
         """,
         (str(session_row["id"]),),
     ).fetchall()
@@ -733,32 +733,6 @@ def _assert_kilo_session_directories(
         )
 
 
-def _kilo_session_messages(
-    conn: sqlite3.Connection,
-    session_rows: list[sqlite3.Row],
-) -> list[dict[str, object]]:
-    session_ids = [str(row["id"]) for row in session_rows]
-    placeholders = ", ".join("?" for _ in session_ids)
-    rows = conn.execute(
-        f"""
-        SELECT data
-        FROM message
-        WHERE session_id IN ({placeholders})
-        ORDER BY time_created ASC, id ASC
-        """,
-        session_ids,
-    ).fetchall()
-    messages: list[dict[str, object]] = []
-    for row in rows:
-        try:
-            payload = json.loads(str(row["data"] or "{}"))
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload, dict):
-            messages.append(payload)
-    return messages
-
-
 def _build_kilocode_openai_env(
     settings, *, api_key: str | None = None
 ) -> dict[str, str]:
@@ -766,13 +740,16 @@ def _build_kilocode_openai_env(
 
     mode = _kilocode_provider_config_mode(settings)
     if mode == "none":
-        return {}
+        return {KILO_CONFIG_CONTENT_ENV: build_kilo_headless_config_content()}
 
     provider_input = _kilocode_provider_input(settings, api_key=api_key)
     if not provider_input["has_provider_config"]:
-        return {}
+        return {KILO_CONFIG_CONTENT_ENV: build_kilo_headless_config_content()}
     if mode == "legacy_env":
-        return _build_kilocode_legacy_openai_env(provider_input, api_key=api_key)
+        return {
+            KILO_CONFIG_CONTENT_ENV: build_kilo_headless_config_content(),
+            **_build_kilocode_legacy_openai_env(provider_input, api_key=api_key),
+        }
     return _build_kilocode_config_openai_env(provider_input, api_key=api_key)
 
 
@@ -936,41 +913,58 @@ def _build_kilo_config_content(
                 "name": provider_model_id,
             }
         }
-    payload: dict[str, object] = {
+    payload = _kilo_headless_config_payload()
+    payload.update(
+        {
+            "$schema": KILO_CONFIG_SCHEMA_URL,
+            "provider": {
+                provider_id: provider,
+            },
+        }
+    )
+    normalized_model = _kilo_config_model(provider_id=provider_id, model=model)
+    if normalized_model:
+        payload["model"] = normalized_model
+    return json.dumps(payload, separators=(",", ":"), sort_keys=True)
+
+
+def build_kilo_headless_config_content() -> str:
+    return json.dumps(
+        _kilo_headless_config_payload(),
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _kilo_headless_config_payload() -> dict[str, object]:
+    permissions = {
+        "interactive_terminal": "deny",
+        "plan_enter": "deny",
+        "plan_exit": "deny",
+        "question": "deny",
+        "suggest": "deny",
+    }
+    disabled_tools = {"suggest": False}
+    return {
         "$schema": KILO_CONFIG_SCHEMA_URL,
         "agent": {
             KILO_HEADLESS_AGENT: {
                 "description": "Non-interactive Loreley worker agent",
                 "mode": "primary",
-                "permission": {
-                    "plan_enter": "deny",
-                    "plan_exit": "deny",
-                    "question": "deny",
-                    "suggest": "deny",
-                },
+                "permission": dict(permissions),
+                "tools": dict(disabled_tools),
                 "prompt": (
                     "You are running headlessly inside Loreley. Never call "
-                    "question, suggest, plan_enter, or plan_exit. Complete the "
-                    "task with non-interactive tools, verify it, then return a "
-                    "short final report immediately."
+                    "interactive_terminal, question, suggest, plan_enter, or "
+                    "plan_exit. Complete the task with non-interactive tools, "
+                    "then return the requested result immediately."
                 ),
             }
         },
         "default_agent": KILO_HEADLESS_AGENT,
-        "permission": {
-            "plan_enter": "deny",
-            "plan_exit": "deny",
-            "question": "deny",
-            "suggest": "deny",
-        },
-        "provider": {
-            provider_id: provider,
-        },
+        "permission": permissions,
+        "tools": disabled_tools,
     }
-    normalized_model = _kilo_config_model(provider_id=provider_id, model=model)
-    if normalized_model:
-        payload["model"] = normalized_model
-    return json.dumps(payload, separators=(",", ":"), sort_keys=True)
 
 
 def _kilo_config_model(*, provider_id: str, model: str) -> str:
@@ -1286,6 +1280,7 @@ __all__ = [
     "KiloCliCapabilities",
     "KiloWorkspaceIsolationError",
     "assert_kilo_session_directory",
+    "build_kilo_headless_config_content",
     "discover_kilo_cli_capabilities",
     "kilocode_backend",
     "kilocode_coding_backend",

@@ -96,6 +96,7 @@ class _KiloUsageTotals:
     cost_usd: Decimal = Decimal("0")
     cost_seen: bool = False
     message_count: int = 0
+    session_count: int = 0
 
     def add_message(self, message: Mapping[str, Any]) -> None:
         tokens = _kilo_assistant_tokens(message)
@@ -111,6 +112,21 @@ class _KiloUsageTotals:
         self.output_tokens += _int_mapping(tokens, "output")
         self.reasoning_output_tokens += _int_mapping(tokens, "reasoning")
         cost = _decimal(message.get("cost"))
+        if cost is not None:
+            self.cost_usd += cost
+            self.cost_seen = True
+
+    def add_session(self, session: Mapping[str, Any]) -> None:
+        self.session_count += 1
+        provider, model = _kilo_session_model(session.get("model"))
+        self.provider = self.provider or provider
+        self.model = self.model or model
+        self.input_tokens += _int_mapping(session, "tokens_input")
+        self.cached_input_tokens += _int_mapping(session, "tokens_cache_read")
+        self.cache_write_tokens += _int_mapping(session, "tokens_cache_write")
+        self.output_tokens += _int_mapping(session, "tokens_output")
+        self.reasoning_output_tokens += _int_mapping(session, "tokens_reasoning")
+        cost = _decimal(session.get("cost"))
         if cost is not None:
             self.cost_usd += cost
             self.cost_seen = True
@@ -217,15 +233,23 @@ def codex_usage_event_from_jsonl(
 def kilo_usage_event_from_messages(
     messages: Iterable[Mapping[str, Any]],
     *,
+    session_rows: Iterable[Mapping[str, Any]] = (),
     event_metadata: UsageEventMetadata | None = None,
     title: str = "",
     session_id: str = "",
     settings: object | None = None,
     **metadata_values: Any,
 ) -> LLMUsageEventPayload | None:
-    totals = _kilo_usage_totals(messages)
-    if totals.message_count <= 0:
+    message_rows = tuple(messages)
+    message_totals = _kilo_usage_totals(message_rows)
+    session_totals = _kilo_session_usage_totals(session_rows)
+    totals = session_totals or message_totals
+    if totals.message_count <= 0 and totals.session_count <= 0:
         return None
+    if not totals.provider:
+        totals.provider = message_totals.provider
+    if not totals.model:
+        totals.model = message_totals.model
     metadata = _usage_event_metadata(
         event_metadata,
         metadata_values,
@@ -247,7 +271,12 @@ def kilo_usage_event_from_messages(
         total_tokens=totals.total_tokens,
         cost_usd=totals.cost_usd if totals.cost_seen else None,
         cost_source=COST_SOURCE_PROVIDER_REPORTED if totals.cost_seen else COST_SOURCE_UNPRICED,
-        raw_usage=_kilo_raw_usage(totals=totals, title=title, session_id=session_id),
+        raw_usage=_kilo_raw_usage(
+            totals=totals,
+            title=title,
+            session_id=session_id,
+            used_session_aggregates=session_totals is not None,
+        ),
         external_usage_id=metadata.external_usage_id or (f"kilo:{session_id}" if session_id else ""),
     )
     return price_usage_event(event, settings=settings)  # type: ignore[arg-type]
@@ -258,6 +287,45 @@ def _kilo_usage_totals(messages: Iterable[Mapping[str, Any]]) -> _KiloUsageTotal
     for message in messages:
         totals.add_message(message)
     return totals
+
+
+_KILO_SESSION_USAGE_FIELDS = frozenset(
+    {
+        "cost",
+        "tokens_input",
+        "tokens_output",
+        "tokens_reasoning",
+        "tokens_cache_read",
+        "tokens_cache_write",
+    }
+)
+
+
+def _kilo_session_usage_totals(
+    sessions: Iterable[Mapping[str, Any]],
+) -> _KiloUsageTotals | None:
+    rows = tuple(sessions)
+    if not rows or any(not _KILO_SESSION_USAGE_FIELDS.issubset(row) for row in rows):
+        return None
+    totals = _KiloUsageTotals()
+    for row in rows:
+        totals.add_session(row)
+    return totals
+
+
+def _kilo_session_model(value: object) -> tuple[str, str]:
+    payload: Mapping[str, Any]
+    if isinstance(value, Mapping):
+        payload = value
+    elif isinstance(value, str) and value.strip():
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return "", ""
+        payload = decoded if isinstance(decoded, Mapping) else {}
+    else:
+        payload = {}
+    return str(payload.get("providerID") or ""), str(payload.get("id") or "")
 
 
 def _kilo_assistant_tokens(message: Mapping[str, Any]) -> Mapping[str, Any] | None:
@@ -272,10 +340,16 @@ def _kilo_raw_usage(
     totals: _KiloUsageTotals,
     title: str,
     session_id: str,
+    used_session_aggregates: bool,
 ) -> dict[str, Any]:
+    session_cost = totals.cost_usd if totals.cost_seen else None
     return {
         "session_id": session_id,
         "title": title,
+        "accounting_source": (
+            "kilo_session_tree" if used_session_aggregates else "assistant_messages"
+        ),
+        "session_count": totals.session_count,
         "message_count": totals.message_count,
         "tokens": {
             "input": totals.input_tokens,
@@ -284,7 +358,7 @@ def _kilo_raw_usage(
             "output": totals.output_tokens,
             "reasoning": totals.reasoning_output_tokens,
         },
-        "cost": str(totals.cost_usd) if totals.cost_seen else None,
+        "cost": str(session_cost) if session_cost is not None else None,
     }
 
 
