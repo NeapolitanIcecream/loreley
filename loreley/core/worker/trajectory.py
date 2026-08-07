@@ -338,7 +338,7 @@ def get_or_build_chunk_summary(
     block_size = int(block_size)
     if not start_commit_hash or not end_commit_hash or block_size <= 0:
         return ""
-    model = (settings.worker_planning_trajectory_summary_model or "").strip() or settings.worker_evolution_commit_model
+    model = _trajectory_summary_model(settings)
 
     existing = session.execute(
         select(CommitChunkSummary).where(
@@ -364,7 +364,9 @@ def get_or_build_chunk_summary(
         step_count=block_size,
         session=session,
     )
-    step_lines = [_format_step(card) for card in step_cards]
+    # Preserve the complete bounded CommitCard summaries for the LLM.  Raw
+    # trajectory lines are shortened only when rendered into a planning prompt.
+    step_lines = [_format_step(card, max_chars=None) for card in step_cards]
     fallback = _fallback_chunk_summary(step_lines, max_chars=settings.worker_planning_trajectory_summary_max_chars)
 
     summarizer = _ChunkSummarizer(settings=settings, client=client)
@@ -787,14 +789,15 @@ def _collect_chunk_cards(
     return cards_tip_to_root
 
 
-def _format_step(card: CommitCard) -> str:
+def _format_step(card: CommitCard, *, max_chars: int | None = 240) -> str:
     """Format a single step summary line for prompt inclusion."""
 
     commit_hash = (getattr(card, "commit_hash", None) or "").strip()
     summary = (getattr(card, "change_summary", None) or "").strip()
     summary = summary or "N/A"
     prefix = commit_hash[:12] if commit_hash else "unknown"
-    return _clamp_text(f"{prefix}: {summary}", 240)
+    line = f"{prefix}: {summary}"
+    return _clamp_text(line, max_chars) if max_chars is not None else line
 
 
 def _fallback_chunk_summary(step_lines: Sequence[str], *, max_chars: int) -> str:
@@ -816,6 +819,16 @@ def _clamp_text(text: str, limit: int) -> str:
     return f"{snippet[: limit - 1].rstrip()}…"
 
 
+def _trajectory_summary_model(settings: Settings) -> str:
+    model = (settings.worker_planning_trajectory_summary_model or "").strip()
+    if not model:
+        raise TrajectoryError(
+            "WORKER_PLANNING_TRAJECTORY_SUMMARY_MODEL must be set when trajectory "
+            "summarization is enabled."
+        )
+    return model
+
+
 class _ChunkSummarizer:
     """LLM helper for chunk summaries with retry and budget controls."""
 
@@ -827,10 +840,11 @@ class _ChunkSummarizer:
     ) -> None:
         self.settings = settings
         self._client = client
-        self._model = (
-            (self.settings.worker_planning_trajectory_summary_model or "").strip()
-            or self.settings.worker_evolution_commit_model
-        )
+        try:
+            self._model = _trajectory_summary_model(self.settings)
+        except TrajectoryError as exc:
+            raise ChunkSummaryError(str(exc)) from exc
+        self._provider_mode = self.settings.worker_planning_trajectory_summary_provider_mode
         self._temperature = float(self.settings.worker_planning_trajectory_summary_temperature)
         self._max_tokens = max(32, int(self.settings.worker_planning_trajectory_summary_max_output_tokens))
         self._max_retries = max(1, int(self.settings.worker_planning_trajectory_summary_max_retries))
@@ -839,7 +853,21 @@ class _ChunkSummarizer:
             float(self.settings.worker_planning_trajectory_summary_retry_backoff_seconds),
         )
         self._max_chars = max(64, int(self.settings.worker_planning_trajectory_summary_max_chars))
-        self._api_spec = self.settings.openai_api_spec
+        self._api_spec = (
+            self.settings.worker_planning_trajectory_summary_api_spec
+            if self._provider_mode == "custom"
+            else self.settings.openai_api_spec
+        )
+        self._thinking = (
+            self.settings.worker_planning_trajectory_summary_thinking
+        )
+        self._reasoning_effort = (
+            self.settings.worker_planning_trajectory_summary_reasoning_effort
+        )
+        if self._thinking == "disabled" and self._reasoning_effort != "provider_default":
+            raise ChunkSummaryError(
+                "Trajectory-summary reasoning effort cannot be set when thinking is disabled."
+            )
 
     def summarize_chunk(self, step_lines: Sequence[str]) -> str:
         """Summarize a fixed-size list of step summaries into a compact description."""
@@ -865,28 +893,11 @@ class _ChunkSummarizer:
                         "- Output plain text only."
                     )
                     client = self._get_client()
-                    if self._api_spec == "responses":
-                        response = client.responses.create(
-                            model=self._model,
-                            input=prompt,
-                            temperature=self._temperature,
-                            max_output_tokens=self._max_tokens,
-                            instructions=instructions,
-                        )
-                        self._record_usage(response, api_surface="responses")
-                        text = (response.output_text or "").strip()
-                    else:
-                        response = client.chat.completions.create(
-                            model=self._model,
-                            messages=[
-                                {"role": "system", "content": instructions},
-                                {"role": "user", "content": prompt},
-                            ],
-                            temperature=self._temperature,
-                            max_tokens=self._max_tokens,
-                        )
-                        self._record_usage(response, api_surface="chat_completions")
-                        text = _extract_chat_completion_text(response).strip()
+                    text = self._request_summary(
+                        client=client,
+                        prompt=prompt,
+                        instructions=instructions,
+                    )
 
                     if not text:
                         raise ChunkSummaryError("Chunk summarizer returned empty output.")
@@ -897,6 +908,73 @@ class _ChunkSummarizer:
             raise ChunkSummaryError(
                 f"Chunk summarizer failed after {attempts} attempt(s): {last_exc}",
             ) from last_exc
+
+    def _request_summary(
+        self,
+        *,
+        client: OpenAI,
+        prompt: str,
+        instructions: str,
+    ) -> str:
+        if self._api_spec == "responses":
+            return self._request_responses(
+                client=client,
+                prompt=prompt,
+                instructions=instructions,
+            )
+        return self._request_chat_completion(
+            client=client,
+            prompt=prompt,
+            instructions=instructions,
+        )
+
+    def _request_responses(
+        self,
+        *,
+        client: OpenAI,
+        prompt: str,
+        instructions: str,
+    ) -> str:
+        request: dict[str, object] = {
+            "model": self._model,
+            "input": prompt,
+            "max_output_tokens": self._max_tokens,
+            "instructions": instructions,
+        }
+        if self._reasoning_effort == "provider_default":
+            request["temperature"] = self._temperature
+        else:
+            request["reasoning"] = {"effort": self._reasoning_effort}
+        response = client.responses.create(**request)
+        self._record_usage(response, api_surface="responses")
+        return (response.output_text or "").strip()
+
+    def _request_chat_completion(
+        self,
+        *,
+        client: OpenAI,
+        prompt: str,
+        instructions: str,
+    ) -> str:
+        request: dict[str, object] = {
+            "model": self._model,
+            "messages": [
+                {"role": "system", "content": instructions},
+                {"role": "user", "content": prompt},
+            ],
+            "max_tokens": self._max_tokens,
+        }
+        # DeepSeek ignores sampling controls in thinking mode. Omit the field so
+        # the recorded request matches the effective provider behavior.
+        if self._thinking != "enabled":
+            request["temperature"] = self._temperature
+        if self._thinking != "provider_default":
+            request["extra_body"] = {"thinking": {"type": self._thinking}}
+        if self._reasoning_effort != "provider_default":
+            request["reasoning_effort"] = self._reasoning_effort
+        response = client.chat.completions.create(**request)
+        self._record_usage(response, api_surface="chat_completions")
+        return _extract_chat_completion_text(response).strip()
 
     @staticmethod
     def _build_prompt(step_lines: Sequence[str]) -> str:
@@ -913,16 +991,31 @@ Return a compact summary describing the overall trajectory across these steps.
         if self._client is not None:
             return self._client
         client_kwargs: dict[str, object] = {}
-        try:
-            api_key = get_internal_openai_api_key(self.settings)
-        except DynamicOpenAIKeyUnavailableError as exc:
-            raise ChunkSummaryError(
-                "Chunk summarizer could not resolve OpenAI API key.",
-            ) from exc
+        if self._provider_mode == "custom":
+            api_key = (
+                self.settings.worker_planning_trajectory_summary_api_key or ""
+            ).strip()
+            base_url = (
+                self.settings.worker_planning_trajectory_summary_base_url or ""
+            ).strip()
+            if not api_key or not base_url:
+                raise ChunkSummaryError(
+                    "Custom trajectory summary provider requires both "
+                    "WORKER_PLANNING_TRAJECTORY_SUMMARY_API_KEY and "
+                    "WORKER_PLANNING_TRAJECTORY_SUMMARY_BASE_URL."
+                )
+        else:
+            try:
+                api_key = get_internal_openai_api_key(self.settings)
+            except DynamicOpenAIKeyUnavailableError as exc:
+                raise ChunkSummaryError(
+                    "Chunk summarizer could not resolve the global OpenAI API key.",
+                ) from exc
+            base_url = (self.settings.openai_base_url or "").strip()
         if api_key:
             client_kwargs["api_key"] = api_key
-        if self.settings.openai_base_url:
-            client_kwargs["base_url"] = self.settings.openai_base_url
+        if base_url:
+            client_kwargs["base_url"] = base_url
         return OpenAI(**client_kwargs) if client_kwargs else OpenAI()
 
     def _record_usage(self, response: object, *, api_surface: str) -> None:

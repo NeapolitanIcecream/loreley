@@ -81,6 +81,7 @@ def test_coerce_plan_from_invocation_extracts_summary(settings: Settings) -> Non
         "framework_managed_evaluation",
         "leave_modified_worktree",
         "no_git_commits",
+        "distinct_candidate_tree",
     )
     assert plan.focus_metrics == ("quality", "runtime_ms")
 
@@ -179,6 +180,8 @@ def test_planning_prompt_requests_markdown_deliverable(settings: Settings) -> No
     assert "Use these sections" in prompt
     assert "Every proposed validation step must obey" in prompt
     assert "Do not propose a command that the campaign forbids" in prompt
+    assert "not an exact reproduction" in prompt
+    assert "inspiration commits as evidence" in prompt
 
 
 def test_planning_prompt_projects_bounded_constraints_and_acceptance_criteria(

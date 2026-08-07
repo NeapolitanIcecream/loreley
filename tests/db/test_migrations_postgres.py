@@ -402,7 +402,21 @@ def test_v5_fixture_migrates_to_current_preserves_rows_and_backfills_candidates(
     )
 
     assert result.from_version == 5
-    assert result.applied_versions == (6, 7, 8, 9, 10, 11, 12, 13, 14, 15)
+    assert result.applied_versions == (
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+    )
     validate_database_schema(
         engine=postgres_engine,
         settings=migration_settings,
@@ -462,6 +476,17 @@ def test_v5_fixture_migrates_to_current_preserves_rows_and_backfills_candidates(
                 text("SELECT version FROM loreley_schema_migrations ORDER BY version")
             )
         ]
+        change_summary_limit = conn.execute(
+            text(
+                """
+                    SELECT character_maximum_length
+                    FROM information_schema.columns
+                    WHERE table_schema = current_schema()
+                      AND table_name = 'commit_cards'
+                      AND column_name = 'change_summary'
+                """
+            )
+        ).scalar_one()
 
     assert job_kinds[str(ids["seed_job"])] == "seed"
     assert job_kinds[str(ids["evolution_job"])] == "evolution"
@@ -480,7 +505,8 @@ def test_v5_fixture_migrates_to_current_preserves_rows_and_backfills_candidates(
     assert candidates["commit-b"]["repair_state"] == "audit_only"
     assert candidates["commit-b"]["repair_source_candidate_id"] is None
     assert candidates["commit-b"]["campaign_program_hash"] is None
-    assert audit_versions == [6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    assert audit_versions == [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+    assert change_summary_limit == 800
 
 
 def test_migration_is_idempotent_after_v5_upgrade(

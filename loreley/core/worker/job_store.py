@@ -22,11 +22,15 @@ from loreley.core.worker.artifacts import (
     write_failure_job_artifacts,
     write_job_artifacts,
 )
+from loreley.core.worker.candidate_identity import (
+    evaluation_identity_key,
+    normalize_candidate_identity,
+)
 from loreley.core.worker.commit_card import build_commit_card_from_git
 from loreley.config import Settings, get_settings
 from loreley.core.worker.coding import CodingAgentResponse
 from loreley.core.campaign_program import campaign_program_artifact_payload
-from loreley.core.worker.evaluator import EvaluationOutcome, EvaluationResult
+from loreley.core.worker.evaluator import EvaluationMetric, EvaluationOutcome, EvaluationResult
 from loreley.core.worker.planning import PlanningAgentResponse
 from loreley.core.worker.repair import build_diagnostic_capsule, repair_failure_kind_allowlist
 from loreley.db.base import session_scope
@@ -116,6 +120,21 @@ class LockedJob:
     sampling_initial_radius: int | None
     sampling_radius_used: int | None
     sampling_fallback_inspirations: int | None
+    sampling_ordinal: int | None
+    sampling_recipe_hash: str | None
+    sampling_recipe_reused: bool
+
+
+@dataclass(slots=True, frozen=True)
+class CandidateCommitRecord:
+    """Candidate publication metadata persisted before or after a push."""
+
+    job_id: UUID
+    commit_hash: str
+    branch_name: str
+    run_token: UUID | None = None
+    published: bool = False
+    source_tree_hash: str | None = None
 
 
 @dataclass(slots=True)
@@ -160,6 +179,7 @@ class _CandidateCommitUpsertInput:
     branch_name: str
     published: bool
     run_token: UUID | None
+    source_tree_hash: str | None = None
 
     @property
     def job_kind(self) -> str:
@@ -287,60 +307,136 @@ class EvolutionJobStore:
 
     def record_candidate_commit(
         self,
-        job_id: UUID,
-        commit_hash: str,
-        branch_name: str,
-        *,
-        run_token: UUID | None = None,
-        published: bool = False,
+        record: CandidateCommitRecord,
     ) -> None:
         """Persist candidate commit metadata before or after remote publication."""
 
-        candidate_hash = str(commit_hash or "").strip()
+        candidate_hash = str(record.commit_hash or "").strip()
         if not candidate_hash:
             raise EvolutionWorkerError("Candidate commit hash must be provided.")
-        candidate_branch = str(branch_name or "").strip()
+        candidate_branch = str(record.branch_name or "").strip()
         if not candidate_branch:
             raise EvolutionWorkerError("Candidate branch name must be provided.")
 
         try:
             with session_scope() as session:
-                if run_token is not None:
+                if record.run_token is not None:
                     job = self._lock_active_job_for_run(
                         session=session,
-                        job_id=job_id,
-                        run_token=run_token,
+                        job_id=record.job_id,
+                        run_token=record.run_token,
                         action="recording candidate metadata",
                     )
                 else:
-                    job = session.get(EvolutionJob, job_id)
+                    job = session.get(EvolutionJob, record.job_id)
                     if not job:
                         raise EvolutionWorkerError(
-                            f"Evolution job {job_id} disappeared while recording candidate metadata.",
+                            f"Evolution job {record.job_id} disappeared while recording candidate metadata.",
                         )
-                if run_token is None and job.status in {
+                if record.run_token is None and job.status in {
                     JobStatus.SUCCEEDED,
                     JobStatus.FAILED,
                     JobStatus.CANCELLED,
                 }:
                     raise EvolutionWorkerError(
-                        f"Evolution job {job_id} cannot record a candidate in status {job.status}.",
+                        f"Evolution job {record.job_id} cannot record a candidate in status {job.status}.",
                     )
                 job.candidate_commit_hash = candidate_hash
                 job.candidate_branch_name = candidate_branch
-                job.candidate_published_at = _utc_now() if published else None
+                job.candidate_published_at = _utc_now() if record.published else None
                 self._upsert_candidate_commit_row(
                     session=session,
                     job=job,
                     commit_hash=candidate_hash,
                     branch_name=candidate_branch,
-                    published=published,
-                    run_token=run_token,
+                    published=record.published,
+                    run_token=record.run_token,
+                    source_tree_hash=str(record.source_tree_hash or "").strip() or None,
                 )
         except SQLAlchemyError as exc:
             raise EvolutionWorkerError(
-                f"Failed to record candidate metadata for job {job_id}: {exc}",
+                f"Failed to record candidate metadata for job {record.job_id}: {exc}",
             ) from exc
+
+    def find_reusable_evaluation(
+        self,
+        *,
+        source_tree_hash: str,
+        evaluator_name: str | None,
+        evaluator_version: str | None,
+        campaign_program_hash: str | None,
+        candidate_commit_hash: str,
+    ) -> EvaluationOutcome | None:
+        """Reuse a passed evaluation for an identical tree and evaluator contract."""
+
+        tree_hash = str(source_tree_hash or "").strip()
+        if not tree_hash:
+            return None
+        with session_scope() as session:
+            row = session.execute(
+                select(CandidateCommit, CommitCard, EvaluationAttempt)
+                .join(CommitCard, CandidateCommit.commit_card_id == CommitCard.id)
+                .join(
+                    EvaluationAttempt,
+                    CandidateCommit.latest_evaluation_attempt_id == EvaluationAttempt.id,
+                )
+                .where(
+                    CandidateCommit.source_tree_hash == tree_hash,
+                    CandidateCommit.evaluation_status == "passed",
+                    CandidateCommit.campaign_program_hash == campaign_program_hash,
+                    EvaluationAttempt.evaluator_name == evaluator_name,
+                    EvaluationAttempt.evaluator_version == evaluator_version,
+                    EvaluationAttempt.outcome_kind == "passed",
+                )
+                .order_by(CandidateCommit.evaluated_at.desc(), CandidateCommit.id.desc())
+                .limit(1)
+            ).first()
+            if row is None:
+                return None
+            candidate, card, attempt = row
+            metrics = tuple(
+                EvaluationMetric(
+                    name=metric.name,
+                    value=metric.value,
+                    unit=metric.unit,
+                    higher_is_better=metric.higher_is_better,
+                    details=dict(metric.details or {}),
+                )
+                for metric in session.execute(
+                    select(Metric)
+                    .where(Metric.commit_card_id == card.id)
+                    .order_by(Metric.name.asc())
+                ).scalars()
+            )
+            reused_commit_hash = candidate.commit_hash
+            candidate_identity = candidate.candidate_identity
+            original_summary = card.evaluation_summary
+
+        now = _utc_now()
+        return EvaluationOutcome(
+            evaluator_name=attempt.evaluator_name,
+            evaluator_version=attempt.evaluator_version,
+            candidate_commit_hash=candidate_commit_hash,
+            outcome_kind="passed",
+            result=EvaluationResult(
+                summary=(
+                    "Reused a passed evaluation for an identical Git source tree "
+                    f"from commit {reused_commit_hash[:12]}."
+                ),
+                metrics=metrics,
+                tests_executed=("exact Git source-tree evaluation reuse",),
+                logs=(f"source_tree_hash={tree_hash}",),
+                extra={
+                    "evaluation_reused": True,
+                    "reused_source_commit_hash": reused_commit_hash,
+                    "source_tree_hash": tree_hash,
+                    "original_evaluation_summary": original_summary,
+                },
+                candidate_identity=candidate_identity,
+            ),
+            started_at=now,
+            finished_at=now,
+        )
 
     def renew_job_lease(self, job_id: UUID, run_token: UUID) -> datetime:
         """Extend the lease for an active RUNNING job attempt."""
@@ -404,6 +500,7 @@ class EvolutionJobStore:
             repair_source_candidate_id=getattr(job, "repair_source_candidate_id", None),
             repair_mode=getattr(job, "repair_mode", None),
             campaign_program_hash=getattr(job, "campaign_program_hash", None),
+            source_tree_hash=request.source_tree_hash,
             candidate_branch_name=request.branch_name,
             candidate_published_at=published_at,
             publication_status=request.publication_status,
@@ -439,6 +536,7 @@ class EvolutionJobStore:
         row.repair_source_candidate_id = row.repair_source_candidate_id or getattr(job, "repair_source_candidate_id", None)
         row.repair_mode = row.repair_mode or getattr(job, "repair_mode", None)
         row.campaign_program_hash = row.campaign_program_hash or getattr(job, "campaign_program_hash", None)
+        row.source_tree_hash = row.source_tree_hash or request.source_tree_hash
         row.candidate_branch_name = request.branch_name
         row.publication_status = request.publication_status
         if request.published:
@@ -796,12 +894,23 @@ class EvolutionJobStore:
             started_at=_utc_now(),
             finished_at=_utc_now(),
         )
+        candidate_identity = normalize_candidate_identity(
+            request.evaluation.candidate_identity
+        )
+        identity_key = evaluation_identity_key(
+            candidate_identity=candidate_identity,
+            evaluator_name=effective_outcome.evaluator_name,
+            evaluator_version=effective_outcome.evaluator_version,
+            campaign_program_hash=request.job_ctx.campaign_program_hash,
+        )
         attempt = EvaluationAttempt(
             candidate_commit_id=candidate.id,
             job_id=request.job_ctx.job_id,
             evaluator_name=effective_outcome.evaluator_name,
             evaluator_version=effective_outcome.evaluator_version,
             campaign_program_hash=request.job_ctx.campaign_program_hash,
+            candidate_identity=candidate_identity,
+            evaluation_identity_key=identity_key,
             outcome_kind="passed",
             repairability=None,
             started_at=effective_outcome.started_at,
@@ -811,6 +920,8 @@ class EvolutionJobStore:
         self._flush_session(request.session)
         candidate.latest_evaluation_attempt_id = attempt.id
         candidate.evaluation_status = "passed"
+        candidate.candidate_identity = candidate_identity
+        candidate.evaluation_identity_key = identity_key
         candidate.archive_status = "not_considered"
         candidate.lifecycle_status = "active"
         candidate.failure_stage = None
@@ -1441,6 +1552,9 @@ def _locked_job_from_row(
         sampling_initial_radius=getattr(job, "sampling_initial_radius", None),
         sampling_radius_used=getattr(job, "sampling_radius_used", None),
         sampling_fallback_inspirations=getattr(job, "sampling_fallback_inspirations", None),
+        sampling_ordinal=getattr(job, "sampling_ordinal", None),
+        sampling_recipe_hash=getattr(job, "sampling_recipe_hash", None),
+        sampling_recipe_reused=bool(getattr(job, "sampling_recipe_reused", False)),
     )
 
 
@@ -1534,7 +1648,10 @@ def _change_summary(request: _PersistSuccessInput) -> str:
         or request.plan.plan.summary
         or f"Evolution job {request.job_ctx.job_id}"
     )
-    return clamp_text(normalize_single_line(source), 512) or "N/A"
+    # Coding summaries are already bounded to 800 characters.  Preserve that
+    # complete projection so later trajectory compression does not discard a
+    # second layer of information.
+    return clamp_text(normalize_single_line(source), 800) or "N/A"
 
 
 def _commit_card_key_files(paths: Sequence[str]) -> list[str]:

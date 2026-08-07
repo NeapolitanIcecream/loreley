@@ -35,6 +35,12 @@ High-level manager that runs the MAP-Elites pipeline on git commits and maintain
   - Behaviour descriptors are clipped to `[-k, k]` (k from `MAPELITES_FEATURE_TRUNCATION_K`), linearly mapped into `[0, 1]^d`, and archives are constructed with fixed `[0, 1]` bounds per dimension to avoid manual per-dimension tuning and boundary crowding.
   - Delegates snapshot loading and incremental persistence to `loreley.core.map_elites.snapshot.DatabaseSnapshotStore`.
 
+Admission is identity-aware when an evaluator returns `candidate_identity`.
+The scheduler scopes that identity by evaluator version and campaign program,
+then processes only its first representative per island. Later equivalents do
+not enter PCA history or the archive. Evaluators that omit the field retain
+commit-hash identity for backward compatibility.
+
 ## Query helpers
 
 - **`get_records(island_id=None)`**: returns every retained Pareto member for an island.

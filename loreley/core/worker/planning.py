@@ -197,6 +197,8 @@ WORKER_CONTRACT_LINES: tuple[str, ...] = (
     "Leave the repository in a modified worktree state.",
     "Prefer focused, minimal changes that directly improve the task.",
     "Preserve existing tracked files unless a change is clearly necessary for the task.",
+    "Treat inspiration commits as evidence, not target snapshots; do not reproduce an inspiration tree exactly.",
+    "The resulting source tree must remain distinct from the base and every inspiration commit.",
 )
 
 WORKER_CONTRACT_GUARDRAILS: tuple[str, ...] = (
@@ -204,6 +206,7 @@ WORKER_CONTRACT_GUARDRAILS: tuple[str, ...] = (
     "framework_managed_evaluation",
     "leave_modified_worktree",
     "no_git_commits",
+    "distinct_candidate_tree",
 )
 
 _AGENT_FEEDBACK_PROJECTION_ORDER: dict[str, int] = {
@@ -1025,6 +1028,8 @@ Produce the next implementation plan for the coding agent.
 
 Planning Instructions:
 - Use the base commit and inspiration commits to identify the most promising next move.
+- State the concrete delta that is absent from the base and is not an exact reproduction
+  of any one inspiration. Combine ideas only when the resulting implementation remains distinct.
 - Optimize for one coherent next step, not a broad rewrite.
 - Every proposed validation step must obey the Evolution Goal and Constraints.
   Do not propose a command that the campaign forbids.

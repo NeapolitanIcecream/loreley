@@ -236,11 +236,6 @@ class _SequenceEvaluator:
         return outcome
 
 
-class _FakeSummarizer:
-    def generate(self, **_kwargs: Any) -> str:
-        return "feat: publish candidate"
-
-
 def _candidate_failed_outcome(
     *,
     failure_kind: str = "typecheck_failed",
@@ -390,6 +385,15 @@ class _FakeRepositoryForRun:
         self._events.append("repo.current_commit")
         return self._current_commit
 
+    def tree_hash(
+        self,
+        commit_hash: str,
+        *,
+        worktree: Path | None = None,
+    ) -> str:
+        del worktree
+        return f"tree-{commit_hash}"
+
     def reset_mixed_to_commit(self, commit_hash: str, *, worktree: Path | None = None) -> None:
         self._events.append(f"repo.reset_mixed_to_commit[{commit_hash}]")
         self._current_commit = commit_hash
@@ -427,6 +431,8 @@ class _FakeJobStoreForPublishFailure:
         self._campaign_program_hash = campaign_program_hash
         self.recorded_candidates: list[dict[str, Any]] = []
         self.failures: list[dict[str, Any]] = []
+        self.reusable_evaluation: EvaluationOutcome | None = None
+        self.reuse_queries: list[dict[str, Any]] = []
 
     def start_job(self, job_id: uuid.UUID) -> Any:
         assert job_id == self._job_id
@@ -458,23 +464,25 @@ class _FakeJobStoreForPublishFailure:
     def renew_job_lease(self, _job_id: uuid.UUID, _run_token: uuid.UUID) -> None:
         return None
 
+    def find_reusable_evaluation(self, **kwargs: Any) -> EvaluationOutcome | None:
+        self.reuse_queries.append(kwargs)
+        return self.reusable_evaluation
+
     def record_candidate_commit(
         self,
-        job_id: uuid.UUID,
-        commit_hash: str,
-        branch_name: str,
-        *,
-        run_token: uuid.UUID | None = None,
-        published: bool = False,
+        record: Any,
     ) -> None:
-        self._events.append(f"store.record_candidate[published={published}]")
+        self._events.append(
+            f"store.record_candidate[published={record.published}]"
+        )
         self.recorded_candidates.append(
             {
-                "job_id": job_id,
-                "commit_hash": commit_hash,
-                "branch_name": branch_name,
-                "run_token": run_token,
-                "published": published,
+                "job_id": record.job_id,
+                "commit_hash": record.commit_hash,
+                "branch_name": record.branch_name,
+                "run_token": record.run_token,
+                "published": record.published,
+                "source_tree_hash": record.source_tree_hash,
             }
         )
 
@@ -613,7 +621,6 @@ def test_run_planning_batches_context_queries_for_base_and_inspirations_gh_n_plu
         planning_agent=planning_agent,  # type: ignore[arg-type]
         coding_agent=object(),  # type: ignore[arg-type]
         evaluator=object(),  # type: ignore[arg-type]
-        summarizer=object(),  # type: ignore[arg-type]
         job_store=object(),  # type: ignore[arg-type]
     )
 
@@ -741,7 +748,6 @@ def test_seed_job_prompt_context_suppresses_historical_evaluation_artifacts(
         planning_agent=object(),  # type: ignore[arg-type]
         coding_agent=object(),  # type: ignore[arg-type]
         evaluator=object(),  # type: ignore[arg-type]
-        summarizer=object(),  # type: ignore[arg-type]
         job_store=object(),  # type: ignore[arg-type]
     )
     card_id = uuid.uuid4()
@@ -837,7 +843,6 @@ def test_start_job_requires_non_empty_base_commit_hash(settings: Settings) -> No
         planning_agent=object(),  # type: ignore[arg-type]
         coding_agent=object(),  # type: ignore[arg-type]
         evaluator=object(),  # type: ignore[arg-type]
-        summarizer=object(),  # type: ignore[arg-type]
         job_store=_FakeJobStore(),  # type: ignore[arg-type]
     )
 
@@ -866,7 +871,6 @@ def test_run_records_candidate_before_push_when_persist_success_fails_gh_candida
         planning_agent=_FakePlanningAgent(),  # type: ignore[arg-type]
         coding_agent=_FakeCodingAgent(),  # type: ignore[arg-type]
         evaluator=_FakeEvaluator(),  # type: ignore[arg-type]
-        summarizer=_FakeSummarizer(),  # type: ignore[arg-type]
         job_store=store,  # type: ignore[arg-type]
     )
 
@@ -876,6 +880,57 @@ def test_run_records_candidate_before_push_when_persist_success_fails_gh_candida
     assert "repo.push_branch" in events
     assert "store.record_candidate[published=False]" in events
     assert events.index("store.record_candidate[published=False]") < events.index("repo.push_branch")
+
+
+def test_run_reuses_exact_source_tree_without_calling_evaluator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    job_id = uuid.uuid4()
+    events: list[str] = []
+    _patch_empty_planning_context_session(monkeypatch)
+    store = _FakeJobStoreForSuccess(job_id=job_id, events=events)
+    store.reusable_evaluation = EvaluationOutcome(
+        evaluator_name="fake-evaluator",
+        evaluator_version="v1",
+        candidate_commit_hash="candidate123",
+        outcome_kind="passed",
+        result=EvaluationResult(
+            summary="reused",
+            extra={"evaluation_reused": True},
+        ),
+    )
+
+    class NeverCalledEvaluator:
+        plugin_ref = "fake-evaluator"
+        evaluator_version = "v1"
+
+        def evaluate_outcome(self, _context: Any) -> EvaluationOutcome:
+            raise AssertionError("identical source trees must bypass the evaluator")
+
+    worker = EvolutionWorker(
+        settings=settings,
+        repository=_FakeRepositoryForRun(worktree=tmp_path, events=events),  # type: ignore[arg-type]
+        planning_agent=_FakePlanningAgent(),  # type: ignore[arg-type]
+        coding_agent=_FakeCodingAgent(),  # type: ignore[arg-type]
+        evaluator=NeverCalledEvaluator(),  # type: ignore[arg-type]
+        job_store=store,  # type: ignore[arg-type]
+    )
+
+    result = worker.run(job_id)
+
+    assert result.evaluation.extra["evaluation_reused"] is True
+    assert store.reuse_queries == [
+        {
+            "source_tree_hash": "tree-candidate123",
+            "evaluator_name": "fake-evaluator",
+            "evaluator_version": "v1",
+            "campaign_program_hash": None,
+            "candidate_commit_hash": "candidate123",
+        }
+    ]
+    assert store.recorded_candidates[0]["source_tree_hash"] == "tree-candidate123"
 
 
 def test_run_keeps_candidate_metadata_when_post_push_persistence_fails_gh_candidate_orphan(
@@ -899,7 +954,6 @@ def test_run_keeps_candidate_metadata_when_post_push_persistence_fails_gh_candid
         planning_agent=_FakePlanningAgent(),  # type: ignore[arg-type]
         coding_agent=_FakeCodingAgent(),  # type: ignore[arg-type]
         evaluator=_FakeEvaluator(),  # type: ignore[arg-type]
-        summarizer=_FakeSummarizer(),  # type: ignore[arg-type]
         job_store=store,  # type: ignore[arg-type]
     )
 
@@ -913,6 +967,7 @@ def test_run_keeps_candidate_metadata_when_post_push_persistence_fails_gh_candid
             "branch_name": "exp/job-branch",
             "run_token": store.recorded_candidates[0]["run_token"],
             "published": False,
+            "source_tree_hash": "tree-candidate123",
         },
         {
             "job_id": job_id,
@@ -920,6 +975,7 @@ def test_run_keeps_candidate_metadata_when_post_push_persistence_fails_gh_candid
             "branch_name": "exp/job-branch",
             "run_token": store.recorded_candidates[1]["run_token"],
             "published": True,
+            "source_tree_hash": "tree-candidate123",
         },
     ]
     assert store.failures == [
@@ -963,7 +1019,6 @@ def test_run_reworks_candidate_failure_and_publishes_only_final_pass(
         planning_agent=_FakePlanningAgent(),  # type: ignore[arg-type]
         coding_agent=coding_agent,  # type: ignore[arg-type]
         evaluator=evaluator,  # type: ignore[arg-type]
-        summarizer=_FakeSummarizer(),  # type: ignore[arg-type]
         job_store=store,  # type: ignore[arg-type]
     )
     monkeypatch.setattr(worker, "_load_campaign_program", lambda _program_hash: program)
@@ -1020,7 +1075,6 @@ def test_run_preserves_path_backed_evaluation_artifacts_before_cleanup(
         planning_agent=_FakePlanningAgent(),  # type: ignore[arg-type]
         coding_agent=_FakeCodingAgent(),  # type: ignore[arg-type]
         evaluator=_PathArtifactEvaluator(events),  # type: ignore[arg-type]
-        summarizer=_FakeSummarizer(),  # type: ignore[arg-type]
         job_store=store,  # type: ignore[arg-type]
     )
 
@@ -1055,7 +1109,6 @@ def test_run_preserves_rework_history_when_retry_coding_crashes(
         planning_agent=_FakePlanningAgent(),  # type: ignore[arg-type]
         coding_agent=coding_agent,  # type: ignore[arg-type]
         evaluator=evaluator,  # type: ignore[arg-type]
-        summarizer=_FakeSummarizer(),  # type: ignore[arg-type]
         job_store=store,  # type: ignore[arg-type]
     )
 
@@ -1095,7 +1148,6 @@ def test_run_exhausts_rework_without_publishing_failed_attempts(
         planning_agent=_FakePlanningAgent(),  # type: ignore[arg-type]
         coding_agent=_FakeCodingAgent(),  # type: ignore[arg-type]
         evaluator=evaluator,  # type: ignore[arg-type]
-        summarizer=_FakeSummarizer(),  # type: ignore[arg-type]
         job_store=store,  # type: ignore[arg-type]
     )
 
@@ -1128,7 +1180,6 @@ def test_run_does_not_rework_non_allowlisted_evalfail_kind(
         planning_agent=_FakePlanningAgent(),  # type: ignore[arg-type]
         coding_agent=_FakeCodingAgent(),  # type: ignore[arg-type]
         evaluator=evaluator,  # type: ignore[arg-type]
-        summarizer=_FakeSummarizer(),  # type: ignore[arg-type]
         job_store=store,  # type: ignore[arg-type]
     )
 
@@ -1158,7 +1209,6 @@ def test_run_preserves_evaluator_failure_outcome_when_structured_retry_succeeds(
         planning_agent=_FakePlanningAgent(),  # type: ignore[arg-type]
         coding_agent=_FakeCodingAgent(),  # type: ignore[arg-type]
         evaluator=_FakeCandidateFailureEvaluator(),  # type: ignore[arg-type]
-        summarizer=_FakeSummarizer(),  # type: ignore[arg-type]
         job_store=store,  # type: ignore[arg-type]
     )
 
@@ -1199,7 +1249,6 @@ def test_run_persists_campaign_scope_violation_before_commit_push_or_evaluation(
         planning_agent=_FakePlanningAgent(),  # type: ignore[arg-type]
         coding_agent=_ScopeViolatingCodingAgent(events),  # type: ignore[arg-type]
         evaluator=_EventCapturingEvaluator(events),  # type: ignore[arg-type]
-        summarizer=_FakeSummarizer(),  # type: ignore[arg-type]
         job_store=store,  # type: ignore[arg-type]
     )
     monkeypatch.setattr(worker, "_load_campaign_program", lambda _program_hash: program)
@@ -1251,7 +1300,6 @@ def test_run_fails_closed_when_referenced_campaign_program_is_missing(
         planning_agent=_FakePlanningAgent(),  # type: ignore[arg-type]
         coding_agent=_FakeCodingAgent(),  # type: ignore[arg-type]
         evaluator=_EventCapturingEvaluator(events),  # type: ignore[arg-type]
-        summarizer=_FakeSummarizer(),  # type: ignore[arg-type]
         job_store=store,  # type: ignore[arg-type]
     )
 
@@ -1287,7 +1335,6 @@ def test_run_evaluation_payload_includes_campaign_program_and_runtime_provenance
         planning_agent=object(),  # type: ignore[arg-type]
         coding_agent=object(),  # type: ignore[arg-type]
         evaluator=evaluator,  # type: ignore[arg-type]
-        summarizer=object(),  # type: ignore[arg-type]
         job_store=object(),  # type: ignore[arg-type]
     )
     program = parse_campaign_program(

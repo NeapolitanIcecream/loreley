@@ -20,7 +20,7 @@ This module defines Pydantic models for **consumable** fields. They are not ORM 
 - **`CommitCard`**: lightweight commit representation used for inspiration prompts and UI.
   - Size budgets (enforced by Pydantic):
     - `subject`: max 72 chars, must not contain code fences and must not start with JSON.
-    - `change_summary`: max 512 chars.
+    - `change_summary`: max 800 chars.
     - `evaluation_summary`: optional, max 512 chars.
     - `key_files`: up to 20 paths (each max 256 chars).
     - `highlights`: 1–8 lines (each max 200 chars).
@@ -34,4 +34,3 @@ This module defines Pydantic models for **consumable** fields. They are not ORM 
 - `loreley.db.models.CommitCard` stores bounded commit metadata used by the UI and planning context.
 - `loreley.db.models.JobArtifacts` stores artifact file paths produced by a worker job.
 - `loreley.db.models.EvolutionJob` stores job spec fields and ingestion tracking fields without embedding large JSON payloads.
-

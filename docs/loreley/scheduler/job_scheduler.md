@@ -59,6 +59,9 @@ from loreley.scheduler.job_scheduler import JobScheduler
   - Enforces the required `SCHEDULER_MAX_TOTAL_JOBS` global cap using the
     current database job count supplied by `EvolutionScheduler`.
   - Requests new work from MAP-Elites via `MapElitesSampler.schedule_job()`.
+  - Uses the durable per-island job count as the next sampling ordinal and loads
+    the most recent `MAPELITES_SAMPLER_RECIPE_COOLDOWN_JOBS` recipe hashes. Newly
+    scheduled recipes join the same exclusion set immediately within the tick.
   - Enqueues job messages first and then marks the successfully sent jobs as
     `QUEUED` using the private `_enqueue_jobs(...)` helper.
   - Returns the number of jobs scheduled during this tick.

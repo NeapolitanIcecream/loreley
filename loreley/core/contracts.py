@@ -47,7 +47,7 @@ def clamp_text(text: str, max_chars: int) -> str:
 
 
 SubjectText = Annotated[str, Field(min_length=1, max_length=72)]
-ChangeSummaryText = Annotated[str, Field(min_length=1, max_length=512)]
+ChangeSummaryText = Annotated[str, Field(min_length=1, max_length=800)]
 EvaluationSummaryText = Annotated[str, Field(max_length=512)]
 FilePathText = Annotated[str, Field(min_length=1, max_length=256)]
 HighlightText = Annotated[str, Field(min_length=1, max_length=200)]
@@ -143,5 +143,4 @@ class EvolutionJobSpec(BaseModel):
     iteration_hint: Annotated[str | None, Field(max_length=256)] = None
 
     priority: int = 0
-
 

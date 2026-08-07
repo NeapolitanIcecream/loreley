@@ -236,7 +236,7 @@ class CommitCard(TimestampMixin, Base):
 
     author: Mapped[str | None] = mapped_column(String(128))
     subject: Mapped[str] = mapped_column(String(72), nullable=False)
-    change_summary: Mapped[str] = mapped_column(String(512), nullable=False)
+    change_summary: Mapped[str] = mapped_column(String(800), nullable=False)
     evaluation_summary: Mapped[str | None] = mapped_column(String(512))
     tags: Mapped[list[str]] = mapped_column(
         MutableList.as_mutable(ARRAY(String(64))),
@@ -434,6 +434,13 @@ class CandidateCommit(TimestampMixin, Base):
         Index("ix_candidate_commits_git_parent", "git_parent_commit_hash"),
         Index("ix_candidate_commits_nearest_viable_ancestor", "nearest_viable_ancestor_hash"),
         Index("ix_candidate_commits_campaign_program_hash", "campaign_program_hash"),
+        Index("ix_candidate_commits_evaluation_identity_key", "evaluation_identity_key"),
+        Index(
+            "ix_candidate_commits_source_tree_contract",
+            "source_tree_hash",
+            "campaign_program_hash",
+            "evaluation_status",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -470,6 +477,9 @@ class CandidateCommit(TimestampMixin, Base):
         default="not_evaluated",
         nullable=False,
     )
+    candidate_identity: Mapped[str | None] = mapped_column(String(512))
+    evaluation_identity_key: Mapped[str | None] = mapped_column(String(64))
+    source_tree_hash: Mapped[str | None] = mapped_column(String(64))
     latest_evaluation_attempt_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey(
@@ -582,6 +592,7 @@ class EvaluationAttempt(TimestampMixin, Base):
         Index("ix_evaluation_attempts_job_id", "job_id"),
         Index("ix_evaluation_attempts_outcome_kind", "outcome_kind"),
         Index("ix_evaluation_attempts_campaign_program_hash", "campaign_program_hash"),
+        Index("ix_evaluation_attempts_identity_key", "evaluation_identity_key"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -602,6 +613,8 @@ class EvaluationAttempt(TimestampMixin, Base):
     evaluator_name: Mapped[str | None] = mapped_column(String(128))
     evaluator_version: Mapped[str | None] = mapped_column(String(128))
     campaign_program_hash: Mapped[str | None] = mapped_column(String(64))
+    candidate_identity: Mapped[str | None] = mapped_column(String(512))
+    evaluation_identity_key: Mapped[str | None] = mapped_column(String(64))
     outcome_kind: Mapped[str] = mapped_column(String(32), nullable=False)
     failure_kind: Mapped[str | None] = mapped_column(String(64))
     failure_stage: Mapped[str | None] = mapped_column(String(32))
@@ -642,6 +655,18 @@ class EvolutionJob(TimestampMixin, Base):
         Index("ix_evolution_jobs_kind_status_scheduled", "job_kind", "status", "scheduled_at"),
         Index("ix_evolution_jobs_repair_source_status", "repair_source_candidate_id", "status"),
         Index("ix_evolution_jobs_campaign_program_hash", "campaign_program_hash"),
+        Index(
+            "ix_evolution_jobs_island_recipe_created",
+            "island_id",
+            "sampling_recipe_hash",
+            "created_at",
+        ),
+        Index(
+            "uq_evolution_jobs_island_sampling_ordinal",
+            "island_id",
+            "sampling_ordinal",
+            unique=True,
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -693,6 +718,9 @@ class EvolutionJob(TimestampMixin, Base):
     sampling_initial_radius: Mapped[int | None] = mapped_column(Integer)
     sampling_radius_used: Mapped[int | None] = mapped_column(Integer)
     sampling_fallback_inspirations: Mapped[int | None] = mapped_column(Integer)
+    sampling_ordinal: Mapped[int | None] = mapped_column(Integer)
+    sampling_recipe_hash: Mapped[str | None] = mapped_column(String(64))
+    sampling_recipe_reused: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_seed_job: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     job_kind: Mapped[str] = mapped_column(String(32), default="evolution", nullable=False)
     repair_source_candidate_id: Mapped[uuid.UUID | None] = mapped_column(

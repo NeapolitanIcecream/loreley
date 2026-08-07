@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "experiment": "zstandard-reliable-qd-gpt-20260806-v19",
+  "analysis_type": "post_hoc_top10_validation_with_prospective_fresh_confirmation",
+  "registered_conclusion_unchanged": true,
+  "top10": {
+    "registered_validation_winner": "7b9aef38ecd44ba1efe0ff7282c234ae1f1ef14c",
+    "expanded_validation_winner": "fe39bee8f4659b8e8da153b9a997614f4d2d4713",
+    "winner_changed": true,
+    "existing_reports_reused": 3,
+    "new_measurements": 7,
+    "new_measurement_seconds": 2348.3295830416027,
+    "model_calls": 0,
+    "results": [
+      {
+        "training_rank": 1,
+        "commit": "44a22df0b05cbfbd3c14245803fb0259afe377e2",
+        "training_compression_lower_95": 1.0098355954316602,
+        "validation_compression_geomean": 1.0098695961979454,
+        "validation_compression_lower_95": 1.009052117593791,
+        "validation_decompression_geomean": 0.9975439245016544
+      },
+      {
+        "training_rank": 2,
+        "commit": "f80c86197f6b6091f9756abea70042f310c1db22",
+        "training_compression_lower_95": 1.0094419297434005,
+        "validation_compression_geomean": 1.0106893759682498,
+        "validation_compression_lower_95": 1.0092318891045513,
+        "validation_decompression_geomean": 1.0011536894089197
+      },
+      {
+        "training_rank": 3,
+        "commit": "7b9aef38ecd44ba1efe0ff7282c234ae1f1ef14c",
+        "training_compression_lower_95": 1.0090322725809089,
+        "validation_compression_geomean": 1.0106600899512141,
+        "validation_compression_lower_95": 1.0099425627138974,
+        "validation_decompression_geomean": 1.0002540991584215
+      },
+      {
+        "training_rank": 4,
+        "commit": "be548e5c510489fe57f92d97654a90fa7e2d6f61",
+        "training_compression_lower_95": 1.0082693799215354,
+        "validation_compression_geomean": 1.0120364717129138,
+        "validation_compression_lower_95": 1.0089913669549941,
+        "validation_decompression_geomean": 0.9998243211826908
+      },
+      {
+        "training_rank": 5,
+        "commit": "afc8175a75d4b1a7b40368ab024c603989b72c9f",
+        "training_compression_lower_95": 1.0079933875473166,
+        "validation_compression_geomean": 1.01083787472787,
+        "validation_compression_lower_95": 1.0102000288504382,
+        "validation_decompression_geomean": 1.001410302516402
+      },
+      {
+        "training_rank": 6,
+        "commit": "b52cbe2bb23d83a69ebabdd8fb63764b45b1ddee",
+        "training_compression_lower_95": 1.0078240017479245,
+        "validation_compression_geomean": 1.0099197359425023,
+        "validation_compression_lower_95": 1.0069291473044704,
+        "validation_decompression_geomean": 0.9984809941043374
+      },
+      {
+        "training_rank": 7,
+        "commit": "5ee53426c57f177f704deacfe107d9c47b2d33cb",
+        "training_compression_lower_95": 1.0074108433180784,
+        "validation_compression_geomean": 1.0121879240842058,
+        "validation_compression_lower_95": 1.010419783043902,
+        "validation_decompression_geomean": 1.0021048447731795
+      },
+      {
+        "training_rank": 8,
+        "commit": "8ec126ea182f4c38bb4563c8a454b65d02c4f5be",
+        "training_compression_lower_95": 1.0073912620177625,
+        "validation_compression_geomean": 1.0092808854515316,
+        "validation_compression_lower_95": 1.0076199091850198,
+        "validation_decompression_geomean": 1.0010838223538954
+      },
+      {
+        "training_rank": 9,
+        "commit": "8075c7ffc74de738b807c04bb6a25bfc20bbc5f1",
+        "training_compression_lower_95": 1.007205603164686,
+        "validation_compression_geomean": 1.0112281086542154,
+        "validation_compression_lower_95": 1.0101086516467508,
+        "validation_decompression_geomean": 0.9999210818692438
+      },
+      {
+        "training_rank": 10,
+        "commit": "fe39bee8f4659b8e8da153b9a997614f4d2d4713",
+        "training_compression_lower_95": 1.0070761632068201,
+        "validation_compression_geomean": 1.012340027565216,
+        "validation_compression_lower_95": 1.0115586320160774,
+        "validation_decompression_geomean": 1.0015128783457012
+      }
+    ]
+  },
+  "expanded_winner": {
+    "commit": "fe39bee8f4659b8e8da153b9a997614f4d2d4713",
+    "binary_sha256": "65c54a8b39d88eafe1667445b4c10e88c669b75a32d7a999192b1924d56f98c9",
+    "generation": 4,
+    "first_logical_completion": 57,
+    "lineage": [
+      "0829ec9e1dbacb8907a44fd65f5565a6881009bc",
+      "f1af0a925f4ae5956c147c1c03fa6ddc85edeb96",
+      "00617c97b85bd9ec4d2e3f6139f916f55957f45a",
+      "fe39bee8f4659b8e8da153b9a997614f4d2d4713"
+    ],
+    "changed_files": [
+      "lib/compress/hist.c",
+      "lib/compress/zstd_compress.c",
+      "lib/compress/zstd_compress_internal.h"
+    ],
+    "insertions": 33,
+    "deletions": 16
+  },
+  "fresh_confirmation": {
+    "corpus_files": 8,
+    "corpus_bytes": 16777216,
+    "disjoint_from_v19_corpora": true,
+    "rounds": 12,
+    "outcome_under_v19_thresholds": "modest_positive",
+    "compression_geomean": 1.0089105501426032,
+    "compression_lower_95": 1.0052227180038549,
+    "compression_upper_95": 1.0126119117267574,
+    "decompression_geomean": 0.9983047469721757,
+    "decompression_lower_95": 0.9947139725804914,
+    "decompression_upper_95": 1.0019084835430265,
+    "throughput_geomean": 1.003593638619571,
+    "throughput_lower_95": 1.0000373285289736,
+    "throughput_upper_95": 1.00716259557954,
+    "worst_cell_speedup": 0.9981796890282348,
+    "max_compressed_size_ratio": 1.0,
+    "peak_rss_delta_mib": 0.03125,
+    "upstream_check_passed": true,
+    "cross_decode_passed": true,
+    "size_gate_passed": true,
+    "rss_gate_passed": true,
+    "elapsed_seconds": 487.011913749855
+  },
+  "evidence_sha256": {
+    "top10_plan": "d469e7cc700988117869da315f07c9bd0f1c43655af283b7bdffe1ae7a4e508a",
+    "top10_result": "0ea400c8065db2766d7521fd3da564c5646baf538dfb10c6faeb7b27790f0f1c",
+    "top10_audit": "d3a690b9ecc830afbbc89fc7ea8f21f69af566cddca3be507a19b14ba9f5bd84",
+    "confirmation_plan": "b5469d6110efaf72f0804d78dd20d9c9f23bfa66c647fbe5019af004edbe4e8d",
+    "confirmation_preparation": "fadab0f505a97093bd7002e88d4046fd0054e78e7b4087611b335e962e57842f",
+    "confirmation_corpus_archive": "9abe52b622f001c3e49aec7e35ba516c629026f36000f33b5ae1b5567c2a759d",
+    "confirmation_result": "a79d017b20fea14f3c0c404421a13347eae68e223f662cee4c0e88e313b3fb05",
+    "confirmation_raw_result": "6b7f860d4395a9929bc9afd5db415f99bb21b9e2ad0da69885acf2084ec63dbf",
+    "confirmation_audit": "769ccdb15b1171fff7a329f7908a54f8187e3e77fa13fa9e4dc912445539fbab"
+  }
+}

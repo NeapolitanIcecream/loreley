@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import hashlib
 from itertools import product
+import json
 from math import prod
 import random
 from collections.abc import Collection, Mapping, Sequence
@@ -33,6 +35,7 @@ __all__ = [
     "SamplingSnapshot",
     "ScheduleJobRequest",
     "ScheduledSamplerJob",
+    "sampling_recipe_hash",
 ]
 
 
@@ -55,6 +58,9 @@ class ScheduledSamplerJob:
     island_id: str
     base_commit_hash: str
     inspiration_commit_hashes: tuple[str, ...]
+    sampling_ordinal: int | None = None
+    sampling_recipe_hash: str | None = None
+    sampling_recipe_reused: bool = False
     migration_source_island_id: str | None = None
     migration_commit_hash: str | None = None
 
@@ -80,6 +86,8 @@ class ScheduleJobRequest:
     sampling_snapshot: SamplingSnapshot | None = None
     cell_fronts: Mapping[int, Sequence[str]] | None = None
     excluded_base_commits: Collection[str] | None = None
+    excluded_recipe_hashes: Collection[str] | None = None
+    sampling_ordinal: int | None = None
     campaign_program: CampaignProgramSnapshot | None = None
     migration_source_island_id: str | None = None
     migration_commit_hash: str | None = None
@@ -95,6 +103,9 @@ class _PreparedSamplerJob:
     selection_stats: Mapping[str, Any]
     iteration_hint: str | None
     priority: int | None
+    sampling_ordinal: int | None
+    sampling_recipe_hash: str
+    sampling_recipe_reused: bool
     campaign_program: CampaignProgramSnapshot | None = None
     migration_source_island_id: str | None = None
     migration_commit_hash: str | None = None
@@ -104,6 +115,7 @@ class _PreparedSamplerJob:
 class _InspirationSelectionState:
     selected: list[str]
     selected_commits: set[str]
+    rng: random.Random
 
 
 @dataclass(slots=True, frozen=True)
@@ -111,6 +123,24 @@ class _NeighborRadiusConfig:
     radius: int
     min_radius: int
     max_radius: int
+
+
+def sampling_recipe_hash(
+    base_commit_hash: str,
+    inspiration_commit_hashes: Sequence[str],
+) -> str:
+    """Return the order-insensitive identity of one sampling recipe."""
+
+    payload = {
+        "base": str(base_commit_hash or "").strip(),
+        "inspirations": sorted(
+            str(commit or "").strip()
+            for commit in inspiration_commit_hashes
+            if str(commit or "").strip()
+        ),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _occupied_neighbor_arrays(
@@ -176,9 +206,9 @@ def _fallback_inspiration_candidates(
     selected = set(selected_commits)
     return tuple(
         commit_hash
-        for cell_index, commits in cell_fronts.items()
+        for cell_index, commits in sorted(cell_fronts.items())
         if cell_index != base_cell_index
-        for commit_hash in commits
+        for commit_hash in sorted(commits)
         if commit_hash and commit_hash not in selected
     )
 
@@ -216,6 +246,10 @@ class MapElitesSampler:
         )
         self._default_priority = self.settings.mapelites_sampler_default_priority
         self._default_island = resolve_default_island_id(self.settings)
+        self._max_resample_attempts = max(
+            1,
+            int(self.settings.mapelites_sampler_max_resample_attempts),
+        )
 
     def schedule_job(
         self,
@@ -247,6 +281,9 @@ class MapElitesSampler:
             island_id=prepared.island_id,
             base_commit_hash=prepared.base_commit_hash,
             inspiration_commit_hashes=prepared.inspiration_commit_hashes,
+            sampling_ordinal=prepared.sampling_ordinal,
+            sampling_recipe_hash=prepared.sampling_recipe_hash,
+            sampling_recipe_reused=prepared.sampling_recipe_reused,
             migration_source_island_id=prepared.migration_source_island_id,
             migration_commit_hash=prepared.migration_commit_hash,
         )
@@ -271,33 +308,84 @@ class MapElitesSampler:
         request: ScheduleJobRequest,
         snapshot: SamplingSnapshot,
     ) -> _PreparedSamplerJob | None:
-        base_selection = self._select_base_candidate(
-            snapshot=snapshot,
-            excluded_base_commits=request.excluded_base_commits,
-        )
-        if base_selection is None:
-            log.info(
-                "Cannot schedule job; island {} has no remaining unique base commits for this batch",
-                snapshot.island_id,
+        rng = self._rng_for_request(request=request, island_id=snapshot.island_id)
+        excluded_recipes = {
+            str(recipe_hash).strip()
+            for recipe_hash in (request.excluded_recipe_hashes or ())
+            if str(recipe_hash).strip()
+        }
+        selected: tuple[
+            str,
+            tuple[str, ...],
+            Mapping[str, Any],
+            str | None,
+            str | None,
+            str,
+        ] | None = None
+        attempts = 0
+        for attempts in range(1, self._max_resample_attempts + 1):
+            base_selection = self._select_base_candidate(
+                snapshot=snapshot,
+                excluded_base_commits=request.excluded_base_commits,
+                rng=rng,
             )
-            return None
+            if base_selection is None:
+                log.info(
+                    "Cannot schedule job; island {} has no remaining unique base commits for this batch",
+                    snapshot.island_id,
+                )
+                return None
 
-        base_cell_index, base_commit_hash = base_selection
-        migration_source, migration_commit = self._migration_for_base(
-            request=request,
-            base_commit_hash=base_commit_hash,
-        )
-        inspirations, selection_stats = self._select_inspirations(
-            base_cell_index=base_cell_index,
-            base_commit_hash=base_commit_hash,
-            cell_fronts=snapshot.cell_fronts,
-            sampling_snapshot=snapshot,
-        )
-        inspirations = self._include_migration_inspiration(
+            base_cell_index, base_commit_hash = base_selection
+            migration_source, migration_commit = self._migration_for_base(
+                request=request,
+                base_commit_hash=base_commit_hash,
+            )
+            inspirations, selection_stats = self._select_inspirations(
+                base_cell_index=base_cell_index,
+                base_commit_hash=base_commit_hash,
+                cell_fronts=snapshot.cell_fronts,
+                sampling_snapshot=snapshot,
+                rng=rng,
+            )
+            inspirations = self._include_migration_inspiration(
+                inspirations,
+                base_commit_hash=base_commit_hash,
+                migration_commit_hash=migration_commit,
+            )
+            recipe_hash = sampling_recipe_hash(base_commit_hash, inspirations)
+            selected = (
+                base_commit_hash,
+                inspirations,
+                selection_stats,
+                migration_source,
+                migration_commit,
+                recipe_hash,
+            )
+            if recipe_hash not in excluded_recipes:
+                break
+        if selected is None:  # pragma: no cover - guarded by positive attempt count
+            return None
+        (
+            base_commit_hash,
             inspirations,
-            base_commit_hash=base_commit_hash,
-            migration_commit_hash=migration_commit,
-        )
+            selection_stats,
+            migration_source,
+            migration_commit,
+            recipe_hash,
+        ) = selected
+        recipe_reused = recipe_hash in excluded_recipes
+        selection_stats = {
+            **selection_stats,
+            "recipe_resample_attempts": attempts,
+        }
+        if recipe_reused:
+            log.warning(
+                "Sampler exhausted {} attempts; reusing a cooled-down recipe island={} ordinal={}",
+                attempts,
+                snapshot.island_id,
+                request.sampling_ordinal,
+            )
         return _PreparedSamplerJob(
             island_id=snapshot.island_id,
             base_commit_hash=base_commit_hash,
@@ -305,10 +393,28 @@ class MapElitesSampler:
             selection_stats=selection_stats,
             iteration_hint=self._iteration_hint(selection_stats),
             priority=request.priority,
+            sampling_ordinal=request.sampling_ordinal,
+            sampling_recipe_hash=recipe_hash,
+            sampling_recipe_reused=recipe_reused,
             campaign_program=request.campaign_program,
             migration_source_island_id=migration_source,
             migration_commit_hash=migration_commit,
         )
+
+    def _rng_for_request(
+        self,
+        *,
+        request: ScheduleJobRequest,
+        island_id: str,
+    ) -> random.Random:
+        """Derive restart-stable randomness from the persistent job ordinal."""
+
+        if request.sampling_ordinal is None:
+            return self._rng
+        seed = max(0, int(getattr(self.settings, "mapelites_sampler_seed", 0) or 0))
+        payload = f"{seed}\0{island_id}\0{int(request.sampling_ordinal)}".encode("utf-8")
+        derived_seed = int.from_bytes(hashlib.sha256(payload).digest(), "big")
+        return random.Random(derived_seed)
 
     def _migration_for_base(
         self,
@@ -426,6 +532,7 @@ class MapElitesSampler:
         *,
         snapshot: SamplingSnapshot,
         excluded_base_commits: Collection[str] | None,
+        rng: random.Random | None = None,
     ) -> tuple[int, str] | None:
         excluded = {str(commit).strip() for commit in (excluded_base_commits or ()) if str(commit).strip()}
         available_cells = [
@@ -433,11 +540,11 @@ class MapElitesSampler:
                 cell_index,
                 tuple(
                     commit
-                    for commit in commits
+                    for commit in sorted(commits)
                     if commit and commit not in excluded
                 ),
             )
-            for cell_index, commits in snapshot.cell_fronts.items()
+            for cell_index, commits in sorted(snapshot.cell_fronts.items())
         ]
         available_cells = [
             (cell_index, commits)
@@ -446,8 +553,9 @@ class MapElitesSampler:
         ]
         if not available_cells:
             return None
-        cell_index, commits = self._rng.choice(available_cells)
-        return cell_index, self._rng.choice(commits)
+        effective_rng = rng or self._rng
+        cell_index, commits = effective_rng.choice(available_cells)
+        return cell_index, effective_rng.choice(commits)
 
     def _select_inspirations(
         self,
@@ -456,6 +564,7 @@ class MapElitesSampler:
         base_commit_hash: str,
         cell_fronts: Mapping[int, Sequence[str]],
         sampling_snapshot: SamplingSnapshot | None = None,
+        rng: random.Random | None = None,
     ) -> tuple[tuple[str, ...], dict[str, Any]]:
         if self._inspiration_count <= 0:
             return tuple(), {
@@ -479,6 +588,7 @@ class MapElitesSampler:
                 state=_InspirationSelectionState(
                     selected=selected,
                     selected_commits=selected_commits,
+                    rng=rng or self._rng,
                 ),
                 radius_config=_NeighborRadiusConfig(
                     radius=radius,
@@ -494,6 +604,7 @@ class MapElitesSampler:
                 cell_fronts=cell_fronts,
                 selected_commits=selected_commits,
                 needed=self._inspiration_count - len(selected),
+                rng=rng,
             )
             fallback_inspirations = len(fallback)
             selected.extend(fallback)
@@ -543,7 +654,7 @@ class MapElitesSampler:
                 radius=radius,
                 first_radius=first_radius,
             )
-            self._rng.shuffle(positions)
+            state.rng.shuffle(positions)
             added_this_radius = self._append_neighbor_inspirations(
                 positions=positions,
                 commits=commits,
@@ -606,6 +717,7 @@ class MapElitesSampler:
         cell_fronts: Mapping[int, Sequence[str]],
         selected_commits: Collection[str],
         needed: int,
+        rng: random.Random | None = None,
     ) -> tuple[str, ...]:
         candidates = list(
             _fallback_inspiration_candidates(
@@ -616,7 +728,7 @@ class MapElitesSampler:
         )
         if not candidates:
             return ()
-        self._rng.shuffle(candidates)
+        (rng or self._rng).shuffle(candidates)
         return tuple(candidates[: min(max(0, int(needed)), self._fallback_sample_size)])
 
     def _neighbor_indices(self, center_index: int, radius: int) -> list[int]:
@@ -677,7 +789,17 @@ class MapElitesSampler:
             if options:
                 raise TypeError("Pass either a prepared job or keyword options, not both.")
             return request
-        return _PreparedSamplerJob(**dict(options))
+        values = dict(options)
+        values.setdefault("sampling_ordinal", None)
+        values.setdefault("sampling_recipe_reused", False)
+        values.setdefault(
+            "sampling_recipe_hash",
+            sampling_recipe_hash(
+                str(values.get("base_commit_hash") or ""),
+                tuple(values.get("inspiration_commit_hashes") or ()),
+            ),
+        )
+        return _PreparedSamplerJob(**values)
 
     def _build_evolution_job(
         self,
@@ -717,6 +839,9 @@ class MapElitesSampler:
             sampling_fallback_inspirations=int(
                 selection_stats.get("fallback_inspirations", 0)
             ),
+            sampling_ordinal=request.sampling_ordinal,
+            sampling_recipe_hash=request.sampling_recipe_hash,
+            sampling_recipe_reused=request.sampling_recipe_reused,
             is_seed_job=False,
             job_kind="evolution",
             campaign_program_hash=(

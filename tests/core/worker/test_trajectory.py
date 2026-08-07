@@ -297,6 +297,7 @@ def test_chunk_summarizer_rebuilds_client_with_current_runtime_api_key_for_each_
     settings: Settings,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    settings.worker_planning_trajectory_summary_model = "summary-model"
     settings.worker_planning_trajectory_summary_max_retries = 2
     settings.worker_planning_trajectory_summary_retry_backoff_seconds = 0
 
@@ -336,10 +337,118 @@ def test_chunk_summarizer_rebuilds_client_with_current_runtime_api_key_for_each_
     assert seen_api_keys == ["dyn-1", "dyn-2"]
 
 
+def test_chat_chunk_summarizer_can_disable_provider_thinking(
+    settings: Settings,
+) -> None:
+    settings.worker_planning_trajectory_summary_model = "summary-model"
+    settings.worker_planning_trajectory_summary_api_spec = "chat_completions"
+    settings.worker_planning_trajectory_summary_provider_mode = "custom"
+    settings.worker_planning_trajectory_summary_thinking = "disabled"
+    seen: list[dict[str, Any]] = []
+
+    class _Completions:
+        def create(self, **kwargs):  # type: ignore[no-untyped-def]
+            seen.append(kwargs)
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content="Trajectory summary")
+                    )
+                ]
+            )
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=_Completions()),
+    )
+    summarizer = trajectory_module._ChunkSummarizer(  # noqa: SLF001
+        settings=settings,
+        client=client,
+    )
+
+    assert summarizer.summarize_chunk(["step one"]) == "Trajectory summary"
+    assert seen[0]["extra_body"] == {"thinking": {"type": "disabled"}}
+
+
+def test_chat_chunk_summarizer_sends_max_reasoning_with_sufficient_budget(
+    settings: Settings,
+) -> None:
+    settings.worker_planning_trajectory_summary_model = "summary-model"
+    settings.worker_planning_trajectory_summary_api_spec = "chat_completions"
+    settings.worker_planning_trajectory_summary_provider_mode = "custom"
+    settings.worker_planning_trajectory_summary_thinking = "enabled"
+    settings.worker_planning_trajectory_summary_reasoning_effort = "max"
+    settings.worker_planning_trajectory_summary_max_output_tokens = 8192
+    seen: list[dict[str, Any]] = []
+
+    class _Completions:
+        def create(self, **kwargs):  # type: ignore[no-untyped-def]
+            seen.append(kwargs)
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content="Trajectory summary")
+                    )
+                ]
+            )
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=_Completions()),
+    )
+    summarizer = trajectory_module._ChunkSummarizer(  # noqa: SLF001
+        settings=settings,
+        client=client,
+    )
+
+    assert summarizer.summarize_chunk(["step one"]) == "Trajectory summary"
+    assert seen[0]["extra_body"] == {"thinking": {"type": "enabled"}}
+    assert seen[0]["reasoning_effort"] == "max"
+    assert seen[0]["max_tokens"] == 8192
+    assert "temperature" not in seen[0]
+
+
+def test_responses_chunk_summarizer_sends_max_reasoning_with_sufficient_budget(
+    settings: Settings,
+) -> None:
+    settings.worker_planning_trajectory_summary_model = "summary-model"
+    settings.worker_planning_trajectory_summary_api_spec = "responses"
+    settings.worker_planning_trajectory_summary_provider_mode = "custom"
+    settings.worker_planning_trajectory_summary_reasoning_effort = "max"
+    settings.worker_planning_trajectory_summary_max_output_tokens = 8192
+    seen: list[dict[str, Any]] = []
+
+    class _Responses:
+        def create(self, **kwargs):  # type: ignore[no-untyped-def]
+            seen.append(kwargs)
+            return SimpleNamespace(output_text="Trajectory summary")
+
+    summarizer = trajectory_module._ChunkSummarizer(  # noqa: SLF001
+        settings=settings,
+        client=SimpleNamespace(responses=_Responses()),
+    )
+
+    assert summarizer.summarize_chunk(["step one"]) == "Trajectory summary"
+    assert seen[0]["reasoning"] == {"effort": "max"}
+    assert seen[0]["max_output_tokens"] == 8192
+    assert "temperature" not in seen[0]
+
+
+def test_chunk_summary_input_preserves_complete_commit_summary() -> None:
+    summary = "x" * 800
+    card = _card("commit-hash", "parent", summary)
+
+    full = trajectory_module._format_step(card, max_chars=None)  # noqa: SLF001
+    rendered = trajectory_module._format_step(card)  # noqa: SLF001
+
+    assert full.endswith(summary)
+    assert len(full) > 800
+    assert len(rendered) == 240
+
+
 def test_get_or_build_chunk_summary_falls_back_when_runtime_api_key_lookup_fails(
     settings: Settings,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    settings.worker_planning_trajectory_summary_model = "summary-model"
     settings.worker_planning_trajectory_summary_max_retries = 2
     settings.worker_planning_trajectory_summary_retry_backoff_seconds = 0
 

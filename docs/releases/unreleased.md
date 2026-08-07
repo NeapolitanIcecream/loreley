@@ -11,9 +11,16 @@ These notes cover changes merged after `v0.9.0-alpha`.
 - A [64-job `python-pathspec` case study](../research/2026-08-03-pathspec-deepseek-case-study.md)
   documenting a four-generation 25.14% diagnostic candidate and the
   allocation-selection failure that invalidated the preregistered outcome.
-- A [256-logical-job Zstandard case study](../research/2026-08-06-zstandard-reliable-qd-case-study-report.md)
-  in which a third-generation candidate improved holdout compression
-  throughput by 1.04% with neutral decompression.
+- A [fresh Zstandard V19 case study](../research/2026-08-07-zstandard-gpt-v19-case-study-report.md)
+  in which the registered winner improved sealed-holdout compression by 1.02%
+  with neutral decompression, plus a Top-10 follow-up that confirmed a
+  generation-4 candidate on a new corpus.
+- A [three-case-study evidence report](../research/2026-08-07-loreley-case-study-evidence-report.md)
+  that keeps prospective, post-hoc, and supplemental results distinct.
+- Phase-specific Kilo planning and coding models, plus explicit provider,
+  thinking, and reasoning controls for trajectory summaries.
+- Evaluator-provided candidate identities and exact Git-tree identities for
+  archive deduplication and safe contract-scoped result reuse.
 
 ## Fixed
 
@@ -30,3 +37,7 @@ These notes cover changes merged after `v0.9.0-alpha`.
   disabling interactive and suggestion tools in the injected headless profile.
 - Make campaign constraints override generic planning and coding validation
   advice, and allow noisy root calibration to retry after cooldown.
+- Derive sampling from persistent per-island ordinals and cool down recent
+  `(base, inspirations)` recipes so scheduler restarts do not replay a campaign.
+- Reuse coding or planning summaries for commit messages instead of making a
+  separate commit-summary model request.

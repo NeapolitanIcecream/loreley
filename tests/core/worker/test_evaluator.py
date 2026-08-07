@@ -93,6 +93,7 @@ def test_coerce_result_from_mapping_and_truncates_metrics(settings: Settings) ->
 
     payload: Mapping[str, Any] = {
         "summary": "ok",
+        "candidate_identity": " binary\nsha256:abc ",
         "metrics": [
             {"name": "m1", "value": 1},
             {"name": "m2", "value": 2},
@@ -105,6 +106,7 @@ def test_coerce_result_from_mapping_and_truncates_metrics(settings: Settings) ->
     result = evaluator._coerce_result(payload)  # type: ignore[attr-defined]
     assert isinstance(result, EvaluationResult)
     assert result.summary == "ok"
+    assert result.candidate_identity == "binary sha256:abc"
     assert len(result.metrics) == 2
     assert result.tests_executed == ("pytest -q",)
     assert result.logs == ("log1", "log2")
@@ -131,6 +133,7 @@ def test_coerce_outcome_accepts_eval_pass(
     outcome = evaluator._coerce_outcome(  # type: ignore[attr-defined]
         EvalPass(
             summary="ok",
+            candidate_identity="binary-sha256:abc",
             metrics=({"name": "quality", "value": 1.0},),
             tests_executed="pytest -q",
             artifacts=(artifact,),
@@ -144,6 +147,7 @@ def test_coerce_outcome_accepts_eval_pass(
     assert outcome.outcome_kind == "passed"
     assert outcome.result is not None
     assert outcome.result.summary == "ok"
+    assert outcome.result.candidate_identity == "binary-sha256:abc"
     assert outcome.result.metrics[0].name == "quality"
     assert outcome.result.artifacts[0].key == "summary"
 

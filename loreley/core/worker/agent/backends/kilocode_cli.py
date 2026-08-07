@@ -28,10 +28,10 @@ KILO_CONFIG_SCHEMA_URL = "https://app.kilo.ai/config.json"
 KILO_CHAT_COMPLETIONS_PROVIDER_ID = "loreley-openai-compatible"
 KILO_RESPONSES_PROVIDER_ID = "loreley-openai-responses"
 KILO_HEADLESS_AGENT = "loreley-headless"
-KILO_PROVIDER_CONFIG_MODES = ("auto", "config", "legacy_env", "none")
+KILO_PROVIDER_CONFIG_MODES = ("auto", "config", "legacy_env", "native", "none")
 DEFAULT_KILOCODE_TIMEOUT_SECONDS = 1800
 KILO_TERMINATION_GRACE_SECONDS = 5.0
-KiloProviderConfigMode = Literal["auto", "config", "legacy_env", "none"]
+KiloProviderConfigMode = Literal["auto", "config", "legacy_env", "native", "none"]
 
 _KILO_RUN_FLAG_PATTERN = re.compile(r"(?<![\w-])--[A-Za-z0-9][A-Za-z0-9-]*")
 _KILO_VERSION_PATTERN = re.compile(r"\b(\d+(?:\.\d+){1,3}(?:[-+][0-9A-Za-z.]+)?)\b")
@@ -734,7 +734,10 @@ def _assert_kilo_session_directories(
 
 
 def _build_kilocode_openai_env(
-    settings, *, api_key: str | None = None
+    settings,
+    *,
+    api_key: str | None = None,
+    selected_model: str | None = None,
 ) -> dict[str, str]:
     """Translate Loreley OpenAI-compatible settings into Kilo provider config."""
 
@@ -742,7 +745,11 @@ def _build_kilocode_openai_env(
     if mode == "none":
         return {KILO_CONFIG_CONTENT_ENV: build_kilo_headless_config_content()}
 
-    provider_input = _kilocode_provider_input(settings, api_key=api_key)
+    provider_input = _kilocode_provider_input(
+        settings,
+        api_key=api_key,
+        selected_model=selected_model,
+    )
     if not provider_input["has_provider_config"]:
         return {KILO_CONFIG_CONTENT_ENV: build_kilo_headless_config_content()}
     if mode == "legacy_env":
@@ -750,6 +757,8 @@ def _build_kilocode_openai_env(
             KILO_CONFIG_CONTENT_ENV: build_kilo_headless_config_content(),
             **_build_kilocode_legacy_openai_env(provider_input, api_key=api_key),
         }
+    if mode == "native":
+        return _build_kilocode_native_openai_env(provider_input, api_key=api_key)
     return _build_kilocode_config_openai_env(provider_input, api_key=api_key)
 
 
@@ -778,10 +787,13 @@ def _has_kilocode_api_key_source(settings, *, api_key: str | None = None) -> boo
 
 
 def _kilocode_provider_input(
-    settings, *, api_key: str | None = None
+    settings,
+    *,
+    api_key: str | None = None,
+    selected_model: str | None = None,
 ) -> dict[str, object]:
     worker_base_url = _stripped_setting(settings, "worker_kilocode_openai_base_url")
-    worker_model = _kilocode_gateway_model(settings)
+    worker_model = _kilocode_gateway_model(settings, selected_model=selected_model)
     worker_api_spec = getattr(settings, "worker_kilocode_openai_api_spec", None)
 
     base_url = worker_base_url or _stripped_setting(settings, "openai_base_url")
@@ -813,11 +825,13 @@ def _kilocode_provider_id(*, api_spec: object, has_provider_config: bool) -> str
     return None
 
 
-def _kilocode_gateway_model(settings) -> str:
+def _kilocode_gateway_model(settings, *, selected_model: str | None = None) -> str:
     explicit = _stripped_setting(settings, "worker_kilocode_openai_model")
-    if explicit:
+    if explicit and not selected_model:
         return explicit
-    selected = _stripped_setting(settings, "worker_kilocode_model")
+    selected = str(selected_model or "").strip() or _stripped_setting(
+        settings, "worker_kilocode_model"
+    )
     provider_id, separator, model_id = selected.partition("/")
     if not separator:
         return selected
@@ -874,6 +888,43 @@ def _build_kilocode_config_openai_env(
             base_url=base_url,
             model=model,
             include_api_key=include_api_key,
+        )
+    }
+    if base_url:
+        env[LORELEY_KILO_OPENAI_BASE_URL_ENV] = base_url
+    resolved_api_key = str(api_key or "").strip()
+    if resolved_api_key:
+        env[LORELEY_KILO_OPENAI_API_KEY_ENV] = resolved_api_key
+    return env
+
+
+def _build_kilocode_native_openai_env(
+    provider_input: dict[str, object],
+    *,
+    api_key: str | None = None,
+) -> dict[str, str]:
+    """Override the native OpenAI route while retaining Kilo's model catalog."""
+
+    base_url = str(provider_input.get("base_url") or "")
+    model = str(provider_input.get("model") or "")
+    include_api_key = bool(provider_input.get("has_api_key_source"))
+    options: dict[str, str] = {}
+    if include_api_key:
+        options["apiKey"] = f"{{env:{LORELEY_KILO_OPENAI_API_KEY_ENV}}}"
+    if base_url:
+        options["baseURL"] = f"{{env:{LORELEY_KILO_OPENAI_BASE_URL_ENV}}}"
+    payload = _kilo_headless_config_payload()
+    payload.update(
+        {
+            "$schema": KILO_CONFIG_SCHEMA_URL,
+            "provider": {"openai": {"options": options}},
+        }
+    )
+    if model:
+        payload["model"] = f"openai/{model}"
+    env = {
+        KILO_CONFIG_CONTENT_ENV: json.dumps(
+            payload, separators=(",", ":"), sort_keys=True
         )
     }
     if base_url:
@@ -1044,7 +1095,12 @@ def _kilo_error_event_detail(
     return truncate_text(str(error.get("name") or fallback), limit=400)
 
 
-def _kilocode_backend_model(settings, extra_env: dict[str, str]) -> str | None:
+def _kilocode_backend_model(
+    settings,
+    extra_env: dict[str, str],
+    *,
+    selected_model: str | None = None,
+) -> str | None:
     config_content = extra_env.get(KILO_CONFIG_CONTENT_ENV)
     if config_content:
         try:
@@ -1053,8 +1109,14 @@ def _kilocode_backend_model(settings, extra_env: dict[str, str]) -> str | None:
             configured_model = None
         if str(configured_model or "").strip():
             return str(configured_model)
-    selected_model = getattr(settings, "worker_kilocode_model", None)
-    return str(selected_model) if selected_model else None
+    fallback_model = selected_model or getattr(settings, "worker_kilocode_model", None)
+    return str(fallback_model) if fallback_model else None
+
+
+def _phase_kilocode_model(settings, phase: Literal["planning", "coding"]) -> str | None:
+    phase_model = getattr(settings, f"worker_kilocode_{phase}_model", None)
+    selected = phase_model or getattr(settings, "worker_kilocode_model", None) or ""
+    return str(selected).strip() or None
 
 
 def _has_explicit_kilocode_api_key(env: dict[str, str]) -> bool:
@@ -1219,8 +1281,11 @@ def kilocode_planning_backend() -> KilocodeCliBackend:
     variant_value = getattr(settings, "worker_kilocode_variant", None)
     pure_value = getattr(settings, "worker_kilocode_pure", False)
     json_output_value = getattr(settings, "worker_kilocode_json_output", False)
-    extra_env = _build_kilocode_openai_env(settings)
-    model_value = _kilocode_backend_model(settings, extra_env)
+    selected_model = _phase_kilocode_model(settings, "planning")
+    extra_env = _build_kilocode_openai_env(settings, selected_model=selected_model)
+    model_value = _kilocode_backend_model(
+        settings, extra_env, selected_model=selected_model
+    )
     return KilocodeCliBackend(
         bin=str(bin_value),
         mode=str(mode_value) if mode_value else None,
@@ -1255,8 +1320,11 @@ def kilocode_coding_backend() -> KilocodeCliBackend:
     variant_value = getattr(settings, "worker_kilocode_variant", None)
     pure_value = getattr(settings, "worker_kilocode_pure", False)
     json_output_value = getattr(settings, "worker_kilocode_json_output", False)
-    extra_env = _build_kilocode_openai_env(settings)
-    model_value = _kilocode_backend_model(settings, extra_env)
+    selected_model = _phase_kilocode_model(settings, "coding")
+    extra_env = _build_kilocode_openai_env(settings, selected_model=selected_model)
+    model_value = _kilocode_backend_model(
+        settings, extra_env, selected_model=selected_model
+    )
     return KilocodeCliBackend(
         bin=str(bin_value),
         mode=str(mode_value) if mode_value else None,

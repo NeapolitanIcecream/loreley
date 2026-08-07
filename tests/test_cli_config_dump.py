@@ -22,8 +22,10 @@ def _make_settings() -> TestSettings:
         TASKS_REDIS_PASSWORD="redis-secret",
         TASKS_REDIS_URL="redis://:redis-secret@redis.internal:6380/2",
         WORKER_KILOCODE_OPENAI_API_KEY="kilo-secret",
-        WORKER_EVOLUTION_COMMIT_API_KEY="commit-secret",
-        WORKER_EVOLUTION_COMMIT_BASE_URL="https://commit.example.com/v1",
+        WORKER_PLANNING_TRAJECTORY_SUMMARY_PROVIDER_MODE="custom",
+        WORKER_PLANNING_TRAJECTORY_SUMMARY_API_KEY="trajectory-secret",
+        WORKER_PLANNING_TRAJECTORY_SUMMARY_BASE_URL="https://trajectory.example.com/v1",
+        WORKER_PLANNING_TRAJECTORY_SUMMARY_MODEL="summary-model",
         WORKER_REPO_REMOTE_URL="https://token@example.com/repo.git",
         LORELEY_AGENT_API_TOKEN="agent-secret",
         LORELEY_API_WRITE_TOKEN="write-secret",
@@ -85,7 +87,7 @@ def test_config_dump_json_can_disable_secret_masking(monkeypatch: pytest.MonkeyP
     payload = json.loads(captured.out)
     assert payload["openai_api_key"] == "sk-test-secret"
     assert payload["tasks_redis_password"] == "redis-secret"
-    assert payload["worker_evolution_commit_api_key"] == "commit-secret"
+    assert payload["worker_planning_trajectory_summary_api_key"] == "trajectory-secret"
     assert "db-secret-password" in payload["database_dsn"]
 
 
@@ -149,8 +151,15 @@ def test_export_safe_masks_sensitive_fields_snapshot() -> None:
         "tasks_redis_url": payload["tasks_redis_url"],
         "tasks_redis_password": payload["tasks_redis_password"],
         "worker_kilocode_openai_api_key": payload["worker_kilocode_openai_api_key"],
-        "worker_evolution_commit_api_key": payload["worker_evolution_commit_api_key"],
-        "worker_evolution_commit_base_url": payload["worker_evolution_commit_base_url"],
+        "worker_planning_trajectory_summary_api_key": payload[
+            "worker_planning_trajectory_summary_api_key"
+        ],
+        "worker_planning_trajectory_summary_base_url": payload[
+            "worker_planning_trajectory_summary_base_url"
+        ],
+        "worker_planning_trajectory_summary_reasoning_effort": payload[
+            "worker_planning_trajectory_summary_reasoning_effort"
+        ],
         "worker_repo_remote_url": payload["worker_repo_remote_url"],
         "loreley_agent_api_token": payload["loreley_agent_api_token"],
         "loreley_api_write_token": payload["loreley_api_write_token"],
@@ -164,8 +173,9 @@ def test_export_safe_masks_sensitive_fields_snapshot() -> None:
         "tasks_redis_url": "redis://redis.internal:6380/2",
         "tasks_redis_password": "***",
         "worker_kilocode_openai_api_key": "***",
-        "worker_evolution_commit_api_key": "***",
-        "worker_evolution_commit_base_url": "https://commit.example.com/v1",
+        "worker_planning_trajectory_summary_api_key": "***",
+        "worker_planning_trajectory_summary_base_url": "https://trajectory.example.com/v1",
+        "worker_planning_trajectory_summary_reasoning_effort": "provider_default",
         "worker_repo_remote_url": "https://example.com/repo.git",
         "loreley_agent_api_token": "***",
         "loreley_api_write_token": "***",

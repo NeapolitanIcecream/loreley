@@ -20,6 +20,9 @@ def test_migration_registry_orders_v5_to_current_chain() -> None:
         (12, 13),
         (13, 14),
         (14, 15),
+        (15, 16),
+        (16, 17),
+        (17, 18),
     ]
 
 

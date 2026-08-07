@@ -10,8 +10,9 @@ Use this page as a high-level overview and a navigation hub into the focused mod
 
 ## Evidence
 
-Three fixed Kilo/DeepSeek case studies show Loreley improving human seed ideas
-through multi-generation search:
+[The three-case-study evidence report](research/2026-08-07-loreley-case-study-evidence-report.md)
+summarizes the selection status, measurements, costs, and limits. The fixed
+repository studies are:
 
 - [`markdown-it-py`](research/2026-08-02-markdown-it-py-deepseek-case-study.md):
   a preregistered winner was 6.75% faster on a separate 28-document corpus.
@@ -20,9 +21,10 @@ through multi-generation search:
   candidate was selected post-hoc after the registered winner missed its
   allocation gate, so this is capability evidence rather than a prospective
   success.
-- [Zstandard](research/2026-08-06-zstandard-reliable-qd-case-study-report.md): a
-  three-generation lineage improved holdout compression throughput by 1.04%
-  with neutral decompression while passing correctness, size, and memory gates.
+- [Zstandard V19](research/2026-08-07-zstandard-gpt-v19-case-study-report.md): the
+  registered winner improved sealed-holdout compression by 1.02% with neutral
+  decompression. A Top-10 follow-up found a generation-4 candidate with a 0.89%
+  fresh-corpus compression gain.
 
 ---
 

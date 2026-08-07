@@ -579,6 +579,105 @@ def test_ingest_snapshot_records_skipped_state_when_archive_unchanged(
     ]
 
 
+def test_ingest_snapshot_skips_evaluator_equivalent_ingested_candidate(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    ingestion = _make_ingestion(tmp_path)
+    snapshot = JobSnapshot(
+        job_id=uuid4(),
+        base_commit_hash=None,
+        island_id="island-a",
+        result_commit_hash="new-commit",
+        completed_at=None,
+    )
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_ensure_commit_available",
+        lambda _self, commit_hash: commit_hash,
+    )
+
+    class _ScalarResult:
+        def __init__(self, value: Any) -> None:
+            self.value = value
+
+        def scalar_one_or_none(self) -> Any:
+            return self.value
+
+    class _Session:
+        def __init__(self) -> None:
+            self.values = iter(
+                [
+                    SimpleNamespace(evaluation_identity_key="identity-key"),
+                    "existing-commit",
+                ]
+            )
+
+        def execute(self, _stmt: Any) -> _ScalarResult:
+            return _ScalarResult(next(self.values))
+
+    class _Manager:
+        def ingest(self, **_kwargs: Any) -> Any:
+            raise AssertionError("equivalent candidates must not reach MAP-Elites")
+
+    ingestion.manager = _Manager()  # type: ignore[assignment]
+    recorded: list[Any] = []
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_record_successful_ingestion",
+        lambda _self, _snapshot, *, insertion, session: recorded.append(
+            (insertion, session)
+        ),
+    )
+    session = _Session()
+
+    assert ingestion._ingest_snapshot(snapshot, snapshot_session=session) is False
+    insertion, observed_session = recorded[0]
+    assert observed_session is session
+    assert insertion.status == 0
+    assert insertion.record is None
+    assert "existing-commit" in insertion.message
+
+
+def test_equivalent_candidate_check_ignores_unprocessed_peer(tmp_path) -> None:
+    ingestion = _make_ingestion(tmp_path)
+    snapshot = JobSnapshot(
+        job_id=uuid4(),
+        base_commit_hash=None,
+        island_id="island-a",
+        result_commit_hash="new-commit",
+        completed_at=None,
+    )
+
+    class _ScalarResult:
+        def __init__(self, value: Any) -> None:
+            self.value = value
+
+        def scalar_one_or_none(self) -> Any:
+            return self.value
+
+    class _Session:
+        def __init__(self) -> None:
+            self.values = iter(
+                [
+                    SimpleNamespace(evaluation_identity_key="identity-key"),
+                    None,
+                ]
+            )
+
+        def execute(self, _stmt: Any) -> _ScalarResult:
+            return _ScalarResult(next(self.values))
+
+    assert (
+        ingestion._equivalent_ingested_candidate(
+            snapshot,
+            commit_hash="new-commit",
+            session=_Session(),  # type: ignore[arg-type]
+        )
+        is None
+    )
+
+
 def test_ingest_snapshot_wraps_batch_session_work_in_savepoint(monkeypatch, tmp_path) -> None:
     ingestion = _make_ingestion(tmp_path)
     snapshot = JobSnapshot(

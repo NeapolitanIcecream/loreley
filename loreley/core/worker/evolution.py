@@ -47,14 +47,11 @@ from loreley.core.worker.planning import (
     PlanningAgentResponse,
     PlanningError,
 )
-from loreley.core.worker.commit_summary import (
-    CommitSummarizer,
-    CommitSummaryError,
-    CommitSummaryUnavailableError,
-)
+from loreley.core.worker.commit_summary import build_commit_message
 from loreley.core.worker.trajectory import build_inspiration_trajectory_rollup
 from loreley.core.usage import persist_usage_events, usage_context
 from loreley.core.worker.job_store import (
+    CandidateCommitRecord,
     EvolutionJobStore,
     EvolutionWorkerError,
     JobLeaseLost,
@@ -87,8 +84,6 @@ log = logger.bind(module="worker.evolution")
 __all__ = [
     "EvolutionWorker",
     "EvolutionWorkerResult",
-    "CommitSummarizer",
-    "CommitSummaryError",
 ]
 
 
@@ -117,6 +112,9 @@ class JobContext:
     repair_mode: str | None = None
     campaign_program_hash: str | None = None
     campaign_program: CampaignProgramSnapshot | None = None
+    sampling_ordinal: int | None = None
+    sampling_recipe_hash: str | None = None
+    sampling_recipe_reused: bool = False
 
 
 @dataclass(slots=True)
@@ -190,6 +188,7 @@ class _EvolutionRunState:
     rework_attempts: tuple[_ReworkAttemptRecord, ...] = ()
     commit_message: str | None = None
     candidate_commit: str | None = None
+    source_tree_hash: str | None = None
     failure_persisted: bool = False
 
 
@@ -321,7 +320,6 @@ class EvolutionWorker:
         planning_agent: PlanningAgent | None = None,
         coding_agent: CodingAgent | None = None,
         evaluator: Evaluator | None = None,
-        summarizer: CommitSummarizer | None = None,
         job_store: EvolutionJobStore | None = None,
     ) -> None:
         self.settings = settings or get_settings()
@@ -329,7 +327,6 @@ class EvolutionWorker:
         self.planning_agent = planning_agent or PlanningAgent(self.settings)
         self.coding_agent = coding_agent or CodingAgent(self.settings)
         self.evaluator = evaluator or Evaluator(self.settings)
-        self.summarizer = summarizer or CommitSummarizer(settings=self.settings)
         self.job_store = job_store or EvolutionJobStore(settings=self.settings)
 
     def run(self, job_id: str | UUID) -> EvolutionWorkerResult:
@@ -568,11 +565,16 @@ class EvolutionWorker:
             commit_message=state.commit_message,
         )
         heartbeat.raise_if_lease_lost()
-        state.evaluation_outcome = self._run_evaluation(
+        state.source_tree_hash = self.repository.tree_hash(
+            _required(state.candidate_commit, "candidate_commit"),
+            worktree=checkout.worktree,
+        )
+        state.evaluation_outcome = self._evaluate_or_reuse(
             job_ctx=job_ctx,
             checkout=checkout,
             plan=_required(state.plan_response, "plan_response"),
             candidate_commit=_required(state.candidate_commit, "candidate_commit"),
+            source_tree_hash=_required(state.source_tree_hash, "source_tree_hash"),
         )
         heartbeat.raise_if_lease_lost()
 
@@ -637,17 +639,22 @@ class EvolutionWorker:
             commit_message=state.commit_message,
         )
         heartbeat.raise_if_lease_lost()
+        state.source_tree_hash = self.repository.tree_hash(
+            _required(state.candidate_commit, "candidate_commit"),
+            worktree=checkout.worktree,
+        )
         self._record_candidate_publication(job_ctx, checkout, state, published=False)
         heartbeat.raise_if_lease_lost()
         self._publish_candidate_commit(checkout)
         heartbeat.raise_if_lease_lost()
         self._record_candidate_publication(job_ctx, checkout, state, published=True)
         heartbeat.raise_if_lease_lost()
-        state.evaluation_outcome = self._run_evaluation(
+        state.evaluation_outcome = self._evaluate_or_reuse(
             job_ctx=job_ctx,
             checkout=checkout,
             plan=_required(state.plan_response, "plan_response"),
             candidate_commit=_required(state.candidate_commit, "candidate_commit"),
+            source_tree_hash=_required(state.source_tree_hash, "source_tree_hash"),
         )
         heartbeat.raise_if_lease_lost()
 
@@ -660,12 +667,62 @@ class EvolutionWorker:
         published: bool,
     ) -> None:
         self.job_store.record_candidate_commit(
-            job_ctx.job_id,
-            _required(state.candidate_commit, "candidate_commit"),
-            checkout.branch_name or "",
-            run_token=job_ctx.run_token,
-            published=published,
+            CandidateCommitRecord(
+                job_id=job_ctx.job_id,
+                commit_hash=_required(state.candidate_commit, "candidate_commit"),
+                branch_name=checkout.branch_name or "",
+                run_token=job_ctx.run_token,
+                published=published,
+                source_tree_hash=state.source_tree_hash,
+            )
         )
+
+    def _evaluate_or_reuse(
+        self,
+        *,
+        job_ctx: JobContext,
+        checkout: CheckoutContext,
+        plan: PlanningAgentResponse,
+        candidate_commit: str,
+        source_tree_hash: str,
+    ) -> EvaluationOutcome:
+        evaluator_name, evaluator_version = self._evaluator_contract()
+        lookup = getattr(self.job_store, "find_reusable_evaluation", None)
+        if callable(lookup):
+            reused = lookup(
+                source_tree_hash=source_tree_hash,
+                evaluator_name=evaluator_name,
+                evaluator_version=evaluator_version,
+                campaign_program_hash=job_ctx.campaign_program_hash,
+                candidate_commit_hash=candidate_commit,
+            )
+            if reused is not None:
+                log.info(
+                    "Reused exact source-tree evaluation job={} tree={} evaluator={}",
+                    job_ctx.job_id,
+                    source_tree_hash,
+                    evaluator_name,
+                )
+                return reused
+        return self._run_evaluation(
+            job_ctx=job_ctx,
+            checkout=checkout,
+            plan=plan,
+            candidate_commit=candidate_commit,
+        )
+
+    def _evaluator_contract(self) -> tuple[str | None, str | None]:
+        evaluator_name = str(
+            getattr(self.evaluator, "plugin_ref", None)
+            or self.evaluator.__class__.__name__
+            or "evaluator"
+        ).strip() or None
+        evaluator_version = str(
+            getattr(self.evaluator, "evaluator_version", None)
+            or getattr(self.settings, "worker_evaluator_version", None)
+            or ""
+        ).strip() or None
+        return evaluator_name, evaluator_version
 
     def _enforce_campaign_scope(
         self,
@@ -817,6 +874,11 @@ class EvolutionWorker:
             repair_mode=getattr(locked_job, "repair_mode", None),
             campaign_program_hash=campaign_program_hash,
             campaign_program=campaign_program,
+            sampling_ordinal=getattr(locked_job, "sampling_ordinal", None),
+            sampling_recipe_hash=getattr(locked_job, "sampling_recipe_hash", None),
+            sampling_recipe_reused=bool(
+                getattr(locked_job, "sampling_recipe_reused", False)
+            ),
         )
 
     def _load_campaign_program(
@@ -1060,28 +1122,11 @@ class EvolutionWorker:
         plan: PlanningAgentResponse,
         coding: CodingAgentResponse,
     ) -> str:
-        try:
-            with usage_context(
-                job_id=job_ctx.job_id,
-                run_token=job_ctx.run_token,
-                phase="commit_summary",
-            ):
-                return self.summarizer.generate(
-                    job=job_ctx,
-                    plan=plan.plan,
-                    coding=coding.report,
-                )
-        except (CommitSummaryError, CommitSummaryUnavailableError) as exc:
-            log.warning("Commit summarizer failed; falling back to non-LLM subject: {}", exc)
-            fallback = (
-                coding.report.summary
-                or plan.plan.summary
-                or f"Evolution job {job_ctx.job_id}"
-            )
-            return self.summarizer.coerce_subject(
-                fallback,
-                default=f"Evolution job {job_ctx.job_id}",
-            )
+        return build_commit_message(
+            job_id=job_ctx.job_id,
+            plan=plan.plan,
+            coding=coding.report,
+        )
 
     def _create_commit(
         self,
@@ -1164,6 +1209,9 @@ class EvolutionWorker:
                         "initial_radius": job_ctx.sampling_initial_radius,
                         "radius_used": job_ctx.sampling_radius_used,
                         "fallback_inspirations": job_ctx.sampling_fallback_inspirations,
+                        "ordinal": job_ctx.sampling_ordinal,
+                        "recipe_hash": job_ctx.sampling_recipe_hash,
+                        "recipe_reused": job_ctx.sampling_recipe_reused,
                     },
                 },
             )
@@ -1179,8 +1227,10 @@ class EvolutionWorker:
                     finished_at=finished_at,
                 )
             result = self.evaluator.evaluate(context)
+            evaluator_name, evaluator_version = self._evaluator_contract()
             return EvaluationOutcome(
-                evaluator_name=None,
+                evaluator_name=evaluator_name,
+                evaluator_version=evaluator_version,
                 candidate_commit_hash=candidate_commit,
                 outcome_kind="passed",
                 result=result,

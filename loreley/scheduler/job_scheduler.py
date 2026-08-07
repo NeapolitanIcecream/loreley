@@ -17,6 +17,7 @@ from uuid import UUID
 from loguru import logger
 from rich.console import Console
 from sqlalchemy import and_, func, or_, select
+from sqlalchemy.exc import SQLAlchemyError
 
 from loreley.config import Settings, resolve_default_island_id
 from loreley.core.campaign_program import (
@@ -32,6 +33,7 @@ from loreley.core.map_elites.sampler import (
     SamplingSnapshot,
     ScheduleJobRequest,
     ScheduledSamplerJob,
+    sampling_recipe_hash,
 )
 from loreley.core.worker.repair import (
     REPAIR_MODE_REBASE_FROM_NEAREST_VIABLE,
@@ -572,6 +574,9 @@ class JobScheduler:
         island_job_counts = self._load_island_job_counts(
             tuple(snapshot.island_id for snapshot in sampling_snapshots)
         )
+        recent_recipe_hashes = self._load_recent_recipe_hashes(
+            tuple(snapshot.island_id for snapshot in sampling_snapshots)
+        )
         if sampling_snapshots:
             scheduled_ids.extend(
                 self._schedule_normal_jobs(
@@ -579,6 +584,7 @@ class JobScheduler:
                     sampling_snapshots=sampling_snapshots,
                     selected_base_commits=selected_base_commits,
                     island_job_counts=island_job_counts,
+                    excluded_recipe_hashes=recent_recipe_hashes,
                 )
             )
         else:
@@ -594,6 +600,7 @@ class JobScheduler:
                     sampling_snapshots=sampling_snapshots,
                     selected_base_commits=selected_base_commits,
                     island_job_counts=island_job_counts,
+                    excluded_recipe_hashes=recent_recipe_hashes,
                 )
             )
         if scheduled_ids:
@@ -607,6 +614,7 @@ class JobScheduler:
         sampling_snapshots: Sequence[SamplingSnapshot],
         selected_base_commits: dict[str, set[str]],
         island_job_counts: dict[str, int],
+        excluded_recipe_hashes: dict[str, set[str]],
     ) -> list[UUID]:
         if capacity <= 0 or not sampling_snapshots:
             return []
@@ -623,12 +631,18 @@ class JobScheduler:
                 target_job_number=target_job_number,
             )
             island_bases = selected_base_commits.setdefault(snapshot.island_id, set())
+            island_recipes = excluded_recipe_hashes.setdefault(snapshot.island_id, set())
             job = self._schedule_single_job(
-                island_id=snapshot.island_id,
-                sampling_snapshot=snapshot,
-                excluded_base_commits=island_bases,
-                migration_source_island_id=migration_source,
-                migration_commit_hash=migration_commit,
+                ScheduleJobRequest(
+                    island_id=snapshot.island_id,
+                    sampling_snapshot=snapshot,
+                    excluded_base_commits=island_bases,
+                    excluded_recipe_hashes=island_recipes,
+                    sampling_ordinal=target_job_number,
+                    campaign_program=self._campaign_program_snapshot,
+                    migration_source_island_id=migration_source,
+                    migration_commit_hash=migration_commit,
+                )
             )
             if job is None:
                 active_snapshots.pop(cursor)
@@ -638,6 +652,9 @@ class JobScheduler:
             scheduled_ids.append(job.job_id)
             island_job_counts[snapshot.island_id] = target_job_number
             island_bases.add(str(job.base_commit_hash))
+            job_recipe_hash = str(getattr(job, "sampling_recipe_hash", "") or "").strip()
+            if job_recipe_hash:
+                island_recipes.add(job_recipe_hash)
             cursor = (cursor + 1) % len(active_snapshots)
         return scheduled_ids
 
@@ -659,6 +676,75 @@ class JobScheduler:
             if island_id in counts:
                 counts[island_id] = int(count)
         return counts
+
+    def _load_recent_recipe_hashes(
+        self,
+        island_ids: Sequence[str],
+    ) -> dict[str, set[str]]:
+        islands = tuple(dict.fromkeys(island_ids))
+        recipes: dict[str, set[str]] = {island_id: set() for island_id in islands}
+        cooldown = max(
+            0,
+            int(getattr(self.settings, "mapelites_sampler_recipe_cooldown_jobs", 0) or 0),
+        )
+        if not islands or cooldown <= 0:
+            return recipes
+        try:
+            with session_scope() as session:
+                for island_id in islands:
+                    recipes[island_id] = self._recent_recipe_hashes_for_island(
+                        session,
+                        island_id=island_id,
+                        cooldown=cooldown,
+                    )
+        except SQLAlchemyError as exc:
+            log.warning("Could not load sampling recipe cooldown history: {}", exc)
+        return recipes
+
+    @staticmethod
+    def _recent_recipe_hashes_for_island(
+        session: Any,
+        *,
+        island_id: str,
+        cooldown: int,
+    ) -> set[str]:
+        rows = session.execute(
+            select(
+                EvolutionJob.base_commit_hash,
+                EvolutionJob.inspiration_commit_hashes,
+                EvolutionJob.sampling_recipe_hash,
+            )
+            .where(
+                EvolutionJob.island_id == island_id,
+                EvolutionJob.job_kind != "seed",
+                EvolutionJob.base_commit_hash.is_not(None),
+                EvolutionJob.base_commit_hash != "",
+            )
+            .order_by(EvolutionJob.created_at.desc(), EvolutionJob.id.desc())
+            .limit(cooldown)
+        ).all()
+        recipes: set[str] = set()
+        for row in rows:
+            recipe_hash = JobScheduler._sampling_recipe_hash_from_history_row(row)
+            if recipe_hash is None:
+                log.warning(
+                    "Ignoring malformed sampling recipe history row island={}",
+                    island_id,
+                )
+                continue
+            recipes.add(recipe_hash)
+        return recipes
+
+    @staticmethod
+    def _sampling_recipe_hash_from_history_row(row: Any) -> str | None:
+        try:
+            base_commit, inspirations, persisted_hash = row
+        except (TypeError, ValueError):
+            return None
+        return str(persisted_hash or "").strip() or sampling_recipe_hash(
+            str(base_commit or ""),
+            tuple(inspirations or ()),
+        )
 
     def _load_sampling_snapshots(self, *, total_jobs: int) -> tuple[SamplingSnapshot, ...]:
         islands = tuple(self.settings.mapelites_islands)
@@ -864,24 +950,10 @@ class JobScheduler:
 
     def _schedule_single_job(
         self,
-        *,
-        island_id: str | None = None,
-        sampling_snapshot: SamplingSnapshot | None = None,
-        excluded_base_commits: Sequence[str] | None = None,
-        migration_source_island_id: str | None = None,
-        migration_commit_hash: str | None = None,
+        request: ScheduleJobRequest,
     ) -> ScheduledSamplerJob | None:
         try:
-            scheduled = self.sampler.schedule_job(
-                ScheduleJobRequest(
-                    island_id=island_id,
-                    sampling_snapshot=sampling_snapshot,
-                    excluded_base_commits=excluded_base_commits,
-                    campaign_program=self._campaign_program_snapshot,
-                    migration_source_island_id=migration_source_island_id,
-                    migration_commit_hash=migration_commit_hash,
-                )
-            )
+            scheduled = self.sampler.schedule_job(request)
         except Exception as exc:  # pragma: no cover - defensive
             self.console.log(f"[bold red]Sampler failed[/] reason={exc}")
             log.exception("Sampler failed to create a job: {}", exc)
