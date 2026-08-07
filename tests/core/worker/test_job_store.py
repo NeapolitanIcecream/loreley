@@ -32,6 +32,7 @@ from loreley.core.worker.evaluator import (
 )
 from loreley.core.worker.evolution import JobContext
 from loreley.core.worker.job_store import (
+    CandidateCommitRecord,
     EvolutionJobStore,
     EvolutionWorkerError,
     JobLeaseLost,
@@ -255,12 +256,14 @@ def test_record_candidate_commit_updates_job_metadata(
     store = EvolutionJobStore(settings=settings)
 
     store.record_candidate_commit(
-        job_id,
-        "cand123",
-        "exp/job-branch",
-        run_token=run_token,
-        published=False,
-        source_tree_hash="tree123",
+        CandidateCommitRecord(
+            job_id=job_id,
+            commit_hash="cand123",
+            branch_name="exp/job-branch",
+            run_token=run_token,
+            published=False,
+            source_tree_hash="tree123",
+        )
     )
     assert job_row.candidate_commit_hash == "cand123"
     assert job_row.candidate_branch_name == "exp/job-branch"
@@ -271,11 +274,13 @@ def test_record_candidate_commit_updates_job_metadata(
     assert candidate_rows[0].source_tree_hash == "tree123"
 
     store.record_candidate_commit(
-        job_id,
-        "cand123",
-        "exp/job-branch",
-        run_token=run_token,
-        published=True,
+        CandidateCommitRecord(
+            job_id=job_id,
+            commit_hash="cand123",
+            branch_name="exp/job-branch",
+            run_token=run_token,
+            published=True,
+        )
     )
     assert job_row.candidate_commit_hash == "cand123"
     assert job_row.candidate_branch_name == "exp/job-branch"
@@ -391,11 +396,13 @@ def test_record_candidate_commit_rejects_stale_run_token(
 
     with pytest.raises(JobLeaseLost):
         store.record_candidate_commit(
-            job_id,
-            "cand123",
-            "exp/job-branch",
-            run_token=stale_run_token,
-            published=True,
+            CandidateCommitRecord(
+                job_id=job_id,
+                commit_hash="cand123",
+                branch_name="exp/job-branch",
+                run_token=stale_run_token,
+                published=True,
+            )
         )
 
     assert job_row.candidate_commit_hash == "cand-old"
@@ -436,10 +443,12 @@ def test_record_candidate_commit_without_run_token_preserves_failed_job(
 
     with pytest.raises(EvolutionWorkerError, match="cannot record a candidate"):
         store.record_candidate_commit(
-            job_id,
-            "cand-new",
-            "exp/new-branch",
-            published=True,
+            CandidateCommitRecord(
+                job_id=job_id,
+                commit_hash="cand-new",
+                branch_name="exp/new-branch",
+                published=True,
+            )
         )
 
     assert job_row.candidate_commit_hash == "cand-old"

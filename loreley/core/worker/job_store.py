@@ -125,6 +125,18 @@ class LockedJob:
     sampling_recipe_reused: bool
 
 
+@dataclass(slots=True, frozen=True)
+class CandidateCommitRecord:
+    """Candidate publication metadata persisted before or after a push."""
+
+    job_id: UUID
+    commit_hash: str
+    branch_name: str
+    run_token: UUID | None = None
+    published: bool = False
+    source_tree_hash: str | None = None
+
+
 @dataclass(slots=True)
 class _PersistSuccessPayload:
     subject: str
@@ -295,61 +307,55 @@ class EvolutionJobStore:
 
     def record_candidate_commit(
         self,
-        job_id: UUID,
-        commit_hash: str,
-        branch_name: str,
-        *,
-        run_token: UUID | None = None,
-        published: bool = False,
-        source_tree_hash: str | None = None,
+        record: CandidateCommitRecord,
     ) -> None:
         """Persist candidate commit metadata before or after remote publication."""
 
-        candidate_hash = str(commit_hash or "").strip()
+        candidate_hash = str(record.commit_hash or "").strip()
         if not candidate_hash:
             raise EvolutionWorkerError("Candidate commit hash must be provided.")
-        candidate_branch = str(branch_name or "").strip()
+        candidate_branch = str(record.branch_name or "").strip()
         if not candidate_branch:
             raise EvolutionWorkerError("Candidate branch name must be provided.")
 
         try:
             with session_scope() as session:
-                if run_token is not None:
+                if record.run_token is not None:
                     job = self._lock_active_job_for_run(
                         session=session,
-                        job_id=job_id,
-                        run_token=run_token,
+                        job_id=record.job_id,
+                        run_token=record.run_token,
                         action="recording candidate metadata",
                     )
                 else:
-                    job = session.get(EvolutionJob, job_id)
+                    job = session.get(EvolutionJob, record.job_id)
                     if not job:
                         raise EvolutionWorkerError(
-                            f"Evolution job {job_id} disappeared while recording candidate metadata.",
+                            f"Evolution job {record.job_id} disappeared while recording candidate metadata.",
                         )
-                if run_token is None and job.status in {
+                if record.run_token is None and job.status in {
                     JobStatus.SUCCEEDED,
                     JobStatus.FAILED,
                     JobStatus.CANCELLED,
                 }:
                     raise EvolutionWorkerError(
-                        f"Evolution job {job_id} cannot record a candidate in status {job.status}.",
+                        f"Evolution job {record.job_id} cannot record a candidate in status {job.status}.",
                     )
                 job.candidate_commit_hash = candidate_hash
                 job.candidate_branch_name = candidate_branch
-                job.candidate_published_at = _utc_now() if published else None
+                job.candidate_published_at = _utc_now() if record.published else None
                 self._upsert_candidate_commit_row(
                     session=session,
                     job=job,
                     commit_hash=candidate_hash,
                     branch_name=candidate_branch,
-                    published=published,
-                    run_token=run_token,
-                    source_tree_hash=str(source_tree_hash or "").strip() or None,
+                    published=record.published,
+                    run_token=record.run_token,
+                    source_tree_hash=str(record.source_tree_hash or "").strip() or None,
                 )
         except SQLAlchemyError as exc:
             raise EvolutionWorkerError(
-                f"Failed to record candidate metadata for job {job_id}: {exc}",
+                f"Failed to record candidate metadata for job {record.job_id}: {exc}",
             ) from exc
 
     def find_reusable_evaluation(

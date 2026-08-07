@@ -27,7 +27,7 @@ Large, audit/debug oriented payloads (prompts, raw outputs, logs) are written to
   - Marks the job as `RUNNING`, records `started_at`, initial `heartbeat_at`, `lease_expires_at`, generates a fresh `run_token`, records a bounded `worker_id`, clears any `last_error`, resets stale candidate metadata from prior attempts, and returns a `LockedJob` snapshot.
   - Raises `EvolutionWorkerError` when `base_commit_hash` is missing, and wraps SQL errors into `JobLockConflict` when they indicate a lock-not-available condition, or `EvolutionWorkerError` otherwise.
 
-- **`record_candidate_commit(job_id, commit_hash, branch_name, published=False)`**:
+- **`record_candidate_commit(CandidateCommitRecord(...))`**:
   - Stores the latest candidate commit hash and branch name on the `EvolutionJob` row before or after remote publication.
   - Accepts an optional `run_token`; when provided, the write is fenced to the active worker attempt and fails with `JobLeaseLost` if another process already reclaimed the job.
   - When `published=False`, records the candidate pointer while leaving `candidate_published_at` unset.

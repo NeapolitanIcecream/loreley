@@ -115,6 +115,7 @@ class _PreparedSamplerJob:
 class _InspirationSelectionState:
     selected: list[str]
     selected_commits: set[str]
+    rng: random.Random
 
 
 @dataclass(slots=True, frozen=True)
@@ -587,13 +588,13 @@ class MapElitesSampler:
                 state=_InspirationSelectionState(
                     selected=selected,
                     selected_commits=selected_commits,
+                    rng=rng or self._rng,
                 ),
                 radius_config=_NeighborRadiusConfig(
                     radius=radius,
                     min_radius=min_radius,
                     max_radius=max_radius,
                 ),
-                rng=rng,
             )
 
         fallback_inspirations = 0
@@ -627,7 +628,6 @@ class MapElitesSampler:
         sampling_snapshot: SamplingSnapshot | None,
         state: _InspirationSelectionState,
         radius_config: _NeighborRadiusConfig,
-        rng: random.Random | None = None,
     ) -> int:
         try:
             base_coords = np.asarray(
@@ -654,7 +654,7 @@ class MapElitesSampler:
                 radius=radius,
                 first_radius=first_radius,
             )
-            (rng or self._rng).shuffle(positions)
+            state.rng.shuffle(positions)
             added_this_radius = self._append_neighbor_inspirations(
                 positions=positions,
                 commits=commits,

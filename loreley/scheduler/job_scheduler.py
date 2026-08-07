@@ -633,13 +633,16 @@ class JobScheduler:
             island_bases = selected_base_commits.setdefault(snapshot.island_id, set())
             island_recipes = excluded_recipe_hashes.setdefault(snapshot.island_id, set())
             job = self._schedule_single_job(
-                island_id=snapshot.island_id,
-                sampling_snapshot=snapshot,
-                excluded_base_commits=island_bases,
-                excluded_recipe_hashes=island_recipes,
-                sampling_ordinal=target_job_number,
-                migration_source_island_id=migration_source,
-                migration_commit_hash=migration_commit,
+                ScheduleJobRequest(
+                    island_id=snapshot.island_id,
+                    sampling_snapshot=snapshot,
+                    excluded_base_commits=island_bases,
+                    excluded_recipe_hashes=island_recipes,
+                    sampling_ordinal=target_job_number,
+                    campaign_program=self._campaign_program_snapshot,
+                    migration_source_island_id=migration_source,
+                    migration_commit_hash=migration_commit,
+                )
             )
             if job is None:
                 active_snapshots.pop(cursor)
@@ -689,39 +692,59 @@ class JobScheduler:
         try:
             with session_scope() as session:
                 for island_id in islands:
-                    rows = session.execute(
-                        select(
-                            EvolutionJob.base_commit_hash,
-                            EvolutionJob.inspiration_commit_hashes,
-                            EvolutionJob.sampling_recipe_hash,
-                        )
-                        .where(
-                            EvolutionJob.island_id == island_id,
-                            EvolutionJob.job_kind != "seed",
-                            EvolutionJob.base_commit_hash.is_not(None),
-                            EvolutionJob.base_commit_hash != "",
-                        )
-                        .order_by(EvolutionJob.created_at.desc(), EvolutionJob.id.desc())
-                        .limit(cooldown)
-                    ).all()
-                    for row in rows:
-                        if len(row) != 3:
-                            log.warning(
-                                "Ignoring malformed sampling recipe history row island={}",
-                                island_id,
-                            )
-                            continue
-                        base_commit, inspirations, persisted_hash = row
-                        recipe_hash = str(persisted_hash or "").strip()
-                        if not recipe_hash:
-                            recipe_hash = sampling_recipe_hash(
-                                str(base_commit or ""),
-                                tuple(inspirations or ()),
-                            )
-                        recipes[island_id].add(recipe_hash)
+                    recipes[island_id] = self._recent_recipe_hashes_for_island(
+                        session,
+                        island_id=island_id,
+                        cooldown=cooldown,
+                    )
         except SQLAlchemyError as exc:
             log.warning("Could not load sampling recipe cooldown history: {}", exc)
         return recipes
+
+    @staticmethod
+    def _recent_recipe_hashes_for_island(
+        session: Any,
+        *,
+        island_id: str,
+        cooldown: int,
+    ) -> set[str]:
+        rows = session.execute(
+            select(
+                EvolutionJob.base_commit_hash,
+                EvolutionJob.inspiration_commit_hashes,
+                EvolutionJob.sampling_recipe_hash,
+            )
+            .where(
+                EvolutionJob.island_id == island_id,
+                EvolutionJob.job_kind != "seed",
+                EvolutionJob.base_commit_hash.is_not(None),
+                EvolutionJob.base_commit_hash != "",
+            )
+            .order_by(EvolutionJob.created_at.desc(), EvolutionJob.id.desc())
+            .limit(cooldown)
+        ).all()
+        recipes: set[str] = set()
+        for row in rows:
+            recipe_hash = JobScheduler._sampling_recipe_hash_from_history_row(row)
+            if recipe_hash is None:
+                log.warning(
+                    "Ignoring malformed sampling recipe history row island={}",
+                    island_id,
+                )
+                continue
+            recipes.add(recipe_hash)
+        return recipes
+
+    @staticmethod
+    def _sampling_recipe_hash_from_history_row(row: Any) -> str | None:
+        try:
+            base_commit, inspirations, persisted_hash = row
+        except (TypeError, ValueError):
+            return None
+        return str(persisted_hash or "").strip() or sampling_recipe_hash(
+            str(base_commit or ""),
+            tuple(inspirations or ()),
+        )
 
     def _load_sampling_snapshots(self, *, total_jobs: int) -> tuple[SamplingSnapshot, ...]:
         islands = tuple(self.settings.mapelites_islands)
@@ -927,28 +950,10 @@ class JobScheduler:
 
     def _schedule_single_job(
         self,
-        *,
-        island_id: str | None = None,
-        sampling_snapshot: SamplingSnapshot | None = None,
-        excluded_base_commits: Sequence[str] | None = None,
-        excluded_recipe_hashes: Sequence[str] | None = None,
-        sampling_ordinal: int | None = None,
-        migration_source_island_id: str | None = None,
-        migration_commit_hash: str | None = None,
+        request: ScheduleJobRequest,
     ) -> ScheduledSamplerJob | None:
         try:
-            scheduled = self.sampler.schedule_job(
-                ScheduleJobRequest(
-                    island_id=island_id,
-                    sampling_snapshot=sampling_snapshot,
-                    excluded_base_commits=excluded_base_commits,
-                    excluded_recipe_hashes=excluded_recipe_hashes,
-                    sampling_ordinal=sampling_ordinal,
-                    campaign_program=self._campaign_program_snapshot,
-                    migration_source_island_id=migration_source_island_id,
-                    migration_commit_hash=migration_commit_hash,
-                )
-            )
+            scheduled = self.sampler.schedule_job(request)
         except Exception as exc:  # pragma: no cover - defensive
             self.console.log(f"[bold red]Sampler failed[/] reason={exc}")
             log.exception("Sampler failed to create a job: {}", exc)

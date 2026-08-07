@@ -51,6 +51,7 @@ from loreley.core.worker.commit_summary import build_commit_message
 from loreley.core.worker.trajectory import build_inspiration_trajectory_rollup
 from loreley.core.usage import persist_usage_events, usage_context
 from loreley.core.worker.job_store import (
+    CandidateCommitRecord,
     EvolutionJobStore,
     EvolutionWorkerError,
     JobLeaseLost,
@@ -666,12 +667,14 @@ class EvolutionWorker:
         published: bool,
     ) -> None:
         self.job_store.record_candidate_commit(
-            job_ctx.job_id,
-            _required(state.candidate_commit, "candidate_commit"),
-            checkout.branch_name or "",
-            run_token=job_ctx.run_token,
-            published=published,
-            source_tree_hash=state.source_tree_hash,
+            CandidateCommitRecord(
+                job_id=job_ctx.job_id,
+                commit_hash=_required(state.candidate_commit, "candidate_commit"),
+                branch_name=checkout.branch_name or "",
+                run_token=job_ctx.run_token,
+                published=published,
+                source_tree_hash=state.source_tree_hash,
+            )
         )
 
     def _evaluate_or_reuse(

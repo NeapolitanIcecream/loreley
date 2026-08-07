@@ -470,23 +470,19 @@ class _FakeJobStoreForPublishFailure:
 
     def record_candidate_commit(
         self,
-        job_id: uuid.UUID,
-        commit_hash: str,
-        branch_name: str,
-        *,
-        run_token: uuid.UUID | None = None,
-        published: bool = False,
-        source_tree_hash: str | None = None,
+        record: Any,
     ) -> None:
-        self._events.append(f"store.record_candidate[published={published}]")
+        self._events.append(
+            f"store.record_candidate[published={record.published}]"
+        )
         self.recorded_candidates.append(
             {
-                "job_id": job_id,
-                "commit_hash": commit_hash,
-                "branch_name": branch_name,
-                "run_token": run_token,
-                "published": published,
-                "source_tree_hash": source_tree_hash,
+                "job_id": record.job_id,
+                "commit_hash": record.commit_hash,
+                "branch_name": record.branch_name,
+                "run_token": record.run_token,
+                "published": record.published,
+                "source_tree_hash": record.source_tree_hash,
             }
         )
 

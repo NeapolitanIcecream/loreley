@@ -893,47 +893,11 @@ class _ChunkSummarizer:
                         "- Output plain text only."
                     )
                     client = self._get_client()
-                    if self._api_spec == "responses":
-                        request: dict[str, object] = {
-                            "model": self._model,
-                            "input": prompt,
-                            "max_output_tokens": self._max_tokens,
-                            "instructions": instructions,
-                        }
-                        if self._reasoning_effort == "provider_default":
-                            request["temperature"] = self._temperature
-                        else:
-                            request["reasoning"] = {
-                                "effort": self._reasoning_effort
-                            }
-                        response = client.responses.create(**request)
-                        self._record_usage(response, api_surface="responses")
-                        text = (response.output_text or "").strip()
-                    else:
-                        request: dict[str, object] = {
-                            "model": self._model,
-                            "messages": [
-                                {"role": "system", "content": instructions},
-                                {"role": "user", "content": prompt},
-                            ],
-                            "max_tokens": self._max_tokens,
-                        }
-                        # DeepSeek ignores sampling controls in thinking mode.
-                        # Omit the field so the recorded request matches the
-                        # effective provider behavior.
-                        if self._thinking != "enabled":
-                            request["temperature"] = self._temperature
-                        if self._thinking != "provider_default":
-                            request["extra_body"] = {
-                                "thinking": {"type": self._thinking}
-                            }
-                        if self._reasoning_effort != "provider_default":
-                            request["reasoning_effort"] = self._reasoning_effort
-                        response = client.chat.completions.create(
-                            **request,
-                        )
-                        self._record_usage(response, api_surface="chat_completions")
-                        text = _extract_chat_completion_text(response).strip()
+                    text = self._request_summary(
+                        client=client,
+                        prompt=prompt,
+                        instructions=instructions,
+                    )
 
                     if not text:
                         raise ChunkSummaryError("Chunk summarizer returned empty output.")
@@ -944,6 +908,73 @@ class _ChunkSummarizer:
             raise ChunkSummaryError(
                 f"Chunk summarizer failed after {attempts} attempt(s): {last_exc}",
             ) from last_exc
+
+    def _request_summary(
+        self,
+        *,
+        client: OpenAI,
+        prompt: str,
+        instructions: str,
+    ) -> str:
+        if self._api_spec == "responses":
+            return self._request_responses(
+                client=client,
+                prompt=prompt,
+                instructions=instructions,
+            )
+        return self._request_chat_completion(
+            client=client,
+            prompt=prompt,
+            instructions=instructions,
+        )
+
+    def _request_responses(
+        self,
+        *,
+        client: OpenAI,
+        prompt: str,
+        instructions: str,
+    ) -> str:
+        request: dict[str, object] = {
+            "model": self._model,
+            "input": prompt,
+            "max_output_tokens": self._max_tokens,
+            "instructions": instructions,
+        }
+        if self._reasoning_effort == "provider_default":
+            request["temperature"] = self._temperature
+        else:
+            request["reasoning"] = {"effort": self._reasoning_effort}
+        response = client.responses.create(**request)
+        self._record_usage(response, api_surface="responses")
+        return (response.output_text or "").strip()
+
+    def _request_chat_completion(
+        self,
+        *,
+        client: OpenAI,
+        prompt: str,
+        instructions: str,
+    ) -> str:
+        request: dict[str, object] = {
+            "model": self._model,
+            "messages": [
+                {"role": "system", "content": instructions},
+                {"role": "user", "content": prompt},
+            ],
+            "max_tokens": self._max_tokens,
+        }
+        # DeepSeek ignores sampling controls in thinking mode. Omit the field so
+        # the recorded request matches the effective provider behavior.
+        if self._thinking != "enabled":
+            request["temperature"] = self._temperature
+        if self._thinking != "provider_default":
+            request["extra_body"] = {"thinking": {"type": self._thinking}}
+        if self._reasoning_effort != "provider_default":
+            request["reasoning_effort"] = self._reasoning_effort
+        response = client.chat.completions.create(**request)
+        self._record_usage(response, api_surface="chat_completions")
+        return _extract_chat_completion_text(response).strip()
 
     @staticmethod
     def _build_prompt(step_lines: Sequence[str]) -> str:
