@@ -34,6 +34,9 @@ def _load_migrations() -> tuple[SchemaMigration, ...]:
         v0013_llm_usage_events,
         v0014_embedding_cache_manifests,
         v0015_multiobjective_islands,
+        v0016_candidate_identities,
+        v0017_sampling_recipe_and_source_tree,
+        v0018_full_change_summaries,
     )
 
     return (
@@ -47,6 +50,9 @@ def _load_migrations() -> tuple[SchemaMigration, ...]:
         v0013_llm_usage_events.MIGRATION,
         v0014_embedding_cache_manifests.MIGRATION,
         v0015_multiobjective_islands.MIGRATION,
+        v0016_candidate_identities.MIGRATION,
+        v0017_sampling_recipe_and_source_tree.MIGRATION,
+        v0018_full_change_summaries.MIGRATION,
     )
 
 

@@ -331,6 +331,8 @@ Output requirements:
 - Run local checks only when the Evolution Goal and Constraints permit them.
   Campaign restrictions take precedence over validation steps in the plan.
 - Before finishing, ensure the worktree contains meaningful tracked-file changes.
+- Before finishing, ensure the resulting source tree is not an exact copy of the base
+  or any inspiration commit. Inspirations are evidence, not snapshots to reproduce.
 - Do not create git commits or push branches; leave the repository in a modified state.
 - Return a single Markdown execution report.
 - Use '##' headings for these sections: Summary, Changes, Checks, Notes (optional).

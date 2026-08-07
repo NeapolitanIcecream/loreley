@@ -34,13 +34,13 @@ ORM models and enums for single-tenant experiment databases.
   - Optionally links to the root `CommitCard` and `Metric` rows used for compatibility projections, but archive/status baseline reads should key off `campaign_baselines`.
 - **`CandidateCommit`** (`candidate_commits` table): durable ledger row for a worker-produced candidate commit.
   - Primary key: `id` (UUID).
-  - Stores the candidate commit hash, parent hash, nearest viable ancestor, produced job, run token, job kind, repair lineage, campaign program hash, publication state, evaluation state, archive state, lifecycle state, and repair-pool counters.
+  - Stores the candidate commit hash, exact source-tree hash, parent hash, nearest viable ancestor, produced job, run token, job kind, repair lineage, campaign program hash, publication state, evaluation state, archive state, lifecycle state, repair-pool counters, and optional evaluator-scoped candidate identity.
   - Failed candidates can be present here without a `CommitCard` and without entering the MAP-Elites archive.
 - **`DiagnosticCapsule`** (`diagnostic_capsules` table): sanitized evaluator failure evidence safe for repair prompts.
   - Stores a bounded JSON payload, policy version, whether the policy passed, and omitted-reason codes.
   - Links to the candidate, job, and evaluation attempt when available.
 - **`EvaluationAttempt`** (`evaluation_attempts` table): one evaluator outcome observed for a candidate commit.
-  - Stores evaluator identity, campaign program hash, outcome kind, failure stage/kind, repairability, safe failure summary, diagnostic capsule link, artifact policy version, and start/finish timestamps.
+  - Stores evaluator identity, campaign program hash, optional raw candidate identity and its scoped hash, outcome kind, failure stage/kind, repairability, safe failure summary, diagnostic capsule link, artifact policy version, and start/finish timestamps.
 - **`OperatorTask`** (`operator_tasks` table): background task state for the local operator console.
   - Primary key: `id` (UUID).
   - Stores `kind`, `status`, JSONB request/result payloads, an optional error summary, and start/completion timestamps.
@@ -52,7 +52,7 @@ ORM models and enums for single-tenant experiment databases.
   - Stores actor, action type, dry-run flag, expected state, request/result payloads, error code/summary, and completion timestamp.
   - A partial unique index on `(action_type, idempotency_key)` applies when `idempotency_key` is non-empty, so retried Agent REST requests can replay a prior result instead of executing the underlying write twice.
 - **`EvolutionJob`** (`evolution_jobs` table): represents a single evolution iteration scheduled by the system.
-  - Tracks current `status`, base commit, island ID, inspiration commit hashes, size-bounded job spec fields (`goal`, `constraints`, `acceptance_criteria`, `notes`, `tags`, sampling hints), human-readable `plan_summary`, priority, scheduling/processing timestamps, and last error if any.
+  - Tracks current `status`, base commit, island ID, inspiration commit hashes, size-bounded job spec fields (`goal`, `constraints`, `acceptance_criteria`, `notes`, `tags`, sampling hints), persistent sampling ordinal, recipe hash/reuse flag, human-readable `plan_summary`, priority, scheduling/processing timestamps, and last error if any.
   - Stores optional `campaign_program_hash` for the campaign contract used to create the job.
   - Stores candidate-publication metadata (`candidate_commit_hash`, `candidate_branch_name`, `candidate_published_at`) so a worker can durably point to a locally created or remotely published candidate even if a later step fails.
   - Stores active lease ownership fields (`heartbeat_at`, `lease_expires_at`, `run_token`, `worker_id`) so workers can renew job ownership and stale attempts can be fenced off.

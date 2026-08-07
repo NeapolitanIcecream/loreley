@@ -81,9 +81,14 @@ def test_commit_card_subject_normalizes_whitespace() -> None:
     assert card.subject == "Hello world"
 
 
+def test_commit_card_preserves_complete_worker_change_summary() -> None:
+    card = _minimal_commit_card(change_summary="x" * 800)
+
+    assert len(card.change_summary) == 800
+
+
 @pytest.mark.parametrize("bad_subject", ["```python", "{ \"a\": 1 }", "[1, 2, 3]"])
 def test_commit_card_subject_rejects_code_fences_and_json_like_prefix(bad_subject: str) -> None:
     with pytest.raises(ValidationError):
         _minimal_commit_card(subject=bad_subject)
-
 

@@ -76,3 +76,4 @@ ADR numbers are unique and chronological. `ADR 0029` resolves an earlier duplica
 - [ADR 0050: Baseline-first campaign comparability contract](0050-baseline-first-campaign-bootstrap.md)
 - [ADR 0051: QD keep/discard candidate semantics](0051-qd-keep-discard-semantics.md)
 - [ADR 0052: Multi-island Pareto archives and native worker processes](0052-multi-island-pareto-archive-and-worker-processes.md)
+- [ADR 0053: Prevent restart recipe replay and repeated exact-tree evaluation](0053-restart-stable-sampling-and-tree-reuse.md)

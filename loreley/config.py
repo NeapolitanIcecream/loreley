@@ -462,6 +462,14 @@ class Settings(BaseSettings):
         default=None,
         alias="WORKER_KILOCODE_MODEL",
     )
+    worker_kilocode_planning_model: str | None = Field(
+        default=None,
+        alias="WORKER_KILOCODE_PLANNING_MODEL",
+    )
+    worker_kilocode_coding_model: str | None = Field(
+        default=None,
+        alias="WORKER_KILOCODE_CODING_MODEL",
+    )
     worker_kilocode_variant: str | None = Field(
         default=None,
         alias="WORKER_KILOCODE_VARIANT",
@@ -482,7 +490,9 @@ class Settings(BaseSettings):
         default=None,
         alias="WORKER_KILOCODE_STATE_ROOT",
     )
-    worker_kilocode_provider_config_mode: Literal["auto", "config", "legacy_env", "none"] = Field(
+    worker_kilocode_provider_config_mode: Literal[
+        "auto", "config", "legacy_env", "native", "none"
+    ] = Field(
         default="auto",
         alias="WORKER_KILOCODE_PROVIDER_CONFIG_MODE",
     )
@@ -580,47 +590,6 @@ class Settings(BaseSettings):
         ),
         alias="WORKER_EVOLUTION_GLOBAL_GOAL",
     )
-    worker_evolution_commit_provider_mode: Literal[
-        "inherit_worker",
-        "global_openai",
-        "custom",
-        "disabled",
-    ] = Field(
-        default="inherit_worker",
-        alias="WORKER_EVOLUTION_COMMIT_PROVIDER_MODE",
-    )
-    worker_evolution_commit_api_key: str | None = Field(
-        default=None,
-        alias="WORKER_EVOLUTION_COMMIT_API_KEY",
-    )
-    worker_evolution_commit_base_url: str | None = Field(
-        default=None,
-        alias="WORKER_EVOLUTION_COMMIT_BASE_URL",
-    )
-    worker_evolution_commit_api_spec: Literal["responses", "chat_completions"] = Field(
-        default="responses",
-        alias="WORKER_EVOLUTION_COMMIT_API_SPEC",
-    )
-    worker_evolution_commit_model: str = Field(
-        default="gpt-4.1-mini",
-        alias="WORKER_EVOLUTION_COMMIT_MODEL",
-    )
-    worker_evolution_commit_temperature: float = Field(
-        default=0.2,
-        alias="WORKER_EVOLUTION_COMMIT_TEMPERATURE",
-    )
-    worker_evolution_commit_max_output_tokens: int = Field(
-        default=128,
-        alias="WORKER_EVOLUTION_COMMIT_MAX_OUTPUT_TOKENS",
-    )
-    worker_evolution_commit_max_retries: int = Field(
-        default=3,
-        alias="WORKER_EVOLUTION_COMMIT_MAX_RETRIES",
-    )
-    worker_evolution_commit_retry_backoff_seconds: float = Field(
-        default=2.0,
-        alias="WORKER_EVOLUTION_COMMIT_RETRY_BACKOFF_SECONDS",
-    )
     worker_evolution_commit_author: str = Field(
         default="Loreley Worker",
         alias="WORKER_EVOLUTION_COMMIT_AUTHOR",
@@ -629,11 +598,6 @@ class Settings(BaseSettings):
         default="worker@loreley.local",
         alias="WORKER_EVOLUTION_COMMIT_EMAIL",
     )
-    worker_evolution_commit_subject_max_chars: int = Field(
-        default=72,
-        alias="WORKER_EVOLUTION_COMMIT_SUBJECT_MAX_CHARS",
-    )
-
     # Planning-time inspiration trajectory rollups (LCA-aware).
     worker_planning_trajectory_block_size: int = Field(
         default=8,
@@ -650,6 +614,44 @@ class Settings(BaseSettings):
     worker_planning_trajectory_summary_model: str | None = Field(
         default=None,
         alias="WORKER_PLANNING_TRAJECTORY_SUMMARY_MODEL",
+    )
+    worker_planning_trajectory_summary_provider_mode: Literal[
+        "global_openai",
+        "custom",
+    ] = Field(
+        default="global_openai",
+        alias="WORKER_PLANNING_TRAJECTORY_SUMMARY_PROVIDER_MODE",
+    )
+    worker_planning_trajectory_summary_api_key: str | None = Field(
+        default=None,
+        alias="WORKER_PLANNING_TRAJECTORY_SUMMARY_API_KEY",
+    )
+    worker_planning_trajectory_summary_base_url: str | None = Field(
+        default=None,
+        alias="WORKER_PLANNING_TRAJECTORY_SUMMARY_BASE_URL",
+    )
+    worker_planning_trajectory_summary_api_spec: Literal[
+        "responses",
+        "chat_completions",
+    ] = Field(
+        default="responses",
+        alias="WORKER_PLANNING_TRAJECTORY_SUMMARY_API_SPEC",
+    )
+    worker_planning_trajectory_summary_thinking: Literal[
+        "provider_default",
+        "enabled",
+        "disabled",
+    ] = Field(
+        default="provider_default",
+        alias="WORKER_PLANNING_TRAJECTORY_SUMMARY_THINKING",
+    )
+    worker_planning_trajectory_summary_reasoning_effort: Literal[
+        "provider_default",
+        "high",
+        "max",
+    ] = Field(
+        default="provider_default",
+        alias="WORKER_PLANNING_TRAJECTORY_SUMMARY_REASONING_EFFORT",
     )
     worker_planning_trajectory_summary_temperature: float = Field(
         default=0.0,
@@ -878,6 +880,15 @@ class Settings(BaseSettings):
         default=0,
         alias="MAPELITES_SAMPLER_SEED",
     )
+    mapelites_sampler_recipe_cooldown_jobs: int = Field(
+        default=64,
+        ge=0,
+        alias="MAPELITES_SAMPLER_RECIPE_COOLDOWN_JOBS",
+    )
+    mapelites_sampler_max_resample_attempts: PositiveInt = Field(
+        default=32,
+        alias="MAPELITES_SAMPLER_MAX_RESAMPLE_ATTEMPTS",
+    )
     mapelites_sampler_neighbor_radius: int = Field(
         default=1,
         alias="MAPELITES_SAMPLER_NEIGHBOR_RADIUS",
@@ -1073,6 +1084,8 @@ def _safe_export_worker_payload(settings: Settings, *, mask_secrets: bool) -> di
         "worker_kilocode_mode": settings.worker_kilocode_mode,
         "worker_kilocode_agent": settings.worker_kilocode_agent,
         "worker_kilocode_model": settings.worker_kilocode_model,
+        "worker_kilocode_planning_model": settings.worker_kilocode_planning_model,
+        "worker_kilocode_coding_model": settings.worker_kilocode_coding_model,
         "worker_kilocode_variant": settings.worker_kilocode_variant,
         "worker_kilocode_pure": settings.worker_kilocode_pure,
         "worker_kilocode_json_output": settings.worker_kilocode_json_output,
@@ -1094,19 +1107,31 @@ def _safe_export_worker_payload(settings: Settings, *, mask_secrets: bool) -> di
         "worker_evaluator_timeout_seconds": settings.worker_evaluator_timeout_seconds,
         "worker_evaluator_max_metrics": settings.worker_evaluator_max_metrics,
         "worker_evolution_global_goal": settings.worker_evolution_global_goal,
-        "worker_evolution_commit_provider_mode": (
-            settings.worker_evolution_commit_provider_mode
+        "worker_evolution_commit_author": settings.worker_evolution_commit_author,
+        "worker_evolution_commit_email": settings.worker_evolution_commit_email,
+        "worker_planning_trajectory_summary_provider_mode": (
+            settings.worker_planning_trajectory_summary_provider_mode
         ),
-        "worker_evolution_commit_api_key": _safe_export_secret(
-            settings.worker_evolution_commit_api_key,
+        "worker_planning_trajectory_summary_api_key": _safe_export_secret(
+            settings.worker_planning_trajectory_summary_api_key,
             mask_secrets=mask_secrets,
         ),
-        "worker_evolution_commit_base_url": _safe_export_url(
-            settings.worker_evolution_commit_base_url,
+        "worker_planning_trajectory_summary_base_url": _safe_export_url(
+            settings.worker_planning_trajectory_summary_base_url,
             mask_secrets=mask_secrets,
         ),
-        "worker_evolution_commit_api_spec": settings.worker_evolution_commit_api_spec,
-        "worker_evolution_commit_model": settings.worker_evolution_commit_model,
+        "worker_planning_trajectory_summary_api_spec": (
+            settings.worker_planning_trajectory_summary_api_spec
+        ),
+        "worker_planning_trajectory_summary_thinking": (
+            settings.worker_planning_trajectory_summary_thinking
+        ),
+        "worker_planning_trajectory_summary_reasoning_effort": (
+            settings.worker_planning_trajectory_summary_reasoning_effort
+        ),
+        "worker_planning_trajectory_summary_model": (
+            settings.worker_planning_trajectory_summary_model
+        ),
     }
 
 
@@ -1182,6 +1207,23 @@ def _build_safe_export_payload(settings: Settings, *, mask_secrets: bool) -> dic
         "mapelites_pareto_front_max_size": settings.mapelites_pareto_front_max_size,
         "mapelites_pareto_epsilon": settings.mapelites_pareto_epsilon,
         "mapelites_migration_interval_jobs": settings.mapelites_migration_interval_jobs,
+        "mapelites_sampler_inspiration_count": settings.mapelites_sampler_inspiration_count,
+        "mapelites_sampler_seed": settings.mapelites_sampler_seed,
+        "mapelites_sampler_recipe_cooldown_jobs": (
+            settings.mapelites_sampler_recipe_cooldown_jobs
+        ),
+        "mapelites_sampler_max_resample_attempts": (
+            settings.mapelites_sampler_max_resample_attempts
+        ),
+        "mapelites_sampler_neighbor_radius": settings.mapelites_sampler_neighbor_radius,
+        "mapelites_sampler_neighbor_max_radius": (
+            settings.mapelites_sampler_neighbor_max_radius
+        ),
+        "mapelites_sampler_fallback_sample_size": (
+            settings.mapelites_sampler_fallback_sample_size
+        ),
+        "mapelites_sampler_default_priority": settings.mapelites_sampler_default_priority,
+        "mapelites_seed_population_size": settings.mapelites_seed_population_size,
         "scheduler_max_unfinished_jobs": settings.scheduler_max_unfinished_jobs,
         "scheduler_dispatch_batch_size": settings.scheduler_dispatch_batch_size,
         "scheduler_schedule_batch_size": settings.scheduler_schedule_batch_size,

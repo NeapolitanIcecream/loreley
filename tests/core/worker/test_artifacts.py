@@ -87,6 +87,7 @@ def test_write_job_artifacts_includes_worker_metadata(settings, tmp_path: Path, 
     )
     evaluation = EvaluationResult(
         summary="ok",
+        candidate_identity="binary-sha256:abc",
         metrics=(EvaluationMetric(name="sum_radii", value=1.23),),
         extra={"evaluator_duration_seconds": 0.25},
     )
@@ -114,6 +115,7 @@ def test_write_job_artifacts_includes_worker_metadata(settings, tmp_path: Path, 
     assert planning_payload["worker"]["instance_id"] == "worker-03"
     assert coding_payload["worker"]["instance_id"] == "worker-03"
     assert evaluation_payload["worker"]["instance_id"] == "worker-03"
+    assert evaluation_payload["candidate_identity"] == "binary-sha256:abc"
     assert planning_payload["worker"]["pid"] == os.getpid()
     assert coding_payload["worker"]["pid"] == os.getpid()
     assert evaluation_payload["worker"]["pid"] == os.getpid()

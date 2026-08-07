@@ -23,6 +23,7 @@ from loreley.core.contracts import clamp_text, normalize_single_line
 from loreley.core.git import RepositoryError as GitRepositoryError, require_commit
 from loreley.core.job_state import pending_ingestion_job_conditions
 from loreley.core.map_elites.manager import MapElitesManager
+from loreley.core.map_elites.types import CommitEmbeddingArtifacts, MapElitesInsertionResult
 from loreley.core.repo_lock import repo_lock
 from loreley.core.worker.evaluator import EvaluationContext, EvaluationError, EvaluationResult, Evaluator
 from loreley.core.worker.repository import RepositoryError, WorkerRepository
@@ -428,6 +429,20 @@ class MapElitesIngestion:
             return False
 
         raw_commit_hash, commit_hash = commit_hashes
+        duplicate_of = self._equivalent_ingested_candidate(
+            snapshot,
+            commit_hash=commit_hash,
+            session=snapshot_session,
+        )
+        if duplicate_of is not None:
+            insertion = self._duplicate_identity_result(duplicate_of)
+            self._log_ingestion_result(snapshot, commit_hash=commit_hash, insertion=insertion)
+            self._record_successful_ingestion(
+                snapshot,
+                insertion=insertion,
+                session=snapshot_session,
+            )
+            return False
         metrics_payload = self._metrics_payload_for_ingestion(
             commit_hash=commit_hash,
             raw_commit_hash=raw_commit_hash,
@@ -452,6 +467,68 @@ class MapElitesIngestion:
         if snapshot_session is None:
             self._record_successful_ingestion(snapshot, insertion=insertion)
         return bool(insertion.record)
+
+    def _equivalent_ingested_candidate(
+        self,
+        snapshot: JobSnapshot,
+        *,
+        commit_hash: str,
+        session: Session | None,
+    ) -> str | None:
+        """Return the first processed evaluator-equivalent candidate, if any.
+
+        The check includes warmup candidates that have completed ingestion but
+        are not in an archive yet. This keeps duplicate identities out of PCA
+        history as well as out of an already-populated archive.
+        """
+
+        if session is None or not hasattr(session, "execute"):
+            return None
+        candidate = session.execute(
+            select(CandidateCommit).where(CandidateCommit.commit_hash == commit_hash)
+        ).scalar_one_or_none()
+        identity_key = str(
+            getattr(candidate, "evaluation_identity_key", None) or ""
+        ).strip()
+        if not identity_key:
+            return None
+        island_id = snapshot.island_id or resolve_default_island_id(self.settings)
+        return session.execute(
+            select(CandidateCommit.commit_hash)
+            .outerjoin(
+                EvolutionJob,
+                EvolutionJob.id == CandidateCommit.produced_by_job_id,
+            )
+            .where(
+                CandidateCommit.island_id == island_id,
+                CandidateCommit.evaluation_identity_key == identity_key,
+                CandidateCommit.commit_hash != commit_hash,
+                or_(
+                    CandidateCommit.archive_status == "member",
+                    EvolutionJob.ingestion_status.in_(("succeeded", "skipped")),
+                ),
+            )
+            .order_by(EvolutionJob.completed_at.asc(), CandidateCommit.created_at.asc())
+            .limit(1)
+        ).scalar_one_or_none()
+
+    @staticmethod
+    def _duplicate_identity_result(existing_commit_hash: str) -> MapElitesInsertionResult:
+        return MapElitesInsertionResult(
+            status=0,
+            delta=0.0,
+            record=None,
+            artifacts=CommitEmbeddingArtifacts(
+                repo_state_stats=None,
+                preprocessed_files=(),
+                code_embedding=None,
+                final_embedding=None,
+            ),
+            message=(
+                "Evaluator-equivalent candidate already represented by ingested commit "
+                f"{existing_commit_hash}; duplicate identity was not admitted."
+            ),
+        )
 
     def _resolve_snapshot_commit(self, snapshot: JobSnapshot) -> tuple[str, str] | None:
         raw_commit_hash = (snapshot.result_commit_hash or "").strip()

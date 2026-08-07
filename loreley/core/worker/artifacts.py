@@ -949,6 +949,7 @@ def _write_evaluation_result_artifacts(
             "campaign_program": dict(request.campaign_program or {}) or None,
             "worker": worker,
             "summary": request.evaluation.summary,
+            "candidate_identity": request.evaluation.candidate_identity,
             "metrics": [metric.as_dict() for metric in request.evaluation.metrics],
             "tests_executed": list(request.evaluation.tests_executed),
             "logs": list(request.evaluation.logs),

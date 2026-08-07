@@ -260,6 +260,7 @@ def test_record_candidate_commit_updates_job_metadata(
         "exp/job-branch",
         run_token=run_token,
         published=False,
+        source_tree_hash="tree123",
     )
     assert job_row.candidate_commit_hash == "cand123"
     assert job_row.candidate_branch_name == "exp/job-branch"
@@ -267,6 +268,7 @@ def test_record_candidate_commit_updates_job_metadata(
     candidate_rows = [obj for obj in added if isinstance(obj, job_store.CandidateCommit)]
     assert candidate_rows
     assert candidate_rows[0].campaign_program_hash == "program123"
+    assert candidate_rows[0].source_tree_hash == "tree123"
 
     store.record_candidate_commit(
         job_id,
@@ -278,6 +280,76 @@ def test_record_candidate_commit_updates_job_metadata(
     assert job_row.candidate_commit_hash == "cand123"
     assert job_row.candidate_branch_name == "exp/job-branch"
     assert job_row.candidate_published_at is not None
+
+
+def test_find_reusable_evaluation_copies_metrics_without_artifacts(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    candidate = SimpleNamespace(
+        commit_hash="prior123",
+        candidate_identity="binary:abc",
+    )
+    card = SimpleNamespace(
+        id=uuid.uuid4(),
+        evaluation_summary="original benchmark pass",
+    )
+    attempt = SimpleNamespace(
+        evaluator_name="example:evaluate",
+        evaluator_version="v3",
+    )
+    metric = SimpleNamespace(
+        name="throughput",
+        value=1.25,
+        unit="ratio",
+        higher_is_better=True,
+        details={"samples": 5},
+    )
+
+    class FirstResult:
+        def first(self) -> tuple[Any, Any, Any]:
+            return candidate, card, attempt
+
+    class MetricResult:
+        def scalars(self) -> list[Any]:
+            return [metric]
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def execute(self, _stmt: Any) -> Any:
+            self.calls += 1
+            return FirstResult() if self.calls == 1 else MetricResult()
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    monkeypatch.setattr(job_store, "session_scope", fake_scope)
+    store = EvolutionJobStore(settings=settings)
+
+    outcome = store.find_reusable_evaluation(
+        source_tree_hash="tree123",
+        evaluator_name="example:evaluate",
+        evaluator_version="v3",
+        campaign_program_hash="program123",
+        candidate_commit_hash="current456",
+    )
+
+    assert outcome is not None and outcome.result is not None
+    assert outcome.candidate_commit_hash == "current456"
+    assert outcome.result.candidate_identity == "binary:abc"
+    assert outcome.result.metrics[0].as_dict() == {
+        "name": "throughput",
+        "value": 1.25,
+        "unit": "ratio",
+        "higher_is_better": True,
+        "details": {"samples": 5},
+    }
+    assert outcome.result.artifacts == ()
+    assert outcome.result.extra["evaluation_reused"] is True
+    assert outcome.result.extra["reused_source_commit_hash"] == "prior123"
 
 
 def test_record_candidate_commit_rejects_stale_run_token(
@@ -520,6 +592,8 @@ def test_persist_success_updates_job_and_records_metadata(
     metadata = [obj for obj in added if isinstance(obj, job_store.CommitCard)]
     metrics = [obj for obj in added if isinstance(obj, job_store.Metric)]
     artifacts = [obj for obj in added if isinstance(obj, job_store.EvaluationArtifactRecord)]
+    attempts = [obj for obj in added if isinstance(obj, job_store.EvaluationAttempt)]
+    candidates = [obj for obj in added if isinstance(obj, job_store.CandidateCommit)]
     assert len(metadata) == 1
     assert metadata[0].commit_hash == "newcommit"
     assert len(metrics) == 1
@@ -529,6 +603,10 @@ def test_persist_success_updates_job_and_records_metadata(
     assert artifacts[0].commit_card_id == metadata[0].id
     assert artifacts[0].key == "benchmark_report"
     assert artifacts[0].diagnostics[0]["message"] == "throughput improved"
+    assert attempts[0].candidate_identity == "binary-sha256:abc"
+    assert len(attempts[0].evaluation_identity_key or "") == 64
+    assert candidates[0].candidate_identity == "binary-sha256:abc"
+    assert candidates[0].evaluation_identity_key == attempts[0].evaluation_identity_key
 
 
 def test_persist_success_materializes_passed_outcome_artifact_records(
@@ -998,6 +1076,7 @@ def _sample_coding_response() -> CodingAgentResponse:
 def _sample_evaluation_result() -> EvaluationResult:
     return EvaluationResult(
         summary="eval",
+        candidate_identity="binary-sha256:abc",
         metrics=(EvaluationMetric(name="score", value=1.0),),
         tests_executed=("pytest -q",),
         logs=("log",),

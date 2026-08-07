@@ -499,7 +499,67 @@ def _worker_requires_openai_api_key(settings: Settings) -> bool:
     model = str(getattr(settings, "mapelites_code_embedding_model", "") or "").strip().lower()
     if not model.startswith("local-hash"):
         return True
-    return int(getattr(settings, "worker_planning_trajectory_max_chunks", 0) or 0) > 0
+    trajectory_enabled = (
+        int(getattr(settings, "worker_planning_trajectory_max_chunks", 0) or 0) > 0
+    )
+    provider_mode = str(
+        getattr(settings, "worker_planning_trajectory_summary_provider_mode", "") or ""
+    ).strip()
+    return trajectory_enabled and provider_mode == "global_openai"
+
+
+def check_trajectory_summary_provider(settings: Settings) -> CheckResult:
+    """Fail early when trajectory summarization has no resolvable LLM route."""
+
+    if int(settings.worker_planning_trajectory_max_chunks or 0) <= 0:
+        return CheckResult(
+            "trajectory_summary_provider",
+            "ok",
+            "disabled because WORKER_PLANNING_TRAJECTORY_MAX_CHUNKS=0",
+        )
+    model = (settings.worker_planning_trajectory_summary_model or "").strip()
+    if not model:
+        return CheckResult(
+            "trajectory_summary_provider",
+            "fail",
+            "WORKER_PLANNING_TRAJECTORY_SUMMARY_MODEL is required when trajectory summaries are enabled.",
+        )
+    mode = settings.worker_planning_trajectory_summary_provider_mode
+    if mode == "custom":
+        missing = []
+        if not (settings.worker_planning_trajectory_summary_api_key or "").strip():
+            missing.append("WORKER_PLANNING_TRAJECTORY_SUMMARY_API_KEY")
+        if not (settings.worker_planning_trajectory_summary_base_url or "").strip():
+            missing.append("WORKER_PLANNING_TRAJECTORY_SUMMARY_BASE_URL")
+        if missing:
+            return CheckResult(
+                "trajectory_summary_provider",
+                "fail",
+                "custom route is missing " + ", ".join(missing),
+            )
+        api_spec = settings.worker_planning_trajectory_summary_api_spec
+    else:
+        api_spec = settings.openai_api_spec
+    reasoning_effort = (
+        settings.worker_planning_trajectory_summary_reasoning_effort
+    )
+    if (
+        settings.worker_planning_trajectory_summary_thinking == "disabled"
+        and reasoning_effort != "provider_default"
+    ):
+        return CheckResult(
+            "trajectory_summary_provider",
+            "fail",
+            "trajectory-summary reasoning effort cannot be set when thinking is disabled",
+        )
+    return CheckResult(
+        "trajectory_summary_provider",
+        "ok",
+        "mode="
+        f"{mode} api_spec={api_spec} model={model} "
+        f"thinking={settings.worker_planning_trajectory_summary_thinking} "
+        f"reasoning_effort={reasoning_effort}",
+    )
 
 
 def _check_dynamic_openai_auth(settings: Settings) -> CheckResult | None:
@@ -1021,6 +1081,7 @@ def preflight_worker(settings: Settings, *, timeout_seconds: float = 2.0) -> lis
 
     results.append(check_binary(settings.worker_repo_git_bin or "git", label="git"))
     results.append(_check_openai_api_key_for_worker(settings))
+    results.append(check_trajectory_summary_provider(settings))
     _append_database_schema_checks(results, settings=settings, timeout_seconds=timeout_seconds)
     results.append(
         check_redis(

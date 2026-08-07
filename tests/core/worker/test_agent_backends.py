@@ -1645,6 +1645,62 @@ def test_kilocode_phase_backend_factories_use_worker_timeout_settings(
     get_settings.cache_clear()
 
 
+def test_kilocode_phase_backend_factories_support_distinct_native_openai_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from loreley.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("WORKER_KILOCODE_PROVIDER_CONFIG_MODE", "native")
+    monkeypatch.setenv("WORKER_KILOCODE_OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv(
+        "WORKER_KILOCODE_OPENAI_BASE_URL", "https://example.invalid/v1"
+    )
+    monkeypatch.setenv("WORKER_KILOCODE_PLANNING_MODEL", "openai/gpt-5.6-sol")
+    monkeypatch.setenv("WORKER_KILOCODE_CODING_MODEL", "openai/gpt-5.6-luna")
+    get_settings.cache_clear()
+
+    planning_backend = kilocode_planning_backend()
+    coding_backend = kilocode_coding_backend()
+
+    assert planning_backend.model == "openai/gpt-5.6-sol"
+    assert coding_backend.model == "openai/gpt-5.6-luna"
+    for backend, expected in (
+        (planning_backend, "openai/gpt-5.6-sol"),
+        (coding_backend, "openai/gpt-5.6-luna"),
+    ):
+        config = json.loads(backend.extra_env["KILO_CONFIG_CONTENT"])
+        assert config["model"] == expected
+        assert config["provider"]["openai"]["options"] == {
+            "apiKey": "{env:LORELEY_KILO_OPENAI_API_KEY}",
+            "baseURL": "{env:LORELEY_KILO_OPENAI_BASE_URL}",
+        }
+        assert (
+            backend.extra_env["LORELEY_KILO_OPENAI_BASE_URL"]
+            == "https://example.invalid/v1"
+        )
+
+    get_settings.cache_clear()
+
+
+def test_kilocode_phase_models_fall_back_to_global_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from loreley.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("WORKER_KILOCODE_PROVIDER_CONFIG_MODE", "none")
+    monkeypatch.setenv("WORKER_KILOCODE_MODEL", "openai/gpt-5.6-luna")
+    monkeypatch.delenv("WORKER_KILOCODE_PLANNING_MODEL", raising=False)
+    monkeypatch.delenv("WORKER_KILOCODE_CODING_MODEL", raising=False)
+    get_settings.cache_clear()
+
+    assert kilocode_planning_backend().model == "openai/gpt-5.6-luna"
+    assert kilocode_coding_backend().model == "openai/gpt-5.6-luna"
+
+    get_settings.cache_clear()
+
+
 def test_kilocode_phase_backend_factories_use_default_worker_timeouts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -1,0 +1,130 @@
+{
+  "schema_version": 1,
+  "experiment": "zstandard-reliable-qd-gpt-20260806-v19",
+  "scope": "one fixed-repository Zstandard case study on one Apple-silicon host",
+  "outcome": "modest_positive",
+  "root": {
+    "experiment_commit": "5b3fe474e4df572a7588be7abf3d8b6bd4b6010e",
+    "upstream_commit": "82d322c4973d9e2968d94047a40892bc6d9a9bdf"
+  },
+  "winner": {
+    "commit": "7b9aef38ecd44ba1efe0ff7282c234ae1f1ef14c",
+    "binary_sha256": "e7e9ef6b060fd060303812e8374a9cb73cba86a965798098b397db3539c302c0",
+    "source": "manual_seed_5",
+    "generation": 1,
+    "direction": "unroll the scalar histogram update loop four bytes at a time",
+    "diff_lines": 9
+  },
+  "jobs": {
+    "physical_terminal": 220,
+    "succeeded": 211,
+    "failed": 9,
+    "unique_successful_release_binaries": 167,
+    "archive_entries": 13,
+    "occupied_coordinates": 11,
+    "duplicate_measurement_reuse_jobs": 19
+  },
+  "validation": [
+    {
+      "commit": "44a22df0b05cbfbd3c14245803fb0259afe377e2",
+      "compression_geomean": 1.0098695961979454,
+      "compression_lower_95": 1.009052117593791,
+      "decompression_geomean": 0.9975439245016544,
+      "decompression_lower_95": 0.9970312549102099,
+      "worst_cell_speedup": 0.9959794413315476
+    },
+    {
+      "commit": "f80c86197f6b6091f9756abea70042f310c1db22",
+      "compression_geomean": 1.0106893759682498,
+      "compression_lower_95": 1.0092318891045513,
+      "decompression_geomean": 1.0011536894089197,
+      "decompression_lower_95": 0.999794990508556,
+      "worst_cell_speedup": 0.9987138606243966
+    },
+    {
+      "commit": "7b9aef38ecd44ba1efe0ff7282c234ae1f1ef14c",
+      "compression_geomean": 1.0106600899512141,
+      "compression_lower_95": 1.0099425627138974,
+      "decompression_geomean": 1.0002540991584215,
+      "decompression_lower_95": 0.9984946654335859,
+      "worst_cell_speedup": 0.9991614665107782
+    }
+  ],
+  "holdout": {
+    "rounds": 12,
+    "compression_geomean": 1.010186505116365,
+    "compression_lower_95": 1.0096158703755744,
+    "compression_upper_95": 1.0107574623798268,
+    "decompression_geomean": 1.000098389654106,
+    "decompression_lower_95": 0.9989031461124239,
+    "decompression_upper_95": 1.0012950633716058,
+    "throughput_geomean": 1.0051297911300738,
+    "throughput_lower_95": 1.0044132929951515,
+    "throughput_upper_95": 1.0058468003788783,
+    "worst_cell_speedup": 0.9981668066827522,
+    "max_compressed_size_ratio": 1.0,
+    "peak_rss_delta_mib": 0.0625,
+    "upstream_check_passed": true,
+    "cross_decode_passed": true,
+    "size_gate_passed": true,
+    "rss_gate_passed": true
+  },
+  "failures": {
+    "test_failed": 4,
+    "measurement_precision": 4,
+    "benchmark_failed": 1
+  },
+  "timing": {
+    "active_runner_hours": 5.3130494600581,
+    "physical_jobs_per_runner_hour": 41.407482022121854,
+    "benchmarked_job_median_seconds": 333.641322,
+    "benchmarked_evaluation_median_seconds": 186.684614,
+    "benchmarked_evaluation_median_job_fraction": 0.6485686032684839,
+    "continuation_new_unique_binaries_per_hour": 30.650031178486703,
+    "final_validation_seconds_per_candidate_approx": 334.6,
+    "holdout_seconds": 485.0715403340291
+  },
+  "usage": {
+    "observed_tokens": 52653004,
+    "kilo_catalog_estimate_usd": 60.24721528,
+    "provider_billed_cost_available": false,
+    "embedding_cost_available": false,
+    "planning": {
+      "model": "gpt-5.6-sol",
+      "events": 212,
+      "input_tokens": 6547054,
+      "cached_input_tokens": 10642848,
+      "output_tokens": 463630,
+      "reasoning_output_tokens": 196143,
+      "catalog_estimate_usd": 57.849884
+    },
+    "coding": {
+      "model": "gpt-5.6-luna",
+      "events": 212,
+      "input_tokens": 6178958,
+      "cached_input_tokens": 25369844,
+      "output_tokens": 452351,
+      "reasoning_output_tokens": 92768,
+      "catalog_estimate_usd": 2.39733128
+    },
+    "embedding": {
+      "model": "openai/text-embedding-3-small",
+      "events": 303,
+      "input_tokens": 2709408
+    }
+  },
+  "evidence_sha256": {
+    "preregistration": "9af2150a6bfaa8c4f51f2cb30b585ec9d44be24df7075c7bf2c64b41acc7fa21",
+    "unique_binary_continuation_amendment": "fbc8a4021bb1526a39d2419c839da5212d1fc7dc766b3639f1c5d3f55eacbe19",
+    "unique_binary_checkpoint": "4bdc11cc9ef1a2712d0784345d9415020f601fdf42c150daba27c94b435c1818",
+    "endpoint_integrity": "980b4f03262d946cdeae1f01ae9ce76adffdea8f37d1c9fd634ec009f2823370",
+    "model_closure": "08eafd3441dd9c81f4191f8f31154d508f3f08a2b21964a3e68d25a855a17725",
+    "finalization_support": "ba583215dab6e94c6087ac924325df4d845080d6d3388bf48de24b166ca1cd1c",
+    "training_finalists": "01ef5e731070dc4b6f46cc40b21d86a9c1adc2a7a6b4ad991397d5c389d95128",
+    "pre_reveal_audit": "37ce4a86551f8dcdb0aa4a8bb03cf62ffa6f2e77c030dbda23241ba446e6dde7",
+    "validation_selection": "f625c76a3533e3c7f0f1d1dfa4508cad0942481d5f1c553edac6adb5b7a4d121",
+    "holdout_result": "9473abf3dad929adee89afa3c75367ec7ab3cfba3a56dc76205c121af0e5c8a5",
+    "conclusion": "f1787dbb4cf3f3939e1ab1fed9b0901dfead9039b14a983b43482e4971db4b0e",
+    "conclusion_audit": "2e0ca0dcb67ff262cc8ad43a00e077953bd76837ffe821223afce4a722b42e63"
+  }
+}

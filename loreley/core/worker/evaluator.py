@@ -18,6 +18,7 @@ from loguru import logger
 from rich.console import Console
 
 from loreley.config import Settings, get_settings
+from loreley.core.worker.evaluator_identity import evaluator_identity_version
 from loreley.core.contracts import clamp_text, normalize_single_line
 from loreley.core.map_elites.objectives import (
     ObjectiveContractError,
@@ -358,12 +359,14 @@ class EvaluationResult:
     extra: dict[str, Any] = field(default_factory=dict)
     artifacts: tuple[EvaluationArtifact, ...] = field(default_factory=tuple)
     artifact_validation_warnings: tuple[ArtifactValidationWarning, ...] = field(default_factory=tuple)
+    candidate_identity: str | None = None
 
     def __post_init__(self) -> None:
         summary = (self.summary or "").strip()
         if not summary:
             raise ValueError("Evaluation summary must be provided.")
         self.summary = summary
+        self.candidate_identity = _optional_bounded_line(self.candidate_identity, 512)
         self.metrics = tuple(self.metrics or ())
         self.tests_executed = tuple(self.tests_executed or ())
         self.logs = tuple(self.logs or ())
@@ -383,10 +386,12 @@ class EvalPass:
     logs: str | Sequence[str] | None = field(default_factory=tuple)
     extra: dict[str, Any] | None = None
     artifacts: EvaluatorArtifactInput | Sequence[EvaluatorArtifactInput] | None = field(default_factory=tuple)
+    candidate_identity: str | None = None
 
     def __post_init__(self) -> None:
         result = EvaluationResult(
             summary=self.summary,
+            candidate_identity=self.candidate_identity,
             metrics=_coerce_public_metrics(self.metrics),
             tests_executed=_normalise_sequence_public(self.tests_executed),
             logs=_normalise_sequence_public(self.logs),
@@ -394,6 +399,7 @@ class EvalPass:
             artifacts=self.artifacts,
         )
         self.summary = result.summary
+        self.candidate_identity = result.candidate_identity
         self.metrics = result.metrics
         self.tests_executed = result.tests_executed
         self.logs = result.logs
@@ -403,6 +409,7 @@ class EvalPass:
     def to_result(self) -> EvaluationResult:
         return EvaluationResult(
             summary=self.summary,
+            candidate_identity=self.candidate_identity,
             metrics=self.metrics,
             tests_executed=self.tests_executed,
             logs=self.logs,
@@ -941,6 +948,7 @@ def _outcome_identity(mapping: _OutcomeMappingInput) -> dict[str, Any]:
 def _evaluation_result_dict(result: EvaluationResult) -> dict[str, Any]:
     return {
         "summary": result.summary,
+        "candidate_identity": result.candidate_identity,
         "metrics": [metric.as_dict() for metric in result.metrics],
         "tests_executed": list(result.tests_executed),
         "logs": list(result.logs),
@@ -1030,6 +1038,11 @@ class Evaluator:
         )
         self.timeout = max(1, self.settings.worker_evaluator_timeout_seconds)
         self.max_metrics = max(1, self.settings.worker_evaluator_max_metrics)
+        self.evaluator_version = evaluator_identity_version(
+            plugin_ref=self.plugin_ref,
+            explicit_version=self.settings.worker_evaluator_version,
+            python_paths=self.settings.worker_evaluator_python_paths,
+        )
         self._plugin_callable: EvaluationCallable | None = plugin
         self._pythonpath_ready = False
 
@@ -1067,6 +1080,7 @@ class Evaluator:
                 started_at=started_at,
                 finished_at=datetime.now(timezone.utc),
             )
+            outcome.evaluator_version = outcome.evaluator_version or self.evaluator_version
         except EvaluationError as exc:
             outcome = self._synthetic_failure_outcome(
                 context=context,
@@ -1377,6 +1391,7 @@ class Evaluator:
         if result_payload is None:
             result_payload = {
                 "summary": payload.get("summary"),
+                "candidate_identity": payload.get("candidate_identity"),
                 "metrics": payload.get("metrics"),
                 "tests_executed": payload.get("tests_executed"),
                 "logs": payload.get("logs"),
@@ -1486,6 +1501,7 @@ class Evaluator:
             try:
                 result = EvaluationResult(
                     summary=summary,
+                    candidate_identity=cast(str | None, payload.get("candidate_identity")),
                     metrics=metrics,
                     tests_executed=tests,
                     logs=logs,

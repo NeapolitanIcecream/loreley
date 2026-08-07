@@ -200,7 +200,7 @@ def test_db_migrate_runs_explicit_migration_even_when_auto_disabled(
         return MigrationResult(
             from_version=5,
             to_version=INSTANCE_SCHEMA_VERSION,
-            applied_versions=(6, 7, 8, 9, 10, 11, 12, 13, 14),
+            applied_versions=(6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18),
         )
 
     monkeypatch.setattr("loreley.db.migrations.runner.ensure_schema_current", fake_ensure)
@@ -220,7 +220,8 @@ def test_db_migrate_runs_explicit_migration_even_when_auto_disabled(
     assert code == 0
     assert calls[0]["auto_migrate"] is True
     assert (
-        f"from=5 to={INSTANCE_SCHEMA_VERSION} applied=6,7,8,9,10,11,12,13,14 fresh=false"
+        f"from=5 to={INSTANCE_SCHEMA_VERSION} "
+        "applied=6,7,8,9,10,11,12,13,14,15,16,17,18 fresh=false"
         in captured.out
     )
 

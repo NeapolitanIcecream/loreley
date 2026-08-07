@@ -40,16 +40,20 @@ from loreley.scheduler.ingestion import MapElitesIngestion
 
 Internally, `_ingest_snapshot(...)`:
 
-1. Reads `result_commit_hash` from the job row, canonicalizes it to improve cache hit ratio, and loads metrics from the
-   `metrics` table for that commit hash.
-2. Ensures the corresponding git commit is present locally, fetching from
+1. Reads `result_commit_hash` from the job row and canonicalizes it.
+2. If the evaluator supplied a `candidate_identity`, checks whether the same
+   evaluator-scoped identity has already completed ingestion in the island. An
+   equivalent candidate is recorded as skipped and does not enter PCA history
+   or consume another archive slot.
+3. Loads metrics from the `metrics` table for that commit hash.
+4. Ensures the corresponding git commit is present locally, fetching from
    remotes as necessary.
-3. Calls `MapElitesManager.ingest(...)` with:
+5. Calls `MapElitesManager.ingest(...)` with:
    - `commit_hash`,
    - `metrics`,
    - `island_id`,
    - `repo_root`,
-4. Writes ingestion state back onto the job row, including:
+6. Writes ingestion state back onto the job row, including:
    - `status` (`"succeeded"` or `"skipped"`),
    - `delta`, `status_code`, and `message` from the ingest result,
    - `cell_index` when the ingest produced a record,

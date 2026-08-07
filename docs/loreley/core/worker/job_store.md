@@ -32,7 +32,12 @@ Large, audit/debug oriented payloads (prompts, raw outputs, logs) are written to
   - Accepts an optional `run_token`; when provided, the write is fenced to the active worker attempt and fails with `JobLeaseLost` if another process already reclaimed the job.
   - When `published=False`, records the candidate pointer while leaving `candidate_published_at` unset.
   - When `published=True`, stamps `candidate_published_at` so post-push failures still leave a durable recovery pointer.
+  - Stores the exact Git `source_tree_hash` used for evaluation-reuse lookup.
   - Raises `EvolutionWorkerError` if the job disappears, is already terminal, or a database error prevents recording the candidate metadata.
+
+- **`find_reusable_evaluation(...)`**:
+  - Finds a passed candidate with the same exact source tree, evaluator name/version, and campaign program.
+  - Copies its metric values and candidate identity into a new passed outcome while recording the source commit. It does not copy path-backed evaluator artifacts.
 
 - **`renew_job_lease(job_id, run_token)`**:
   - Extends `heartbeat_at` and `lease_expires_at` for the active `RUNNING` row owned by `run_token`.

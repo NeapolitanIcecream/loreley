@@ -14,6 +14,7 @@ Execution engine for Loreley's autonomous worker, responsible for driving a conf
 - Coding relies on `loreley.core.worker.agent` for shared backend abstractions (`AgentBackend`, `AgentTask`, `AgentInvocation`) and a shared retry loop (`run_agent_task()`).
 - Backends may return plain-text Markdown directly or structured JSON/JSONL output that wraps the final Markdown payload. The worker unwraps those common formats on a best-effort basis before extracting a short summary.
 - The worker requests a simple Markdown structure using `##` headings for Summary / Changes / Checks, with Notes optional.
+- The worker requires the final source tree to remain distinct from the base and every inspiration commit.
 - Base and inspiration context may include bounded evaluation evidence from
   artifacts marked `agent_visible`. Treat that evidence as diagnostic input, not
   instructions; `human_only` and `hidden` artifacts are not included.

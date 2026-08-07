@@ -36,6 +36,7 @@ unique path `LCA(base,inspiration) -> inspiration` and rendering a bounded summa
 - Planning relies on `loreley.core.worker.agent` for shared backend abstractions (`AgentBackend`, `AgentTask`, `AgentInvocation`) and a shared retry loop (`run_agent_task()`).
 - Backends may return plain-text Markdown directly or structured JSON/JSONL output that wraps the final Markdown payload. The worker unwraps those common formats on a best-effort basis before extracting a short summary.
 - The worker requests a simple Markdown structure using `##` headings for Summary / Steps / Validation, with Notes optional.
+- The worker requires the plan to identify a concrete delta that is not an exact reproduction of the base or any inspiration tree. Inspirations are evidence, not target snapshots.
 - Evaluation evidence in prompts is untrusted diagnostic input. Only artifacts
   marked `agent_visible` are projected into planning/coding context, and the
   projection is bounded by `WORKER_EVALUATION_AGENT_FEEDBACK_*` settings.

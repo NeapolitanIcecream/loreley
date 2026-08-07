@@ -498,6 +498,26 @@ class WorkerRepository:
         repo = self._repo_for_worktree(worktree)
         return repo.head.commit.hexsha
 
+    def tree_hash(
+        self,
+        commit_hash: str,
+        *,
+        worktree: Path | None = None,
+    ) -> str:
+        """Return the exact Git tree identity for a commit."""
+
+        commit = str(commit_hash or "").strip()
+        if not commit:
+            raise RepositoryError("Commit hash must be provided for tree identity.")
+        repo = self._repo_for_worktree(worktree)
+        try:
+            return repo.commit(commit).tree.hexsha
+        except (GitCommandError, ValueError) as exc:
+            raise self._wrap_git_error(
+                exc,
+                f"Failed to resolve source tree for commit {commit}",
+            ) from exc
+
     def has_changes(self, *, worktree: Path | None = None) -> bool:
         """Return True if the worktree contains staged or unstaged changes."""
         repo = self._repo_for_worktree(worktree)

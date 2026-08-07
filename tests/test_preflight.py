@@ -7,6 +7,7 @@ from loreley.preflight import (
     _check_openai_api_key_for_worker,
     _check_dynamic_openai_agent_ttl,
     check_embedding_dimensions,
+    check_trajectory_summary_provider,
     preflight_worker,
 )
 
@@ -48,6 +49,82 @@ def test_openai_key_not_required_for_local_hash_worker_when_trajectory_disabled(
 
     assert result.status == "ok"
     assert "trajectory summarization is disabled" in result.details
+
+
+def test_trajectory_summary_provider_requires_explicit_model() -> None:
+    result = check_trajectory_summary_provider(TestSettings())
+
+    assert result.status == "fail"
+    assert "WORKER_PLANNING_TRAJECTORY_SUMMARY_MODEL" in result.details
+
+
+def test_custom_trajectory_summary_provider_is_resolved() -> None:
+    settings = TestSettings(
+        WORKER_PLANNING_TRAJECTORY_SUMMARY_PROVIDER_MODE="custom",
+        WORKER_PLANNING_TRAJECTORY_SUMMARY_API_KEY="secret",
+        WORKER_PLANNING_TRAJECTORY_SUMMARY_BASE_URL="https://summary.example/v1",
+        WORKER_PLANNING_TRAJECTORY_SUMMARY_API_SPEC="chat_completions",
+        WORKER_PLANNING_TRAJECTORY_SUMMARY_MODEL="summary-model",
+    )
+
+    result = check_trajectory_summary_provider(settings)
+
+    assert result.status == "ok"
+    assert result.details == (
+        "mode=custom api_spec=chat_completions model=summary-model "
+        "thinking=provider_default reasoning_effort=provider_default"
+    )
+
+
+def test_trajectory_summary_provider_accepts_explicit_max_reasoning() -> None:
+    settings = TestSettings(
+        WORKER_PLANNING_TRAJECTORY_SUMMARY_PROVIDER_MODE="custom",
+        WORKER_PLANNING_TRAJECTORY_SUMMARY_API_KEY="secret",
+        WORKER_PLANNING_TRAJECTORY_SUMMARY_BASE_URL="https://summary.example/v1",
+        WORKER_PLANNING_TRAJECTORY_SUMMARY_API_SPEC="chat_completions",
+        WORKER_PLANNING_TRAJECTORY_SUMMARY_MODEL="summary-model",
+        WORKER_PLANNING_TRAJECTORY_SUMMARY_THINKING="enabled",
+        WORKER_PLANNING_TRAJECTORY_SUMMARY_REASONING_EFFORT="max",
+    )
+
+    result = check_trajectory_summary_provider(settings)
+
+    assert result.status == "ok"
+    assert "thinking=enabled reasoning_effort=max" in result.details
+
+
+def test_trajectory_summary_provider_accepts_responses_max_reasoning() -> None:
+    settings = TestSettings(
+        WORKER_PLANNING_TRAJECTORY_SUMMARY_PROVIDER_MODE="custom",
+        WORKER_PLANNING_TRAJECTORY_SUMMARY_API_KEY="secret",
+        WORKER_PLANNING_TRAJECTORY_SUMMARY_BASE_URL="https://summary.example/v1",
+        WORKER_PLANNING_TRAJECTORY_SUMMARY_API_SPEC="responses",
+        WORKER_PLANNING_TRAJECTORY_SUMMARY_MODEL="summary-model",
+        WORKER_PLANNING_TRAJECTORY_SUMMARY_REASONING_EFFORT="max",
+    )
+
+    result = check_trajectory_summary_provider(settings)
+
+    assert result.status == "ok"
+    assert "api_spec=responses" in result.details
+    assert "reasoning_effort=max" in result.details
+
+
+def test_trajectory_summary_provider_rejects_effort_without_thinking() -> None:
+    settings = TestSettings(
+        WORKER_PLANNING_TRAJECTORY_SUMMARY_PROVIDER_MODE="custom",
+        WORKER_PLANNING_TRAJECTORY_SUMMARY_API_KEY="secret",
+        WORKER_PLANNING_TRAJECTORY_SUMMARY_BASE_URL="https://summary.example/v1",
+        WORKER_PLANNING_TRAJECTORY_SUMMARY_API_SPEC="chat_completions",
+        WORKER_PLANNING_TRAJECTORY_SUMMARY_MODEL="summary-model",
+        WORKER_PLANNING_TRAJECTORY_SUMMARY_THINKING="disabled",
+        WORKER_PLANNING_TRAJECTORY_SUMMARY_REASONING_EFFORT="max",
+    )
+
+    result = check_trajectory_summary_provider(settings)
+
+    assert result.status == "fail"
+    assert "thinking is disabled" in result.details
 
 
 def test_dynamic_provider_satisfies_scheduler_openai_auth(monkeypatch) -> None:

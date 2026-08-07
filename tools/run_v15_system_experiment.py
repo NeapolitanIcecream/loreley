@@ -110,7 +110,7 @@ def _safe_environment(args: argparse.Namespace) -> dict[str, str]:
             "WORKER_EVALUATOR_REWORK_ENABLED": "false",
             "WORKER_PLANNING_MAX_ATTEMPTS": "1",
             "WORKER_CODING_MAX_ATTEMPTS": "1",
-            "WORKER_EVOLUTION_COMMIT_PROVIDER_MODE": "disabled",
+            "WORKER_PLANNING_TRAJECTORY_MAX_CHUNKS": "0",
             "V15_EXPERIMENT_PLANNING_DELAY_SECONDS": str(args.planning_delay),
             "V15_EXPERIMENT_CODING_DELAY_SECONDS": str(args.coding_delay),
             "V15_EXPERIMENT_TRACE_PATH": str(args.trace),

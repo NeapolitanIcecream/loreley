@@ -9,7 +9,11 @@ from types import SimpleNamespace
 
 from loreley.config import Settings
 from loreley.core.map_elites import sampler as sampler_module
-from loreley.core.map_elites.sampler import MapElitesSampler, ScheduleJobRequest
+from loreley.core.map_elites.sampler import (
+    MapElitesSampler,
+    ScheduleJobRequest,
+    sampling_recipe_hash,
+)
 
 
 @dataclass(slots=True)
@@ -316,3 +320,99 @@ def test_schedule_job_excludes_base_commits_selected_earlier_in_batch(
     )
     assert second is not None
     assert second.base_commit_hash != first.base_commit_hash
+
+
+def test_sampling_ordinal_is_restart_stable(
+    monkeypatch,
+    settings: Settings,
+) -> None:
+    records = [FakeRecord(commit_hash=f"c{i}", cell_index=i) for i in range(9)]
+    settings.mapelites_sampler_seed = 20260804
+    monkeypatch.setattr(
+        MapElitesSampler,
+        "_persist_job",
+        lambda *_args, **_kwargs: SimpleNamespace(id=uuid4()),
+    )
+
+    first_sampler = make_sampler(settings, records=records)
+    second_sampler = make_sampler(settings, records=list(reversed(records)))
+    first = first_sampler.schedule_job(ScheduleJobRequest(sampling_ordinal=71))
+    second = second_sampler.schedule_job(ScheduleJobRequest(sampling_ordinal=71))
+
+    assert first is not None and second is not None
+    assert (
+        first.base_commit_hash,
+        first.inspiration_commit_hashes,
+        first.sampling_recipe_hash,
+    ) == (
+        second.base_commit_hash,
+        second.inspiration_commit_hashes,
+        second.sampling_recipe_hash,
+    )
+
+
+def test_recipe_cooldown_resamples_instead_of_replaying(
+    monkeypatch,
+    settings: Settings,
+) -> None:
+    records = [FakeRecord(commit_hash=f"c{i}", cell_index=i) for i in range(9)]
+    settings.mapelites_sampler_seed = 20260804
+    settings.mapelites_sampler_max_resample_attempts = 32
+    monkeypatch.setattr(
+        MapElitesSampler,
+        "_persist_job",
+        lambda *_args, **_kwargs: SimpleNamespace(id=uuid4()),
+    )
+    sampler = make_sampler(settings, records=records)
+
+    first = sampler.schedule_job(ScheduleJobRequest(sampling_ordinal=76))
+    assert first is not None and first.sampling_recipe_hash
+    replacement = sampler.schedule_job(
+        ScheduleJobRequest(
+            sampling_ordinal=76,
+            excluded_recipe_hashes={first.sampling_recipe_hash},
+        )
+    )
+
+    assert replacement is not None
+    assert replacement.sampling_recipe_hash != first.sampling_recipe_hash
+    assert replacement.sampling_recipe_reused is False
+
+
+def test_recipe_cooldown_marks_unavoidable_reuse(
+    monkeypatch,
+    settings: Settings,
+) -> None:
+    settings.mapelites_sampler_inspiration_count = 0
+    settings.mapelites_sampler_max_resample_attempts = 3
+    expected_hash = sampling_recipe_hash("only", ())
+    captured: list[Any] = []
+
+    def fake_persist(_self: MapElitesSampler, request: Any) -> SimpleNamespace:
+        captured.append(request)
+        return SimpleNamespace(id=uuid4())
+
+    monkeypatch.setattr(MapElitesSampler, "_persist_job", fake_persist)
+    sampler = MapElitesSampler(
+        manager=FakeManager([FakeRecord(commit_hash="only", cell_index=0)]),
+        settings=settings,
+    )
+
+    job = sampler.schedule_job(
+        ScheduleJobRequest(
+            sampling_ordinal=3,
+            excluded_recipe_hashes={expected_hash},
+        )
+    )
+
+    assert job is not None
+    assert job.sampling_recipe_hash == expected_hash
+    assert job.sampling_recipe_reused is True
+    assert captured[0].selection_stats["recipe_resample_attempts"] == 3
+
+
+def test_sampling_recipe_hash_ignores_inspiration_order() -> None:
+    assert sampling_recipe_hash("base", ("a", "b")) == sampling_recipe_hash(
+        "base",
+        ("b", "a"),
+    )
