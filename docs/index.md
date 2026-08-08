@@ -4,6 +4,11 @@
 
 Loreley is an automated Quality-Diversity optimization system that **evolves entire git repositories**, not just single files or scripts. It continuously samples promising commits, asks external agents to plan and implement changes, evaluates them, and archives the best-performing and most diverse variants for later reuse.
 
+A git commit is the auditable source and ancestry representation. For compiled
+or generated targets, the evaluator can define a separate measurement identity,
+such as a release-binary hash, so source-distinct but equivalent artifacts do
+not require another benchmark.
+
 Use this page as a high-level overview and a navigation hub into the focused module guides under `loreley/` and `script/` (see the sidebar navigation).
 
 ---
@@ -19,12 +24,16 @@ repository studies are:
 - [`python-pathspec`](research/2026-08-03-pathspec-deepseek-case-study.md): a
   four-generation archive lineage produced a qualifying 25.14% speedup. The
   candidate was selected post-hoc after the registered winner missed its
-  allocation gate, so this is capability evidence rather than a prospective
-  success.
+  allocation gate.
 - [Zstandard V19](research/2026-08-07-zstandard-gpt-v19-case-study-report.md): the
-  registered winner improved sealed-holdout compression by 1.02% with neutral
-  decompression. A Top-10 follow-up found a generation-4 candidate with a 0.89%
+  registered winner improved sealed-holdout compression by 1.019% with neutral
+  decompression. A Top-10 follow-up found a generation-4 candidate with a 0.891%
   fresh-corpus compression gain.
+
+Read the project essay in [Chinese](marketing/2026-08-loreley-launch-article-zh.md)
+or [English](marketing/2026-08-loreley-launch-article-en.md). Teams with an
+automated evaluator can use the [design-partner brief](marketing/loreley-design-partner-brief.md)
+to assess fit and submit a non-confidential intake.
 
 ---
 
@@ -36,7 +45,7 @@ Loreley is built around three core ideas, each designed to address a concrete ch
 | --- | --- |
 | Single-file evolution cannot express cross-module refactors and production changes | **Whole-repo evolution** |
 | Hand-crafted behaviour descriptors do not generalise across projects | **Learned behaviour space** |
-| Demo-style pipelines do not scale to distributed, long-running operation | **Production-grade distributed loop** |
+| Long-running searches require persistent state, concurrency controls, and audit records | **Persistent distributed loop** |
 
 Related systems include [AlphaEvolve](https://deepmind.google/blog/alphaevolve-a-gemini-powered-coding-agent-for-designing-advanced-algorithms/), [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve), and [ShinkaEvolve](https://github.com/SakanaAI/ShinkaEvolve).
 
@@ -164,9 +173,9 @@ See: [Running the scheduler](script/run_scheduler.md), [Running the worker](scri
 
 ### Whole-repo evolution
 
-Whole-repo evolution makes the **git commit** the fundamental unit of search. This solves the practical limitation of single-file optimisation: real improvements often require changing multiple modules, updating configs and build scripts, and keeping tests and tooling intact.
+Whole-repo evolution uses the **git commit** as the reproducible source and ancestry unit. Real improvements can require changing multiple modules, updating configs and build scripts, and keeping tests and tooling intact. The evaluator can additionally group commits by binary, artifact, trace, or another identity relevant to measurement.
 
-Repository-scale evolution has been demonstrated in the literature (for example, [SATLUTION](https://arxiv.org/pdf/2509.07367)), but many repository-scale loops are champion-based and rulebase-driven: a single “current best” becomes the next baseline, and extensive human-authored rules are used to keep the agent on track. This design can limit diversity and makes quality-diversity methods difficult to realise.
+Repository-scale evolution has been demonstrated in the literature. For example, [SATLUTION](https://arxiv.org/abs/2509.07367) uses a champion/challenger process and an explicit rulebase to evolve SAT solver repositories. Loreley explores a different design point: a bounded archive retains multiple candidates across behavioral niches and objective trade-offs.
 
 ![champion-based](./assets/satlution-single-champion.jpg)
 
@@ -175,7 +184,7 @@ Loreley is designed to be **QD-native at repository scale**:
 - it keeps a bounded Pareto front of **multiple elites** in every occupied behavioural niche,
 - it schedules independent configured islands fairly and periodically injects a donor elite as a cross-island inspiration,
 - it samples from those niches as inspirations for new jobs,
-- and it uses evaluator gates + repository semantics as the primary source of constraints, minimising dependence on domain-specific rulebases.
+- and it places project-specific correctness, performance, and scope constraints in the evaluator contract.
 
 ### Learned behaviour space
 
@@ -190,9 +199,9 @@ archive can preserve structurally different improvements (refactors vs
 micro-optimisations vs feature shifts) as distinct behavioural niches, enabling
 exploration without collapsing to a single style of change.
 
-### Production-grade distributed loop
+### Persistent distributed loop
 
-Production-grade evolution requires more than an agent loop: it needs distributed execution, resource controls, and persistent traceability.
+Long-running evolution requires more than an agent loop: it needs distributed execution, resource controls, and persistent traceability.
 
 Loreley runs a long-lived loop with:
 

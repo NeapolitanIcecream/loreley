@@ -1,6 +1,13 @@
 site_name: Loreley
 site_description: Automated MAP-Elites system that evolves entire git repositories.
 
+exclude_docs: |
+  marketing/README.md
+  marketing/2026-08-loreley-launch-claim-sheet.md
+  marketing/2026-08-loreley-launch-copy-kit.md
+  research/2026-08-03-loreley-promotion-plan.md
+  research/2026-08-03-zstandard-third-case-study-handoff.md
+
 theme:
   name: material
 
@@ -12,8 +19,13 @@ nav:
       - python-pathspec DeepSeek case study: research/2026-08-03-pathspec-deepseek-case-study.md
       - Zstandard V19 case study: research/2026-08-07-zstandard-gpt-v19-case-study-report.md
       - Zstandard V19 Top-10 supplement: research/2026-08-07-zstandard-gpt-v19-top10-validation-supplement.md
+      - Candidate source diffs: marketing/candidates/README.md
       - Framework convergence proposal: research/2026-08-07-case-study-framework-convergence-proposal.md
       - Deferred research register: research/2026-08-07-case-study-deferred-research.md
+  - Essays & collaboration:
+      - 用编码智能体搜索真实代码仓库: marketing/2026-08-loreley-launch-article-zh.md
+      - Searching Real Code Repositories with Coding Agents: marketing/2026-08-loreley-launch-article-en.md
+      - Design partners: marketing/loreley-design-partner-brief.md
   - Releases:
       - Unreleased: releases/unreleased.md
       - v0.9.0-alpha: releases/v0.9.0-alpha.md

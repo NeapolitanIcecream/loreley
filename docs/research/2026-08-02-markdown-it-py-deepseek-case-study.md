@@ -20,14 +20,16 @@ and edit-scope checks. Every one of the 28 validation documents improved.
 | Winner on training | 1.0699x |
 | Winner on separate validation corpus | **1.0675x** |
 | Validation documents improved | 28 / 28 |
-| Per-document speedup | 1.0071x min, 1.0675x median, 1.1715x max |
+| Per-document speedup | 1.007149x min, 1.068380x median, 1.171532x max |
 | Peak allocation | 3.4890 MiB winner vs. 3.4924 MiB root |
 | Campaign wall time | 4.35 hours |
 | Generation usage | 215.35M tokens, 3,792 requests |
 | Recorded DeepSeek cost | $2.08 |
 
 The winner was job 26, commit
-`b10adb6fad0da2a9825c3d1525048fd7b177d773`. The training-to-validation gap
+`b10adb6fad0da2a9825c3d1525048fd7b177d773`; its
+[source diff is available as a static patch](../marketing/candidates/markdown-it-py-winner.patch).
+The training-to-validation gap
 was only 0.24 percentage points. Four feasible candidates exceeded 1.06x on
 training, so the outcome was not supported by one isolated training sample.
 

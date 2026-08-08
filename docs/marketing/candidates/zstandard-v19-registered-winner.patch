@@ -1,0 +1,20 @@
+diff --git a/lib/compress/hist.c b/lib/compress/hist.c
+index 3692bc250cadbb831133b432094a7115efed848e..917b85df81764db305e3b04e99c0137c55bab7c2 100644
+--- a/lib/compress/hist.c
++++ b/lib/compress/hist.c
+@@ -37,7 +37,14 @@ void HIST_add(unsigned* count, const void* src, size_t srcSize)
+     const BYTE* ip = (const BYTE*)src;
+     const BYTE* const end = ip + srcSize;
+ 
+-    while (ip<end) {
++    while ((size_t)(end - ip) >= 4) {
++        count[ip[0]]++;
++        count[ip[1]]++;
++        count[ip[2]]++;
++        count[ip[3]]++;
++        ip += 4;
++    }
++    while (ip < end) {
+         count[*ip++]++;
+     }
+ }

@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+<title>Loreley three-case evidence summary</title>
+<defs>
+<filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+<feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#0F172A" flood-opacity="0.10"/>
+</filter>
+<marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+<path d="M0,0 L0,6 L9,3 z" fill="#6563FF"/>
+</marker>
+</defs>
+<rect width="1600" height="900" fill="#F8FAFC"/>
+<text x="80" y="82.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="48" font-weight="700" text-anchor="start">Results from three repository searches</text>
+<text x="80" y="126.0" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="400" text-anchor="start">Selection protocol and workload scope are shown with each result.</text>
+<rect x="80" y="150" width="1440" height="4" rx="2" fill="#6563FF" stroke="none" stroke-width="2"/>
+<rect x="80" y="205" width="450" height="600" rx="24" fill="#FFFFFF" stroke="none" stroke-width="2" filter="url(#shadow)"/>
+<rect x="80" y="205" width="450" height="10" rx="5" fill="#6563FF" stroke="none" stroke-width="2"/>
+<text x="110" y="270.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700" text-anchor="start">markdown-it-py</text>
+<text x="110" y="348.0" fill="#6563FF" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="700" text-anchor="start">+6.75%</text>
+<text x="112" y="388.0" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" text-anchor="start">throughput · separate 28-doc corpus</text>
+<rect x="110" y="420" width="300" height="42" rx="21" fill="#EAF8EF" stroke="none" stroke-width="2"/><text x="260.0" y="449.0" fill="#15803D" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" text-anchor="middle">Prospective result</text>
+<text x="110" y="505.0" fill="#64748B" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" text-anchor="start">Run summary</text>
+<circle cx="123" cy="548" r="7" fill="#00A9D6" stroke="#00A9D6" stroke-width="1"/>
+<text x="144" y="556.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" text-anchor="start">64 jobs · generation 4</text>
+<circle cx="123" cy="593" r="7" fill="#00A9D6" stroke="#00A9D6" stroke-width="1"/>
+<text x="144" y="601.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" text-anchor="start">28 / 28 documents improved</text>
+<circle cx="123" cy="638" r="7" fill="#00A9D6" stroke="#00A9D6" stroke-width="1"/>
+<text x="144" y="646.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" text-anchor="start">Winner frozen before validation</text>
+<line x1="110" y1="688" x2="500" y2="688" stroke="#CBD5E1" stroke-width="2" stroke-linecap="round"/>
+<text x="110" y="728.0" fill="#64748B" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" text-anchor="start">Scope note</text>
+<text x="110" y="762.0" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="400" text-anchor="start">One repository and host;</text><text x="110" y="785.4" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="400" text-anchor="start">human-written seeds.</text>
+<rect x="575" y="205" width="450" height="600" rx="24" fill="#FFFFFF" stroke="none" stroke-width="2" filter="url(#shadow)"/>
+<rect x="575" y="205" width="450" height="10" rx="5" fill="#6563FF" stroke="none" stroke-width="2"/>
+<text x="605" y="270.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700" text-anchor="start">python-pathspec</text>
+<text x="605" y="348.0" fill="#6563FF" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="700" text-anchor="start">+25.14%</text>
+<text x="607" y="388.0" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" text-anchor="start">throughput · five reference workloads</text>
+<rect x="605" y="420" width="300" height="42" rx="21" fill="#FFF7E6" stroke="none" stroke-width="2"/><text x="755.0" y="449.0" fill="#B45309" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" text-anchor="middle">Post-hoc selection</text>
+<text x="605" y="505.0" fill="#64748B" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" text-anchor="start">Run summary</text>
+<circle cx="618" cy="548" r="7" fill="#00A9D6" stroke="#00A9D6" stroke-width="1"/>
+<text x="639" y="556.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" text-anchor="start">64 jobs · generation 4</text>
+<circle cx="618" cy="593" r="7" fill="#00A9D6" stroke="#00A9D6" stroke-width="1"/>
+<text x="639" y="601.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" text-anchor="start">5 / 5 workloads improved</text>
+<circle cx="618" cy="638" r="7" fill="#00A9D6" stroke="#00A9D6" stroke-width="1"/>
+<text x="639" y="646.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" text-anchor="start">Archive revisited a retained branch</text>
+<line x1="605" y1="688" x2="995" y2="688" stroke="#CBD5E1" stroke-width="2" stroke-linecap="round"/>
+<text x="605" y="728.0" fill="#64748B" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" text-anchor="start">Scope note</text>
+<text x="605" y="762.0" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="400" text-anchor="start">Candidate selected after the</text><text x="605" y="785.4" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="400" text-anchor="start">allocation gate was revealed.</text>
+<rect x="1070" y="205" width="450" height="600" rx="24" fill="#FFFFFF" stroke="none" stroke-width="2" filter="url(#shadow)"/>
+<rect x="1070" y="205" width="450" height="10" rx="5" fill="#6563FF" stroke="none" stroke-width="2"/>
+<text x="1100" y="270.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700" text-anchor="start">Zstandard V19</text>
+<text x="1100" y="348.0" fill="#6563FF" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="700" text-anchor="start">+1.019%</text>
+<text x="1102" y="388.0" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" text-anchor="start">compression · sealed holdout</text>
+<rect x="1100" y="420" width="300" height="42" rx="21" fill="#EFEEFF" stroke="none" stroke-width="2"/><text x="1250.0" y="449.0" fill="#6563FF" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" text-anchor="middle">Preregistered result</text>
+<text x="1100" y="505.0" fill="#64748B" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" text-anchor="start">Run summary</text>
+<circle cx="1113" cy="548" r="7" fill="#00A9D6" stroke="#00A9D6" stroke-width="1"/>
+<text x="1134" y="556.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" text-anchor="start">220 jobs · 167 binaries</text>
+<circle cx="1113" cy="593" r="7" fill="#00A9D6" stroke="#00A9D6" stroke-width="1"/>
+<text x="1134" y="601.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" text-anchor="start">95% CI +0.962% to +1.076%</text>
+<circle cx="1113" cy="638" r="7" fill="#00A9D6" stroke="#00A9D6" stroke-width="1"/>
+<text x="1134" y="646.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" text-anchor="start">Top-10 follow-up: +0.891%</text>
+<line x1="1100" y1="688" x2="1490" y2="688" stroke="#CBD5E1" stroke-width="2" stroke-linecap="round"/>
+<text x="1100" y="728.0" fill="#64748B" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" text-anchor="start">Scope note</text>
+<text x="1100" y="762.0" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="400" text-anchor="start">Registered winner is a manual seed;</text><text x="1100" y="785.4" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="400" text-anchor="start">follow-up used a different corpus.</text>
+<text x="800" y="850.0" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" text-anchor="middle">348 terminal jobs · 310 successful · 38 failed · fixed-repository results</text>
+</svg>

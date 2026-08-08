@@ -1,0 +1,87 @@
+name: Design partner intake
+description: Propose a repository optimization or evaluator-calibration collaboration.
+title: "[Design partner] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Submit only a non-confidential summary. Do not include private code, data,
+        credentials, internal hostnames, or undisclosed performance numbers in this
+        public issue.
+
+  - type: input
+    id: repository_type
+    attributes:
+      label: Repository type
+      description: Language, system category, and approximate repository size.
+      placeholder: C++ storage engine, about 250k lines
+    validations:
+      required: true
+
+  - type: textarea
+    id: target
+    attributes:
+      label: Optimization target
+      description: State the metric, direction, correctness gates, and value of a useful improvement.
+      placeholder: Improve p99 throughput without increasing memory or changing output.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evaluator
+    attributes:
+      label: Evaluator
+      description: Describe the automated build, test, benchmark, and structured result.
+    validations:
+      required: true
+
+  - type: input
+    id: timing
+    attributes:
+      label: Evaluation P50 and P95
+      description: Include training timing and, if known, full validation timing.
+      placeholder: Training P50 4 min, P95 6 min; validation 35 min
+    validations:
+      required: true
+
+  - type: input
+    id: concurrency
+    attributes:
+      label: Safe evaluator concurrency
+      description: State the lane count and shared CPU, GPU, I/O, or service limits.
+      placeholder: Four CPU lanes on isolated hosts
+    validations:
+      required: true
+
+  - type: textarea
+    id: noise
+    attributes:
+      label: Baseline noise
+      description: Provide repeated-root CV, paired differences, confidence intervals, or say that calibration is needed.
+      placeholder: Root/root paired CV 0.3%, or calibration needed
+    validations:
+      required: true
+
+  - type: textarea
+    id: data_scope
+    attributes:
+      label: Data and code boundary
+      description: State what can be shared with coding-model providers and what must remain private.
+    validations:
+      required: true
+
+  - type: textarea
+    id: budget
+    attributes:
+      label: Available budget
+      description: Give candidate evaluations, device-hours, model budget, and calendar window where possible.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: public_summary
+    attributes:
+      label: Public issue safety
+      options:
+        - label: I have removed confidential code, data, credentials, and internal identifiers.
+          required: true

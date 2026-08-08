@@ -9,7 +9,9 @@ Scope: one 64-job campaign on `cpburnz/python-pathspec` commit
 
 Loreley combined six small, human-written optimization seeds with 58
 Kilo/DeepSeek evolution jobs. The final validated winner,
-`9d977f0a73d58aec73fa36516c07cbb0ec879347`, ran the separate reference
+`9d977f0a73d58aec73fa36516c07cbb0ec879347`, has a
+[source-only static patch](../marketing/candidates/python-pathspec-winner.patch)
+and ran the separate reference
 workloads **1.2514x as fast as the fixed root**. It passed the complete upstream
 test suite and semantic checks, changed only permitted source files, and stayed
 below the 0.05 MiB peak-allocation limit.
