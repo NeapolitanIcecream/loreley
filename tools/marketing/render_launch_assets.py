@@ -5,7 +5,7 @@ from __future__ import annotations
 import html
 import subprocess
 from pathlib import Path
-
+from typing import TypedDict, Unpack
 
 ROOT = Path(__file__).resolve().parents[2]
 OUTPUT = ROOT / "docs" / "marketing" / "assets"
@@ -30,6 +30,60 @@ AMBER_PALE = "#FFF7E6"
 RED = "#BE123C"
 
 
+class RectOptions(TypedDict, total=False):
+    fill: str
+    stroke: str
+    radius: float
+    shadow: bool
+    stroke_width: float
+
+
+class TextOptions(TypedDict, total=False):
+    size: int
+    fill: str
+    weight: int
+    anchor: str
+    line_height: float
+    family: str
+
+
+class LineOptions(TypedDict, total=False):
+    stroke: str
+    width: float
+    dashed: bool
+
+
+class CaseCardOptions(TypedDict):
+    x: int
+    name: str
+    value: str
+    metric: str
+    status: str
+    status_fill: str
+    status_text: str
+    facts: list[str]
+    scope_note: list[str]
+
+
+class NodeOptions(TypedDict):
+    x: float
+    y: float
+    generation: str
+    title_value: str
+    metric: str
+    accent: str
+
+
+class IntervalOptions(TypedDict):
+    y: float
+    label: str
+    estimate: float
+    low: float
+    high: float
+    color: str
+    note: str
+
+
 def esc(value: object) -> str:
     return html.escape(str(value), quote=True)
 
@@ -39,13 +93,13 @@ def rect(
     y: float,
     width: float,
     height: float,
-    *,
-    fill: str = WHITE,
-    stroke: str = "none",
-    radius: float = 24,
-    shadow: bool = False,
-    stroke_width: float = 2,
+    **options: Unpack[RectOptions],
 ) -> str:
+    fill = options.get("fill", WHITE)
+    stroke = options.get("stroke", "none")
+    radius = options.get("radius", 24)
+    shadow = options.get("shadow", False)
+    stroke_width = options.get("stroke_width", 2)
     filter_attr = ' filter="url(#shadow)"' if shadow else ""
     return (
         f'<rect x="{x}" y="{y}" width="{width}" height="{height}" '
@@ -58,14 +112,14 @@ def text(
     x: float,
     y: float,
     lines: str | list[str] | tuple[str, ...],
-    *,
-    size: int = 28,
-    fill: str = NAVY,
-    weight: int = 400,
-    anchor: str = "start",
-    line_height: float = 1.25,
-    family: str = "Arial, Helvetica, sans-serif",
+    **options: Unpack[TextOptions],
 ) -> str:
+    size = options.get("size", 28)
+    fill = options.get("fill", NAVY)
+    weight = options.get("weight", 400)
+    anchor = options.get("anchor", "start")
+    line_height = options.get("line_height", 1.25)
+    family = options.get("family", "Arial, Helvetica, sans-serif")
     if isinstance(lines, str):
         lines = [lines]
     rendered_lines = []
@@ -84,11 +138,11 @@ def line(
     y1: float,
     x2: float,
     y2: float,
-    *,
-    stroke: str = LINE,
-    width: float = 4,
-    dashed: bool = False,
+    **options: Unpack[LineOptions],
 ) -> str:
+    stroke = options.get("stroke", LINE)
+    width = options.get("width", 4)
+    dashed = options.get("dashed", False)
     dash = ' stroke-dasharray="12 10"' if dashed else ""
     return (
         f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" '
@@ -101,11 +155,11 @@ def arrow(
     y1: float,
     x2: float,
     y2: float,
-    *,
-    stroke: str = VIOLET,
-    width: float = 5,
-    dashed: bool = False,
+    **options: Unpack[LineOptions],
 ) -> str:
+    stroke = options.get("stroke", VIOLET)
+    width = options.get("width", 5)
+    dashed = options.get("dashed", False)
     dash = ' stroke-dasharray="12 10"' if dashed else ""
     return (
         f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" '
@@ -141,7 +195,15 @@ def pill(
     return "".join(
         [
             rect(x, y, width, 42, fill=fill, radius=21),
-            text(x + width / 2, y + 29, label, size=18, fill=text_fill, weight=700, anchor="middle"),
+            text(
+                x + width / 2,
+                y + 29,
+                label,
+                size=18,
+                fill=text_fill,
+                weight=700,
+                anchor="middle",
+            ),
         ]
     )
 
@@ -181,17 +243,53 @@ def search_loop() -> str:
     )
 
     cards = [
-        (80, "1", "Repository state", ["Complete Git commit", "and recorded ancestry"], CYAN_PALE, CYAN),
-        (455, "2", "Coding agents", ["Propose coherent,", "repo-level changes"], VIOLET_PALE, VIOLET),
-        (830, "3", "External evaluator", ["Build, verify, score", "and define identity"], GREEN_PALE, GREEN),
-        (1205, "4", "QD archive", ["Retain strong, diverse", "states for reuse"], AMBER_PALE, AMBER),
+        (
+            80,
+            "1",
+            "Repository state",
+            ["Complete Git commit", "and recorded ancestry"],
+            CYAN_PALE,
+            CYAN,
+        ),
+        (
+            455,
+            "2",
+            "Coding agents",
+            ["Propose coherent,", "repo-level changes"],
+            VIOLET_PALE,
+            VIOLET,
+        ),
+        (
+            830,
+            "3",
+            "External evaluator",
+            ["Build, verify, score", "and define identity"],
+            GREEN_PALE,
+            GREEN,
+        ),
+        (
+            1205,
+            "4",
+            "QD archive",
+            ["Retain strong, diverse", "states for reuse"],
+            AMBER_PALE,
+            AMBER,
+        ),
     ]
     for x, number, title_value, detail, fill, accent in cards:
         body.extend(
             [
                 rect(x, 245, 315, 250, fill=WHITE, shadow=True),
                 circle(x + 52, 298, 25, fill=fill, stroke=accent, stroke_width=3),
-                text(x + 52, 307, number, size=23, fill=accent, weight=700, anchor="middle"),
+                text(
+                    x + 52,
+                    307,
+                    number,
+                    size=23,
+                    fill=accent,
+                    weight=700,
+                    anchor="middle",
+                ),
                 text(x + 28, 372, title_value, size=28, weight=700),
                 text(x + 28, 418, detail, size=22, fill=SLATE, line_height=1.35),
             ]
@@ -204,30 +302,70 @@ def search_loop() -> str:
             arrow(1355, 515, 1355, 585, stroke=VIOLET),
             line(1355, 585, 250, 585, stroke=VIOLET, width=5),
             arrow(250, 585, 250, 515, stroke=VIOLET),
-            text(805, 621, "Successful states become parents or inspirations", size=21, fill=VIOLET, weight=700, anchor="middle"),
+            text(
+                805,
+                621,
+                "Successful states become parents or inspirations",
+                size=21,
+                fill=VIOLET,
+                weight=700,
+                anchor="middle",
+            ),
             rect(80, 684, 690, 140, fill=CYAN_PALE, radius=22),
-            text(112, 730, "The agent changes the proposal distribution", size=25, fill=NAVY, weight=700),
-            text(112, 770, ["It uses repository semantics and prior feedback instead of", "sampling arbitrary syntax."], size=20, fill=SLATE, line_height=1.35),
+            text(
+                112,
+                730,
+                "The agent changes the proposal distribution",
+                size=25,
+                fill=NAVY,
+                weight=700,
+            ),
+            text(
+                112,
+                770,
+                [
+                    "It uses repository semantics and prior feedback instead of",
+                    "sampling arbitrary syntax.",
+                ],
+                size=20,
+                fill=SLATE,
+                line_height=1.35,
+            ),
             rect(830, 684, 690, 140, fill=GREEN_PALE, radius=22),
-            text(862, 730, "The evaluator controls archive admission", size=25, fill=NAVY, weight=700),
-            text(862, 770, ["Only candidates that build, remain correct, and improve the", "frozen objective can enter the archive."], size=20, fill=SLATE, line_height=1.35),
+            text(
+                862,
+                730,
+                "The evaluator controls archive admission",
+                size=25,
+                fill=NAVY,
+                weight=700,
+            ),
+            text(
+                862,
+                770,
+                [
+                    "Only candidates that build, remain correct, and improve the",
+                    "frozen objective can enter the archive.",
+                ],
+                size=20,
+                fill=SLATE,
+                line_height=1.35,
+            ),
         ]
     )
     return svg_document(body, title="Loreley repository search loop")
 
 
-def case_card(
-    *,
-    x: int,
-    name: str,
-    value: str,
-    metric: str,
-    status: str,
-    status_fill: str,
-    status_text: str,
-    facts: list[str],
-    scope_note: list[str],
-) -> list[str]:
+def case_card(**options: Unpack[CaseCardOptions]) -> list[str]:
+    x = options["x"]
+    name = options["name"]
+    value = options["value"]
+    metric = options["metric"]
+    status = options["status"]
+    status_fill = options["status_fill"]
+    status_text = options["status_text"]
+    facts = options["facts"]
+    scope_note = options["scope_note"]
     result = [
         rect(x, 205, 450, 600, fill=WHITE, shadow=True),
         rect(x, 205, 450, 10, fill=VIOLET, radius=5),
@@ -240,7 +378,9 @@ def case_card(
     for index, fact in enumerate(facts):
         result.extend(
             [
-                circle(x + 43, 548 + index * 45, 7, fill=CYAN, stroke=CYAN, stroke_width=1),
+                circle(
+                    x + 43, 548 + index * 45, 7, fill=CYAN, stroke=CYAN, stroke_width=1
+                ),
                 text(x + 64, 556 + index * 45, fact, size=20, fill=NAVY),
             ]
         )
@@ -268,7 +408,11 @@ def three_case_evidence() -> str:
             status="Prospective result",
             status_fill=GREEN_PALE,
             status_text=GREEN,
-            facts=["64 jobs · generation 4", "28 / 28 documents improved", "Winner frozen before validation"],
+            facts=[
+                "64 jobs · generation 4",
+                "28 / 28 documents improved",
+                "Winner frozen before validation",
+            ],
             scope_note=["One repository and host;", "human-written seeds."],
         )
     )
@@ -281,8 +425,15 @@ def three_case_evidence() -> str:
             status="Post-hoc selection",
             status_fill=AMBER_PALE,
             status_text=AMBER,
-            facts=["64 jobs · generation 4", "5 / 5 workloads improved", "Archive revisited a retained branch"],
-            scope_note=["Candidate selected after the", "allocation gate was revealed."],
+            facts=[
+                "64 jobs · generation 4",
+                "5 / 5 workloads improved",
+                "Archive revisited a retained branch",
+            ],
+            scope_note=[
+                "Candidate selected after the",
+                "allocation gate was revealed.",
+            ],
         )
     )
     body.extend(
@@ -294,29 +445,50 @@ def three_case_evidence() -> str:
             status="Preregistered result",
             status_fill=VIOLET_PALE,
             status_text=VIOLET,
-            facts=["220 jobs · 167 binaries", "95% CI +0.962% to +1.076%", "Top-10 follow-up: +0.891%"],
-            scope_note=["Registered winner is a manual seed;", "follow-up used a different corpus."],
+            facts=[
+                "220 jobs · 167 binaries",
+                "95% CI +0.962% to +1.076%",
+                "Top-10 follow-up: +0.891%",
+            ],
+            scope_note=[
+                "Registered winner is a manual seed;",
+                "follow-up used a different corpus.",
+            ],
         )
     )
-    body.append(text(800, 850, "348 terminal jobs · 310 successful · 38 failed · fixed-repository results", size=21, fill=SLATE, weight=700, anchor="middle"))
+    body.append(
+        text(
+            800,
+            850,
+            "348 terminal jobs · 310 successful · 38 failed · fixed-repository results",
+            size=21,
+            fill=SLATE,
+            weight=700,
+            anchor="middle",
+        )
+    )
     return svg_document(body, title="Loreley three-case evidence summary")
 
 
 def node(
     body: list[str],
-    *,
-    x: float,
-    y: float,
-    generation: str,
-    title_value: str,
-    metric: str,
-    accent: str,
+    **options: Unpack[NodeOptions],
 ) -> None:
+    x = options["x"]
+    y = options["y"]
+    generation = options["generation"]
+    title_value = options["title_value"]
+    metric = options["metric"]
+    accent = options["accent"]
     body.extend(
         [
             circle(x, y, 33, fill=WHITE, stroke=accent, stroke_width=5),
-            text(x, y + 8, generation, size=20, fill=accent, weight=700, anchor="middle"),
-            text(x, y + 70, title_value, size=18, fill=NAVY, weight=700, anchor="middle"),
+            text(
+                x, y + 8, generation, size=20, fill=accent, weight=700, anchor="middle"
+            ),
+            text(
+                x, y + 70, title_value, size=18, fill=NAVY, weight=700, anchor="middle"
+            ),
             text(x, y + 98, metric, size=17, fill=MUTED, anchor="middle"),
         ]
     )
@@ -332,7 +504,14 @@ def lineages() -> str:
         [
             rect(80, 205, 1440, 270, fill=WHITE, shadow=True),
             pill(112, 235, "markdown-it-py", fill=CYAN_PALE, text_fill=CYAN, width=220),
-            text(360, 264, "Independent validation: +6.75%", size=22, fill=GREEN, weight=700),
+            text(
+                360,
+                264,
+                "Independent validation: +6.75%",
+                size=22,
+                fill=GREEN,
+                weight=700,
+            ),
             line(200, 335, 1400, 335, stroke=LINE, width=5),
         ]
     )
@@ -343,15 +522,37 @@ def lineages() -> str:
         (1380, "G4", "Normalization", "job 26 · winner"),
     ]
     for x, gen, title_value, metric in markdown_nodes:
-        node(body, x=x, y=335, generation=gen, title_value=title_value, metric=metric, accent=CYAN)
+        node(
+            body,
+            x=x,
+            y=335,
+            generation=gen,
+            title_value=title_value,
+            metric=metric,
+            accent=CYAN,
+        )
     for x1, x2 in [(248, 562), (638, 952), (1028, 1342)]:
         body.append(arrow(x1, 335, x2, 335, stroke=CYAN, width=4))
 
     body.extend(
         [
             rect(80, 515, 1440, 300, fill=WHITE, shadow=True),
-            pill(112, 545, "python-pathspec", fill=VIOLET_PALE, text_fill=VIOLET, width=220),
-            text(360, 574, "Reference workloads: +25.14% · post-hoc selection", size=22, fill=AMBER, weight=700),
+            pill(
+                112,
+                545,
+                "python-pathspec",
+                fill=VIOLET_PALE,
+                text_fill=VIOLET,
+                width=220,
+            ),
+            text(
+                360,
+                574,
+                "Reference workloads: +25.14% · post-hoc selection",
+                size=22,
+                fill=AMBER,
+                weight=700,
+            ),
             line(175, 665, 1410, 665, stroke=LINE, width=5),
         ]
     )
@@ -363,14 +564,36 @@ def lineages() -> str:
         (1400, "G4", "Flatten dispatch", "1.2536× training"),
     ]
     for x, gen, title_value, metric in pathspec_nodes:
-        node(body, x=x, y=665, generation=gen, title_value=title_value, metric=metric, accent=VIOLET)
+        node(
+            body,
+            x=x,
+            y=665,
+            generation=gen,
+            title_value=title_value,
+            metric=metric,
+            accent=VIOLET,
+        )
     for x1, x2 in [(218, 417), (493, 692), (768, 967)]:
         body.append(arrow(x1, 665, x2, 665, stroke=VIOLET, width=4))
     body.extend(
         [
             arrow(1043, 665, 1362, 665, stroke=VIOLET, width=4, dashed=True),
-            pill(1080, 610, "20 other jobs explored elsewhere", fill=AMBER_PALE, text_fill=AMBER, width=270),
-            text(800, 864, "Parent ancestry and inspiration edges are recorded separately.", size=20, fill=SLATE, anchor="middle"),
+            pill(
+                1080,
+                610,
+                "20 other jobs explored elsewhere",
+                fill=AMBER_PALE,
+                text_fill=AMBER,
+                width=270,
+            ),
+            text(
+                800,
+                864,
+                "Parent ancestry and inspiration edges are recorded separately.",
+                size=20,
+                fill=SLATE,
+                anchor="middle",
+            ),
         ]
     )
     return svg_document(body, title="Loreley case-study lineages")
@@ -378,15 +601,15 @@ def lineages() -> str:
 
 def interval_plot(
     body: list[str],
-    *,
-    y: float,
-    label: str,
-    estimate: float,
-    low: float,
-    high: float,
-    color: str,
-    note: str,
+    **options: Unpack[IntervalOptions],
 ) -> None:
+    y = options["y"]
+    label = options["label"]
+    estimate = options["estimate"]
+    low = options["low"]
+    high = options["high"]
+    color = options["color"]
+    note = options["note"]
     chart_x = 720
     chart_w = 760
     max_value = 1.5
@@ -403,7 +626,15 @@ def interval_plot(
             line(scale(low), y - 13, scale(low), y + 13, stroke=color, width=4),
             line(scale(high), y - 13, scale(high), y + 13, stroke=color, width=4),
             circle(scale(estimate), y, 12, fill=WHITE, stroke=color, stroke_width=6),
-            text(scale(estimate), y - 27, f"{estimate:.3f}%", size=18, fill=color, weight=700, anchor="middle"),
+            text(
+                scale(estimate),
+                y - 27,
+                f"{estimate:.3f}%",
+                size=18,
+                fill=color,
+                weight=700,
+                anchor="middle",
+            ),
         ]
     )
 
@@ -432,10 +663,30 @@ def zstd_identity_results() -> str:
         body.append(arrow(x1, identity_y + 75, x2, identity_y + 75))
     body.extend(
         [
-            text(980, 407, "44 successful jobs repeated an existing binary", size=18, fill=MUTED, anchor="middle"),
-            text(980, 435, "25 measured before cache · 19 reused after cache", size=18, fill=MUTED, anchor="middle"),
+            text(
+                980,
+                407,
+                "44 successful jobs repeated an existing binary",
+                size=18,
+                fill=MUTED,
+                anchor="middle",
+            ),
+            text(
+                980,
+                435,
+                "25 measured before cache · 19 reused after cache",
+                size=18,
+                fill=MUTED,
+                anchor="middle",
+            ),
             rect(80, 480, 1440, 330, fill=WHITE, shadow=True),
-            text(120, 535, "Compression throughput gain with 95% confidence intervals", size=28, weight=700),
+            text(
+                120,
+                535,
+                "Compression throughput gain with 95% confidence intervals",
+                size=28,
+                weight=700,
+            ),
         ]
     )
 
@@ -471,8 +722,23 @@ def zstd_identity_results() -> str:
     )
     body.extend(
         [
-            pill(80, 835, "Different fresh corpora · not directly comparable", fill=AMBER_PALE, text_fill=AMBER, width=500),
-            text(1520, 864, "Registered winner: manual seed · +1.019%", size=20, fill=SLATE, weight=700, anchor="end"),
+            pill(
+                80,
+                835,
+                "Different fresh corpora · not directly comparable",
+                fill=AMBER_PALE,
+                text_fill=AMBER,
+                width=500,
+            ),
+            text(
+                1520,
+                864,
+                "Registered winner: manual seed · +1.019%",
+                size=20,
+                fill=SLATE,
+                weight=700,
+                anchor="end",
+            ),
         ]
     )
     return svg_document(body, title="Loreley Zstandard identity and result summary")
