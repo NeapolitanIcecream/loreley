@@ -1,0 +1,178 @@
+diff --git a/markdown_it/common/utils.py b/markdown_it/common/utils.py
+index 11bda644c260b714cf010ed44d2ed345de80314e..1c14feaffde0af9bb6bc6ff095833c1edfa6526e 100644
+--- a/markdown_it/common/utils.py
++++ b/markdown_it/common/utils.py
+@@ -139,6 +139,8 @@ def stripEscape(string: str) -> str:
+ def escapeHtml(raw: str) -> str:
+     """Replace special characters "&", "<", ">" and '"' to HTML-safe sequences."""
+     # like html.escape, but without escaping single quotes
++    if "&" not in raw and "<" not in raw and ">" not in raw and '"' not in raw:
++        return raw
+     raw = raw.replace("&", "&amp;")  # Must be done first!
+     raw = raw.replace("<", "&lt;")
+     raw = raw.replace(">", "&gt;")
+diff --git a/markdown_it/renderer.py b/markdown_it/renderer.py
+index f690b091e2b16d249ab2d57f90cb2bb2276bbf66..46f64070ac0f30bb12b7f5a4e02bac456e6c9f07 100644
+--- a/markdown_it/renderer.py
++++ b/markdown_it/renderer.py
+@@ -75,15 +75,20 @@ class RendererHTML(RendererProtocol):
+ 
+         """
+         result = ""
++        rules = self.rules
++        renderToken = self.renderToken
++        renderInline = self.renderInline
+ 
+         for i, token in enumerate(tokens):
+             if token.type == "inline":
+                 if token.children:
+-                    result += self.renderInline(token.children, options, env)
+-            elif token.type in self.rules:
+-                result += self.rules[token.type](tokens, i, options, env)
++                    result += renderInline(token.children, options, env)
+             else:
+-                result += self.renderToken(tokens, i, options, env)
++                rule = rules.get(token.type)
++                if rule is not None:
++                    result += rule(tokens, i, options, env)
++                else:
++                    result += renderToken(tokens, i, options, env)
+ 
+         return result
+ 
+@@ -97,12 +102,15 @@ class RendererHTML(RendererProtocol):
+         :param env: additional data from parsed input (references, for example)
+         """
+         result = ""
++        rules = self.rules
++        renderToken = self.renderToken
+ 
+         for i, token in enumerate(tokens):
+-            if token.type in self.rules:
+-                result += self.rules[token.type](tokens, i, options, env)
++            rule = rules.get(token.type)
++            if rule is not None:
++                result += rule(tokens, i, options, env)
+             else:
+-                result += self.renderToken(tokens, i, options, env)
++                result += renderToken(tokens, i, options, env)
+ 
+         return result
+ 
+@@ -120,9 +128,25 @@ class RendererHTML(RendererProtocol):
+         :param idx: token index to render
+         :param options: params of parser instance
+         """
++        token = tokens[idx]
++        renderAttrs = self.renderAttrs
++
++        # Fast path for inline tokens, which never need the block-level
++        # newline handling below.
++        if not token.block:
++            if token.hidden:
++                return ""
++
++            result = ("</" if token.nesting == -1 else "<") + token.tag
++            result += renderAttrs(token)
++
++            if token.nesting == 0 and options["xhtmlOut"]:
++                result += " /"
++
++            return result + ">"
++
+         result = ""
+         needLf = False
+-        token = tokens[idx]
+ 
+         # Tight list paragraphs
+         if token.hidden:
+@@ -142,7 +166,7 @@ class RendererHTML(RendererProtocol):
+         result += ("</" if token.nesting == -1 else "<") + token.tag
+ 
+         # Encode attributes, e.g. `<img src="foo"`
+-        result += self.renderAttrs(token)
++        result += renderAttrs(token)
+ 
+         # Add a slash for self-closing tags, e.g. `<img src="foo" /`
+         if token.nesting == 0 and options["xhtmlOut"]:
+@@ -172,9 +196,11 @@ class RendererHTML(RendererProtocol):
+     @staticmethod
+     def renderAttrs(token: Token) -> str:
+         """Render token attributes to string."""
++        if not token.attrs:
++            return ""
+         result = ""
+ 
+-        for key, value in token.attrItems():
++        for key, value in token.attrs.items():
+             result += " " + escapeHtml(key) + '="' + escapeHtml(str(value)) + '"'
+ 
+         return result
+diff --git a/markdown_it/rules_core/normalize.py b/markdown_it/rules_core/normalize.py
+index 32439243ef6ebfa424d202ed63635983d4c9ea82..472a23616f42f84ec54d42f04d35aae38d0bcebe 100644
+--- a/markdown_it/rules_core/normalize.py
++++ b/markdown_it/rules_core/normalize.py
+@@ -10,8 +10,16 @@ NULL_RE = re.compile(r"\0")
+ 
+ 
+ def normalize(state: StateCore) -> None:
++    src = state.src
++
++    # Fast path: sources without \r or \0 characters are already normalized,
++    # since NEWLINES_RE only rewrites \r/\r\n (plain \n is an identity
++    # replacement) and NULL_RE only rewrites \0.
++    if "\r" not in src and "\0" not in src:
++        return
++
+     # Normalize newlines
+-    string = NEWLINES_RE.sub("\n", state.src)
++    string = NEWLINES_RE.sub("\n", src)
+ 
+     # Replace NULL characters
+     string = NULL_RE.sub("\ufffd", string)
+diff --git a/markdown_it/rules_inline/html_inline.py b/markdown_it/rules_inline/html_inline.py
+index 9065e1d034da76270f7d3f1ba528132c8d57d341..db5b728bdecc7ed43d9ccb58787cbe0cf59e754a 100644
+--- a/markdown_it/rules_inline/html_inline.py
++++ b/markdown_it/rules_inline/html_inline.py
+@@ -1,8 +1,11 @@
+ # Process html tags
++import re
++
+ from ..common.html_re import HTML_TAG_RE
+ from ..common.utils import isLinkClose, isLinkOpen
+ from .state_inline import StateInline
+ 
++HTML_TAG_AT_POS_RE = re.compile(HTML_TAG_RE.pattern.removeprefix("^"))
+ 
+ def isLetter(ch: int) -> bool:
+     lc = ch | 0x20  # to lower case
+@@ -26,13 +29,13 @@ def html_inline(state: StateInline, silent: bool) -> bool:
+     if ch not in ("!", "?", "/") and not isLetter(ord(ch)):  # /* / */
+         return False
+ 
+-    match = HTML_TAG_RE.search(state.src[pos:])
++    match = HTML_TAG_AT_POS_RE.match(state.src, pos)
+     if not match:
+         return False
+ 
+     if not silent:
+         token = state.push("html_inline", "", 0)
+-        token.content = state.src[pos : pos + len(match.group(0))]
++        token.content = match.group(0)
+ 
+         if isLinkOpen(token.content):
+             state.linkLevel += 1
+diff --git a/markdown_it/token.py b/markdown_it/token.py
+index d6d0b4530d283f4fb925ca4e95c75eef0818117d..fecf6ab1ad53a1a60ebc2c00db313cd40d023d5c 100644
+--- a/markdown_it/token.py
++++ b/markdown_it/token.py
+@@ -75,7 +75,8 @@ class Token:
+     """
+ 
+     def __post_init__(self) -> None:
+-        self.attrs = convert_attrs(self.attrs)
++        if not isinstance(self.attrs, dict):
++            self.attrs = convert_attrs(self.attrs)
+ 
+     def attrIndex(self, name: str) -> int:
+         warnings.warn(  # noqa: B028

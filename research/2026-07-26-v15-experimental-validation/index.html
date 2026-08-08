@@ -1,0 +1,3449 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Automated MAP-Elites system that evolves entire git repositories.">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.0">
+    
+    
+      
+        <title>Loreley v15 experimental validation sprint - Loreley</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.618322db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#loreley-v15-experimental-validation-sprint" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Loreley" class="md-header__button md-logo" aria-label="Loreley" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Loreley
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Loreley v15 experimental validation sprint
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Loreley" class="md-nav__button md-logo" aria-label="Loreley" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Loreley
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evidence
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Evidence
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../2026-08-07-loreley-case-study-evidence-report/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Three-case-study report
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../2026-08-02-markdown-it-py-deepseek-case-study/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    markdown-it-py DeepSeek case study
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../2026-08-03-pathspec-deepseek-case-study/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    python-pathspec DeepSeek case study
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../2026-08-07-zstandard-gpt-v19-case-study-report/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Zstandard V19 case study
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../2026-08-07-zstandard-gpt-v19-top10-validation-supplement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Zstandard V19 Top-10 supplement
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../marketing/candidates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Candidate source diffs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../2026-08-07-case-study-framework-convergence-proposal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Framework convergence proposal
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../2026-08-07-case-study-deferred-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deferred research register
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Essays & collaboration
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Essays & collaboration
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../marketing/2026-08-loreley-launch-article-zh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    用编码智能体搜索真实代码仓库
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../marketing/2026-08-loreley-launch-article-en/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Searching Real Code Repositories with Coding Agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../marketing/loreley-design-partner-brief/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design partners
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Releases
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Releases
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/unreleased/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Unreleased
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v0.9.0-alpha/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v0.9.0-alpha
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v0.8.4-alpha/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v0.8.4-alpha
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v0.8.3-alpha/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v0.8.3-alpha
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v0.8.2-alpha/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v0.8.2-alpha
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v0.8.1-alpha/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v0.8.1-alpha
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v0.8.0-alpha/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v0.8.0-alpha
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v0.7.9-alpha/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v0.7.9-alpha
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v0.7.8-alpha/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v0.7.8-alpha
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v0.7.7-alpha/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v0.7.7-alpha
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loreley
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Loreley
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/campaign-program/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Campaign program
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/experiments/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experiments
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../adr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture decisions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_6" id="__nav_5_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scheduler
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Scheduler
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/scheduler/main/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/scheduler/job_scheduler/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Job scheduling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/scheduler/ingestion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ingestion
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_7" id="__nav_5_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Database
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Database
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/db/base/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Engine & sessions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/db/models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_8" id="__nav_5_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MAP-Elites
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    MAP-Elites
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/map-elites/map-elites/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/map-elites/repository_embedding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository embeddings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/map-elites/preprocess/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Preprocessing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/map-elites/chunk/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chunking
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/map-elites/code_embedding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Code embeddings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/map-elites/dimension_reduction/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dimensionality reduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/map-elites/sampler/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sampler
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/map-elites/snapshot/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Snapshots
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_9" id="__nav_5_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Worker pipeline
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Worker pipeline
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/worker/repository/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/worker/planning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Planning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/worker/agent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/worker/coding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/worker/evaluator/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/worker/evolution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evolution loop
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/worker/commit_card/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Commit cards
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/worker/commit_summary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Commit summaries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/worker/artifacts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Artifacts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/worker/job_store/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Job store
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_10" id="__nav_5_10_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tasks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Tasks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/tasks/broker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/tasks/workers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Workers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    UI API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/agent-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent REST API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/ui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Streamlit UI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Operations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../script/doctor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Doctor (environment checks)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../script/status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../script/db/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Database schema commands
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../script/jobs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Managing jobs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../script/job_leases/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Job lease recovery
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../script/archive_stats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Archive stats
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../script/config_dump/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Config dump
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../script/benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmarking
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../script/run_scheduler/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Running the scheduler
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../script/run_worker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Running the worker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../script/run_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Running the UI API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../script/run_ui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Running the UI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../script/reset_db/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Resetting the database
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#research-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Research contract
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Research contract">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#target-claims" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Target claims
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scope-and-invariants" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scope and invariants
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#required-evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Required evidence
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#insufficient-outcomes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Insufficient outcomes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epistemic-stance-and-terminal-states" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epistemic stance and terminal states
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#resource-and-source-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resource and source policy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#adaptive-experiment-portfolio" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adaptive experiment portfolio
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#failure-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failure model
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#experiments-and-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Experiments and results
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Experiments and results">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#model-and-coding-agent-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model and coding-agent selection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#same-candidate-pareto-replay" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Same-candidate Pareto replay
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multi-island-scheduling-and-migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-island scheduling and migration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#one-command-parallel-ab" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One-command parallel A/B
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#selected-model-end-to-end-campaign" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Selected-model end-to-end campaign
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-decisions-changed-by-evidence-and-review" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation decisions changed by evidence and review
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#final-verification-and-structural-debt-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Final verification and structural-debt gate
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#budget-closeout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Budget closeout
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reproduction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reproduction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#final-checkpoint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Final checkpoint
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="loreley-v15-experimental-validation-sprint">Loreley v15 experimental validation sprint<a class="headerlink" href="#loreley-v15-experimental-validation-sprint" title="Permanent link">&para;</a></h1>
+<p>Date: 2026-07-26</p>
+<p>Status: Complete</p>
+<h2 id="research-contract">Research contract<a class="headerlink" href="#research-contract" title="Permanent link">&para;</a></h2>
+<h3 id="target-claims">Target claims<a class="headerlink" href="#target-claims" title="Permanent link">&para;</a></h3>
+<p>This sprint tests whether the v15 changes provide useful behavior beyond unit
+correctness:</p>
+<ol>
+<li>A bounded Pareto front preserves real quality/runtime trade-offs that a
+   primary-objective scalar archive would discard in the same behavior niche.</li>
+<li>Configured islands receive fair search work, retain independent state, and
+   exchange usable donor context with explicit provenance when migration is
+   enabled.</li>
+<li><code>loreley worker --processes N</code> provides one-command process parallelism with
+   isolated workers and lower makespan on a fixed workload.</li>
+<li>A model/backend choice can be justified by observed valid-patch rate,
+   objective quality, latency, and proxy-accounted cost rather than reputation.</li>
+</ol>
+<h3 id="scope-and-invariants">Scope and invariants<a class="headerlink" href="#scope-and-invariants" title="Permanent link">&para;</a></h3>
+<ul>
+<li>The empirical task is the repository's deterministic 26-circle packing
+  example. Candidates must return exactly 26 non-overlapping circles inside the
+  unit square and stay below the evaluator's runtime limit.</li>
+<li>Quality is <code>sum_radii</code> (maximize); latency is repeated <code>runtime_p50_ms</code>
+  (minimize). Runtime comparisons use repeated measurements and report noise.</li>
+<li>Algorithm comparisons replay the same evaluated candidates. A different
+  candidate set is not accepted as evidence that Pareto selection beats scalar
+  selection.</li>
+<li>Island comparisons keep the total job budget and agent/model fixed.</li>
+<li>Parallel comparisons keep the task set and backend fixed. Worker startup,
+  distinct PIDs/workspaces, duplicate execution, failures, and makespan are all
+  measured.</li>
+<li>PostgreSQL and Redis are disposable local services. No production data or
+  remote experiment database is in scope.</li>
+<li>API secrets remain environment-only and are never written to artifacts,
+  command output, git, or prompts.</li>
+</ul>
+<h3 id="required-evidence">Required evidence<a class="headerlink" href="#required-evidence" title="Permanent link">&para;</a></h3>
+<p>The strongest successful result requires:</p>
+<ul>
+<li>at least one valid, measured same-niche pair where neither objective vector
+  dominates the other, both are retained by the v15 front, and the scalar
+  primary baseline retains only one;</li>
+<li>a replayable island trace showing fair target allocation, a donor from a
+  different ready island, persisted provenance, local target membership, and no
+  donor when migration is disabled;</li>
+<li>identical parallel workloads for <code>N=1</code> and <code>N&gt;1</code>, with distinct worker PIDs
+  and workspaces, no duplicate job completion, and a reported makespan ratio;</li>
+<li>a coding-agent/model bake-off with the same prompt and repository state,
+  actual evaluator outcomes, response usage, latency, and proxy pricing;</li>
+<li>an end-to-end Loreley run using the selected backend/model, including
+  scheduler, one-command worker pool, evaluator, archive persistence, usage
+  records, and a generated report;</li>
+<li>adversarial review of the harness, measurements, and conclusions.</li>
+</ul>
+<h3 id="insufficient-outcomes">Insufficient outcomes<a class="headerlink" href="#insufficient-outcomes" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Existing unit tests alone.</li>
+<li>Synthetic objective vectors presented as empirical optimization evidence.</li>
+<li>Different prompts or job budgets compared as though they were controlled.</li>
+<li>Counting several metric rows as proof of multi-objective selection.</li>
+<li>Counting worker processes without measuring completed work and isolation.</li>
+<li>A single successful model sample used to claim general superiority.</li>
+<li>A migration row that never reaches agent context.</li>
+<li>A benchmark conclusion that ignores failed or invalid candidates.</li>
+<li>Spending the budget without changing a decision.</li>
+</ul>
+<h3 id="epistemic-stance-and-terminal-states">Epistemic stance and terminal states<a class="headerlink" href="#epistemic-stance-and-terminal-states" title="Permanent link">&para;</a></h3>
+<p>The implementation and 827-test baseline are established facts. Whether the
+features improve empirical search behavior is an open hypothesis.</p>
+<p>Allowed terminal states are:</p>
+<ul>
+<li>supported within the tested task and budget;</li>
+<li>refuted by a reproducible counterexample;</li>
+<li>bounded inconclusive, with the exact statistical or systems gap recorded;</li>
+<li>blocked by proxy, GitHub, or local-service state that cannot be repaired
+  inside the authorized scope.</li>
+</ul>
+<p>No desired empirical improvement is assumed.</p>
+<h2 id="resource-and-source-policy">Resource and source policy<a class="headerlink" href="#resource-and-source-policy" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Hard API cap: <strong>$100</strong>, equivalent to <strong>50,000,000 New API quota points</strong> at
+  the proxy's documented 500,000 quota points per US dollar.</li>
+<li>Operational stop: $90 attributed spend. The final $10 is reserved for
+  delayed accounting, a decisive repeat, or review repair.</li>
+<li>Codex-session tokens and local CPU/Docker use do not count toward the cap.</li>
+<li>Per-response token usage is attributed with the proxy's <code>/api/pricing</code>
+  model/completion ratios. The token appears shared, so global balance deltas
+  are retained as a conservative but contaminated cross-check.</li>
+<li>Pricing source:
+  <a href="https://docs.newapi.pro/en/docs/guide/console/settings/rate-settings">https://docs.newapi.pro/en/docs/guide/console/settings/rate-settings</a>.</li>
+<li>Token-usage endpoint source:
+  <a href="https://doc.newapi.pro/en/api/token-usage/">https://doc.newapi.pro/en/api/token-usage/</a>.</li>
+<li>External sources may explain API behavior and standard experimental methods.
+  Repository code, commits, evaluator results, database rows, and captured
+  process evidence are authoritative for Loreley claims.</li>
+</ul>
+<h2 id="adaptive-experiment-portfolio">Adaptive experiment portfolio<a class="headerlink" href="#adaptive-experiment-portfolio" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Family</th>
+<th>Thesis</th>
+<th>First decisive test</th>
+<th style="text-align: right;">Initial budget</th>
+<th>Status</th>
+<th>Reopening condition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Coding-agent/model bake-off</td>
+<td>A strong, medium, and cheap model have measurably different valid-patch/cost frontiers</td>
+<td>Same repository, prompt, evaluator, and one independent run per profile/model; repeat only contenders</td>
+<td style="text-align: right;">$18</td>
+<td>Complete</td>
+<td>Reopen a rejected model only if failure is provider/tool incompatibility</td>
+</tr>
+<tr>
+<td>Same-candidate Pareto replay</td>
+<td>v15 retains measured trade-offs lost by scalar primary selection</td>
+<td>Force evaluated candidates into one controlled behavior cell and replay both policies</td>
+<td style="text-align: right;">$4</td>
+<td>Complete</td>
+<td>Reopen if the objective contract or archive dominance logic changes</td>
+</tr>
+<tr>
+<td>Migration causal trace</td>
+<td>Migration changes usable planning context while preserving island identity and fairness</td>
+<td>Fixed seeds/jobs with migration off/on; inspect persisted lineage and captured prompts</td>
+<td style="text-align: right;">$20</td>
+<td>Complete for mechanism; quality effect inconclusive</td>
+<td>Reopen quality-effect claim only with repeated non-seed campaigns</td>
+</tr>
+<tr>
+<td>One-command parallel A/B</td>
+<td>Native multi-process mode reduces makespan without isolation failure</td>
+<td>Identical deterministic workload at N=1 and N=4; confirm process isolation in the live pool</td>
+<td style="text-align: right;">$8</td>
+<td>Complete</td>
+<td>Reopen on worker-process or broker changes</td>
+</tr>
+<tr>
+<td>End-to-end selected configuration</td>
+<td>The chosen model/backend exercises the complete product path within acceptable cost/failure bounds</td>
+<td>Bounded circle-packing run with real scheduler, worker pool, evaluator, archive, usage, and report</td>
+<td style="text-align: right;">$40</td>
+<td>Complete</td>
+<td>Expand only if a new model/backend is being selected</td>
+</tr>
+<tr>
+<td>Reserve/adversarial repeat</td>
+<td>A surprising result is not a one-off or harness artifact</td>
+<td>Repeat the most decision-sensitive cell after audit</td>
+<td style="text-align: right;">$10</td>
+<td>Partly used for live failure-path confirmation</td>
+<td>Reopen only for a merge-blocking review finding</td>
+</tr>
+</tbody>
+</table>
+<p>Budget allocations are ceilings, not quotas. Funds move toward experiments with
+the highest expected decision value.</p>
+<h2 id="failure-model">Failure model<a class="headerlink" href="#failure-model" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Proxy model aliases may route differently or omit usable token accounting.</li>
+<li>Kilo may succeed conversationally without editing the requested worktree.</li>
+<li>Runtime noise may manufacture false Pareto trade-offs.</li>
+<li>Candidate behavior embeddings may place trade-offs in different cells,
+  invalidating a direct scalar/Pareto comparison.</li>
+<li>Seed scheduling may look fair while normal scheduling is not.</li>
+<li>Migration provenance may exist without donor content reaching planning.</li>
+<li>Provider rate limiting may make N=4 slower without invalidating local worker
+  parallelism.</li>
+<li>Shared API-token activity may contaminate global quota deltas.</li>
+<li>A report may silently omit failures, duplicate jobs, or expensive retries.</li>
+<li>Experiment-only code may accidentally leak credentials or become product
+  compatibility debt.</li>
+</ul>
+<p>Each item is an explicit audit check.</p>
+<h2 id="experiments-and-results">Experiments and results<a class="headerlink" href="#experiments-and-results" title="Permanent link">&para;</a></h2>
+<p>All machine-readable inputs, raw rows, traces, logs, reports, incidents, and
+derived conclusions are under <code>artifacts/2026-07-26-v15-validation/</code>.
+<a href="../artifacts/2026-07-26-v15-validation/conclusions.json"><code>conclusions.json</code></a> is the
+compact claim ledger, and
+<a href="../artifacts/2026-07-26-v15-validation/incidents.json"><code>incidents.json</code></a> retains
+failed and superseded runs. Complete per-process debug directories are packaged
+with hashes in
+<a href="../artifacts/2026-07-26-v15-validation/log-archive-manifest.json"><code>log-archive-manifest.json</code></a>.</p>
+<h3 id="model-and-coding-agent-selection">Model and coding-agent selection<a class="headerlink" href="#model-and-coding-agent-selection" title="Permanent link">&para;</a></h3>
+<p>The direct-API probe was only a compatibility screen. It rejected three of four
+one-shot outputs as invalid and sent the surviving candidate plus the other
+models through the same Kilo task, repository commit, editable scope, and
+100-run evaluator.</p>
+<table>
+<thead>
+<tr>
+<th>Kilo model</th>
+<th>Agent edit</th>
+<th>Valid</th>
+<th style="text-align: right;"><code>sum_radii</code></th>
+<th style="text-align: right;">Agent seconds</th>
+<th style="text-align: right;">Attributed cost</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gpt-5.4-mini</code></td>
+<td>yes</td>
+<td>yes</td>
+<td style="text-align: right;">2.4389662674</td>
+<td style="text-align: right;">85.626</td>
+<td style="text-align: right;">$0.0867366</td>
+</tr>
+<tr>
+<td><code>deepseek-v4-flash</code></td>
+<td>yes</td>
+<td>yes</td>
+<td style="text-align: right;">2.4389662674</td>
+<td style="text-align: right;">217.568</td>
+<td style="text-align: right;">$0.5497128</td>
+</tr>
+<tr>
+<td><code>gpt-5.4</code></td>
+<td>yes</td>
+<td>yes</td>
+<td style="text-align: right;">1.4768432292</td>
+<td style="text-align: right;">102.654</td>
+<td style="text-align: right;">$0.2460300</td>
+</tr>
+<tr>
+<td><code>claude-sonnet-4-6</code></td>
+<td>no; timeout</td>
+<td>baseline only</td>
+<td style="text-align: right;">0.25</td>
+<td style="text-align: right;">241.722</td>
+<td style="text-align: right;">$1.8459540</td>
+</tr>
+</tbody>
+</table>
+<p><code>gpt-5.4-mini</code> was selected because it matched the best observed quality at
+39% of DeepSeek's latency and 16% of its attributed cost. This is an
+operational choice for this task, not a general model ranking: the sample per
+alternative is small, and a later bounded Mini task also timed out.</p>
+<p>The Kilo calibration found two integration defects before the comparison was
+accepted: the chat-completions gateway used an incompatible adapter, and the
+headless agent could enter interactive tools. Both failures, their costs, and
+the fixes are in the incident ledger. A Kilo result counted only when it left a
+tracked diff and that diff passed the independent evaluator.</p>
+<h3 id="same-candidate-pareto-replay">Same-candidate Pareto replay<a class="headerlink" href="#same-candidate-pareto-replay" title="Permanent link">&para;</a></h3>
+<p>Three measured implementations were evaluated in one Docker-constrained
+environment with 31 independent timing samples of 1,000 calls each. Median
+bootstrap intervals used 20,000 resamples.</p>
+<table>
+<thead>
+<tr>
+<th>Candidate</th>
+<th style="text-align: right;"><code>sum_radii</code> (max)</th>
+<th style="text-align: right;">runtime p50 ms (min)</th>
+<th>median 95% bootstrap CI</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>repository baseline</td>
+<td style="text-align: right;">0.25</td>
+<td style="text-align: right;">0.001560605</td>
+<td>[0.001544772, 0.001565897]</td>
+</tr>
+<tr>
+<td>DeepSeek candidate</td>
+<td style="text-align: right;">2.4389662674</td>
+<td style="text-align: right;">0.101259361</td>
+<td>[0.100328039, 0.102409012]</td>
+</tr>
+<tr>
+<td>Mini candidate</td>
+<td style="text-align: right;">2.4389662674</td>
+<td style="text-align: right;">0.000095707</td>
+<td>[0.000092249, 0.000096791]</td>
+</tr>
+</tbody>
+</table>
+<p>The controlled baseline/DeepSeek pair shared the same behavior measure. Neither
+dominated the other: DeepSeek improved quality while the baseline was faster.
+The v15 front retained both, whereas a primary-quality scalar baseline retained
+only DeepSeek. Adding Mini correctly removed both because it matched DeepSeek's
+quality and was faster than both candidates. This supports Pareto retention
+without relying on synthetic objective vectors or preserving dominated points.</p>
+<h3 id="multi-island-scheduling-and-migration">Multi-island scheduling and migration<a class="headerlink" href="#multi-island-scheduling-and-migration" title="Permanent link">&para;</a></h3>
+<p>The system harness launched the real scheduler, PostgreSQL persistence, Redis
+broker, one-command worker pool, evaluator, and archive manager. A deterministic
+delayed backend isolated scheduler behavior from provider variance.</p>
+<p>The final eight-job migration run produced:</p>
+<ul>
+<li>four <code>alpha</code> and four <code>beta</code> jobs;</li>
+<li>two seed and two normal jobs per island;</li>
+<li>separate persisted state and archive rows for both islands;</li>
+<li>one <code>alpha ← beta</code> and one <code>beta ← alpha</code> migration;</li>
+<li>donor hashes present in both persisted inspirations and captured planning
+  prompts;</li>
+<li>four worker PIDs, eight worktrees, and no duplicate phase execution.</li>
+</ul>
+<p>The disabled controls had no donor provenance. Two rejected preliminary runs
+found real defects: normal scheduling began before every island was ready, and
+a global every-second-job migration cadence aliased with two-island
+round-robin, sending both donors to one island. The implementation now gates
+normal cold start on all configured islands and counts migration cadence per
+target island.</p>
+<p>This establishes genuine independent island execution and causal donor
+delivery. It does not establish that migration improves objective quality; that
+claim remains bounded inconclusive until repeated matched non-seed campaigns
+are available.</p>
+<h3 id="one-command-parallel-ab">One-command parallel A/B<a class="headerlink" href="#one-command-parallel-ab" title="Permanent link">&para;</a></h3>
+<p>The <code>processes=1</code> and <code>processes=4</code> runs used the same eight-job workload,
+delays, islands, job limits, migration setting, database shape, and evaluator.
+Only the worker process count changed.</p>
+<table>
+<thead>
+<tr>
+<th>Configuration</th>
+<th style="text-align: right;">Job execution window</th>
+<th style="text-align: right;">Scheduler/worker wall time</th>
+<th style="text-align: right;">PIDs</th>
+<th style="text-align: right;">Worktrees</th>
+<th>Failures / duplicates</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--processes 1</code></td>
+<td style="text-align: right;">25.701889 s</td>
+<td style="text-align: right;">29.694509 s</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">8</td>
+<td>0 / 0</td>
+</tr>
+<tr>
+<td><code>--processes 4</code></td>
+<td style="text-align: right;">8.452003 s</td>
+<td style="text-align: right;">15.068000 s</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">8</td>
+<td>0 / 0</td>
+</tr>
+</tbody>
+</table>
+<p>The job-window speedup was <strong>3.041×</strong> and the end-to-end wall-time speedup was
+<strong>1.970×</strong>. Startup, scheduler polling, and shutdown dominate the short
+workload's wall time. Every job had exactly one planning and one coding event
+in a distinct worktree.</p>
+<p>The first four-process attempt also exposed a multiprocessing-context collision:
+queued logging initialized <code>spawn</code> before Dramatiq unconditionally requested
+<code>--use-spawn</code>. Reusing an initialized context avoided that collision but left a
+<code>fork</code> caller able to copy cached, non-randomized worker settings. The final
+entrypoint temporarily forces <code>spawn</code> for the Dramatiq master without asking
+Dramatiq to set it a second time, then restores the caller's prior context.
+A bounded regression smoke explicitly initialized the worker parent to <code>fork</code>
+before launching the real two-process master. Four jobs completed 2/2 across
+the islands using two PIDs and four distinct coding workspaces, with no
+duplicate phase event, in 10.125 seconds wall time. The compact record is
+<a href="../artifacts/2026-07-26-v15-validation/fork-parent-worker-pool-regression.json"><code>fork-parent-worker-pool-regression.json</code></a>;
+its first invalid database-endpoint attempt remains in the incident ledger.</p>
+<h3 id="selected-model-end-to-end-campaign">Selected-model end-to-end campaign<a class="headerlink" href="#selected-model-end-to-end-campaign" title="Permanent link">&para;</a></h3>
+<p>The selected configuration ran four real Mini jobs with one command,
+<code>--processes 2</code>, two islands, one attempt per phase, and a hard total-job cap.
+All four jobs completed planning, coding, evaluation, branch publication,
+ingestion, archive persistence, and usage recording:</p>
+<ul>
+<li>status: 4 succeeded, 0 failed;</li>
+<li>allocation: <code>alpha=2</code>, <code>beta=2</code>;</li>
+<li>isolation: two PIDs, four distinct worktrees, eight unique phase events;</li>
+<li>report: generated JSON and Markdown successfully;</li>
+<li>best <code>sum_radii</code>: 2.5, compared with root 0.25 and historical best
+  2.003569804;</li>
+<li>usage: eight events and 640,030 recorded tokens.</li>
+</ul>
+<p>The run found that the gateway leaves Kilo's provider cost at zero. Loreley
+previously treated that placeholder as authoritative and bypassed an explicit
+pricing table. The fix preserves positive provider costs but allows a matching
+explicit rule to price non-empty zero-cost Kilo usage. A separate failure-path
+confirmation persisted two <code>estimated</code> events totaling $0.3277944. That
+confirmation's coding phase timed out at 360 seconds, and therefore also
+disproved any zero-failure-rate interpretation of the four-job success.</p>
+<p>The same failed task exposed an empty-campaign terminal bug: after all jobs
+failed, the scheduler crashed while creating a primary-objective branch.
+Absence of a retained candidate is now a logged, clean terminal state; genuine
+branch creation errors still fail.</p>
+<h2 id="implementation-decisions-changed-by-evidence-and-review">Implementation decisions changed by evidence and review<a class="headerlink" href="#implementation-decisions-changed-by-evidence-and-review" title="Permanent link">&para;</a></h2>
+<p>The experiments and current-head review caused product changes that were
+not justified by the original unit suite alone:</p>
+<ol>
+<li>sanitize non-finite PCA diagnostics before JSON persistence;</li>
+<li>restore an island manager from the durable snapshot when ingestion rolls
+   back;</li>
+<li>wait for every configured island before normal cold-start scheduling;</li>
+<li>apply migration cadence per target island;</li>
+<li>temporarily force a spawn multiprocessing context for the worker pool;</li>
+<li>make Kilo gateway/headless execution and timeout usage recovery reliable;</li>
+<li>price Kilo zero-cost placeholders with explicit rules and terminate cleanly
+   when a campaign retains no candidate;</li>
+<li>keep one bounded seed probe after PCA warmup until an island archive is
+   usable;</li>
+<li>ignore zero-span objectives when assigning crowding-distance boundaries;</li>
+<li>derive migration cadence from persisted per-island job counts;</li>
+<li>drain terminal ingestion, cap failed-ingestion retries, and mark exhausted
+    results terminal; and</li>
+<li>count retryable failed seed ingestion as pending so backoff cannot create
+    duplicate readiness probes.</li>
+</ol>
+<p>The same review also aligned configured island IDs with their persisted
+64-character boundary and preserved the legacy <code>main</code> fallback for blank
+default-island values in the one-shot migration tool.</p>
+<p>The implementation did not add a compatibility layer for legacy scalar or
+single-island semantics. Existing configuration is handled by the committed
+one-shot migration command documented in the architecture work.</p>
+<h2 id="final-verification-and-structural-debt-gate">Final verification and structural-debt gate<a class="headerlink" href="#final-verification-and-structural-debt-gate" title="Permanent link">&para;</a></h2>
+<p>The final suite ran with the PostgreSQL migration tests enabled: <strong>866 passed,
+0 failed, 0 skipped</strong> in 42.21 seconds. Coverage.py measured 82.72% statement
+coverage and 57.38% branch coverage (78.78% combined).</p>
+<p>Cremona then scanned 279 Python files against the committed refactor baseline
+using that coverage report and git history. Signal health was <code>full</code>; the
+branch introduced <strong>0 new</strong> and <strong>0 worsened</strong> structural-debt signals while
+resolving <strong>22</strong> baseline signals. The baseline was not rewritten. Eight
+<code>refactor_now</code> and eighteen <code>refactor_soon</code> findings remain as pre-existing
+repository debt, so the verdict is <code>strained</code>, not debt-free. The compact
+machine-readable record is
+<a href="../artifacts/2026-07-26-v15-validation/structural-audit.json"><code>structural-audit.json</code></a>.</p>
+<h2 id="budget-closeout">Budget closeout<a class="headerlink" href="#budget-closeout" title="Permanent link">&para;</a></h2>
+<p>The conservative attributed total is <strong>$3.844143</strong> (1,922,071.5 quota points),
+or <strong>3.844%</strong> of the $100 cap. The remaining cap is <strong>$96.155857</strong>. Cache reads
+were charged as ordinary input because the proxy discount was not known. The
+shared token's global balance delta was larger and is retained only as a
+contaminated cross-check.</p>
+<p>The budget was a ceiling, not a spending target. More calls would refine model
+failure-rate estimates but would not change the selected backend, system
+design, bug fixes, or merge decision. Stopping preserves the reserve and follows
+the contract rule that spend must change a decision.</p>
+<h2 id="reproduction">Reproduction<a class="headerlink" href="#reproduction" title="Permanent link">&para;</a></h2>
+<p>The deterministic system experiments cost no API budget:</p>
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d<span class="w"> </span>postgres<span class="w"> </span>redis
+uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>tools/run_v15_pareto_replay.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--output<span class="w"> </span>docs/research/artifacts/2026-07-26-v15-validation/pareto-replay.json
+uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>tools/run_v15_system_experiment.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--label<span class="w"> </span>v15-parallel-p1<span class="w"> </span>--processes<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--output<span class="w"> </span>docs/research/artifacts/2026-07-26-v15-validation/system-parallel-p1.json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--trace<span class="w"> </span>docs/research/artifacts/2026-07-26-v15-validation/system-parallel-p1-trace.jsonl
+uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>tools/run_v15_system_experiment.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--label<span class="w"> </span>v15-parallel-p4<span class="w"> </span>--processes<span class="w"> </span><span class="m">4</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--output<span class="w"> </span>docs/research/artifacts/2026-07-26-v15-validation/system-parallel-p4.json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--trace<span class="w"> </span>docs/research/artifacts/2026-07-26-v15-validation/system-parallel-p4-trace.jsonl
+uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>tools/run_v15_system_experiment.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--label<span class="w"> </span>v15-islands-migration<span class="w"> </span>--processes<span class="w"> </span><span class="m">4</span><span class="w"> </span>--migration-interval<span class="w"> </span><span class="m">2</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--output<span class="w"> </span>docs/research/artifacts/2026-07-26-v15-validation/system-islands-migration.json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--trace<span class="w"> </span>docs/research/artifacts/2026-07-26-v15-validation/system-islands-migration-trace.jsonl
+</code></pre></div>
+<p>The live command consumes proxy budget and requires <code>LLM_API_KEY</code> and
+<code>LLM_BASE_URL</code>; secrets are forwarded only to the worker subprocess and are
+never serialized:</p>
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>tools/run_v15_system_experiment.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--label<span class="w"> </span>v15-live-gpt54mini<span class="w"> </span>--backend<span class="w"> </span>kilocode<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--model<span class="w"> </span>gpt-5.4-mini<span class="w"> </span>--processes<span class="w"> </span><span class="m">2</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--max-total-jobs<span class="w"> </span><span class="m">4</span><span class="w"> </span>--max-unfinished-jobs<span class="w"> </span><span class="m">2</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--timeout-seconds<span class="w"> </span><span class="m">1200</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--report-dir<span class="w"> </span>docs/research/artifacts/2026-07-26-v15-validation/v15-live-gpt54mini-report<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--output<span class="w"> </span>docs/research/artifacts/2026-07-26-v15-validation/system-live-gpt54mini.json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--trace<span class="w"> </span>docs/research/artifacts/2026-07-26-v15-validation/system-live-gpt54mini-trace.jsonl
+</code></pre></div>
+<h2 id="final-checkpoint">Final checkpoint<a class="headerlink" href="#final-checkpoint" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Pareto retention: supported within the measured task.</li>
+<li>Multi-island independence and migration mechanism: supported.</li>
+<li>One-command multi-process execution: supported with measured speedup.</li>
+<li>Selected Kilo/Mini end-to-end path: supported, with observed timeout risk.</li>
+<li>Migration quality benefit: bounded inconclusive.</li>
+<li>Algorithm, debt, and parallelism audits reported no blocker or major finding.</li>
+<li>Final verification: 862 tests passed; structural audit found no regression
+  and resolved 22 baseline signals.</li>
+<li>All failed and superseded experiments remain in the incident ledger.</li>
+<li>No credential was written to an artifact.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.7a47a382.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.e71a0d61.min.js"></script>
+      
+    
+  </body>
+</html>

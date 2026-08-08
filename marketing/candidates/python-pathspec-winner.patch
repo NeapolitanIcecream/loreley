@@ -1,0 +1,287 @@
+diff --git a/pathspec/_backends/simple/gitignore.py b/pathspec/_backends/simple/gitignore.py
+index 29701f5ed12675aa20ea4e860bab00c25d6392a7..90f37495958b0b9f3d24fa8aad7910ac059b339b 100644
+--- a/pathspec/_backends/simple/gitignore.py
++++ b/pathspec/_backends/simple/gitignore.py
+@@ -62,43 +62,52 @@ class SimpleGiBackend(SimplePsBackend):
+ 		or :data:`None`), and the index of the last matched pattern (:class:`int` or
+ 		:data:`None`).
+ 		"""
++		fast_patterns = self._fast_patterns
+ 		is_reversed = self._is_reversed
++		dir_mark_name = _DIR_MARK
+ 
+ 		out_include: Optional[bool] = None
+ 		out_index: Optional[int] = None
+ 		out_priority = 0
+-		for index, pattern in self._patterns:
+-			if (
+-				(include := pattern.include) is not None
+-				and (match := pattern.match_file(file)) is not None
+-			):
+-				# Pattern matched.
+-
+-				# Check for directory marker.
+-				dir_mark = match.match.groupdict().get(_DIR_MARK)
+-
+-				if dir_mark:
+-					# Pattern matched by a directory pattern.
+-					priority = 1
+-				else:
+-					# Pattern matched by a file pattern.
+-					priority = 2
+-
+-				if is_reversed:
+-					if priority > out_priority:
+-						out_include = include
+-						out_index = index
+-						out_priority = priority
+-				else:
+-					# Forward.
+-					if (include and dir_mark) or priority >= out_priority:
+-						out_include = include
+-						out_index = index
+-						out_priority = priority
+-
+-				if is_reversed and priority == 2:
+-					# Patterns are being checked in reverse order. The first pattern that
+-					# matches with priority 2 takes precedence.
+-					break
++		for index, include, match_call, is_fast in fast_patterns:
++			match = match_call(file)
++			if match is None:
++				continue
++
++			if is_fast:
++				# Fast path: the matcher returns a raw regex match. Check for
++				# the directory marker. The regexes held by this backend contain
++				# at most one named group (`ps_d`), so `lastgroup` is exactly
++				# `ps_d` when the directory marker participated.
++				dir_mark = match.lastgroup == dir_mark_name
++
++			else:
++				# Custom pattern: the matcher returns a `RegexMatchResult`, so
++				# unwrap its `.match` attribute.
++				dir_mark = match.match.lastgroup == dir_mark_name
++
++			if dir_mark:
++				# Pattern matched by a directory pattern.
++				priority = 1
++			else:
++				# Pattern matched by a file pattern.
++				priority = 2
++
++			if is_reversed:
++				if priority > out_priority:
++					out_include = include
++					out_index = index
++					out_priority = priority
++			else:
++				# Forward.
++				if (include and dir_mark) or priority >= out_priority:
++					out_include = include
++					out_index = index
++					out_priority = priority
++
++			if is_reversed and priority == 2:
++				# Patterns are being checked in reverse order. The first pattern that
++				# matches with priority 2 takes precedence.
++				break
+ 
+ 		return (out_include, out_index)
+diff --git a/pathspec/_backends/simple/pathspec.py b/pathspec/_backends/simple/pathspec.py
+index 2ded1be8b71a8d12ca13412cea7dc49cd2ac19b9..c05cc5753637eb33ca87f8e5b2fbf611c3b7680e 100644
+--- a/pathspec/_backends/simple/pathspec.py
++++ b/pathspec/_backends/simple/pathspec.py
+@@ -6,18 +6,20 @@ Its contents and structure are likely to change.
+ """
+ 
+ from collections.abc import (
++	Callable,
+ 	Sequence)
+ from typing import (
+-	Optional)  # Replaced by `X | None` in 3.10.
++	Any,
++	Optional,  # Replaced by `X | None` in 3.10.
++	cast)
+ 
+ from pathspec.backend import (
+ 	_Backend)
+ from pathspec.pattern import (
+-	Pattern)
++	Pattern,
++	RegexPattern)
+ from pathspec._typing import (
+ 	override)  # Added in 3.12.
+-from pathspec.util import (
+-	check_match_file)
+ 
+ from .._utils import (
+ 	enumerate_patterns)
+@@ -62,6 +64,37 @@ class SimplePsBackend(_Backend):
+ 		patterns.
+ 		"""
+ 
++		# Precompute a flat table so the per-file matching loop only performs
++		# local-variable loads and direct bound-method calls per pattern. Each
++		# entry is a 4-tuple containing the enumerated index, the include value,
++		# the bound matcher callable, and whether the matcher returns a raw regex
++		# match. No-op patterns (i.e., `include is None`) are dropped because they
++		# can never affect the result. For stock `RegexPattern.match_file()`
++		# implementations the compiled regex's `search` method is bound once
++		# (avoiding a bound-method allocation and a `RegexMatchResult` wrapper for
++		# every pattern on every file); anything else keeps its own `match_file()`
++		# to preserve custom pattern semantics.
++		regex_match_file = RegexPattern.match_file
++		self._fast_patterns: list[tuple[int, Optional[bool], Callable[[Any], Any], bool]] = []
++		for __index, __pattern in self._patterns:
++			__include = __pattern.include
++			if __include is None:
++				continue
++			if (
++				type(__pattern).match_file is regex_match_file
++				and (__regex := cast(RegexPattern, __pattern).regex) is not None
++			):
++				self._fast_patterns.append((__index, __include, __regex.search, True))
++			else:
++				self._fast_patterns.append((__index, __include, __pattern.match_file, False))
++		"""
++		*_fast_patterns* (:class:`list` of :class:`tuple`) contains each non-null
++		enumerated pattern as a :class:`tuple` of the enumerated index
++		(:class:`int`), the include value (:class:`bool`), the bound matcher
++		callable (:class:`Callable`), and whether the matcher returns a raw regex
++		match (:class:`bool`). This is only used by the matching loop.
++		"""
++
+ 	@override
+ 	def match_file(self, file: str) -> tuple[Optional[bool], Optional[int]]:
+ 		"""
+@@ -73,4 +106,22 @@ class SimplePsBackend(_Backend):
+ 		or :data:`None`), and the index of the last matched pattern (:class:`int` or
+ 		:data:`None`).
+ 		"""
+-		return check_match_file(self._patterns, file, self._is_reversed)
++		fast_patterns = self._fast_patterns
++		is_reversed = self._is_reversed
++
++		out_include: Optional[bool] = None
++		out_index: Optional[int] = None
++		for index, include, match_call, _is_fast in fast_patterns:
++			if match_call(file) is None:
++				continue
++
++			if is_reversed:
++				# Patterns are being checked in reverse order. The first pattern
++				# that matches takes precedence.
++				return (include, index)
++
++			# Forward. The last pattern that matches takes precedence.
++			out_include = include
++			out_index = index
++
++		return (out_include, out_index)
+diff --git a/pathspec/pathspec.py b/pathspec/pathspec.py
+index 3e3872acf6555883bd4e1864b8767d3f7a2694aa..4d0328ecafcafeabd407f8e1aa5c0eb23c9508f1 100644
+--- a/pathspec/pathspec.py
++++ b/pathspec/pathspec.py
+@@ -197,9 +197,11 @@ class PathSpec(Generic[TPattern_co]):
+ 		if not _is_iterable(files):
+ 			raise TypeError(f"files:{files!r} is not an iterable.")
+ 
++		normalize = normalize_file
++		match_file = self._backend.match_file
+ 		for orig_file in files:
+-			norm_file = normalize_file(orig_file, separators)
+-			include, index = self._backend.match_file(norm_file)
++			norm_file = normalize(orig_file, separators)
++			include, index = match_file(norm_file)
+ 			yield CheckResult(orig_file, include, index)
+ 
+ 	def check_tree_files(
+@@ -323,7 +325,10 @@ class PathSpec(Generic[TPattern_co]):
+ 		if not _is_iterable(lines):
+ 			raise TypeError(f"lines:{lines!r} is not an iterable.")
+ 
+-		patterns = [use_factory(__line) for __line in lines if __line]  # type: ignore[arg-type]
++		# Keep filtering and factory dispatch in the C-level iterator loop. This
++		# matters when large ignore files are compiled and preserves the existing
++		# behavior of skipping only false-y lines.
++		patterns = list(map(use_factory, filter(None, lines)))  # type: ignore[arg-type]
+ 		self = cls(patterns, backend=backend, _test_backend_factory=_test_backend_factory)
+ 		return self
+ 
+@@ -375,9 +380,11 @@ class PathSpec(Generic[TPattern_co]):
+ 		if not _is_iterable(entries):
+ 			raise TypeError(f"entries:{entries!r} is not an iterable.")
+ 
++		normalize = normalize_file
++		match_file = self._backend.match_file
+ 		for entry in entries:
+-			norm_file = normalize_file(entry.path, separators)
+-			include, _index = self._backend.match_file(norm_file)
++			norm_file = normalize(entry.path, separators)
++			include, _index = match_file(norm_file)
+ 
+ 			if negate:
+ 				include = not include
+@@ -435,9 +442,11 @@ class PathSpec(Generic[TPattern_co]):
+ 		if not _is_iterable(files):
+ 			raise TypeError(f"files:{files!r} is not an iterable.")
+ 
++		normalize = normalize_file
++		match_file = self._backend.match_file
+ 		for orig_file in files:
+-			norm_file = normalize_file(orig_file, separators)
+-			include, _index = self._backend.match_file(norm_file)
++			norm_file = normalize(orig_file, separators)
++			include, _index = match_file(norm_file)
+ 
+ 			if negate:
+ 				include = not include
+diff --git a/pathspec/patterns/gitignore/base.py b/pathspec/patterns/gitignore/base.py
+index 5c0a4d9a28db482426b1bf20715e8f57265888d1..afa2bc805a487554f9276419b0d66543b196a7e4 100644
+--- a/pathspec/patterns/gitignore/base.py
++++ b/pathspec/patterns/gitignore/base.py
+@@ -192,8 +192,13 @@ class _GitIgnoreBasePattern(RegexPattern):
+ 						assert_unreachable(f"{range_error=!r} is invalid.")
+ 
+ 			else:
+-				# Regular character, escape it for regex.
+-				regex += re.escape(char)
++				# Regular character, escape it for regex. Escape the
++				# contiguous run of regular characters at once.
++				j = i
++				while j < end and pattern[j] not in ('\\', '*', '?', '['):
++					j += 1
++				regex += re.escape(pattern[i - 1:j])
++				i = j
+ 
+ 		if escape:
+ 			raise ValueError((
+diff --git a/pathspec/util.py b/pathspec/util.py
+index e847ff8c2ceea486c1815265bb29231e55d66fc2..243fffee71d1d21c989e86dc16b44d5ad058d597 100644
+--- a/pathspec/util.py
++++ b/pathspec/util.py
+@@ -112,8 +112,9 @@ def check_match_file(
+ 		# Check patterns in reverse order. The first pattern that matches takes
+ 		# precedence.
+ 		for index, pattern in patterns:
+-			if pattern.include is not None and pattern.match_file(file) is not None:
+-				return pattern.include, index
++			include = pattern.include
++			if include is not None and pattern.match_file(file) is not None:
++				return include, index
+ 
+ 		return None, None
+ 
+@@ -122,8 +123,9 @@ def check_match_file(
+ 		out_include: Optional[bool] = None
+ 		out_index: Optional[int] = None
+ 		for index, pattern in patterns:
+-			if pattern.include is not None and pattern.match_file(file) is not None:
+-				out_include = pattern.include
++			include = pattern.include
++			if include is not None and pattern.match_file(file) is not None:
++				out_include = include
+ 				out_index = index
+ 
+ 		return out_include, out_index

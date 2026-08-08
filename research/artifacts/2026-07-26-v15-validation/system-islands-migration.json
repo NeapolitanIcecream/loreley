@@ -1,0 +1,926 @@
+{
+  "commands": {
+    "scheduler": [
+      "/Users/chenmohan/gits/ACE/loreley/.venv/bin/python3",
+      "examples/evol_circle_packing.py",
+      "scheduler",
+      "--phase",
+      "smoke",
+      "--init-db",
+      "--yes",
+      "--preflight-timeout-seconds",
+      "5",
+      "--max-total-jobs",
+      "8"
+    ],
+    "worker": [
+      "/Users/chenmohan/gits/ACE/loreley/.venv/bin/python3",
+      "examples/evol_circle_packing.py",
+      "worker",
+      "--phase",
+      "smoke",
+      "--processes",
+      "4",
+      "--preflight-timeout-seconds",
+      "5"
+    ]
+  },
+  "environment": {
+    "database_host": "localhost:5432",
+    "python": "3.13.9 (main, Nov 19 2025, 23:39:32) [Clang 21.1.4 ]",
+    "redis_db": 15,
+    "repository": "/Users/chenmohan/gits/ACE/loreley/examples/circle-packing",
+    "root_commit": "6dab191",
+    "secrets_forwarded": false
+  },
+  "generated_at": "2026-07-25T17:29:34.394985+00:00",
+  "logs": {
+    "scheduler": "/Users/chenmohan/gits/ACE/loreley/docs/research/artifacts/2026-07-26-v15-validation/system-islands-migration.scheduler.log",
+    "worker": "/Users/chenmohan/gits/ACE/loreley/docs/research/artifacts/2026-07-26-v15-validation/system-islands-migration.worker.log"
+  },
+  "rows": {
+    "archive_cells": [
+      {
+        "cell_index": 2,
+        "commit_hash": "af7164207cecabccbc83d914dc93cfb3d24a12c0",
+        "island_id": "alpha",
+        "measures": [
+          0.5
+        ],
+        "objective_values": [
+          0.25,
+          0.002208980731666088
+        ]
+      },
+      {
+        "cell_index": 2,
+        "commit_hash": "6f3cfb465e4b5d5bfdf2d770906accee78c0f44c",
+        "island_id": "beta",
+        "measures": [
+          0.6360827634879543
+        ],
+        "objective_values": [
+          0.25,
+          0.002625049091875553
+        ]
+      }
+    ],
+    "island_states": [
+      {
+        "island_id": "alpha",
+        "snapshot": {
+          "last_update_at": 1785000571.335698,
+          "lower_bounds": [
+            0.0
+          ],
+          "objective_contract": [
+            {
+              "direction": "max",
+              "name": "sum_radii"
+            },
+            {
+              "direction": "min",
+              "name": "runtime_p50_ms"
+            }
+          ],
+          "objective_contract_fingerprint": "8bbbad7efe16d7ec03df3825409b3f7e5c8e367b418ed4196d0f13de9f718efe",
+          "projection": {
+            "components": [
+              [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            ],
+            "epoch": 2,
+            "explained_variance": [
+              0.0
+            ],
+            "explained_variance_ratio": [
+              0.0
+            ],
+            "feature_count": 64,
+            "fitted_at": 1785000571.335379,
+            "mean": [
+              0.135232152694288,
+              0.2043979929281109,
+              -0.08139311121376117,
+              -0.04044029543664236,
+              -0.006809198809187218,
+              0.16876562639974765,
+              0.013301123121889002,
+              0.09803781941399657,
+              0.14943628784463558,
+              -0.09593892659109299,
+              0.0763655307309921,
+              0.07148438463121631,
+              -0.0347293544999047,
+              -0.08744573237748314,
+              -0.021647882952505616,
+              -0.1275687533176401,
+              -0.15573296631334632,
+              0.10809298037953467,
+              0.15880808835620502,
+              -0.06796995943937775,
+              -0.1597843175761602,
+              -0.14928985346164234,
+              -0.22577741284512884,
+              0.21445315389364902,
+              -0.10648220216660868,
+              -0.0759262275820123,
+              0.08217409458972529,
+              0.04859180942326793,
+              -0.026333783208290353,
+              0.19497738095554362,
+              0.2095720077938732,
+              0.07665839949697864,
+              0.135232152694288,
+              0.2043979929281109,
+              -0.08139311121376117,
+              -0.04044029543664236,
+              -0.006809198809187218,
+              0.16876562639974765,
+              0.013301123121889002,
+              0.09803781941399657,
+              0.14943628784463558,
+              -0.09593892659109299,
+              0.0763655307309921,
+              0.07148438463121631,
+              -0.0347293544999047,
+              -0.08744573237748314,
+              -0.021647882952505616,
+              -0.1275687533176401,
+              -0.15573296631334632,
+              0.10809298037953467,
+              0.15880808835620502,
+              -0.06796995943937775,
+              -0.1597843175761602,
+              -0.14928985346164234,
+              -0.22577741284512884,
+              0.21445315389364902,
+              -0.10648220216660868,
+              -0.0759262275820123,
+              0.08217409458972529,
+              0.04859180942326793,
+              -0.026333783208290353,
+              0.19497738095554362,
+              0.2095720077938732,
+              0.07665839949697864
+            ],
+            "rotation": null,
+            "sample_count": 4,
+            "whiten": true
+          },
+          "samples_since_fit": 0,
+          "upper_bounds": [
+            1.0
+          ]
+        }
+      },
+      {
+        "island_id": "beta",
+        "snapshot": {
+          "last_update_at": 1785000571.2832088,
+          "lower_bounds": [
+            0.0
+          ],
+          "objective_contract": [
+            {
+              "direction": "max",
+              "name": "sum_radii"
+            },
+            {
+              "direction": "min",
+              "name": "runtime_p50_ms"
+            }
+          ],
+          "objective_contract_fingerprint": "8bbbad7efe16d7ec03df3825409b3f7e5c8e367b418ed4196d0f13de9f718efe",
+          "projection": {
+            "components": [
+              [
+                -1.4097667031762065e-16,
+                2.5037647772389833e-33,
+                0.0,
+                0.0,
+                -0.17149858514250882,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.6859943405700353,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                -0.17149858514250882,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.6859943405700353,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            ],
+            "epoch": 1,
+            "explained_variance": [
+              3.836813561083946e-35
+            ],
+            "explained_variance_ratio": [
+              1.0
+            ],
+            "feature_count": 64,
+            "fitted_at": 1785000571.28278,
+            "mean": [
+              0.135232152694288,
+              0.2043979929281109,
+              -0.08139311121376117,
+              -0.04044029543664236,
+              -0.006809198809187217,
+              0.16876562639974765,
+              0.013301123121889002,
+              0.09803781941399657,
+              0.14943628784463558,
+              -0.09593892659109299,
+              0.0763655307309921,
+              0.07148438463121631,
+              -0.0347293544999047,
+              -0.08744573237748314,
+              -0.02164788295250562,
+              -0.1275687533176401,
+              -0.15573296631334632,
+              0.10809298037953467,
+              0.15880808835620502,
+              -0.06796995943937775,
+              -0.1597843175761602,
+              -0.14928985346164234,
+              -0.22577741284512884,
+              0.21445315389364902,
+              -0.10648220216660868,
+              -0.0759262275820123,
+              0.08217409458972529,
+              0.04859180942326793,
+              -0.026333783208290353,
+              0.19497738095554362,
+              0.2095720077938732,
+              0.07665839949697864,
+              0.135232152694288,
+              0.2043979929281109,
+              -0.08139311121376117,
+              -0.04044029543664236,
+              -0.006809198809187217,
+              0.16876562639974765,
+              0.013301123121889002,
+              0.09803781941399657,
+              0.14943628784463558,
+              -0.09593892659109299,
+              0.0763655307309921,
+              0.07148438463121631,
+              -0.0347293544999047,
+              -0.08744573237748314,
+              -0.02164788295250562,
+              -0.1275687533176401,
+              -0.15573296631334632,
+              0.10809298037953467,
+              0.15880808835620502,
+              -0.06796995943937775,
+              -0.1597843175761602,
+              -0.14928985346164234,
+              -0.22577741284512884,
+              0.21445315389364902,
+              -0.10648220216660868,
+              -0.0759262275820123,
+              0.08217409458972529,
+              0.04859180942326793,
+              -0.026333783208290353,
+              0.19497738095554362,
+              0.2095720077938732,
+              0.07665839949697864
+            ],
+            "rotation": null,
+            "sample_count": 3,
+            "whiten": true
+          },
+          "samples_since_fit": 0,
+          "upper_bounds": [
+            1.0
+          ]
+        }
+      }
+    ],
+    "jobs": [
+      {
+        "base_commit_hash": "6dab19189cd41b9e57f11e12c315341da53f22af",
+        "candidate_commit_hash": "ec64c494a76bc184de8631363e4497b562be4d47",
+        "completed_at_epoch": 1785000565.838482,
+        "id": "0ee112b6-a542-4ed5-b9d3-f07d00113705",
+        "ingestion_status": "skipped",
+        "inspiration_commit_hashes": [],
+        "is_seed_job": true,
+        "island_id": "alpha",
+        "job_kind": "seed",
+        "last_error": null,
+        "migration_commit_hash": null,
+        "migration_source_island_id": null,
+        "result_commit_hash": "ec64c494a76bc184de8631363e4497b562be4d47",
+        "scheduled_at_epoch": 1785000562.113147,
+        "started_at_epoch": 1785000562.248136,
+        "status": "SUCCEEDED",
+        "worker_id": null
+      },
+      {
+        "base_commit_hash": "6dab19189cd41b9e57f11e12c315341da53f22af",
+        "candidate_commit_hash": "09426607fa008516f8dcc36e35a4bab4b8105942",
+        "completed_at_epoch": 1785000565.951785,
+        "id": "c5117f22-59e3-4eba-a968-29d46fe20287",
+        "ingestion_status": "skipped",
+        "inspiration_commit_hashes": [],
+        "is_seed_job": true,
+        "island_id": "alpha",
+        "job_kind": "seed",
+        "last_error": null,
+        "migration_commit_hash": null,
+        "migration_source_island_id": null,
+        "result_commit_hash": "09426607fa008516f8dcc36e35a4bab4b8105942",
+        "scheduled_at_epoch": 1785000562.113147,
+        "started_at_epoch": 1785000562.258475,
+        "status": "SUCCEEDED",
+        "worker_id": null
+      },
+      {
+        "base_commit_hash": "6dab19189cd41b9e57f11e12c315341da53f22af",
+        "candidate_commit_hash": "fc71b6e63cc7600867d371a53e352f4201648912",
+        "completed_at_epoch": 1785000566.194795,
+        "id": "342a0c7f-53be-4971-8a61-4719a7039370",
+        "ingestion_status": "skipped",
+        "inspiration_commit_hashes": [],
+        "is_seed_job": true,
+        "island_id": "beta",
+        "job_kind": "seed",
+        "last_error": null,
+        "migration_commit_hash": null,
+        "migration_source_island_id": null,
+        "result_commit_hash": "fc71b6e63cc7600867d371a53e352f4201648912",
+        "scheduled_at_epoch": 1785000562.128696,
+        "started_at_epoch": 1785000562.279528,
+        "status": "SUCCEEDED",
+        "worker_id": null
+      },
+      {
+        "base_commit_hash": "6dab19189cd41b9e57f11e12c315341da53f22af",
+        "candidate_commit_hash": "6f3cfb465e4b5d5bfdf2d770906accee78c0f44c",
+        "completed_at_epoch": 1785000566.06912,
+        "id": "7f7be656-a342-4284-bf63-bf94fb89068f",
+        "ingestion_status": "skipped",
+        "inspiration_commit_hashes": [],
+        "is_seed_job": true,
+        "island_id": "beta",
+        "job_kind": "seed",
+        "last_error": null,
+        "migration_commit_hash": null,
+        "migration_source_island_id": null,
+        "result_commit_hash": "6f3cfb465e4b5d5bfdf2d770906accee78c0f44c",
+        "scheduled_at_epoch": 1785000562.128696,
+        "started_at_epoch": 1785000562.284586,
+        "status": "SUCCEEDED",
+        "worker_id": null
+      },
+      {
+        "base_commit_hash": "ec64c494a76bc184de8631363e4497b562be4d47",
+        "candidate_commit_hash": "3a2af655cc2f31099c588d5e3b3dfa4d063a1b56",
+        "completed_at_epoch": 1785000570.187354,
+        "id": "097a6a17-0385-4e96-af7f-7665b8ac5f46",
+        "ingestion_status": "succeeded",
+        "inspiration_commit_hashes": [],
+        "is_seed_job": false,
+        "island_id": "alpha",
+        "job_kind": "evolution",
+        "last_error": null,
+        "migration_commit_hash": null,
+        "migration_source_island_id": null,
+        "result_commit_hash": "3a2af655cc2f31099c588d5e3b3dfa4d063a1b56",
+        "scheduled_at_epoch": 1785000567.240965,
+        "started_at_epoch": 1785000567.344483,
+        "status": "SUCCEEDED",
+        "worker_id": null
+      },
+      {
+        "base_commit_hash": "6f3cfb465e4b5d5bfdf2d770906accee78c0f44c",
+        "candidate_commit_hash": "94d3ab8e6716cbdbce137baeb191ed1c6c57a9cb",
+        "completed_at_epoch": 1785000570.222214,
+        "id": "b56ec4a4-bf58-4dfb-884c-c630a7f4df09",
+        "ingestion_status": "skipped",
+        "inspiration_commit_hashes": [],
+        "is_seed_job": false,
+        "island_id": "beta",
+        "job_kind": "evolution",
+        "last_error": null,
+        "migration_commit_hash": null,
+        "migration_source_island_id": null,
+        "result_commit_hash": "94d3ab8e6716cbdbce137baeb191ed1c6c57a9cb",
+        "scheduled_at_epoch": 1785000567.244077,
+        "started_at_epoch": 1785000567.43924,
+        "status": "SUCCEEDED",
+        "worker_id": null
+      },
+      {
+        "base_commit_hash": "ec64c494a76bc184de8631363e4497b562be4d47",
+        "candidate_commit_hash": "af7164207cecabccbc83d914dc93cfb3d24a12c0",
+        "completed_at_epoch": 1785000571.05153,
+        "id": "2f6f837c-b239-413d-a792-16d8b0e5d113",
+        "ingestion_status": "succeeded",
+        "inspiration_commit_hashes": [
+          "6f3cfb465e4b5d5bfdf2d770906accee78c0f44c"
+        ],
+        "is_seed_job": false,
+        "island_id": "alpha",
+        "job_kind": "evolution",
+        "last_error": null,
+        "migration_commit_hash": "6f3cfb465e4b5d5bfdf2d770906accee78c0f44c",
+        "migration_source_island_id": "beta",
+        "result_commit_hash": "af7164207cecabccbc83d914dc93cfb3d24a12c0",
+        "scheduled_at_epoch": 1785000568.192105,
+        "started_at_epoch": 1785000568.217885,
+        "status": "SUCCEEDED",
+        "worker_id": null
+      },
+      {
+        "base_commit_hash": "6f3cfb465e4b5d5bfdf2d770906accee78c0f44c",
+        "candidate_commit_hash": "ad4c11594803d07b40959a87cb5af322a15468de",
+        "completed_at_epoch": 1785000571.33462,
+        "id": "fa88e410-8cc1-4c3b-a6fc-caffe7a2d098",
+        "ingestion_status": null,
+        "inspiration_commit_hashes": [
+          "ec64c494a76bc184de8631363e4497b562be4d47"
+        ],
+        "is_seed_job": false,
+        "island_id": "beta",
+        "job_kind": "evolution",
+        "last_error": null,
+        "migration_commit_hash": "ec64c494a76bc184de8631363e4497b562be4d47",
+        "migration_source_island_id": "alpha",
+        "result_commit_hash": "ad4c11594803d07b40959a87cb5af322a15468de",
+        "scheduled_at_epoch": 1785000568.195868,
+        "started_at_epoch": 1785000568.473719,
+        "status": "SUCCEEDED",
+        "worker_id": null
+      }
+    ],
+    "usage": []
+  },
+  "summary": {
+    "all_jobs_terminal": true,
+    "api_cost_usd": 0.0,
+    "archive_islands": [
+      "alpha",
+      "beta"
+    ],
+    "coding_workspaces": [
+      "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-islands-migration/worker-pid-95544-03f11ab5-worktrees/097a6a17-0385-4e96-af7f-7665b8ac5f46-d414cd7c",
+      "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-islands-migration/worker-pid-95544-03f11ab5-worktrees/7f7be656-a342-4284-bf63-bf94fb89068f-ef5c7c38",
+      "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-islands-migration/worker-pid-95546-12596a76-worktrees/2f6f837c-b239-413d-a792-16d8b0e5d113-5e0068da",
+      "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-islands-migration/worker-pid-95546-12596a76-worktrees/c5117f22-59e3-4eba-a968-29d46fe20287-571c4d50",
+      "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-islands-migration/worker-pid-95547-6c813641-worktrees/0ee112b6-a542-4ed5-b9d3-f07d00113705-ea7c00b7",
+      "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-islands-migration/worker-pid-95547-6c813641-worktrees/fa88e410-8cc1-4c3b-a6fc-caffe7a2d098-776aca13",
+      "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-islands-migration/worker-pid-95549-9ce985b3-worktrees/342a0c7f-53be-4971-8a61-4719a7039370-a8d0ef17",
+      "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-islands-migration/worker-pid-95549-9ce985b3-worktrees/b56ec4a4-bf58-4dfb-884c-c630a7f4df09-1201ac27"
+    ],
+    "configured": {
+      "coding_delay_seconds": 1.5,
+      "islands": [
+        "alpha",
+        "beta"
+      ],
+      "max_total_jobs": 8,
+      "max_unfinished_jobs": 4,
+      "migration_interval_jobs": 2,
+      "planning_delay_seconds": 0.5,
+      "processes": 4,
+      "seed_population_per_island": 2
+    },
+    "distinct_coding_workspace_count": 8,
+    "distinct_worker_pid_count": 4,
+    "duplicate_phase_events": {},
+    "every_job_has_one_planning_and_coding_event": true,
+    "fair_target_allocation": true,
+    "island_job_counts": {
+      "alpha": 4,
+      "beta": 4
+    },
+    "island_state_ids": [
+      "alpha",
+      "beta"
+    ],
+    "job_execution_window_seconds": 9.0864839553833,
+    "jobs_total": 8,
+    "label": "v15-islands-migration",
+    "migration_disabled_has_no_donors": false,
+    "migration_evidence": [
+      {
+        "donor_in_persisted_inspirations": true,
+        "donor_is_cross_island": true,
+        "donor_reached_planning_prompt": true,
+        "job_id": "2f6f837c-b239-413d-a792-16d8b0e5d113",
+        "migration_commit_hash": "6f3cfb465e4b5d5bfdf2d770906accee78c0f44c",
+        "source_island": "beta",
+        "target_island": "alpha"
+      },
+      {
+        "donor_in_persisted_inspirations": true,
+        "donor_is_cross_island": true,
+        "donor_reached_planning_prompt": true,
+        "job_id": "fa88e410-8cc1-4c3b-a6fc-caffe7a2d098",
+        "migration_commit_hash": "ec64c494a76bc184de8631363e4497b562be4d47",
+        "source_island": "alpha",
+        "target_island": "beta"
+      }
+    ],
+    "migration_job_count": 2,
+    "migration_provenance_valid": true,
+    "normal_job_counts": {
+      "alpha": 2,
+      "beta": 2
+    },
+    "scheduler_worker_wall_seconds": 14.920971916988492,
+    "seed_job_counts": {
+      "alpha": 2,
+      "beta": 2
+    },
+    "status_counts": {
+      "succeeded": 8
+    },
+    "trace_events": 16,
+    "usage_event_count": 0,
+    "worker_pids": [
+      95544,
+      95546,
+      95547,
+      95549
+    ]
+  },
+  "trace": [
+    {
+      "configured_delay_seconds": 0.5,
+      "duration_seconds": 0.5100267919478938,
+      "finished_at": "2026-07-25T17:29:23.433854+00:00",
+      "job_id": "0ee112b6-a542-4ed5-b9d3-f07d00113705",
+      "phase": "planning",
+      "pid": 95547,
+      "ppid": 95496,
+      "prompt_commit_hashes": [
+        "6dab19189cd41b9e57f11e12c315341da53f22af"
+      ],
+      "prompt_sha256": "e15672cecd4a1a65d27c5f1791c80c985a3c33035bc3b67fd147d07651fe33ed",
+      "run_token": "ea7c00b7-f782-46c7-af39-abad2d96e5e5",
+      "started_at": "2026-07-25T17:29:22.923672+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-islands-migration/worker-pid-95547-6c813641-worktrees/0ee112b6-a542-4ed5-b9d3-f07d00113705-ea7c00b7"
+    },
+    {
+      "configured_delay_seconds": 0.5,
+      "duration_seconds": 0.5100562089355662,
+      "finished_at": "2026-07-25T17:29:23.541991+00:00",
+      "job_id": "c5117f22-59e3-4eba-a968-29d46fe20287",
+      "phase": "planning",
+      "pid": 95546,
+      "ppid": 95496,
+      "prompt_commit_hashes": [
+        "6dab19189cd41b9e57f11e12c315341da53f22af"
+      ],
+      "prompt_sha256": "e15672cecd4a1a65d27c5f1791c80c985a3c33035bc3b67fd147d07651fe33ed",
+      "run_token": "571c4d50-4f95-4061-83b8-02cd4ebf3106",
+      "started_at": "2026-07-25T17:29:23.031321+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-islands-migration/worker-pid-95546-12596a76-worktrees/c5117f22-59e3-4eba-a968-29d46fe20287-571c4d50"
+    },
+    {
+      "configured_delay_seconds": 0.5,
+      "duration_seconds": 0.5100474170176312,
+      "finished_at": "2026-07-25T17:29:23.660023+00:00",
+      "job_id": "7f7be656-a342-4284-bf63-bf94fb89068f",
+      "phase": "planning",
+      "pid": 95544,
+      "ppid": 95496,
+      "prompt_commit_hashes": [
+        "6dab19189cd41b9e57f11e12c315341da53f22af"
+      ],
+      "prompt_sha256": "e15672cecd4a1a65d27c5f1791c80c985a3c33035bc3b67fd147d07651fe33ed",
+      "run_token": "ef5c7c38-5d80-468d-9299-366510ff4123",
+      "started_at": "2026-07-25T17:29:23.149415+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-islands-migration/worker-pid-95544-03f11ab5-worktrees/7f7be656-a342-4284-bf63-bf94fb89068f-ef5c7c38"
+    },
+    {
+      "configured_delay_seconds": 0.5,
+      "duration_seconds": 0.5100581659935415,
+      "finished_at": "2026-07-25T17:29:23.769710+00:00",
+      "job_id": "342a0c7f-53be-4971-8a61-4719a7039370",
+      "phase": "planning",
+      "pid": 95549,
+      "ppid": 95496,
+      "prompt_commit_hashes": [
+        "6dab19189cd41b9e57f11e12c315341da53f22af"
+      ],
+      "prompt_sha256": "e15672cecd4a1a65d27c5f1791c80c985a3c33035bc3b67fd147d07651fe33ed",
+      "run_token": "a8d0ef17-809f-41f7-9d90-d66c1c28f828",
+      "started_at": "2026-07-25T17:29:23.259120+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-islands-migration/worker-pid-95549-9ce985b3-worktrees/342a0c7f-53be-4971-8a61-4719a7039370-a8d0ef17"
+    },
+    {
+      "configured_delay_seconds": 1.5,
+      "duration_seconds": 1.5107517500873655,
+      "finished_at": "2026-07-25T17:29:24.959427+00:00",
+      "job_id": "0ee112b6-a542-4ed5-b9d3-f07d00113705",
+      "phase": "coding",
+      "pid": 95547,
+      "ppid": 95496,
+      "prompt_commit_hashes": [
+        "6dab19189cd41b9e57f11e12c315341da53f22af"
+      ],
+      "prompt_sha256": "e574e4e1eecadbe289986bdcb66c6308df15020a43760a087289513476e5a4fd",
+      "run_token": "ea7c00b7-f782-46c7-af39-abad2d96e5e5",
+      "started_at": "2026-07-25T17:29:23.448423+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-islands-migration/worker-pid-95547-6c813641-worktrees/0ee112b6-a542-4ed5-b9d3-f07d00113705-ea7c00b7"
+    },
+    {
+      "configured_delay_seconds": 1.5,
+      "duration_seconds": 1.5103837500791997,
+      "finished_at": "2026-07-25T17:29:25.071666+00:00",
+      "job_id": "c5117f22-59e3-4eba-a968-29d46fe20287",
+      "phase": "coding",
+      "pid": 95546,
+      "ppid": 95496,
+      "prompt_commit_hashes": [
+        "6dab19189cd41b9e57f11e12c315341da53f22af"
+      ],
+      "prompt_sha256": "fd8975e85fb342af83fd182aa7486d9f9d54b83a058f826b055ecc4f089b9a6a",
+      "run_token": "571c4d50-4f95-4061-83b8-02cd4ebf3106",
+      "started_at": "2026-07-25T17:29:23.561196+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-islands-migration/worker-pid-95546-12596a76-worktrees/c5117f22-59e3-4eba-a968-29d46fe20287-571c4d50"
+    },
+    {
+      "configured_delay_seconds": 1.5,
+      "duration_seconds": 1.501638040994294,
+      "finished_at": "2026-07-25T17:29:25.180037+00:00",
+      "job_id": "7f7be656-a342-4284-bf63-bf94fb89068f",
+      "phase": "coding",
+      "pid": 95544,
+      "ppid": 95496,
+      "prompt_commit_hashes": [
+        "6dab19189cd41b9e57f11e12c315341da53f22af"
+      ],
+      "prompt_sha256": "f0fbc2cb920acc20ecc8316d29b8f9f23915d50fbe2e3d7ca52b142a131ff724",
+      "run_token": "ef5c7c38-5d80-468d-9299-366510ff4123",
+      "started_at": "2026-07-25T17:29:23.678322+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-islands-migration/worker-pid-95544-03f11ab5-worktrees/7f7be656-a342-4284-bf63-bf94fb89068f-ef5c7c38"
+    },
+    {
+      "configured_delay_seconds": 1.5,
+      "duration_seconds": 1.5102901250356808,
+      "finished_at": "2026-07-25T17:29:25.299738+00:00",
+      "job_id": "342a0c7f-53be-4971-8a61-4719a7039370",
+      "phase": "coding",
+      "pid": 95549,
+      "ppid": 95496,
+      "prompt_commit_hashes": [
+        "6dab19189cd41b9e57f11e12c315341da53f22af"
+      ],
+      "prompt_sha256": "40319a040e498b220d112b4188775548d69a646510e33a4bae5e780413896eb2",
+      "run_token": "a8d0ef17-809f-41f7-9d90-d66c1c28f828",
+      "started_at": "2026-07-25T17:29:23.789370+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-islands-migration/worker-pid-95549-9ce985b3-worktrees/342a0c7f-53be-4971-8a61-4719a7039370-a8d0ef17"
+    },
+    {
+      "configured_delay_seconds": 0.5,
+      "duration_seconds": 0.5078825829550624,
+      "finished_at": "2026-07-25T17:29:28.158264+00:00",
+      "job_id": "097a6a17-0385-4e96-af7f-7665b8ac5f46",
+      "phase": "planning",
+      "pid": 95544,
+      "ppid": 95496,
+      "prompt_commit_hashes": [
+        "ec64c494a76bc184de8631363e4497b562be4d47"
+      ],
+      "prompt_sha256": "519ec63e7711ebdcc04e019ad92b930d382dd7fabdecf7aeb0c8cf9bca31a5a7",
+      "run_token": "d414cd7c-995c-432b-8e06-aec4691e0a99",
+      "started_at": "2026-07-25T17:29:27.649674+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-islands-migration/worker-pid-95544-03f11ab5-worktrees/097a6a17-0385-4e96-af7f-7665b8ac5f46-d414cd7c"
+    },
+    {
+      "configured_delay_seconds": 0.5,
+      "duration_seconds": 0.5092373749939725,
+      "finished_at": "2026-07-25T17:29:28.232248+00:00",
+      "job_id": "b56ec4a4-bf58-4dfb-884c-c630a7f4df09",
+      "phase": "planning",
+      "pid": 95549,
+      "ppid": 95496,
+      "prompt_commit_hashes": [
+        "6f3cfb465e4b5d5bfdf2d770906accee78c0f44c"
+      ],
+      "prompt_sha256": "591c4e67db10ea672e2e158fcf5d3b6138e7ab6599d410e3e0c69cf38c19e1b9",
+      "run_token": "1201ac27-f130-401d-a6b2-8d3837808d55",
+      "started_at": "2026-07-25T17:29:27.722818+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-islands-migration/worker-pid-95549-9ce985b3-worktrees/b56ec4a4-bf58-4dfb-884c-c630a7f4df09-1201ac27"
+    },
+    {
+      "configured_delay_seconds": 0.5,
+      "duration_seconds": 0.5100490000331774,
+      "finished_at": "2026-07-25T17:29:29.015921+00:00",
+      "job_id": "2f6f837c-b239-413d-a792-16d8b0e5d113",
+      "phase": "planning",
+      "pid": 95546,
+      "ppid": 95496,
+      "prompt_commit_hashes": [
+        "ec64c494a76bc184de8631363e4497b562be4d47",
+        "6f3cfb465e4b5d5bfdf2d770906accee78c0f44c"
+      ],
+      "prompt_sha256": "25da75deacd7ebbc5f875f2667378cde7bc69bd0a85a568f0e32ad883c9c938d",
+      "run_token": "5e0068da-1c3d-438a-97b6-3c14d67b71b2",
+      "started_at": "2026-07-25T17:29:28.505072+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-islands-migration/worker-pid-95546-12596a76-worktrees/2f6f837c-b239-413d-a792-16d8b0e5d113-5e0068da"
+    },
+    {
+      "configured_delay_seconds": 0.5,
+      "duration_seconds": 0.5039570829831064,
+      "finished_at": "2026-07-25T17:29:29.315472+00:00",
+      "job_id": "fa88e410-8cc1-4c3b-a6fc-caffe7a2d098",
+      "phase": "planning",
+      "pid": 95547,
+      "ppid": 95496,
+      "prompt_commit_hashes": [
+        "6f3cfb465e4b5d5bfdf2d770906accee78c0f44c",
+        "ec64c494a76bc184de8631363e4497b562be4d47"
+      ],
+      "prompt_sha256": "8e06922300098e6ff987ddd52303a3cc05f650ce91d0baf170c3497d6d7c2c38",
+      "run_token": "776aca13-d3e9-45ca-95fe-07d64d4f0139",
+      "started_at": "2026-07-25T17:29:28.810794+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-islands-migration/worker-pid-95547-6c813641-worktrees/fa88e410-8cc1-4c3b-a6fc-caffe7a2d098-776aca13"
+    },
+    {
+      "configured_delay_seconds": 1.5,
+      "duration_seconds": 1.505209832917899,
+      "finished_at": "2026-07-25T17:29:29.696677+00:00",
+      "job_id": "097a6a17-0385-4e96-af7f-7665b8ac5f46",
+      "phase": "coding",
+      "pid": 95544,
+      "ppid": 95496,
+      "prompt_commit_hashes": [
+        "ec64c494a76bc184de8631363e4497b562be4d47"
+      ],
+      "prompt_sha256": "042a4bc1e786971a384d1b502b063c9ab216442e22c9fe5f06a27c738df69d60",
+      "run_token": "d414cd7c-995c-432b-8e06-aec4691e0a99",
+      "started_at": "2026-07-25T17:29:28.191227+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-islands-migration/worker-pid-95544-03f11ab5-worktrees/097a6a17-0385-4e96-af7f-7665b8ac5f46-d414cd7c"
+    },
+    {
+      "configured_delay_seconds": 1.5,
+      "duration_seconds": 1.5014375420287251,
+      "finished_at": "2026-07-25T17:29:29.749899+00:00",
+      "job_id": "b56ec4a4-bf58-4dfb-884c-c630a7f4df09",
+      "phase": "coding",
+      "pid": 95549,
+      "ppid": 95496,
+      "prompt_commit_hashes": [
+        "6f3cfb465e4b5d5bfdf2d770906accee78c0f44c"
+      ],
+      "prompt_sha256": "980e7e1b1b7231a678f96f98b7903103158e56959bc322889ec38a4dc803c603",
+      "run_token": "1201ac27-f130-401d-a6b2-8d3837808d55",
+      "started_at": "2026-07-25T17:29:28.248375+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-islands-migration/worker-pid-95549-9ce985b3-worktrees/b56ec4a4-bf58-4dfb-884c-c630a7f4df09-1201ac27"
+    },
+    {
+      "configured_delay_seconds": 1.5,
+      "duration_seconds": 1.50789679097943,
+      "finished_at": "2026-07-25T17:29:30.555928+00:00",
+      "job_id": "2f6f837c-b239-413d-a792-16d8b0e5d113",
+      "phase": "coding",
+      "pid": 95546,
+      "ppid": 95496,
+      "prompt_commit_hashes": [
+        "ec64c494a76bc184de8631363e4497b562be4d47",
+        "6f3cfb465e4b5d5bfdf2d770906accee78c0f44c"
+      ],
+      "prompt_sha256": "894a00379caa146fb652311424625e4a37c06268fde2c9878ef2646b8ab0070c",
+      "run_token": "5e0068da-1c3d-438a-97b6-3c14d67b71b2",
+      "started_at": "2026-07-25T17:29:29.047547+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-islands-migration/worker-pid-95546-12596a76-worktrees/2f6f837c-b239-413d-a792-16d8b0e5d113-5e0068da"
+    },
+    {
+      "configured_delay_seconds": 1.5,
+      "duration_seconds": 1.5087595420191064,
+      "finished_at": "2026-07-25T17:29:30.853897+00:00",
+      "job_id": "fa88e410-8cc1-4c3b-a6fc-caffe7a2d098",
+      "phase": "coding",
+      "pid": 95547,
+      "ppid": 95496,
+      "prompt_commit_hashes": [
+        "6f3cfb465e4b5d5bfdf2d770906accee78c0f44c",
+        "ec64c494a76bc184de8631363e4497b562be4d47"
+      ],
+      "prompt_sha256": "d74b07c94ed2b99bebed520c5a51a4a3cd9cbd18ad46c9d8d882781a96f0a844",
+      "run_token": "776aca13-d3e9-45ca-95fe-07d64d4f0139",
+      "started_at": "2026-07-25T17:29:29.345056+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-islands-migration/worker-pid-95547-6c813641-worktrees/fa88e410-8cc1-4c3b-a6fc-caffe7a2d098-776aca13"
+    }
+  ]
+}

@@ -1,0 +1,80 @@
+{
+  "generated_at": "2026-07-26T01:53:01+08:00",
+  "purpose": "Live confirmation that explicit pricing replaces Kilo's zero-cost gateway placeholder.",
+  "configured": {
+    "backend": "kilocode",
+    "model": "gpt-5.4-mini",
+    "processes": 1,
+    "max_total_jobs": 1,
+    "max_unfinished_jobs": 1,
+    "planning_max_attempts": 1,
+    "coding_max_attempts": 1,
+    "planning_timeout_seconds": 240,
+    "coding_timeout_seconds": 360
+  },
+  "outcome": {
+    "scheduler_exit_code": 1,
+    "job_status": "FAILED",
+    "job_failure": "Coding agent timed out after 360 seconds.",
+    "scheduler_failure": "No retained commit has the configured primary objective.",
+    "expected_for_cost_test": false,
+    "cost_accounting_confirmed": true,
+    "new_terminal_state_defect_found": true
+  },
+  "job": {
+    "id": "0692e67f-4741-4917-83d0-459547394fa8",
+    "island_id": "alpha",
+    "is_seed_job": true,
+    "base_commit_hash": "6dab19189cd41b9e57f11e12c315341da53f22af",
+    "candidate_commit_hash": null,
+    "status": "FAILED",
+    "last_error": "Coding agent failed after one attempt."
+  },
+  "usage": [
+    {
+      "phase": "planning",
+      "source": "kilo_cli",
+      "provider": "loreley-openai-compatible",
+      "model": "gpt-5.4-mini",
+      "api_surface": "kilo_run",
+      "input_tokens": 11399,
+      "cached_input_tokens": 1664,
+      "output_tokens": 387,
+      "reasoning_output_tokens": 111,
+      "total_tokens": 13450,
+      "cost_usd": 0.0138465,
+      "cost_source": "estimated",
+      "pricing_version": "newapi-2026-07-26-conservative"
+    },
+    {
+      "phase": "coding",
+      "source": "kilo_cli",
+      "provider": "loreley-openai-compatible",
+      "model": "gpt-5.4-mini",
+      "api_surface": "kilo_run",
+      "input_tokens": 16723,
+      "cached_input_tokens": 280448,
+      "output_tokens": 8610,
+      "reasoning_output_tokens": 42778,
+      "total_tokens": 305781,
+      "cost_usd": 0.3139479,
+      "cost_source": "estimated",
+      "pricing_version": "newapi-2026-07-26-conservative"
+    }
+  ],
+  "usage_totals": {
+    "input_tokens": 28122,
+    "cached_input_tokens": 282112,
+    "output_tokens": 8997,
+    "reasoning_output_tokens": 42889,
+    "total_tokens": 319231,
+    "cost_usd": 0.3277944
+  },
+  "evidence": {
+    "trace": "system-live-cost-accounting-trace.jsonl",
+    "scheduler_log": "system-live-cost-accounting.scheduler.log",
+    "worker_log": "system-live-cost-accounting.worker.log",
+    "database_query": "Queried evolution_jobs and llm_usage_events immediately after process exit.",
+    "secrets_recorded": false
+  }
+}

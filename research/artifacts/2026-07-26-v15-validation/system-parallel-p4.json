@@ -1,0 +1,899 @@
+{
+  "commands": {
+    "scheduler": [
+      "/Users/chenmohan/gits/ACE/loreley/.venv/bin/python3",
+      "examples/evol_circle_packing.py",
+      "scheduler",
+      "--phase",
+      "smoke",
+      "--init-db",
+      "--yes",
+      "--preflight-timeout-seconds",
+      "5",
+      "--max-total-jobs",
+      "8"
+    ],
+    "worker": [
+      "/Users/chenmohan/gits/ACE/loreley/.venv/bin/python3",
+      "examples/evol_circle_packing.py",
+      "worker",
+      "--phase",
+      "smoke",
+      "--processes",
+      "4",
+      "--preflight-timeout-seconds",
+      "5"
+    ]
+  },
+  "environment": {
+    "database_host": "localhost:5432",
+    "python": "3.13.9 (main, Nov 19 2025, 23:39:32) [Clang 21.1.4 ]",
+    "redis_db": 15,
+    "repository": "/Users/chenmohan/gits/ACE/loreley/examples/circle-packing",
+    "root_commit": "6dab191",
+    "secrets_forwarded": false
+  },
+  "generated_at": "2026-07-25T17:26:28.985592+00:00",
+  "logs": {
+    "scheduler": "/Users/chenmohan/gits/ACE/loreley/docs/research/artifacts/2026-07-26-v15-validation/system-parallel-p4.scheduler.log",
+    "worker": "/Users/chenmohan/gits/ACE/loreley/docs/research/artifacts/2026-07-26-v15-validation/system-parallel-p4.worker.log"
+  },
+  "rows": {
+    "archive_cells": [
+      {
+        "cell_index": 2,
+        "commit_hash": "4ae5dfd8c5348c495741ab25791c0f6db34c59f3",
+        "island_id": "alpha",
+        "measures": [
+          0.5
+        ],
+        "objective_values": [
+          0.25,
+          0.002374988980591297
+        ]
+      },
+      {
+        "cell_index": 2,
+        "commit_hash": "7d8aa49350735363a0fc6c76cace7714b12d0c36",
+        "island_id": "beta",
+        "measures": [
+          0.5
+        ],
+        "objective_values": [
+          0.25,
+          0.002624932676553726
+        ]
+      }
+    ],
+    "island_states": [
+      {
+        "island_id": "alpha",
+        "snapshot": {
+          "last_update_at": 1785000384.673285,
+          "lower_bounds": [
+            0.0
+          ],
+          "objective_contract": [
+            {
+              "direction": "max",
+              "name": "sum_radii"
+            },
+            {
+              "direction": "min",
+              "name": "runtime_p50_ms"
+            }
+          ],
+          "objective_contract_fingerprint": "8bbbad7efe16d7ec03df3825409b3f7e5c8e367b418ed4196d0f13de9f718efe",
+          "projection": {
+            "components": [
+              [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            ],
+            "epoch": 2,
+            "explained_variance": [
+              0.0
+            ],
+            "explained_variance_ratio": [
+              0.0
+            ],
+            "feature_count": 64,
+            "fitted_at": 1785000384.672847,
+            "mean": [
+              0.135232152694288,
+              0.2043979929281109,
+              -0.08139311121376117,
+              -0.04044029543664236,
+              -0.006809198809187218,
+              0.16876562639974765,
+              0.013301123121889002,
+              0.09803781941399657,
+              0.14943628784463558,
+              -0.09593892659109299,
+              0.0763655307309921,
+              0.07148438463121631,
+              -0.0347293544999047,
+              -0.08744573237748314,
+              -0.021647882952505616,
+              -0.1275687533176401,
+              -0.15573296631334632,
+              0.10809298037953467,
+              0.15880808835620502,
+              -0.06796995943937775,
+              -0.1597843175761602,
+              -0.14928985346164234,
+              -0.22577741284512884,
+              0.21445315389364902,
+              -0.10648220216660868,
+              -0.0759262275820123,
+              0.08217409458972529,
+              0.04859180942326793,
+              -0.026333783208290353,
+              0.19497738095554362,
+              0.2095720077938732,
+              0.07665839949697864,
+              0.135232152694288,
+              0.2043979929281109,
+              -0.08139311121376117,
+              -0.04044029543664236,
+              -0.006809198809187218,
+              0.16876562639974765,
+              0.013301123121889002,
+              0.09803781941399657,
+              0.14943628784463558,
+              -0.09593892659109299,
+              0.0763655307309921,
+              0.07148438463121631,
+              -0.0347293544999047,
+              -0.08744573237748314,
+              -0.021647882952505616,
+              -0.1275687533176401,
+              -0.15573296631334632,
+              0.10809298037953467,
+              0.15880808835620502,
+              -0.06796995943937775,
+              -0.1597843175761602,
+              -0.14928985346164234,
+              -0.22577741284512884,
+              0.21445315389364902,
+              -0.10648220216660868,
+              -0.0759262275820123,
+              0.08217409458972529,
+              0.04859180942326793,
+              -0.026333783208290353,
+              0.19497738095554362,
+              0.2095720077938732,
+              0.07665839949697864
+            ],
+            "rotation": null,
+            "sample_count": 4,
+            "whiten": true
+          },
+          "samples_since_fit": 0,
+          "upper_bounds": [
+            1.0
+          ]
+        }
+      },
+      {
+        "island_id": "beta",
+        "snapshot": {
+          "last_update_at": 1785000385.554461,
+          "lower_bounds": [
+            0.0
+          ],
+          "objective_contract": [
+            {
+              "direction": "max",
+              "name": "sum_radii"
+            },
+            {
+              "direction": "min",
+              "name": "runtime_p50_ms"
+            }
+          ],
+          "objective_contract_fingerprint": "8bbbad7efe16d7ec03df3825409b3f7e5c8e367b418ed4196d0f13de9f718efe",
+          "projection": {
+            "components": [
+              [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            ],
+            "epoch": 2,
+            "explained_variance": [
+              0.0
+            ],
+            "explained_variance_ratio": [
+              0.0
+            ],
+            "feature_count": 64,
+            "fitted_at": 1785000385.554091,
+            "mean": [
+              0.135232152694288,
+              0.2043979929281109,
+              -0.08139311121376117,
+              -0.04044029543664236,
+              -0.006809198809187218,
+              0.16876562639974765,
+              0.013301123121889002,
+              0.09803781941399657,
+              0.14943628784463558,
+              -0.09593892659109299,
+              0.0763655307309921,
+              0.07148438463121631,
+              -0.0347293544999047,
+              -0.08744573237748314,
+              -0.021647882952505616,
+              -0.1275687533176401,
+              -0.15573296631334632,
+              0.10809298037953467,
+              0.15880808835620502,
+              -0.06796995943937775,
+              -0.1597843175761602,
+              -0.14928985346164234,
+              -0.22577741284512884,
+              0.21445315389364902,
+              -0.10648220216660868,
+              -0.0759262275820123,
+              0.08217409458972529,
+              0.04859180942326793,
+              -0.026333783208290353,
+              0.19497738095554362,
+              0.2095720077938732,
+              0.07665839949697864,
+              0.135232152694288,
+              0.2043979929281109,
+              -0.08139311121376117,
+              -0.04044029543664236,
+              -0.006809198809187218,
+              0.16876562639974765,
+              0.013301123121889002,
+              0.09803781941399657,
+              0.14943628784463558,
+              -0.09593892659109299,
+              0.0763655307309921,
+              0.07148438463121631,
+              -0.0347293544999047,
+              -0.08744573237748314,
+              -0.021647882952505616,
+              -0.1275687533176401,
+              -0.15573296631334632,
+              0.10809298037953467,
+              0.15880808835620502,
+              -0.06796995943937775,
+              -0.1597843175761602,
+              -0.14928985346164234,
+              -0.22577741284512884,
+              0.21445315389364902,
+              -0.10648220216660868,
+              -0.0759262275820123,
+              0.08217409458972529,
+              0.04859180942326793,
+              -0.026333783208290353,
+              0.19497738095554362,
+              0.2095720077938732,
+              0.07665839949697864
+            ],
+            "rotation": null,
+            "sample_count": 4,
+            "whiten": true
+          },
+          "samples_since_fit": 0,
+          "upper_bounds": [
+            1.0
+          ]
+        }
+      }
+    ],
+    "jobs": [
+      {
+        "base_commit_hash": "6dab19189cd41b9e57f11e12c315341da53f22af",
+        "candidate_commit_hash": "4ae5dfd8c5348c495741ab25791c0f6db34c59f3",
+        "completed_at_epoch": 1785000379.983569,
+        "id": "a35e2d88-6a5b-4cd3-b31c-2eb1a542c059",
+        "ingestion_status": "skipped",
+        "inspiration_commit_hashes": [],
+        "is_seed_job": true,
+        "island_id": "alpha",
+        "job_kind": "seed",
+        "last_error": null,
+        "migration_commit_hash": null,
+        "migration_source_island_id": null,
+        "result_commit_hash": "4ae5dfd8c5348c495741ab25791c0f6db34c59f3",
+        "scheduled_at_epoch": 1785000376.411545,
+        "started_at_epoch": 1785000376.47325,
+        "status": "SUCCEEDED",
+        "worker_id": null
+      },
+      {
+        "base_commit_hash": "6dab19189cd41b9e57f11e12c315341da53f22af",
+        "candidate_commit_hash": "637091f73e58e72300eb6222884fe6b005070484",
+        "completed_at_epoch": 1785000380.100998,
+        "id": "d5625b17-2c3f-4ff8-9ff6-6fce8b2b672e",
+        "ingestion_status": "skipped",
+        "inspiration_commit_hashes": [],
+        "is_seed_job": true,
+        "island_id": "alpha",
+        "job_kind": "seed",
+        "last_error": null,
+        "migration_commit_hash": null,
+        "migration_source_island_id": null,
+        "result_commit_hash": "637091f73e58e72300eb6222884fe6b005070484",
+        "scheduled_at_epoch": 1785000376.411545,
+        "started_at_epoch": 1785000376.512934,
+        "status": "SUCCEEDED",
+        "worker_id": null
+      },
+      {
+        "base_commit_hash": "6dab19189cd41b9e57f11e12c315341da53f22af",
+        "candidate_commit_hash": "8f91cbbb3f065f05977b6bd37f1a8e8b50c65d6b",
+        "completed_at_epoch": 1785000380.217099,
+        "id": "a0f65768-67da-44ff-9e42-d7b7c06cfc5d",
+        "ingestion_status": "skipped",
+        "inspiration_commit_hashes": [],
+        "is_seed_job": true,
+        "island_id": "beta",
+        "job_kind": "seed",
+        "last_error": null,
+        "migration_commit_hash": null,
+        "migration_source_island_id": null,
+        "result_commit_hash": "8f91cbbb3f065f05977b6bd37f1a8e8b50c65d6b",
+        "scheduled_at_epoch": 1785000376.425154,
+        "started_at_epoch": 1785000376.533453,
+        "status": "SUCCEEDED",
+        "worker_id": null
+      },
+      {
+        "base_commit_hash": "6dab19189cd41b9e57f11e12c315341da53f22af",
+        "candidate_commit_hash": "1246cad4d793ce89ebc05a0c6fac573e3c6a9d04",
+        "completed_at_epoch": 1785000380.335374,
+        "id": "f0fe6c34-9e44-4b07-8c42-e049d27b4db8",
+        "ingestion_status": "skipped",
+        "inspiration_commit_hashes": [],
+        "is_seed_job": true,
+        "island_id": "beta",
+        "job_kind": "seed",
+        "last_error": null,
+        "migration_commit_hash": null,
+        "migration_source_island_id": null,
+        "result_commit_hash": "1246cad4d793ce89ebc05a0c6fac573e3c6a9d04",
+        "scheduled_at_epoch": 1785000376.425154,
+        "started_at_epoch": 1785000376.540097,
+        "status": "SUCCEEDED",
+        "worker_id": null
+      },
+      {
+        "base_commit_hash": "4ae5dfd8c5348c495741ab25791c0f6db34c59f3",
+        "candidate_commit_hash": "acb1d11938c0901a048080982dae3449f86d5816",
+        "completed_at_epoch": 1785000383.568244,
+        "id": "5006afa2-a886-4c19-9fcb-54a918ca43cc",
+        "ingestion_status": "skipped",
+        "inspiration_commit_hashes": [],
+        "is_seed_job": false,
+        "island_id": "alpha",
+        "job_kind": "evolution",
+        "last_error": null,
+        "migration_commit_hash": null,
+        "migration_source_island_id": null,
+        "result_commit_hash": "acb1d11938c0901a048080982dae3449f86d5816",
+        "scheduled_at_epoch": 1785000380.712628,
+        "started_at_epoch": 1785000380.803467,
+        "status": "SUCCEEDED",
+        "worker_id": null
+      },
+      {
+        "base_commit_hash": "8f91cbbb3f065f05977b6bd37f1a8e8b50c65d6b",
+        "candidate_commit_hash": "987d8b287a8388a8a563cbf1ced543ffccaaf6dc",
+        "completed_at_epoch": 1785000383.992379,
+        "id": "53f93c26-c8db-490c-b148-7c7542337d83",
+        "ingestion_status": "succeeded",
+        "inspiration_commit_hashes": [],
+        "is_seed_job": false,
+        "island_id": "beta",
+        "job_kind": "evolution",
+        "last_error": null,
+        "migration_commit_hash": null,
+        "migration_source_island_id": null,
+        "result_commit_hash": "987d8b287a8388a8a563cbf1ced543ffccaaf6dc",
+        "scheduled_at_epoch": 1785000380.715974,
+        "started_at_epoch": 1785000381.186736,
+        "status": "SUCCEEDED",
+        "worker_id": null
+      },
+      {
+        "base_commit_hash": "4ae5dfd8c5348c495741ab25791c0f6db34c59f3",
+        "candidate_commit_hash": "6955b3d1ddd1dea93a363a3724a4787479321b39",
+        "completed_at_epoch": 1785000384.445085,
+        "id": "1f26a146-99ce-460d-ad53-09d900f0fc84",
+        "ingestion_status": "skipped",
+        "inspiration_commit_hashes": [],
+        "is_seed_job": false,
+        "island_id": "alpha",
+        "job_kind": "evolution",
+        "last_error": null,
+        "migration_commit_hash": null,
+        "migration_source_island_id": null,
+        "result_commit_hash": "6955b3d1ddd1dea93a363a3724a4787479321b39",
+        "scheduled_at_epoch": 1785000381.497689,
+        "started_at_epoch": 1785000381.633881,
+        "status": "SUCCEEDED",
+        "worker_id": null
+      },
+      {
+        "base_commit_hash": "8f91cbbb3f065f05977b6bd37f1a8e8b50c65d6b",
+        "candidate_commit_hash": "7d8aa49350735363a0fc6c76cace7714b12d0c36",
+        "completed_at_epoch": 1785000384.925253,
+        "id": "47eeb6b6-bbbf-41ac-ac20-aa117ade40ba",
+        "ingestion_status": "succeeded",
+        "inspiration_commit_hashes": [],
+        "is_seed_job": false,
+        "island_id": "beta",
+        "job_kind": "evolution",
+        "last_error": null,
+        "migration_commit_hash": null,
+        "migration_source_island_id": null,
+        "result_commit_hash": "7d8aa49350735363a0fc6c76cace7714b12d0c36",
+        "scheduled_at_epoch": 1785000381.500364,
+        "started_at_epoch": 1785000381.991213,
+        "status": "SUCCEEDED",
+        "worker_id": null
+      }
+    ],
+    "usage": []
+  },
+  "summary": {
+    "all_jobs_terminal": true,
+    "api_cost_usd": 0.0,
+    "archive_islands": [
+      "alpha",
+      "beta"
+    ],
+    "coding_workspaces": [
+      "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-parallel-p4/worker-pid-92002-d9502b61-worktrees/47eeb6b6-bbbf-41ac-ac20-aa117ade40ba-723a807e",
+      "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-parallel-p4/worker-pid-92002-d9502b61-worktrees/a35e2d88-6a5b-4cd3-b31c-2eb1a542c059-9f292e7d",
+      "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-parallel-p4/worker-pid-92003-2cbcdbe4-worktrees/5006afa2-a886-4c19-9fcb-54a918ca43cc-c131096a",
+      "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-parallel-p4/worker-pid-92003-2cbcdbe4-worktrees/f0fe6c34-9e44-4b07-8c42-e049d27b4db8-6d97e5ec",
+      "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-parallel-p4/worker-pid-92004-38be3037-worktrees/53f93c26-c8db-490c-b148-7c7542337d83-c70cb00b",
+      "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-parallel-p4/worker-pid-92004-38be3037-worktrees/d5625b17-2c3f-4ff8-9ff6-6fce8b2b672e-bf1f1077",
+      "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-parallel-p4/worker-pid-92005-ce8b7bcf-worktrees/1f26a146-99ce-460d-ad53-09d900f0fc84-bbe16215",
+      "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-parallel-p4/worker-pid-92005-ce8b7bcf-worktrees/a0f65768-67da-44ff-9e42-d7b7c06cfc5d-4a040eaf"
+    ],
+    "configured": {
+      "coding_delay_seconds": 1.5,
+      "islands": [
+        "alpha",
+        "beta"
+      ],
+      "max_total_jobs": 8,
+      "max_unfinished_jobs": 4,
+      "migration_interval_jobs": 0,
+      "planning_delay_seconds": 0.5,
+      "processes": 4,
+      "seed_population_per_island": 2
+    },
+    "distinct_coding_workspace_count": 8,
+    "distinct_worker_pid_count": 4,
+    "duplicate_phase_events": {},
+    "every_job_has_one_planning_and_coding_event": true,
+    "fair_target_allocation": true,
+    "island_job_counts": {
+      "alpha": 4,
+      "beta": 4
+    },
+    "island_state_ids": [
+      "alpha",
+      "beta"
+    ],
+    "job_execution_window_seconds": 8.452003002166748,
+    "jobs_total": 8,
+    "label": "v15-parallel-p4",
+    "migration_disabled_has_no_donors": true,
+    "migration_evidence": [],
+    "migration_job_count": 0,
+    "migration_provenance_valid": false,
+    "normal_job_counts": {
+      "alpha": 2,
+      "beta": 2
+    },
+    "scheduler_worker_wall_seconds": 15.068000125000253,
+    "seed_job_counts": {
+      "alpha": 2,
+      "beta": 2
+    },
+    "status_counts": {
+      "succeeded": 8
+    },
+    "trace_events": 16,
+    "usage_event_count": 0,
+    "worker_pids": [
+      92002,
+      92003,
+      92004,
+      92005
+    ]
+  },
+  "trace": [
+    {
+      "configured_delay_seconds": 0.5,
+      "duration_seconds": 0.5100520829437301,
+      "finished_at": "2026-07-25T17:26:17.600500+00:00",
+      "job_id": "a35e2d88-6a5b-4cd3-b31c-2eb1a542c059",
+      "phase": "planning",
+      "pid": 92002,
+      "ppid": 91948,
+      "prompt_commit_hashes": [
+        "6dab19189cd41b9e57f11e12c315341da53f22af"
+      ],
+      "prompt_sha256": "e15672cecd4a1a65d27c5f1791c80c985a3c33035bc3b67fd147d07651fe33ed",
+      "run_token": "9f292e7d-ee9d-461f-87c1-b6b7cf0a1664",
+      "started_at": "2026-07-25T17:26:17.090216+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-parallel-p4/worker-pid-92002-d9502b61-worktrees/a35e2d88-6a5b-4cd3-b31c-2eb1a542c059-9f292e7d"
+    },
+    {
+      "configured_delay_seconds": 0.5,
+      "duration_seconds": 0.5101116670994088,
+      "finished_at": "2026-07-25T17:26:17.714433+00:00",
+      "job_id": "d5625b17-2c3f-4ff8-9ff6-6fce8b2b672e",
+      "phase": "planning",
+      "pid": 92004,
+      "ppid": 91948,
+      "prompt_commit_hashes": [
+        "6dab19189cd41b9e57f11e12c315341da53f22af"
+      ],
+      "prompt_sha256": "e15672cecd4a1a65d27c5f1791c80c985a3c33035bc3b67fd147d07651fe33ed",
+      "run_token": "bf1f1077-88d9-4ecf-a245-a5d60af68c34",
+      "started_at": "2026-07-25T17:26:17.203790+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-parallel-p4/worker-pid-92004-38be3037-worktrees/d5625b17-2c3f-4ff8-9ff6-6fce8b2b672e-bf1f1077"
+    },
+    {
+      "configured_delay_seconds": 0.5,
+      "duration_seconds": 0.5034003749024123,
+      "finished_at": "2026-07-25T17:26:17.812138+00:00",
+      "job_id": "a0f65768-67da-44ff-9e42-d7b7c06cfc5d",
+      "phase": "planning",
+      "pid": 92005,
+      "ppid": 91948,
+      "prompt_commit_hashes": [
+        "6dab19189cd41b9e57f11e12c315341da53f22af"
+      ],
+      "prompt_sha256": "e15672cecd4a1a65d27c5f1791c80c985a3c33035bc3b67fd147d07651fe33ed",
+      "run_token": "4a040eaf-a785-4c72-ad47-779f28dce497",
+      "started_at": "2026-07-25T17:26:17.308384+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-parallel-p4/worker-pid-92005-ce8b7bcf-worktrees/a0f65768-67da-44ff-9e42-d7b7c06cfc5d-4a040eaf"
+    },
+    {
+      "configured_delay_seconds": 0.5,
+      "duration_seconds": 0.5092090830439702,
+      "finished_at": "2026-07-25T17:26:17.916406+00:00",
+      "job_id": "f0fe6c34-9e44-4b07-8c42-e049d27b4db8",
+      "phase": "planning",
+      "pid": 92003,
+      "ppid": 91948,
+      "prompt_commit_hashes": [
+        "6dab19189cd41b9e57f11e12c315341da53f22af"
+      ],
+      "prompt_sha256": "e15672cecd4a1a65d27c5f1791c80c985a3c33035bc3b67fd147d07651fe33ed",
+      "run_token": "6d97e5ec-9be7-4be2-90a3-1290fb00d6fe",
+      "started_at": "2026-07-25T17:26:17.406932+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-parallel-p4/worker-pid-92003-2cbcdbe4-worktrees/f0fe6c34-9e44-4b07-8c42-e049d27b4db8-6d97e5ec"
+    },
+    {
+      "configured_delay_seconds": 1.5,
+      "duration_seconds": 1.5060692499391735,
+      "finished_at": "2026-07-25T17:26:19.125029+00:00",
+      "job_id": "a35e2d88-6a5b-4cd3-b31c-2eb1a542c059",
+      "phase": "coding",
+      "pid": 92002,
+      "ppid": 91948,
+      "prompt_commit_hashes": [
+        "6dab19189cd41b9e57f11e12c315341da53f22af"
+      ],
+      "prompt_sha256": "ea7f58c4f9fd370e4e75baed408b0870f184cbb42139a37f0edefc0f96a5ba79",
+      "run_token": "9f292e7d-ee9d-461f-87c1-b6b7cf0a1664",
+      "started_at": "2026-07-25T17:26:17.618466+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-parallel-p4/worker-pid-92002-d9502b61-worktrees/a35e2d88-6a5b-4cd3-b31c-2eb1a542c059-9f292e7d"
+    },
+    {
+      "configured_delay_seconds": 1.5,
+      "duration_seconds": 1.510454916046001,
+      "finished_at": "2026-07-25T17:26:19.253917+00:00",
+      "job_id": "d5625b17-2c3f-4ff8-9ff6-6fce8b2b672e",
+      "phase": "coding",
+      "pid": 92004,
+      "ppid": 91948,
+      "prompt_commit_hashes": [
+        "6dab19189cd41b9e57f11e12c315341da53f22af"
+      ],
+      "prompt_sha256": "b71d594f4122ba607714ed1785cb080025501db59fbb73320404900fd1cdf540",
+      "run_token": "bf1f1077-88d9-4ecf-a245-a5d60af68c34",
+      "started_at": "2026-07-25T17:26:17.743367+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-parallel-p4/worker-pid-92004-38be3037-worktrees/d5625b17-2c3f-4ff8-9ff6-6fce8b2b672e-bf1f1077"
+    },
+    {
+      "configured_delay_seconds": 1.5,
+      "duration_seconds": 1.5103166250046343,
+      "finished_at": "2026-07-25T17:26:19.345336+00:00",
+      "job_id": "a0f65768-67da-44ff-9e42-d7b7c06cfc5d",
+      "phase": "coding",
+      "pid": 92005,
+      "ppid": 91948,
+      "prompt_commit_hashes": [
+        "6dab19189cd41b9e57f11e12c315341da53f22af"
+      ],
+      "prompt_sha256": "8824e3f513376e113a9a45f44f313f3b9207214241254321f387fa90b01e2574",
+      "run_token": "4a040eaf-a785-4c72-ad47-779f28dce497",
+      "started_at": "2026-07-25T17:26:17.834942+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-parallel-p4/worker-pid-92005-ce8b7bcf-worktrees/a0f65768-67da-44ff-9e42-d7b7c06cfc5d-4a040eaf"
+    },
+    {
+      "configured_delay_seconds": 1.5,
+      "duration_seconds": 1.504609709023498,
+      "finished_at": "2026-07-25T17:26:19.441601+00:00",
+      "job_id": "f0fe6c34-9e44-4b07-8c42-e049d27b4db8",
+      "phase": "coding",
+      "pid": 92003,
+      "ppid": 91948,
+      "prompt_commit_hashes": [
+        "6dab19189cd41b9e57f11e12c315341da53f22af"
+      ],
+      "prompt_sha256": "2a4b1d38e3614d907202b32253cdfcf58035dc952352b04deb58e3a2763019ee",
+      "run_token": "6d97e5ec-9be7-4be2-90a3-1290fb00d6fe",
+      "started_at": "2026-07-25T17:26:17.936915+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-parallel-p4/worker-pid-92003-2cbcdbe4-worktrees/f0fe6c34-9e44-4b07-8c42-e049d27b4db8-6d97e5ec"
+    },
+    {
+      "configured_delay_seconds": 0.5,
+      "duration_seconds": 0.5100188329815865,
+      "finished_at": "2026-07-25T17:26:21.580531+00:00",
+      "job_id": "5006afa2-a886-4c19-9fcb-54a918ca43cc",
+      "phase": "planning",
+      "pid": 92003,
+      "ppid": 91948,
+      "prompt_commit_hashes": [
+        "4ae5dfd8c5348c495741ab25791c0f6db34c59f3"
+      ],
+      "prompt_sha256": "fb4ed2548c48fe292e66808b51ed836af735208d3a1c8cf04956410a2ee6669a",
+      "run_token": "c131096a-d058-471d-a64f-1fe370fcfad3",
+      "started_at": "2026-07-25T17:26:21.070373+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-parallel-p4/worker-pid-92003-2cbcdbe4-worktrees/5006afa2-a886-4c19-9fcb-54a918ca43cc-c131096a"
+    },
+    {
+      "configured_delay_seconds": 0.5,
+      "duration_seconds": 0.5100190000375733,
+      "finished_at": "2026-07-25T17:26:21.989249+00:00",
+      "job_id": "53f93c26-c8db-490c-b148-7c7542337d83",
+      "phase": "planning",
+      "pid": 92004,
+      "ppid": 91948,
+      "prompt_commit_hashes": [
+        "8f91cbbb3f065f05977b6bd37f1a8e8b50c65d6b"
+      ],
+      "prompt_sha256": "bb85d35e002810a9817253666b447124a53dabd43cac500a006aa889a07343dc",
+      "run_token": "c70cb00b-ef06-4d76-a8a8-1e231d6fae7f",
+      "started_at": "2026-07-25T17:26:21.479123+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-parallel-p4/worker-pid-92004-38be3037-worktrees/53f93c26-c8db-490c-b148-7c7542337d83-c70cb00b"
+    },
+    {
+      "configured_delay_seconds": 0.5,
+      "duration_seconds": 0.5100119999842718,
+      "finished_at": "2026-07-25T17:26:22.434448+00:00",
+      "job_id": "1f26a146-99ce-460d-ad53-09d900f0fc84",
+      "phase": "planning",
+      "pid": 92005,
+      "ppid": 91948,
+      "prompt_commit_hashes": [
+        "4ae5dfd8c5348c495741ab25791c0f6db34c59f3"
+      ],
+      "prompt_sha256": "fb4ed2548c48fe292e66808b51ed836af735208d3a1c8cf04956410a2ee6669a",
+      "run_token": "bbe16215-3b11-48b9-92ee-67636de6367c",
+      "started_at": "2026-07-25T17:26:21.924315+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-parallel-p4/worker-pid-92005-ce8b7bcf-worktrees/1f26a146-99ce-460d-ad53-09d900f0fc84-bbe16215"
+    },
+    {
+      "configured_delay_seconds": 0.5,
+      "duration_seconds": 0.5058107920922339,
+      "finished_at": "2026-07-25T17:26:22.825343+00:00",
+      "job_id": "47eeb6b6-bbbf-41ac-ac20-aa117ade40ba",
+      "phase": "planning",
+      "pid": 92002,
+      "ppid": 91948,
+      "prompt_commit_hashes": [
+        "8f91cbbb3f065f05977b6bd37f1a8e8b50c65d6b"
+      ],
+      "prompt_sha256": "bb85d35e002810a9817253666b447124a53dabd43cac500a006aa889a07343dc",
+      "run_token": "723a807e-f35d-4753-90ad-8974ac4696be",
+      "started_at": "2026-07-25T17:26:22.319401+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-parallel-p4/worker-pid-92002-d9502b61-worktrees/47eeb6b6-bbbf-41ac-ac20-aa117ade40ba-723a807e"
+    },
+    {
+      "configured_delay_seconds": 1.5,
+      "duration_seconds": 1.5103962499415502,
+      "finished_at": "2026-07-25T17:26:23.104794+00:00",
+      "job_id": "5006afa2-a886-4c19-9fcb-54a918ca43cc",
+      "phase": "coding",
+      "pid": 92003,
+      "ppid": 91948,
+      "prompt_commit_hashes": [
+        "4ae5dfd8c5348c495741ab25791c0f6db34c59f3"
+      ],
+      "prompt_sha256": "8c95b66546b5a88bacc85188ebb5ac1a324b75aaa8014187d858eb29eca060a3",
+      "run_token": "c131096a-d058-471d-a64f-1fe370fcfad3",
+      "started_at": "2026-07-25T17:26:21.594323+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-parallel-p4/worker-pid-92003-2cbcdbe4-worktrees/5006afa2-a886-4c19-9fcb-54a918ca43cc-c131096a"
+    },
+    {
+      "configured_delay_seconds": 1.5,
+      "duration_seconds": 1.5016773329116404,
+      "finished_at": "2026-07-25T17:26:23.505604+00:00",
+      "job_id": "53f93c26-c8db-490c-b148-7c7542337d83",
+      "phase": "coding",
+      "pid": 92004,
+      "ppid": 91948,
+      "prompt_commit_hashes": [
+        "8f91cbbb3f065f05977b6bd37f1a8e8b50c65d6b"
+      ],
+      "prompt_sha256": "9a0eb4dcf3b3a5b14309045b93e3313ce11fdc4e5f686c52f4c4f34e110a46a5",
+      "run_token": "c70cb00b-ef06-4d76-a8a8-1e231d6fae7f",
+      "started_at": "2026-07-25T17:26:22.003856+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-parallel-p4/worker-pid-92004-38be3037-worktrees/53f93c26-c8db-490c-b148-7c7542337d83-c70cb00b"
+    },
+    {
+      "configured_delay_seconds": 1.5,
+      "duration_seconds": 1.507356125046499,
+      "finished_at": "2026-07-25T17:26:23.954889+00:00",
+      "job_id": "1f26a146-99ce-460d-ad53-09d900f0fc84",
+      "phase": "coding",
+      "pid": 92005,
+      "ppid": 91948,
+      "prompt_commit_hashes": [
+        "4ae5dfd8c5348c495741ab25791c0f6db34c59f3"
+      ],
+      "prompt_sha256": "78a14f999d4f83b7e4ca9795b63622886f70af95a97edf51dd1f360906d46224",
+      "run_token": "bbe16215-3b11-48b9-92ee-67636de6367c",
+      "started_at": "2026-07-25T17:26:22.447454+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-parallel-p4/worker-pid-92005-ce8b7bcf-worktrees/1f26a146-99ce-460d-ad53-09d900f0fc84-bbe16215"
+    },
+    {
+      "configured_delay_seconds": 1.5,
+      "duration_seconds": 1.5071231669280678,
+      "finished_at": "2026-07-25T17:26:24.346127+00:00",
+      "job_id": "47eeb6b6-bbbf-41ac-ac20-aa117ade40ba",
+      "phase": "coding",
+      "pid": 92002,
+      "ppid": 91948,
+      "prompt_commit_hashes": [
+        "8f91cbbb3f065f05977b6bd37f1a8e8b50c65d6b"
+      ],
+      "prompt_sha256": "8738a6d2a5dd9e1f521e69e9837a7ecffff7be21adbd8a6ad8161f0086f75d5d",
+      "run_token": "723a807e-f35d-4753-90ad-8974ac4696be",
+      "started_at": "2026-07-25T17:26:22.838916+00:00",
+      "working_directory": "/Users/chenmohan/gits/ACE/loreley/.cache/v15-system/v15-parallel-p4/worker-pid-92002-d9502b61-worktrees/47eeb6b6-bbbf-41ac-ac20-aa117ade40ba-723a807e"
+    }
+  ]
+}

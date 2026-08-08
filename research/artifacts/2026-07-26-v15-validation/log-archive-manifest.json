@@ -1,0 +1,33 @@
+{
+  "generated_at": "2026-07-26T02:02:00+08:00",
+  "format": "tar.gz",
+  "reason": "Preserve complete scheduler, worker, prompt, response, evaluation, and debug artifacts without committing hundreds of loose files.",
+  "archives": [
+    {
+      "path": "v15-islands-migration-logs.tar.gz",
+      "source_file_count": 172,
+      "sha256": "1c140c872b14132f6b595e09e3a3521481fafe30e9501b04ee806362fabf2d60"
+    },
+    {
+      "path": "v15-live-cost-accounting-logs.tar.gz",
+      "source_file_count": 4,
+      "sha256": "d0e24a5f44939bd553b655401a15f7c86ead0a3a7f8e4120c824eb70ea7a8cef"
+    },
+    {
+      "path": "v15-live-gpt54mini-logs.tar.gz",
+      "source_file_count": 44,
+      "sha256": "9ff270eb9effb0a915871da2b6891ad643d944b2c63d9da171b72d8d15170f84"
+    },
+    {
+      "path": "v15-parallel-p1-logs.tar.gz",
+      "source_file_count": 246,
+      "sha256": "9b36277a5eb932b5196fb20921fdd442c690bbe2163fd5ec3de7a0e0ac1f7428"
+    },
+    {
+      "path": "v15-parallel-p4-logs.tar.gz",
+      "source_file_count": 88,
+      "sha256": "a31e8135677b9a677c06167832ece5c129ede1ea9bc030b384ec8f0ef044b629"
+    }
+  ],
+  "secrets_recorded": false
+}

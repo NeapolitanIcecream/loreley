@@ -1,0 +1,3782 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Automated MAP-Elites system that evolves entire git repositories.">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.0">
+    
+    
+      
+        <title>ADR 0048: Failed-candidate repair pool - Loreley</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.618322db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#adr-0048-failed-candidate-repair-pool" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Loreley" class="md-header__button md-logo" aria-label="Loreley" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Loreley
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ADR 0048: Failed-candidate repair pool
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Loreley" class="md-nav__button md-logo" aria-label="Loreley" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Loreley
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evidence
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Evidence
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/2026-08-07-loreley-case-study-evidence-report/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Three-case-study report
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/2026-08-02-markdown-it-py-deepseek-case-study/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    markdown-it-py DeepSeek case study
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/2026-08-03-pathspec-deepseek-case-study/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    python-pathspec DeepSeek case study
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/2026-08-07-zstandard-gpt-v19-case-study-report/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Zstandard V19 case study
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/2026-08-07-zstandard-gpt-v19-top10-validation-supplement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Zstandard V19 Top-10 supplement
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../marketing/candidates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Candidate source diffs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/2026-08-07-case-study-framework-convergence-proposal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Framework convergence proposal
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/2026-08-07-case-study-deferred-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deferred research register
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Essays & collaboration
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Essays & collaboration
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../marketing/2026-08-loreley-launch-article-zh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    用编码智能体搜索真实代码仓库
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../marketing/2026-08-loreley-launch-article-en/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Searching Real Code Repositories with Coding Agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../marketing/loreley-design-partner-brief/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design partners
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Releases
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Releases
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/unreleased/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Unreleased
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v0.9.0-alpha/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v0.9.0-alpha
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v0.8.4-alpha/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v0.8.4-alpha
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v0.8.3-alpha/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v0.8.3-alpha
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v0.8.2-alpha/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v0.8.2-alpha
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v0.8.1-alpha/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v0.8.1-alpha
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v0.8.0-alpha/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v0.8.0-alpha
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v0.7.9-alpha/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v0.7.9-alpha
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v0.7.8-alpha/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v0.7.8-alpha
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v0.7.7-alpha/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v0.7.7-alpha
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loreley
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Loreley
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/campaign-program/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Campaign program
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/experiments/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experiments
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture decisions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_6" id="__nav_5_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scheduler
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Scheduler
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/scheduler/main/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/scheduler/job_scheduler/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Job scheduling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/scheduler/ingestion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ingestion
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_7" id="__nav_5_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Database
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Database
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/db/base/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Engine & sessions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/db/models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_8" id="__nav_5_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MAP-Elites
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    MAP-Elites
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/map-elites/map-elites/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/map-elites/repository_embedding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository embeddings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/map-elites/preprocess/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Preprocessing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/map-elites/chunk/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chunking
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/map-elites/code_embedding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Code embeddings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/map-elites/dimension_reduction/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dimensionality reduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/map-elites/sampler/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sampler
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/map-elites/snapshot/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Snapshots
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_9" id="__nav_5_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Worker pipeline
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Worker pipeline
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/worker/repository/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/worker/planning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Planning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/worker/agent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/worker/coding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/worker/evaluator/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/worker/evolution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evolution loop
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/worker/commit_card/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Commit cards
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/worker/commit_summary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Commit summaries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/worker/artifacts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Artifacts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/core/worker/job_store/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Job store
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_10" id="__nav_5_10_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tasks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Tasks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/tasks/broker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/tasks/workers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Workers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    UI API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/agent-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent REST API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loreley/ui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Streamlit UI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Operations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../script/doctor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Doctor (environment checks)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../script/status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../script/db/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Database schema commands
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../script/jobs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Managing jobs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../script/job_leases/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Job lease recovery
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../script/archive_stats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Archive stats
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../script/config_dump/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Config dump
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../script/benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmarking
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../script/run_scheduler/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Running the scheduler
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../script/run_worker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Running the worker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../script/run_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Running the UI API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../script/run_ui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Running the UI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../script/reset_db/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Resetting the database
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Non-Goals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#terminology" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Terminology
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#evaluation-outcome-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Evaluation Outcome Contract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#data-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data Model
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#worker-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Worker Lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#failure-evidence-and-diagnosticcapsule" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failure Evidence And DiagnosticCapsule
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#repo-state-aggregate-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Repo-State Aggregate Policy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#repair-scheduling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Repair Scheduling
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#repair-prompt-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Repair Prompt Contract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#promotion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Promotion
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ui-api-and-cli" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        UI, API, And CLI
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#observability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Observability
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation Plan
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#acceptance-criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Acceptance Criteria
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#risks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Risks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deferred-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deferred Questions
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="adr-0048-failed-candidate-repair-pool">ADR 0048: Failed-candidate repair pool<a class="headerlink" href="#adr-0048-failed-candidate-repair-pool" title="Permanent link">&para;</a></h1>
+<p>Date: 2026-05-06</p>
+<p>Status: Superseded for new work</p>
+<p>Superseded by:
+<a href="../../proposals/evaluator-guided-in-loop-rework/">Evaluator-Guided In-Loop Rework</a>.
+The repair-pool schema and legacy handling remain for compatibility, but new
+failed-candidate repair scheduling is deprecated.</p>
+<p>Resolves: <a href="../0047-defer-failed-candidate-lineage/">ADR 0047</a></p>
+<h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
+<p>ADR 0047 deferred the question of whether failed candidate commits should become
+part of Loreley's evolvable lineage. The current implementation is deliberately
+closer to viable-frontier search:</p>
+<ul>
+<li><code>EvolutionWorker</code> creates and publishes a worker-owned candidate commit before
+  running the evaluator.</li>
+<li><code>EvolutionJobStore.record_candidate_commit()</code> stores candidate hash, branch,
+  and publication metadata on <code>EvolutionJob</code> before evaluation completes.</li>
+<li><code>EvolutionJobStore.persist_success()</code> is the only path that creates
+  <code>CommitCard</code>, <code>Metric</code>, fixed worker artifact, and evaluator artifact rows.</li>
+<li><code>EvolutionJobStore.mark_job_failed()</code> records <code>status=FAILED</code> and
+  <code>last_error</code>, while preserving candidate metadata already stored on the job.</li>
+<li><code>MapElitesIngestion</code> only scans <code>SUCCEEDED</code> jobs with <code>result_commit_hash</code>.
+  Failed jobs are not ingested into MAP-Elites.</li>
+<li><code>MapElitesSampler</code> samples base and inspiration commits only from occupied
+  MAP-Elites archive cells.</li>
+<li>repo-state ingestion is incremental-only after root bootstrap. A successful
+  candidate is embedded from its git parent aggregate; runtime full-tree
+  recomputation is not part of normal promotion.</li>
+<li>remote job branch pruning already protects failed jobs that still have
+  candidate branch metadata, but manual job retry clears those fields. A repair
+  design therefore needs its own durable candidate reference instead of relying
+  only on the mutable job row.</li>
+</ul>
+<p>The missing product capability is controlled repair of useful failed work:
+large refactors, API migrations, and benchmark changes may require temporarily
+broken commits, but letting those commits enter the normal MAP-Elites archive
+would weaken archive meaning and waste capacity on unrecoverable failures.</p>
+<p>The design review of this ADR agreed with the repair-pool direction and
+recommended two changes that this ADR adopts:</p>
+<ol>
+<li>Candidate validation failure must be a first-class evaluator outcome, not an
+   exception shape inferred by the worker.</li>
+<li>The first implementation should not make the repair result a git descendant
+   of the failed commit. Repair source and git parent are distinct concepts.</li>
+</ol>
+<h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
+<p>Add a separate failed-candidate repair pool, backed by a first-class candidate
+commit ledger and a first-class evaluation outcome contract.</p>
+<p>The normal MAP-Elites archive remains the only ordinary source of evolution
+bases and inspirations. Failed commits are never inserted into
+<code>map_elites_archive_cells</code>, never represented as <code>CommitCard</code> rows, and never
+selected by <code>MapElitesSampler</code>.</p>
+<p>Worker-produced commits are recorded in a new candidate ledger. Rows for failed
+commits can become repair-pool entries only when they are durable, diagnosable,
+and explicitly classified as repairable candidate failures.</p>
+<p>The MVP repair mode is rebase/patch repair:</p>
+<div class="highlight"><pre><span></span><code>V = nearest viable ancestor
+F = failed candidate produced from V
+
+repair worker:
+  checkout V
+  apply diff V..F into the worktree
+  provide a safe DiagnosticCapsule
+  ask the agent to repair the worktree
+  commit R with git parent V
+</code></pre></div>
+<p>The resulting provenance is:</p>
+<div class="highlight"><pre><span></span><code>archive / git parent lineage:
+  V -&gt; R
+
+candidate provenance:
+  V -&gt; F
+  R repaired_from F
+</code></pre></div>
+<p><code>R</code> records <code>repair_source_candidate_id=F.id</code>, but <code>R</code> does not use <code>F</code> as its
+git parent. This keeps incremental repo-state embedding on the viable lineage:
+<code>R</code> can be embedded from <code>V</code> without requiring a failed-candidate aggregate.</p>
+<p>True descendant repair remains a future mode:</p>
+<div class="highlight"><pre><span></span><code>V -&gt; F failed -&gt; R repaired
+</code></pre></div>
+<p>That mode may be useful later, but it requires failed intermediate aggregates
+and stricter safeguards. It is not part of the MVP.</p>
+<p>The repair lane is explicit and budgeted:</p>
+<ul>
+<li>disabled by default;</li>
+<li>bounded by per-candidate attempts, failed-depth, scheduler tokens, active
+  repair jobs, and global job limits;</li>
+<li>isolated from normal archive sampling by using a distinct <code>job_kind</code>,
+  sampling strategy, prompts, and UI/API language;</li>
+<li>safe by default: failure logs and artifacts are not agent-visible unless they
+  pass ADR 0046 visibility/projection policy and the DiagnosticCapsule
+  sanitizer.</li>
+</ul>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Do not make failed commits normal MAP-Elites candidates.</li>
+<li>Do not use <code>CommitCard</code> for failed candidates. <code>CommitCard</code> remains the
+  lightweight representation for evaluated viable candidates and root metadata.</li>
+<li>Do not let normal samplers query <code>CandidateCommit</code> directly.</li>
+<li>Do not make repair-produced commits git descendants of failed candidates in
+  the MVP.</li>
+<li>Do not compute repo-state aggregates for failed candidates in the MVP.</li>
+<li>Do not add runtime full-tree repo-state recomputation for repair promotion.</li>
+<li>Do not let failed candidates influence PCA fitting history, archive
+  projection state, behavior-space density, or normal sampler eligibility.</li>
+<li>Do not load raw evaluator logs, raw agent output, or arbitrary filesystem
+  paths into repair prompts by default.</li>
+<li>Do not hide repair behind prompt wording or backend-local agent loops.</li>
+</ul>
+<h2 id="terminology">Terminology<a class="headerlink" href="#terminology" title="Permanent link">&para;</a></h2>
+<p><code>candidate commit</code>
+: A git commit produced by a Loreley worker.</p>
+<p><code>candidate ledger</code>
+: The durable table of worker-produced candidate commits, including successful,
+  failed, and repair-produced commits.</p>
+<p><code>failed candidate</code>
+: A candidate commit whose evaluation outcome is <code>candidate_failed</code>.</p>
+<p><code>repair-pool entry</code>
+: A failed candidate that passes eligibility checks and may be sampled by the
+  repair scheduler.</p>
+<p><code>repair source</code>
+: The failed candidate being repaired. The repair source is provenance; it is
+  not necessarily the repair job's git parent.</p>
+<p><code>nearest viable ancestor</code>
+: The archive-valid commit from which the failed candidate was originally
+  produced and from which the repair result can be embedded.</p>
+<p><code>repair job</code>
+: An <code>EvolutionJob</code> whose task is to repair a failed candidate, not to explore a
+  new archive cell from scratch.</p>
+<p><code>DiagnosticCapsule</code>
+: A bounded, sanitized, policy-checked summary of evaluation failure evidence
+  that is safe to show to the repair agent.</p>
+<p><code>promoted repair result</code>
+: A repair-produced candidate that passes evaluation and enters the normal
+  success path. It becomes a regular evaluated candidate; it becomes a viable
+  archive entry only if MAP-Elites accepts it into a cell.</p>
+<h2 id="evaluation-outcome-contract">Evaluation Outcome Contract<a class="headerlink" href="#evaluation-outcome-contract" title="Permanent link">&para;</a></h2>
+<p>Evaluator output should be represented as an envelope:</p>
+<div class="highlight"><pre><span></span><code>EvaluationOutcome
+- schema_version
+- evaluator_name
+- evaluator_version
+- candidate_commit_hash
+- outcome_kind
+- result nullable
+- failure nullable
+- artifact_records
+- started_at
+- finished_at
+</code></pre></div>
+<p>Supported <code>outcome_kind</code> values:</p>
+<ul>
+<li><code>passed</code>: evaluator completed and produced comparable success metrics.</li>
+<li><code>candidate_failed</code>: evaluator completed and determined that the candidate
+  code failed validation, tests, lint, typecheck, benchmark gates, or another
+  candidate-owned gate.</li>
+<li><code>evaluator_failed</code>: evaluator logic or evaluator dependencies failed.</li>
+<li><code>infrastructure_failed</code>: checkout, worktree, runner, network, resource,
+  artifact persistence, database, or push infrastructure failed.</li>
+<li><code>inconclusive</code>: evaluator completed partially but cannot reliably assign the
+  failure to the candidate, evaluator, or infrastructure.</li>
+</ul>
+<p>Keep <code>EvaluationResult</code> as a success-only shape:</p>
+<div class="highlight"><pre><span></span><code>EvaluationResult
+- metrics
+- quality_score
+- behavior_descriptors
+- evaluation_summary
+- artifact_refs
+</code></pre></div>
+<p>Add a failure shape:</p>
+<div class="highlight"><pre><span></span><code>EvaluationFailureResult
+- failure_stage
+- failure_kind
+- repairability
+- repairability_reason
+- safe_failure_summary
+- agent_visible_evidence_refs
+- human_only_artifact_refs
+- hidden_artifact_refs
+- exit_code nullable
+- timeout_seconds nullable
+- failing_tests_summary nullable
+- compiler_errors_summary nullable
+- stack_trace_summary nullable
+- policy_version
+</code></pre></div>
+<p><code>repairability</code> values are <code>repairable</code>, <code>not_repairable</code>, and <code>unknown</code>.</p>
+<p>Repair eligibility is only possible for:</p>
+<div class="highlight"><pre><span></span><code>outcome_kind = candidate_failed
+AND repairability = repairable
+AND DiagnosticCapsule policy passed
+</code></pre></div>
+<p>Timeouts must be classified carefully. A candidate-owned test or program
+timeout may be <code>candidate_failed</code>, but runner/container/resource timeout is
+<code>infrastructure_failed</code>. MVP repair should not allow timeout failures unless
+the evaluator can classify them as candidate-owned with high confidence.</p>
+<p>Worker exception handling remains as a fallback:</p>
+<ul>
+<li>valid <code>EvaluationOutcome</code>: persist the evaluator outcome;</li>
+<li>evaluator process failed before a valid outcome: synthesize
+  <code>evaluator_failed</code> or <code>infrastructure_failed</code>;</li>
+<li>checkout, runner, DB, artifact, push, or worktree error: persist
+  <code>infrastructure_failed</code>.</li>
+</ul>
+<p>Synthetic failure outcomes created from exceptions are not repairable by
+default.</p>
+<h2 id="data-model">Data Model<a class="headerlink" href="#data-model" title="Permanent link">&para;</a></h2>
+<p>Add <code>CandidateCommit</code> as the source of truth for worker-produced git commits.
+It is not a replacement for <code>CommitCard</code>.</p>
+<div class="highlight"><pre><span></span><code>candidate_commits
+- id UUID primary key
+- commit_hash string(64) unique not null
+- git_parent_commit_hash string(64) not null
+- nearest_viable_ancestor_hash string(64) null
+- island_id string(64) null
+
+- produced_by_job_id UUID null references evolution_jobs(id) on delete set null
+- run_token UUID null
+- job_kind string(32) not null
+- repair_source_candidate_id UUID null references candidate_commits(id)
+- repair_mode string(32) null
+
+- candidate_branch_name string(255) null
+- candidate_published_at timestamptz null
+- publication_status string(32) not null
+
+- evaluation_status string(32) not null
+- latest_evaluation_attempt_id UUID null
+
+- archive_status string(32) not null
+- lifecycle_status string(32) not null
+
+- failure_stage string(32) null
+- failure_kind string(64) null
+- failure_summary text null
+- failure_evidence_id UUID null
+
+- repair_state string(32) not null
+- failed_depth integer not null default 0
+- repair_attempts integer not null default 0
+- last_repair_job_id UUID null references evolution_jobs(id) on delete set null
+
+- repo_state_aggregate_status string(32) not null default &#39;not_required&#39;
+- repo_state_aggregate_error text null
+
+- commit_card_id UUID null references commit_cards(id) on delete set null
+- created_at / updated_at
+- published_at timestamptz null
+- evaluated_at timestamptz null
+- archived_at timestamptz null
+</code></pre></div>
+<p>Recommended low-cardinality values:</p>
+<ul>
+<li><code>job_kind</code>: <code>evolution</code>, <code>seed</code>, <code>repair</code>.</li>
+<li><code>repair_mode</code>: <code>rebase_from_nearest_viable</code>, <code>patch_from_source_diff</code>,
+  <code>descendant</code>.</li>
+<li><code>publication_status</code>: <code>created</code>, <code>published</code>, <code>publish_failed</code>,
+  <code>discarded</code>.</li>
+<li><code>evaluation_status</code>: <code>not_evaluated</code>, <code>passed</code>, <code>candidate_failed</code>,
+  <code>evaluator_failed</code>, <code>infrastructure_failed</code>, <code>inconclusive</code>.</li>
+<li><code>archive_status</code>: <code>not_considered</code>, <code>member</code>, <code>rejected</code>, <code>superseded</code>,
+  <code>not_applicable</code>.</li>
+<li><code>lifecycle_status</code>: <code>active</code>, <code>quarantined</code>, <code>discarded</code>.</li>
+<li><code>failure_stage</code>: <code>planning</code>, <code>coding</code>, <code>commit</code>, <code>publish</code>, <code>evaluation</code>,
+  <code>success_persistence</code>, <code>ingestion</code>, <code>unknown</code>.</li>
+<li><code>failure_kind</code>: <code>validation_failed</code>, <code>test_failed</code>, <code>typecheck_failed</code>,
+  <code>lint_failed</code>, <code>candidate_timeout</code>, <code>evaluator_error</code>,
+  <code>infrastructure_error</code>, <code>repository_error</code>, <code>unknown</code>.</li>
+<li><code>repair_state</code>: <code>audit_only</code>, <code>ineligible</code>, <code>eligible</code>, <code>scheduled</code>,
+  <code>repairing</code>, <code>repaired</code>, <code>exhausted</code>, <code>quarantined</code>, <code>discarded</code>.</li>
+<li><code>repo_state_aggregate_status</code>: <code>not_required</code>, <code>pending</code>, <code>ready</code>, <code>failed</code>.</li>
+</ul>
+<p>Add an <code>EvaluationAttempt</code> table rather than storing all evaluation detail on
+<code>CandidateCommit</code>:</p>
+<div class="highlight"><pre><span></span><code>evaluation_attempts
+- id UUID primary key
+- candidate_commit_id UUID references candidate_commits(id)
+- job_id UUID references evolution_jobs(id)
+- evaluator_name string(128)
+- evaluator_version string(128)
+- outcome_kind string(32)
+- failure_kind string(64) null
+- failure_stage string(32) null
+- repairability string(32) null
+- safe_failure_summary text null
+- diagnostic_capsule_id UUID null
+- artifact_policy_version string(64) null
+- started_at timestamptz
+- finished_at timestamptz
+- created_at / updated_at
+</code></pre></div>
+<p>Artifact rows remain in <code>EvaluationArtifactRecord</code>. Failed-candidate evidence
+uses <code>commit_card_id=NULL</code> and links by <code>job_id</code>, <code>commit_hash</code>, and
+<code>evaluation_attempt_id</code> where available.</p>
+<p>Add these fields to <code>EvolutionJob</code>:</p>
+<div class="highlight"><pre><span></span><code>job_kind string(32) default &#39;evolution&#39;
+repair_source_candidate_id UUID null references candidate_commits(id)
+repair_mode string(32) null
+</code></pre></div>
+<p>Keep <code>EvolutionJob.candidate_commit_hash</code>, <code>candidate_branch_name</code>,
+<code>candidate_published_at</code>, and <code>result_commit_hash</code> as denormalized job audit and
+list-view fields. They remain useful for the current UI and CLI. The new
+candidate ledger is the stable lineage and repair scheduler source.</p>
+<p>Required invariants:</p>
+<div class="highlight"><pre><span></span><code>CommitCard.commit_hash references CandidateCommit.commit_hash
+AND CandidateCommit.evaluation_status = passed
+</code></pre></div>
+<div class="highlight"><pre><span></span><code>CandidateCommit.commit_card_id IS NULL
+WHEN CandidateCommit.evaluation_status != passed
+</code></pre></div>
+<div class="highlight"><pre><span></span><code>Archive cell commit_hash has a CommitCard
+AND CandidateCommit.evaluation_status = passed
+AND CandidateCommit.archive_status = member
+</code></pre></div>
+<div class="highlight"><pre><span></span><code>Normal MapElitesSampler queries map_elites_archive_cells only,
+never CandidateCommit directly.
+</code></pre></div>
+<div class="highlight"><pre><span></span><code>Repair source candidate has:
+CandidateCommit.evaluation_status = candidate_failed
+AND CandidateCommit.repair_state = eligible
+</code></pre></div>
+<div class="highlight"><pre><span></span><code>At most one pending, queued, or running repair job exists per
+repair_source_candidate_id.
+</code></pre></div>
+<p>Indexes:</p>
+<ul>
+<li><code>candidate_commits(commit_hash)</code> unique.</li>
+<li><code>candidate_commits(produced_by_job_id)</code>.</li>
+<li><code>candidate_commits(island_id, repair_state, evaluation_status, updated_at)</code>.</li>
+<li><code>candidate_commits(repair_source_candidate_id)</code>.</li>
+<li><code>candidate_commits(git_parent_commit_hash)</code>.</li>
+<li><code>candidate_commits(nearest_viable_ancestor_hash)</code>.</li>
+<li><code>evaluation_attempts(candidate_commit_id, started_at)</code>.</li>
+<li><code>evaluation_attempts(job_id)</code>.</li>
+<li><code>evolution_jobs(job_kind, status, scheduled_at)</code>.</li>
+<li><code>evolution_jobs(repair_source_candidate_id, status)</code>.</li>
+</ul>
+<p>Because Loreley uses schema reset/create-all instead of Alembic migrations, this
+schema change must bump <code>INSTANCE_SCHEMA_VERSION</code> and document the reset path.</p>
+<h2 id="worker-lifecycle">Worker Lifecycle<a class="headerlink" href="#worker-lifecycle" title="Permanent link">&para;</a></h2>
+<p><code>record_candidate_commit()</code> should create or update a <code>CandidateCommit</code> row when
+the worker creates a commit. At this point the row has:</p>
+<ul>
+<li><code>publication_status='created'</code> for a local candidate commit and
+  <code>publication_status='published'</code> after remote publication succeeds;</li>
+<li><code>evaluation_status='not_evaluated'</code>;</li>
+<li><code>archive_status='not_considered'</code> for normal candidates and
+  <code>archive_status='not_applicable'</code> for failed repair sources;</li>
+<li><code>job_kind</code> from the owning job;</li>
+<li><code>git_parent_commit_hash</code> from the actual commit parent;</li>
+<li><code>nearest_viable_ancestor_hash</code> from the selected archive base;</li>
+<li><code>repair_source_candidate_id</code> and <code>repair_mode</code> when the job is a repair job.</li>
+</ul>
+<p>For MVP repair jobs, the worker should:</p>
+<ol>
+<li>load source failed candidate <code>F</code>;</li>
+<li>resolve nearest viable ancestor <code>V</code>;</li>
+<li>checkout <code>V</code>;</li>
+<li>apply the patch represented by <code>git diff V..F</code>;</li>
+<li>render repair planning/coding context with the DiagnosticCapsule;</li>
+<li>commit repair result <code>R</code> on top of <code>V</code>;</li>
+<li>record <code>R.repair_source_candidate_id=F.id</code> and
+   <code>R.repair_mode='rebase_from_nearest_viable'</code>.</li>
+</ol>
+<p>If the patch from <code>V..F</code> does not apply cleanly, the repair job should fail with
+<code>outcome_kind=infrastructure_failed</code> or <code>inconclusive</code>, not enter a nested
+repair loop.</p>
+<p><code>persist_success()</code> updates the candidate ledger after writing <code>CommitCard</code> and
+<code>Metric</code> rows:</p>
+<ul>
+<li>create an <code>EvaluationAttempt</code> with <code>outcome_kind='passed'</code>;</li>
+<li>set candidate <code>evaluation_status='passed'</code>;</li>
+<li>link <code>commit_card_id</code>;</li>
+<li>clear repair-only failure fields on the produced candidate;</li>
+<li>if the successful job was a repair job, update the source failed candidate's
+  <code>repair_state</code> to <code>repaired</code> once the success row is committed.</li>
+</ul>
+<p><code>MapElitesIngestion</code> may later update the candidate row to
+<code>archive_status='member'</code> when an archive record is created. If ingestion skips
+the commit because it does not improve a cell, set <code>archive_status='rejected'</code>.
+Archive membership should still be derived from <code>map_elites_archive_cells</code> when
+exact current state matters, because PCA refits and archive replacement can move
+or evict rows.</p>
+<p>On failure, replace the best-effort-only <code>mark_job_failed()</code> path with a
+structured <code>persist_failure()</code> path when the worker still owns the lease. It
+should:</p>
+<ol>
+<li>lock the active job by <code>job_id</code> and <code>run_token</code>;</li>
+<li>write any available planning and coding artifacts even if evaluation failed;</li>
+<li>persist the <code>EvaluationOutcome</code> or synthesize a non-repairable fallback
+   outcome;</li>
+<li>persist a bounded failure artifact row when no evaluator artifact exists;</li>
+<li>create an <code>EvaluationAttempt</code>;</li>
+<li>mark the job <code>FAILED</code>, clear lease fields, and store <code>last_error</code>;</li>
+<li>update the candidate ledger if a candidate commit exists;</li>
+<li>decide repair eligibility from outcome kind, failure kind, repairability,
+   branch durability, nearest viable ancestor aggregate readiness, and
+   DiagnosticCapsule policy.</li>
+</ol>
+<p>Failures before a candidate commit exists remain ordinary failed jobs. They are
+not repair-pool entries. If the failed job is itself a repair job, the source
+failed candidate must still receive a terminal attempt-state update: move it
+back to <code>eligible</code> when attempts remain, or to <code>exhausted</code> when the consumed
+attempt reaches the configured maximum.</p>
+<p>Failures caused by publish errors, lost leases, database errors, artifact-store
+errors, or success-persistence errors should default to <code>repair_state='audit_only'</code>
+or <code>quarantined</code>, because they do not prove that the candidate itself is an
+invalid but useful repair source.</p>
+<h2 id="failure-evidence-and-diagnosticcapsule">Failure Evidence And DiagnosticCapsule<a class="headerlink" href="#failure-evidence-and-diagnosticcapsule" title="Permanent link">&para;</a></h2>
+<p>Repair jobs need concise failure context, but raw failure outputs can contain
+secrets, prompt injection, or irrelevant noise.</p>
+<p>Evaluator plugins should return structured failure evidence through
+<code>EvaluationOutcome</code>. Exceptions remain a legacy adapter path only.</p>
+<p>The repair agent may see only a <code>DiagnosticCapsule</code>, not raw evaluator output:</p>
+<div class="highlight"><pre><span></span><code>DiagnosticCapsule
+- schema_version
+- policy_version
+- failure_stage
+- failure_kind
+- repairability
+- safe_failure_summary
+- failing_test_names
+- failing_test_locations
+- compiler/typecheck/lint error summaries
+- selected sanitized stack frames
+- selected bounded stdout/stderr excerpts
+- diff summary between nearest viable ancestor and failed candidate
+- artifact manifest
+- evaluator name/version
+</code></pre></div>
+<p>Default-deny content:</p>
+<ul>
+<li>raw stdout/stderr and raw test logs;</li>
+<li>raw evaluator artifacts and benchmark outputs;</li>
+<li>environment variables, credentials, cookies, authorization headers, and URLs
+  with sensitive query params;</li>
+<li>absolute host paths and arbitrary artifact paths;</li>
+<li>paths outside the repo or artifact root;</li>
+<li>binary blobs, HTML reports, screenshots, network traces, and large coverage
+  reports;</li>
+<li>human-only or hidden artifacts.</li>
+</ul>
+<p>Minimum sanitization:</p>
+<ul>
+<li>enforce total and per-excerpt byte budgets;</li>
+<li>strip ANSI escapes, terminal OSC hyperlinks, control characters, and
+  binary-looking content;</li>
+<li>normalize UTF-8 and newlines;</li>
+<li>redact common token, key, private-key, cookie, auth-header, and database URL
+  patterns;</li>
+<li>normalize paths to repo-relative paths where possible;</li>
+<li>reject <code>..</code>, symlink escapes, and paths outside allowed roots;</li>
+<li>present diagnostic text as untrusted data, never as prompt instructions.</li>
+</ul>
+<p>ADR 0046 visibility and projection rules remain authoritative:</p>
+<ul>
+<li><code>agent_visible</code> is required but not sufficient; content still needs capsule
+  projection, redaction, and budget checks.</li>
+<li><code>human_only</code> and <code>hidden</code> artifacts are never rendered into repair prompts.</li>
+<li><code>path</code> projection is allowed only for repo-relative source/test locations in
+  the MVP.</li>
+</ul>
+<p>Until the outcome contract exists, exceptions from the evaluator can produce
+only a bounded synthetic diagnostic:</p>
+<div class="highlight"><pre><span></span><code>key: evaluation_failure
+kind: failure
+visibility: human_only
+agent_projection: summary
+summary: bounded EvaluationError message
+repairability: unknown
+</code></pre></div>
+<p>Synthetic diagnostics are not repairable by default.</p>
+<h2 id="repo-state-aggregate-policy">Repo-State Aggregate Policy<a class="headerlink" href="#repo-state-aggregate-policy" title="Permanent link">&para;</a></h2>
+<p>MVP repair does not require a repo-state aggregate for the failed candidate.</p>
+<p>Reason: the repair result <code>R</code> is committed on top of the nearest viable ancestor
+<code>V</code>, not on top of failed candidate <code>F</code>. <code>MapElitesManager.ingest(R)</code> can use the
+existing incremental path:</p>
+<div class="highlight"><pre><span></span><code>aggregate(R) = aggregate(V) + diff(V..R)
+</code></pre></div>
+<p>Repair eligibility therefore requires:</p>
+<div class="highlight"><pre><span></span><code>nearest viable ancestor has MapElitesRepoStateAggregate ready
+</code></pre></div>
+<p>and sets the failed candidate's:</p>
+<div class="highlight"><pre><span></span><code>repo_state_aggregate_status=&#39;not_required&#39;
+</code></pre></div>
+<p>Failed candidates must not update:</p>
+<ul>
+<li>MAP-Elites archive cells;</li>
+<li>PCA history;</li>
+<li>PCA projection state;</li>
+<li>behavior-space density;</li>
+<li>candidate fitness or metrics;</li>
+<li>sampler state.</li>
+</ul>
+<p>If a future ADR enables true descendant repair, failed intermediate aggregates
+must be clearly marked and fenced:</p>
+<div class="highlight"><pre><span></span><code>aggregate_kind=&#39;failed_intermediate&#39;
+eligible_for_archive_projection=false
+eligible_for_pca_history=false
+eligible_for_sampler=false
+</code></pre></div>
+<p>That future service should call the incremental repo-state API, not the full
+bootstrap API, and should compute aggregates only for repair-eligible candidates
+after safe evidence checks pass. It should not compute aggregates for every
+failed job.</p>
+<h2 id="repair-scheduling">Repair Scheduling<a class="headerlink" href="#repair-scheduling" title="Permanent link">&para;</a></h2>
+<p>Introduce a <code>FailedCandidateRepairSampler</code> owned by <code>JobScheduler</code> or
+<code>EvolutionScheduler</code>. It runs separately from <code>MapElitesSampler</code>.</p>
+<p>MVP eligibility:</p>
+<ul>
+<li>repair feature is enabled;</li>
+<li><code>publication_status='published'</code>;</li>
+<li><code>evaluation_status='candidate_failed'</code>;</li>
+<li><code>failure_stage='evaluation'</code>;</li>
+<li><code>failure_kind</code> is allowlisted for repair, initially <code>validation_failed</code>,
+  <code>test_failed</code>, <code>typecheck_failed</code>, and <code>lint_failed</code>;</li>
+<li><code>repairability='repairable'</code>;</li>
+<li>DiagnosticCapsule policy passed;</li>
+<li><code>nearest_viable_ancestor_hash</code> is present and has repo-state aggregate ready;</li>
+<li>original failed candidate only: <code>repair_source_candidate_id IS NULL</code> and
+  <code>failed_depth = 0</code>;</li>
+<li><code>repair_attempts &lt; FAILED_CANDIDATE_REPAIR_MAX_ATTEMPTS</code>;</li>
+<li><code>lifecycle_status='active'</code>;</li>
+<li>no pending, queued, or running repair job references the same source;</li>
+<li>candidate branch is protected from pruning while eligible, scheduled, or
+  repairing.</li>
+</ul>
+<p>Do not repair:</p>
+<ul>
+<li>evaluator failures;</li>
+<li>infrastructure failures;</li>
+<li>repository failures;</li>
+<li>unknown or inconclusive failures;</li>
+<li>unsafe diagnostics;</li>
+<li>unpublished commits;</li>
+<li>failures without a viable ancestor aggregate;</li>
+<li>repair-produced failures in the MVP.</li>
+</ul>
+<p>Scheduling uses a token bucket:</p>
+<div class="highlight"><pre><span></span><code>repair_enabled=false
+normal_jobs_per_repair_token=9
+max_repair_tokens=3
+max_active_repair_jobs=1
+max_repair_jobs_per_scheduler_tick=1
+</code></pre></div>
+<p>Rules:</p>
+<ul>
+<li>completed normal jobs earn repair tokens in the persisted job-history budget;</li>
+<li>scheduling one repair job consumes one token;</li>
+<li>repair tokens are capped by <code>max_repair_tokens</code>;</li>
+<li>repair jobs still count against global unfinished and total job limits;</li>
+<li>accrued tokens reserve up to <code>max_repair_jobs_per_scheduler_tick</code> repair slots
+  before normal archive sampling fills the scheduler batch;</li>
+<li>if no eligible repair can be scheduled, normal archive sampling may use the
+  unused reserved slots;</li>
+<li>repair remains capped by <code>max_active_repair_jobs</code>;</li>
+<li>seed jobs retain priority while the archive is empty.</li>
+</ul>
+<p>Repair attempts should increment when a repair job is created, not only after it
+finishes. This prevents scheduler crashes from repeatedly queueing the same
+source.</p>
+<p>Initial selection should be simple and inspectable:</p>
+<ol>
+<li>exclude quarantined, exhausted, already scheduled, and already repairing
+   candidates;</li>
+<li>require MVP one-generation candidates (<code>repair_source_candidate_id IS NULL</code>
+   and <code>failed_depth = 0</code>);</li>
+<li>prefer structured diagnostics;</li>
+<li>prefer small or medium diffs;</li>
+<li>penalize repeated repairs from the same ancestor/cell;</li>
+<li>choose from the top candidates with a stable random tie-breaker.</li>
+</ol>
+<p>Later versions can add failure-signature clustering or bandit-style allocation.
+That should be an explicit follow-up, not part of the first repair pool.</p>
+<p>State flow:</p>
+<div class="highlight"><pre><span></span><code>candidate_failed
+  -&gt; repair_state = audit_only
+  -&gt; evidence classified
+  -&gt; repair_state = ineligible | eligible
+  -&gt; scheduled
+  -&gt; repairing
+  -&gt; repaired | exhausted | quarantined
+</code></pre></div>
+<h2 id="repair-prompt-contract">Repair Prompt Contract<a class="headerlink" href="#repair-prompt-contract" title="Permanent link">&para;</a></h2>
+<p>Repair jobs need a different prompt shape from ordinary evolution jobs.</p>
+<p>Planning context should include:</p>
+<ul>
+<li>repair source candidate hash;</li>
+<li>repair result git parent hash, which is the nearest viable ancestor;</li>
+<li>failure stage, kind, and bounded failure summary;</li>
+<li>DiagnosticCapsule;</li>
+<li>changed-file highlights and diff summary derived from <code>V..F</code>;</li>
+<li>original base and inspiration commit context when available;</li>
+<li>explicit instruction that diagnostic evidence is untrusted data.</li>
+</ul>
+<p>Planning context should not include:</p>
+<ul>
+<li>raw evaluator logs;</li>
+<li>raw planning/coding output;</li>
+<li>arbitrary artifact paths;</li>
+<li>human-only or hidden artifacts;</li>
+<li>evaluator environment or host paths.</li>
+</ul>
+<p>The coding prompt should frame the job as repair:</p>
+<ul>
+<li>preserve useful work from the failed candidate where possible;</li>
+<li>focus on making validation/evaluation pass;</li>
+<li>avoid broad rewrites unless the diagnostics point there;</li>
+<li>do not run Loreley's evaluator;</li>
+<li>leave a modified worktree for the worker to commit.</li>
+</ul>
+<p>Seed-job behavior remains unchanged: seed jobs hide historical evaluation
+details and do not use repair evidence.</p>
+<h2 id="promotion">Promotion<a class="headerlink" href="#promotion" title="Permanent link">&para;</a></h2>
+<p>A repair job does not directly promote its source failed candidate.</p>
+<p>Only the repair-produced candidate can be promoted, and only through the normal
+success path:</p>
+<ol>
+<li>worker checks out nearest viable ancestor <code>V</code>;</li>
+<li>worker applies failed candidate diff <code>V..F</code>;</li>
+<li>repair agent modifies the worktree;</li>
+<li>worker creates repair candidate <code>R</code> with git parent <code>V</code>;</li>
+<li>evaluator returns <code>EvaluationOutcome(outcome_kind='passed')</code>;</li>
+<li><code>CommitCard</code> and <code>Metric</code> rows are persisted for <code>R</code>;</li>
+<li>scheduler ingestion derives repo-state embedding incrementally from <code>V</code>;</li>
+<li>MAP-Elites decides whether <code>R</code> enters an archive cell.</li>
+</ol>
+<p>Promotion states:</p>
+<ul>
+<li>evaluation success but archive skip: <code>R</code> is an evaluated candidate, not a
+  normal future base.</li>
+<li>archive insertion: <code>R</code> is a viable archive entry and becomes eligible for
+  normal sampling.</li>
+<li>repair job failure: the produced failed repair candidate is recorded for
+  audit, but does not enter the repair pool in the MVP.</li>
+</ul>
+<p>The source failed candidate should move to <code>repaired</code> after at least one repair
+result reaches evaluation success. If all allowed attempts fail, it moves to
+<code>exhausted</code>.</p>
+<h2 id="ui-api-and-cli">UI, API, And CLI<a class="headerlink" href="#ui-api-and-cli" title="Permanent link">&para;</a></h2>
+<p>Use explicit language:</p>
+<ul>
+<li>"Failed Candidates" for the audit and repair pool.</li>
+<li>"Repair Jobs" for jobs created from failed candidates.</li>
+<li>"Archive Entries" or "Viable Entries" for MAP-Elites cells.</li>
+</ul>
+<p>Expose two lineage views:</p>
+<ul>
+<li>viable/archive lineage: default view based on <code>CommitCard</code> parent chains and
+  MAP-Elites archive state;</li>
+<li>candidate provenance graph: debug/audit view that includes failed candidates,
+  repair-source edges, physical git-parent edges, evaluation attempts, and
+  evidence summaries.</li>
+</ul>
+<p>API additions:</p>
+<ul>
+<li>list failed candidates with filters for <code>repair_state</code>, <code>failure_kind</code>,
+  <code>island_id</code>, and <code>failed_depth</code>;</li>
+<li>return failure evidence indicators using the ADR 0046 evidence services;</li>
+<li>expose repair source metadata on job detail;</li>
+<li>expose repair mode and git parent separately;</li>
+<li>expose candidate provenance graph mode distinct from the viable graph.</li>
+</ul>
+<p>UI additions:</p>
+<ul>
+<li>Jobs page: show <code>job_kind</code>, repair source link, and repair mode.</li>
+<li>Failed Candidates page or tab: status, failure summary, branch, repair
+  attempts, evidence status, and nearest viable ancestor.</li>
+<li>Graphs page: add a candidate-provenance mode distinct from the existing
+  viable <code>CommitCard</code> parent-chain graph.</li>
+<li>Commit detail: when a successful commit was repaired from a failed candidate,
+  show repair provenance without implying the failed source was an archive
+  entry.</li>
+</ul>
+<p>CLI additions:</p>
+<ul>
+<li><code>loreley failed-candidates list</code></li>
+<li><code>loreley failed-candidates discard &lt;id&gt;</code></li>
+<li><code>loreley failed-candidates schedule-repair &lt;id&gt;</code></li>
+<li><code>loreley failed-candidates quarantine &lt;id&gt;</code></li>
+</ul>
+<p>Manual retry of an original failed job should remain separate from scheduling a
+repair job. Retrying rewinds the same job spec from the original base; repair
+uses the failed candidate as diagnostic/provenance source and commits the result
+on top of the nearest viable ancestor.</p>
+<h2 id="observability">Observability<a class="headerlink" href="#observability" title="Permanent link">&para;</a></h2>
+<p>Add machine-readable logs and counters for:</p>
+<ul>
+<li>candidate commit records created by job kind;</li>
+<li>evaluation outcomes by kind and evaluator;</li>
+<li>evaluation attempts created;</li>
+<li>failed candidate records created;</li>
+<li>DiagnosticCapsule projection, redaction, and omission decisions by reason;</li>
+<li>repair eligibility decisions by reason;</li>
+<li>repair tokens accrued and consumed;</li>
+<li>repair jobs scheduled;</li>
+<li>repair jobs succeeded, failed, exhausted, and promoted to archive entries;</li>
+<li>candidate branch protection decisions;</li>
+<li>patch application failures for rebase/patch repair.</li>
+</ul>
+<p>Avoid high-cardinality metrics labels. Commit hashes, job IDs, candidate IDs,
+and artifact IDs belong in logs or structured event payloads, not metric label
+sets.</p>
+<h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
+<p>Suggested settings:</p>
+<div class="highlight"><pre><span></span><code>FAILED_CANDIDATE_REPAIR_ENABLED=false
+FAILED_CANDIDATE_REPAIR_MODE=rebase_from_nearest_viable
+FAILED_CANDIDATE_REPAIR_MAX_ATTEMPTS=1
+FAILED_CANDIDATE_REPAIR_NORMAL_JOBS_PER_TOKEN=9
+FAILED_CANDIDATE_REPAIR_MAX_TOKENS=3
+FAILED_CANDIDATE_REPAIR_MAX_ACTIVE_JOBS=1
+FAILED_CANDIDATE_REPAIR_MAX_JOBS_PER_TICK=1
+FAILED_CANDIDATE_REPAIR_FAILURE_KINDS=validation_failed,test_failed,typecheck_failed,lint_failed
+FAILED_CANDIDATE_REPAIR_AGENT_FEEDBACK_MODE=diagnostic_capsule
+FAILED_CANDIDATE_REPAIR_MAX_DIFF_BYTES=65536
+FAILED_CANDIDATE_REPAIR_MAX_DIAGNOSTIC_BYTES=16384
+</code></pre></div>
+<p><code>FAILED_CANDIDATE_REPAIR_MAX_DEPTH</code> is retained as a deprecated compatibility
+setting. It does not control active MVP scheduling; <code>failed_depth</code> remains a
+diagnostic DB/API field for lineage inspection.</p>
+<p>Defaults keep the feature disabled. Enabling repair should require operators to
+accept that failed candidates can consume scheduler slots. In the MVP they do
+not consume failed-candidate embedding budget because failed aggregates are not
+computed.</p>
+<h2 id="implementation-plan">Implementation Plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
+<p>Phase 1: evaluation outcome and candidate ledger</p>
+<ul>
+<li>Add <code>EvaluationOutcome</code>, <code>EvaluationFailureResult</code>, and <code>EvaluationAttempt</code>.</li>
+<li>Add <code>CandidateCommit</code>, <code>EvolutionJob.job_kind</code>,
+  <code>EvolutionJob.repair_source_candidate_id</code>, and <code>EvolutionJob.repair_mode</code>.</li>
+<li>Bump <code>INSTANCE_SCHEMA_VERSION</code>.</li>
+<li>Create candidate rows when candidate commits are recorded.</li>
+<li>Split artifact writing so planning/coding artifacts can be persisted on
+  failure.</li>
+<li>Persist bounded failure evidence with <code>commit_card_id=NULL</code>.</li>
+<li>Update branch-pruning protection to read from <code>CandidateCommit</code>, not only
+  mutable <code>EvolutionJob</code> candidate fields.</li>
+</ul>
+<p>Phase 2: DiagnosticCapsule and repair eligibility</p>
+<ul>
+<li>Add DiagnosticCapsule projection and sanitization.</li>
+<li>Adapt existing evaluators to return <code>EvaluationOutcome</code>; keep exception
+  fallback non-repairable.</li>
+<li>Classify repair eligibility from outcome kind, repairability, allowlisted
+  failure kind, safe evidence, publication status, attempts, and nearest viable
+  ancestor aggregate readiness.</li>
+<li>Add tests proving evaluator, infrastructure, unknown, unsafe, and unpublished
+  failures are not repair-eligible.</li>
+</ul>
+<p>Phase 3: rebase/patch repair scheduler and worker mode</p>
+<ul>
+<li>Add token-bucket repair capacity allocation.</li>
+<li>Add repair job creation and queueing with one unfinished job per source.</li>
+<li>Add worker flow that checks out nearest viable ancestor and applies <code>V..F</code>
+  before repair prompting.</li>
+<li>Add failed-candidate planning context and repair-specific prompt rendering.</li>
+<li>Keep the feature disabled by default.</li>
+</ul>
+<p>Phase 4: promotion, UX, and operations</p>
+<ul>
+<li>Update ingestion to annotate candidate archive outcome.</li>
+<li>Add API/CLI/UI surfaces for failed candidates and repair jobs.</li>
+<li>Add candidate-provenance graph mode.</li>
+<li>Add observability counters and release notes.</li>
+</ul>
+<p>Future phase: true descendant repair</p>
+<ul>
+<li>Add failed-intermediate aggregate support only if rebase/patch repair proves
+  insufficient.</li>
+<li>Mark failed aggregates with explicit non-archive, non-PCA, non-sampler flags.</li>
+<li>Add tests proving a successful descendant can be ingested from a failed parent
+  aggregate without adding the failed parent to PCA history or archive.</li>
+</ul>
+<h2 id="acceptance-criteria">Acceptance Criteria<a class="headerlink" href="#acceptance-criteria" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Failed candidate commits are never present in <code>map_elites_archive_cells</code>.</li>
+<li>Failed candidate commits never create <code>CommitCard</code> rows.</li>
+<li>Normal archive sampling continues to select only archive cell commits.</li>
+<li>Evaluator candidate failures are represented as <code>EvaluationOutcome</code>, not only
+  as exceptions.</li>
+<li>Worker-synthesized exception fallback outcomes are not repairable by default.</li>
+<li>A failed job with no candidate commit creates no repair-pool entry.</li>
+<li>A repair job that fails before producing a candidate still updates its source
+  failed candidate to <code>eligible</code> or <code>exhausted</code>.</li>
+<li>A failed job with a candidate commit but no durable branch is audit-only by
+  default.</li>
+<li>A repair-eligible failed candidate has safe DiagnosticCapsule evidence.</li>
+<li>A repair-eligible failed candidate has a nearest viable ancestor with a ready
+  repo-state aggregate.</li>
+<li>A repair job records <code>job_kind='repair'</code>, <code>repair_source_candidate_id</code>, and
+  <code>repair_mode='rebase_from_nearest_viable'</code>.</li>
+<li>In the MVP, repair candidate <code>R</code> has nearest viable ancestor <code>V</code> as git
+  parent, not failed candidate <code>F</code>.</li>
+<li>A successful repair candidate follows the existing success and ingestion
+  paths.</li>
+<li>A repair candidate can become a normal sampled base only after MAP-Elites
+  inserts it into an archive cell.</li>
+<li>Human-only and hidden failure artifacts are never rendered into repair
+  prompts.</li>
+<li>Manual job retry and repair scheduling remain distinct operations.</li>
+</ul>
+<h2 id="risks">Risks<a class="headerlink" href="#risks" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Repair mode can spend capacity on unrecoverable failures. Keep the feature
+  disabled by default and budgeted when enabled.</li>
+<li>Failure diagnostics may be too weak until evaluators return structured
+  <code>EvaluationOutcome</code> values.</li>
+<li>The rebase/patch repair mode can fail when <code>V..F</code> does not apply cleanly to
+  the repair worktree. Treat that as a bounded repair failure, not as a reason
+  to introduce nested repair in the MVP.</li>
+<li>Candidate lineage can diverge from the current <code>CommitCard</code> parent-chain
+  assumptions. Graphs and trajectory rollups must either stay viable-only or
+  explicitly query the candidate ledger.</li>
+<li>DiagnosticCapsule sanitization is a security boundary. ADR 0046 visibility
+  alone is not enough.</li>
+<li>Failed candidates must not influence PCA axes unless a future ADR chooses
+  that tradeoff. The current design keeps failed candidates out of PCA history.</li>
+<li>True descendant repair remains more complex because it requires failed
+  intermediate aggregates and strict non-archive guards.</li>
+</ul>
+<h2 id="deferred-questions">Deferred Questions<a class="headerlink" href="#deferred-questions" title="Permanent link">&para;</a></h2>
+<p>These questions are deferred until the MVP has real repair data:</p>
+<ol>
+<li>Should Loreley ever enable true descendant repair, where the repair result is
+   a git child of the failed candidate?</li>
+<li>If true descendant repair is enabled, what exact aggregate metadata and DB
+   constraints prevent failed intermediates from affecting PCA, archive
+   projection, or sampling?</li>
+<li>Should timeout failures become repairable after evaluators can reliably
+   classify candidate-owned timeouts?</li>
+<li>Should repair allocation evolve from a token bucket to a bandit policy once
+   repair success-rate data exists?</li>
+<li>Should candidate provenance graphs become a primary UI, or stay an
+   operations/debug surface?</li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.7a47a382.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.e71a0d61.min.js"></script>
+      
+    
+  </body>
+</html>

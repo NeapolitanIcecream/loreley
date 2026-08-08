@@ -1,0 +1,59 @@
+{
+  "generated_at": "2026-07-25T19:23:36.844107+00:00",
+  "purpose": "Verify the real two-process Dramatiq path when the worker parent has already selected fork.",
+  "method": {
+    "backend": "deterministic",
+    "worker_parent_bootstrap": "multiprocessing.set_start_method('fork', force=True)",
+    "worker_command": "examples/evol_circle_packing.py worker --phase smoke --processes 2",
+    "configured_processes": 2,
+    "configured_islands": [
+      "alpha",
+      "beta"
+    ],
+    "max_total_jobs": 4,
+    "max_unfinished_jobs": 2,
+    "planning_delay_seconds": 0.05,
+    "coding_delay_seconds": 0.1,
+    "llm_api_used": false,
+    "api_cost_usd": 0.0
+  },
+  "attempts": [
+    {
+      "outcome": "invalid_infrastructure_attempt",
+      "symptom": "The scheduler could not see the disposable database created inside the Docker PostgreSQL container.",
+      "cause": "localhost:5432 resolved to a separate host PostgreSQL server in this environment.",
+      "replacement": "Use a dedicated schema on the exact PostgreSQL endpoint used by Loreley."
+    },
+    {
+      "outcome": "valid",
+      "postgres_isolation": "dedicated schema on the application endpoint",
+      "redis_isolation": "empty database 14",
+      "effective_pool_start_method": "spawn"
+    }
+  ],
+  "result": {
+    "all_jobs_terminal": true,
+    "jobs_total": 4,
+    "status_counts": {
+      "succeeded": 4
+    },
+    "island_job_counts": {
+      "alpha": 2,
+      "beta": 2
+    },
+    "distinct_worker_pid_count": 2,
+    "distinct_coding_workspace_count": 4,
+    "trace_events": 8,
+    "every_job_has_one_planning_and_coding_event": true,
+    "duplicate_phase_events": {},
+    "job_execution_window_seconds": 3.5996921062469482,
+    "scheduler_worker_wall_seconds": 10.125321292085573
+  },
+  "conclusion": "A fork-initialized parent was replaced with spawn for the real Dramatiq pool; both workers used distinct base clones and workspaces, completed every job exactly once, and preserved fair island allocation.",
+  "cleanup": {
+    "postgres_schema_removed": true,
+    "accidental_docker_database_removed": true,
+    "redis_database_14_keys_after_run": 0
+  },
+  "secrets_recorded": false
+}
