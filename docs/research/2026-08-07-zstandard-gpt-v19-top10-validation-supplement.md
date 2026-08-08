@@ -98,6 +98,8 @@ is:
 Relative to root, it changes `lib/compress/hist.c`,
 `lib/compress/zstd_compress.c`, and
 `lib/compress/zstd_compress_internal.h`: 33 insertions and 16 deletions.
+The [source diff is available as a static
+patch](../marketing/candidates/zstandard-v19-evolved-followup.patch).
 
 ## Interpretation and next rule
 

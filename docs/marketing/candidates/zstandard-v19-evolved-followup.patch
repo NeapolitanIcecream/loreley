@@ -1,0 +1,83 @@
+diff --git a/lib/compress/hist.c b/lib/compress/hist.c
+index 3692bc250cadbb831133b432094a7115efed848e..cf4a169f13df4272011f2974f00e5836ec0fb484 100644
+--- a/lib/compress/hist.c
++++ b/lib/compress/hist.c
+@@ -36,7 +36,19 @@ void HIST_add(unsigned* count, const void* src, size_t srcSize)
+ {
+     const BYTE* ip = (const BYTE*)src;
+     const BYTE* const end = ip + srcSize;
+-
++    const BYTE* const bulkEnd = ip + (srcSize & ~(size_t)7);
++
++    while (ip < bulkEnd) {
++        count[ip[ 0]]++;
++        count[ip[ 1]]++;
++        count[ip[ 2]]++;
++        count[ip[ 3]]++;
++        count[ip[ 4]]++;
++        count[ip[ 5]]++;
++        count[ip[ 6]]++;
++        count[ip[ 7]]++;
++        ip += 8;
++    }
+     while (ip<end) {
+         count[*ip++]++;
+     }
+diff --git a/lib/compress/zstd_compress.c b/lib/compress/zstd_compress.c
+index c06f2e1bb9863016a0cb8bc92b34395f4b4759b7..709905545ad96ae4a8c16371cdb373a53d6f8b80 100644
+--- a/lib/compress/zstd_compress.c
++++ b/lib/compress/zstd_compress.c
+@@ -3607,11 +3607,14 @@ static int ZSTD_isRLE(const BYTE* src, size_t length) {
+         return 0;
+     }
+     for (i = prefixLength; i != length; i += unrollSize) {
+-        size_t u;
+-        for (u = 0; u < unrollSize; u += sizeof(size_t)) {
+-            if (MEM_readST(ip + i + u) != valueST) {
+-                return 0;
+-    }   }   }
++        size_t const mismatch01 =
++            (MEM_readST(ip + i) ^ valueST) |
++            (MEM_readST(ip + i + sizeof(size_t)) ^ valueST);
++        size_t const mismatch23 =
++            (MEM_readST(ip + i + 2 * sizeof(size_t)) ^ valueST) |
++            (MEM_readST(ip + i + 3 * sizeof(size_t)) ^ valueST);
++        if (mismatch01 | mismatch23) return 0;
++    }
+     return 1;
+ }
+ 
+diff --git a/lib/compress/zstd_compress_internal.h b/lib/compress/zstd_compress_internal.h
+index 13a394b38161f0747c5ba347a7448c16583e19e9..84159747e5a6fd2ed91c9a900c4f9ef9db28314a 100644
+--- a/lib/compress/zstd_compress_internal.h
++++ b/lib/compress/zstd_compress_internal.h
+@@ -793,17 +793,19 @@ ZSTD_storeSeq(SeqStore_t* seqStorePtr,
+     assert(seqStorePtr->maxNbLit <= 128 KB);
+     assert(seqStorePtr->lit + litLength <= seqStorePtr->litStart + seqStorePtr->maxNbLit);
+     assert(literals + litLength <= litLimit);
+-    if (litEnd <= litLimit_w) {
+-        /* Common case we can use wildcopy.
+-         * First copy 16 bytes, because literals are likely short.
+-         */
+-        ZSTD_STATIC_ASSERT(WILDCOPY_OVERLENGTH >= 16);
+-        ZSTD_copy16(seqStorePtr->lit, literals);
+-        if (litLength > 16) {
+-            ZSTD_wildcopy(seqStorePtr->lit+16, literals+16, litLength-16, ZSTD_no_overlap);
++    if (LIKELY(litLength != 0)) {
++        if (litEnd <= litLimit_w) {
++            /* Common case we can use wildcopy.
++             * First copy 16 bytes, because literals are likely short.
++             */
++            ZSTD_STATIC_ASSERT(WILDCOPY_OVERLENGTH >= 16);
++            ZSTD_copy16(seqStorePtr->lit, literals);
++            if (litLength > 16) {
++                ZSTD_wildcopy(seqStorePtr->lit+16, literals+16, litLength-16, ZSTD_no_overlap);
++            }
++        } else {
++            ZSTD_safecopyLiterals(seqStorePtr->lit, literals, litEnd, litLimit_w);
+         }
+-    } else {
+-        ZSTD_safecopyLiterals(seqStorePtr->lit, literals, litEnd, litLimit_w);
+     }
+     seqStorePtr->lit += litLength;
+ 

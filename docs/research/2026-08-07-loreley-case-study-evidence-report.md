@@ -190,6 +190,7 @@ Zstandard performance, or upstream acceptance.
 ## Evidence links
 
 - [`markdown-it-py` case study](2026-08-02-markdown-it-py-deepseek-case-study.md)
+- [Static candidate source diffs](../marketing/candidates/README.md)
 - [`python-pathspec` case study](2026-08-03-pathspec-deepseek-case-study.md)
 - [Zstandard V19 registered report](2026-08-07-zstandard-gpt-v19-case-study-report.md)
 - [Zstandard V19 Top-10 and fresh-confirmation supplement](2026-08-07-zstandard-gpt-v19-top10-validation-supplement.md)

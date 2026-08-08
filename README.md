@@ -2,7 +2,7 @@
 
 > Whole-repository Quality-Diversity optimization for real git codebases.
 
-Loreley is a distributed system that **evolves entire git repositories** (the unit of search is a git commit). It continuously samples base commits, asks external planning and coding agents to implement repo-wide changes, evaluates the result with your evaluator, and stores metrics plus bounded per-cell Pareto fronts in Postgres for later sampling and reuse.
+Loreley is a distributed system that **searches over complete git repositories**. A git commit records each candidate's source state and ancestry; the evaluator may define a narrower measurement identity such as a release binary. Loreley samples base commits, asks external planning and coding agents to implement repo-wide changes, evaluates the result with your evaluator, and stores metrics plus bounded per-cell Pareto fronts in Postgres for later sampling and reuse.
 
 ![](./docs/assets/loreley.svg)
 
@@ -25,12 +25,17 @@ repository studies are:
 - [`python-pathspec`](docs/research/2026-08-03-pathspec-deepseek-case-study.md):
   a four-generation archive lineage produced a qualifying 25.14% speedup. The
   candidate was selected post-hoc after the registered winner missed its
-  allocation gate, so this is capability evidence rather than a prospective
-  success.
+  allocation gate.
 - [Zstandard V19](docs/research/2026-08-07-zstandard-gpt-v19-case-study-report.md):
-  the registered winner improved sealed-holdout compression by 1.02% with
+  the registered winner improved sealed-holdout compression by 1.019% with
   neutral decompression. A Top-10 follow-up found a generation-4 candidate with
-  a 0.89% fresh-corpus compression gain.
+  a 0.891% fresh-corpus compression gain.
+
+### Essays and collaboration
+
+- [中文：用编码智能体搜索真实代码仓库](docs/marketing/2026-08-loreley-launch-article-zh.md)
+- [English: Searching Real Code Repositories with Coding Agents](docs/marketing/2026-08-loreley-launch-article-en.md)
+- [Design-partner brief](docs/marketing/loreley-design-partner-brief.md)
 
 ### Quick start (local)
 

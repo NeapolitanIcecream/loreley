@@ -81,7 +81,9 @@ not promoted from a favorable point estimate.
 ## Winner and lineage
 
 The winner is release binary `e7e9ef6b060f…`, represented by commit
-`7b9aef38ecd4`. It is manual seed 5, not a later evolved candidate. Its complete
+`7b9aef38ecd4`; the [registered source diff is available as a static
+patch](../marketing/candidates/zstandard-v19-registered-winner.patch). It is
+manual seed 5, not a later evolved candidate. Its complete
 lineage is one step:
 
 1. root `5b3fe474`;
@@ -121,7 +123,9 @@ size, and RSS gates.
 
 `fe39bee8` is a generation-4 candidate first observed at logical completion 57.
 Its lineage combines a zero-literal fast path, a compression hot-path evolution,
-and an eight-byte histogram update unroll. This follow-up establishes a separate
+and an eight-byte histogram update unroll. Its [source diff is also available as
+a static patch](../marketing/candidates/zstandard-v19-evolved-followup.patch).
+This follow-up establishes a separate
 evolved-candidate result. It does not relabel the registered holdout winner or
 establish a head-to-head result because the two candidates were confirmed on
 different fresh corpora. The complete method and evidence are in the
