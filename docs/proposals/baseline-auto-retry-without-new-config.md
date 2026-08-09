@@ -10,104 +10,129 @@ Accepted / Implemented
 
 ## Context
 
-Loreley 在 campaign 开始调度前，会先为 root commit 建立一条
-`campaign_baselines` 记录。这个 baseline 是后续比较改进幅度的基准。
+Before a campaign starts scheduling work, Loreley creates a
+`campaign_baselines` record for the root commit. Later improvement measurements
+use this baseline as their reference.
 
-当前默认策略是：
+The default policies are:
 
-- `BASELINE_BOOTSTRAP_POLICY=required`：baseline 不可用时，scheduler 不 dispatch、不 seed、不 schedule。
-- `BASELINE_BOOTSTRAP_POLICY=warn`：baseline 不可用时继续调度，但记录 degraded 状态，baseline delta 不可用。
+- `BASELINE_BOOTSTRAP_POLICY=required`: the scheduler does not dispatch, seed,
+  or schedule work while the baseline is unavailable.
+- `BASELINE_BOOTSTRAP_POLICY=warn`: scheduling continues in a degraded state,
+  but baseline deltas are unavailable.
 
-这个 gate 本身是必要的。它防止系统在没有可靠基准的情况下消耗 worker 预算，也防止后续结果变得不可比较。
+This gate prevents the system from consuming worker budget without a reliable
+reference and keeps later results comparable.
 
-问题出在失败恢复上。
+The problem was failure recovery. `BaselineBootstrapService.ensure_or_load_baseline()`
+looks up an existing baseline by `baseline_key_hash`. Unless the caller passes
+`force_rerun=True`, an existing row with status `valid`, `failed`, or `degraded`
+was reused without another evaluation.
 
-`BaselineBootstrapService.ensure_or_load_baseline()` 会按 `baseline_key_hash` 查找已有 baseline。如果已有行状态是 `valid`、`failed` 或 `degraded`，并且调用方没有传 `force_rerun=True`，它会直接复用这条记录。
+The scheduler does not pass `force_rerun=True`. Under the default `required`
+policy, a transient evaluator failure therefore persisted a failed row. Every
+later scheduler tick read that row and stopped at the baseline gate. The
+evaluator was never called again, even after the environment recovered.
 
-Scheduler 调用这个方法时不会传 `force_rerun=True`。因此，在默认 `required` 策略下，如果某次 baseline evaluator 因环境问题失败，失败行会被持久化。之后每个 scheduler tick 都只会读到这条失败行，然后直接被 baseline gate 挡住。Evaluator 不会再被调用，环境恢复后也不会自动自愈。
-
-用户看到的症状是反复出现类似日志：
+The visible symptom was a repeated log message such as:
 
 ```text
 Scheduler tick blocked by campaign baseline status=failed
 ```
 
-这不是 evaluator 专属问题。Evaluator 第一次失败可能来自 Docker、服务健康检查、权限、超时或外部依赖。但失败行永久挡住 scheduler，是 Loreley scheduler/baseline 复用逻辑的问题。
+The initial evaluator failure could come from Docker, a service health check,
+permissions, a timeout, or another external dependency. The permanent block
+was caused by Loreley's baseline reuse behavior.
 
 ## Problem
 
-当前系统把非 valid baseline 当成了长期结论：
+The previous implementation treated every recorded non-valid baseline as a
+durable conclusion:
 
-- `valid` 行复用是正确的。
-- `failed` / `degraded` 行永久复用会让 transient failure 变成 permanent stuck。
-- operator 可以手动 force rerun，但这要求用户知道内部状态并主动介入。
+- Reusing a `valid` row is correct.
+- Permanently reusing a `failed` or `degraded` row turns a transient failure
+  into a stuck campaign.
+- An operator can force a rerun, but only after recognizing and intervening in
+  the internal state.
 
-直接新增配置可以解决，例如：
+New settings could control this behavior, for example:
 
 ```text
 BASELINE_BOOTSTRAP_RETRY_FAILED=true
 BASELINE_BOOTSTRAP_RETRY_COOLDOWN_SECONDS=300
 ```
 
-但这会增加用户更新成本。用户需要学习新配置、决定开关和冷却时间，还要在不同部署里同步 `.env`。对于一个应该默认自愈的调度器，这个配置面太重。
+That would expand the public configuration surface for scheduler recovery that
+should work safely by default. Operators would need to learn the settings,
+choose a cooldown, and keep deployment environments synchronized.
 
 ## Goals
 
-- 不新增用户可见配置。
-- 不改变 `BASELINE_BOOTSTRAP_POLICY` 的含义。
-- 保留 baseline gate，不让无有效基准的 campaign 在 `required` 下继续调度。
-- 让 transient baseline failure 在环境恢复后自动自愈。
-- 避免每个 scheduler tick 都重跑 evaluator。
-- 保留 operator 手动 `force_rerun=True` 重跑非 valid baseline 的行为。
-- 保持 valid baseline 的稳定复用。
+- Add no user-visible configuration.
+- Preserve the meaning of `BASELINE_BOOTSTRAP_POLICY`.
+- Keep the baseline gate under `required` until a valid reference exists.
+- Recover automatically after transient baseline failures.
+- Avoid rerunning the evaluator on every scheduler tick.
+- Preserve the operator's `force_rerun=True` override for non-valid rows.
+- Continue reusing valid baselines without change.
 
-## Non-Goals
+## Non-goals
 
-- 不移除 baseline-first gate。
-- 不把 evaluator 内部重试和 scheduler 级恢复混在一起。
-- 不要求用户迁移数据库或修改 `.env`。
-- 不保证所有配置错误都能自愈。比如 primary metric 配错时，自动重试不会让配置变正确。
+- Removing the baseline-first gate.
+- Combining evaluator-internal retries with scheduler-level recovery.
+- Requiring a database migration or `.env` change.
+- Recovering from every configuration error. Repeating an evaluation cannot
+  repair a missing or incorrectly configured primary metric.
 
-## Proposed Design
+## Proposed design
 
-把 failed/degraded baseline 从“永久结论”改成“带内置冷却期的可重试状态”。
+Treat failed and degraded baselines as retryable states with an internal
+cooldown instead of permanent conclusions.
 
-不新增环境变量。代码内部使用一个保守常量：
+Use a conservative code constant rather than an environment variable:
 
 ```python
 _BASELINE_RETRY_COOLDOWN_SECONDS = 300
 ```
 
-行为规则：
+The behavior is:
 
-1. `valid` baseline 永远复用。
-2. `failed` / `degraded` baseline 在冷却期内复用。
-3. 冷却期到了，如果失败类型可重试，则重新运行 baseline evaluator。
-4. 重试成功后，更新同一条 `campaign_baselines` 行为 `valid`。
-5. 重试失败后，更新同一条行的失败信息和完成时间，下一次继续等待冷却期。
-6. `force_rerun=True` 继续作为 operator 对非 valid baseline 的手动覆盖入口。
-7. `valid` baseline 即使传入 `force_rerun=True` 也继续复用，避免破坏已经建立的 campaign 基准。
+1. Always reuse a `valid` baseline.
+2. Reuse a `failed` or `degraded` baseline during the cooldown.
+3. After the cooldown, rerun the baseline evaluator when the failure type is
+   retryable.
+4. On success, update the same `campaign_baselines` row to `valid`.
+5. On failure, update the row's failure details and completion time, then wait
+   for the next cooldown.
+6. Keep `force_rerun=True` as the operator override for a non-valid baseline.
+7. Continue reusing a `valid` baseline even when `force_rerun=True`, so an
+   established campaign reference cannot be replaced accidentally.
 
-冷却时间基准使用已有字段，不引入 schema 变更：
+Use existing timestamps, in this order, as the cooldown reference:
 
-1. 优先 `finished_at`
-2. 其次 `updated_at`
-3. 最后 `created_at`
+1. `finished_at`
+2. `updated_at`
+3. `created_at`
 
-这些字段来自数据库或测试替身时可能是 timezone-aware，也可能是 naive。
-实现必须先把时间归一化为 UTC 再比较；naive datetime 按 UTC 解释，避免在
-SQLite、PostgreSQL 和测试 fake 之间出现 offset-aware/offset-naive 比较错误。
+Database rows and test doubles may provide either timezone-aware or naive
+datetimes. Normalize timestamps to UTC before comparison. Interpret a naive
+datetime as UTC so SQLite, PostgreSQL, and test doubles do not trigger
+aware-versus-naive comparison errors.
 
-并发边界保持简单：scheduler 本身已有 experiment advisory lock，但 operator
-baseline ensure 可能和 scheduler 自动重试同时触发。实现不在 evaluator 运行期间
-长时间持有数据库行锁；如果发生并发触发，最多可能重复运行一次 evaluator，最后仍由
-`baseline_key_hash` 唯一约束和 `_persist_baseline_attempt()` 覆盖同一条 row。
+The scheduler already holds an experiment advisory lock, but an operator
+baseline request can overlap an automatic scheduler retry. The implementation
+does not hold a database row lock while the external evaluator runs. An overlap
+can therefore evaluate the same baseline twice. The `baseline_key_hash` unique
+constraint and `_persist_baseline_attempt()` still converge both attempts onto
+one durable row. This bounded duplicate evaluation is preferable to holding a
+database lock across external work.
 
-## Retry Classification
+## Retry classification
 
-不要让明显的配置错误无限重试。Baseline service 可以内置一个小的分类函数。
+Do not retry clear campaign contract errors indefinitely. The baseline service
+uses a small internal classifier.
 
-建议默认重试这些失败：
+Retry these failures by default:
 
 - `baseline_evaluation_failed`
 - `evaluator_error`
@@ -117,28 +142,28 @@ baseline ensure 可能和 scheduler 自动重试同时触发。实现不在 eval
 - `service_unavailable`
 - `evaluation_missing_result`
 
-建议默认不重试这些失败：
+Do not retry these failures by default:
 
 - `primary_metric_not_configured`
 - `primary_metric_missing`
 - `primary_metric_non_finite`
 - `primary_metric_direction_conflict`
 
-直觉上可以这样理解：
+The first group indicates that evaluation did not complete normally and may
+recover when the environment changes. The second group indicates that the
+evaluator returned a result that violates the campaign contract and requires a
+configuration or evaluator change.
 
-- evaluator 没跑成，或者 evaluator 报运行错误：可以等环境恢复后自动再试。
-- evaluator 跑成了，但结果不符合 campaign contract：需要修配置或修 evaluator，自动重试大概率没用。
+For an unknown failure kind:
 
-对未知失败类型，建议保守处理：
+- Treat a name ending in `_error` as retryable.
+- Leave other unknown failures for the operator to rerun explicitly.
 
-- 如果 `failure_kind` 以 `_error` 结尾，可以按可重试处理。
-- 其他未知失败先不自动重试，保留 operator force rerun。
+## Implementation plan
 
-## Implementation Plan
+The main change is in `loreley/scheduler/baselines.py`.
 
-主要修改 `loreley/scheduler/baselines.py`。
-
-新增内部 helper：
+Add internal helpers:
 
 ```python
 _BASELINE_RETRY_COOLDOWN_SECONDS = 300
@@ -146,7 +171,11 @@ _BASELINE_RETRY_COOLDOWN_SECONDS = 300
 def _baseline_retry_reference_time(row: CampaignBaseline) -> datetime | None:
     ...
 
-def _baseline_retry_cooldown_elapsed(row: CampaignBaseline, *, now: datetime) -> bool:
+def _baseline_retry_cooldown_elapsed(
+    row: CampaignBaseline,
+    *,
+    now: datetime,
+) -> bool:
     ...
 
 def _baseline_timestamp_as_utc(value: datetime | None) -> datetime | None:
@@ -155,18 +184,23 @@ def _baseline_timestamp_as_utc(value: datetime | None) -> datetime | None:
 def _baseline_failure_is_retryable(row: CampaignBaseline) -> bool:
     ...
 
-def _should_retry_existing_baseline(row: CampaignBaseline, *, now: datetime) -> bool:
+def _should_retry_existing_baseline(
+    row: CampaignBaseline,
+    *,
+    now: datetime,
+) -> bool:
     ...
 ```
 
-然后把 `ensure_or_load_baseline()` 里的复用逻辑从：
+Replace the unconditional recorded-status reuse in
+`ensure_or_load_baseline()`:
 
 ```python
 if existing is not None and existing.status in _RECORDED_BASELINE_STATUSES:
     return self._result_from_row(existing, key_hash=key.hash, policy=policy)
 ```
 
-调整为：
+with status-specific behavior:
 
 ```python
 if existing is not None and existing.status == BASELINE_STATUS_VALID:
@@ -176,99 +210,114 @@ if (
     existing is not None
     and existing.status in {BASELINE_STATUS_FAILED, BASELINE_STATUS_DEGRADED}
     and not force_rerun
-    and not _should_retry_existing_baseline(existing, now=datetime.now(timezone.utc))
+    and not _should_retry_existing_baseline(
+        existing,
+        now=datetime.now(timezone.utc),
+    )
 ):
     return self._result_from_row(existing, key_hash=key.hash, policy=policy)
 
-# otherwise evaluate and persist into the same row
+# Otherwise, evaluate and persist into the same row.
 ```
 
-如果准备自动重试，写一条清晰日志。日志复用现有 `scheduler.baselines`
-logger，字段要包含 key、prior status、failure kind 和 cooldown：
+Log each automatic retry through the existing `scheduler.baselines` logger.
+Include the key, previous status, failure kind, and cooldown:
 
 ```text
 Campaign baseline retrying key=<hash> status=failed failure_kind=evaluator_error cooldown_seconds=300
 ```
 
-重试结果仍走现有 `_persist_baseline_attempt()`，它已经会按 key 找同一条 row 并覆盖状态、metric、failure summary 和时间戳。
+Persist retry results through `_persist_baseline_attempt()`. It already finds
+the row by key and updates its status, metric, failure summary, and timestamps.
 
-## User-Facing Behavior
+## User-facing behavior
 
-用户不需要改任何配置。
+No configuration change is required.
 
-`BASELINE_BOOTSTRAP_POLICY=required` 的含义保持简单：
+`BASELINE_BOOTSTRAP_POLICY=required` continues to mean:
 
-- baseline valid：可以调度。
-- baseline invalid：暂时不能调度。
+- A valid baseline permits scheduling.
+- An invalid baseline blocks scheduling.
 
-新增的默认恢复逻辑只改变一件事：如果 invalid 是可重试失败，scheduler 会隔一段时间自己再试，而不是永远卡住。
+When the invalid state is retryable, the scheduler now evaluates it again after
+the cooldown instead of remaining blocked indefinitely.
 
-`BASELINE_BOOTSTRAP_POLICY=warn` 也会受益。Degraded baseline 期间可以继续调度，但 service 会在冷却期后尝试恢复成 valid，让 baseline delta 重新可用。
+`BASELINE_BOOTSTRAP_POLICY=warn` also benefits. Scheduling can continue while
+the baseline is degraded, and the service later attempts to restore a valid
+baseline so baseline deltas become available again.
 
-## Acceptance Criteria
+## Acceptance criteria
 
-- failed same-key baseline 不会永久挡住 campaign。
-- scheduler 不会每个 tick 都重跑 baseline evaluator。
-- valid baseline 仍然不重跑。
-- cooldown 内的 failed/degraded baseline 仍然复用旧行。
-- cooldown 后的 retry 成功时，同一条 row 更新为 `valid`。
-- cooldown 后的 retry 失败时，同一条 row 更新失败信息和 `finished_at`。
-- manual `force_rerun=True` 仍然能立即重跑非 valid baseline。
-- `required` 下 baseline 未 valid 前仍然阻塞调度。
-- `warn` 下 degraded baseline 仍然允许调度。
+- A failed same-key baseline does not block a campaign permanently.
+- The scheduler does not rerun the baseline evaluator on every tick.
+- A valid baseline is never rerun.
+- A failed or degraded baseline is reused during the cooldown.
+- A successful retry updates the same row to `valid`.
+- A failed retry updates the same row's failure details and `finished_at`.
+- `force_rerun=True` immediately reruns a non-valid baseline.
+- Under `required`, scheduling remains blocked until the baseline is valid.
+- Under `warn`, a degraded baseline continues to permit scheduling.
 
-## Test Plan
+## Test plan
 
-Focused tests:
+Run the focused tests:
 
 ```bash
-uv run pytest tests/scheduler/test_baseline_bootstrap.py tests/scheduler/test_baseline_scheduler_gate.py
+uv run pytest \
+  tests/scheduler/test_baseline_bootstrap.py \
+  tests/scheduler/test_baseline_scheduler_gate.py
 ```
 
-新增或更新测试：
+Add or update tests for the following cases:
 
-- failed row 在 cooldown 内不会重跑 evaluator。
-- failed row 超过 cooldown 后会重跑 evaluator。
-- retry 成功会把同一条 row 更新为 `valid`。
-- retry 失败会更新同一条 row 的 failure summary 和 finished time。
-- valid row 即使超过 cooldown 也不会重跑。
-- non-retryable failure kind 不会自动重跑。
-- `force_rerun=True` 仍然立即重跑非 valid row。
-- scheduler 在 retry 成功后不再返回 `baseline_blocked=1`。
+- A failed row does not rerun the evaluator during the cooldown.
+- A failed row reruns the evaluator after the cooldown.
+- A successful retry updates the same row to `valid`.
+- A failed retry updates the failure summary and completion time.
+- A valid row is not rerun after the cooldown.
+- A non-retryable failure kind does not rerun automatically.
+- `force_rerun=True` immediately reruns a non-valid row.
+- The scheduler stops returning `baseline_blocked=1` after a successful retry.
 
-Related tests after implementation:
+Run the related suite after implementation:
 
 ```bash
-uv run pytest tests/scheduler tests/api/test_operator_routes.py tests/api/test_app.py
+uv run pytest \
+  tests/scheduler \
+  tests/api/test_operator_routes.py \
+  tests/api/test_app.py
 ```
 
 ## Risks
 
-The main risk is retrying a failure that is not actually transient. The cooldown keeps this from becoming a busy loop, and the retry classifier avoids obvious campaign contract errors.
+The retry classifier can mark a persistent failure as transient. The cooldown
+prevents a busy loop, and the classifier excludes known campaign contract
+errors.
 
-Another risk is hiding a persistent environment problem behind periodic retries. The fix should therefore log each retry attempt clearly, including key, prior status, failure kind, and cooldown.
+Periodic retries can also make a persistent environment problem less obvious.
+Each attempt must therefore log the key, previous status, failure kind, and
+cooldown.
 
-A small concurrency risk remains: scheduler and operator can both decide to retry the same
-non-valid row before either one persists the result. This is acceptable because it is bounded
-to rare operator overlap, avoids holding database locks across external evaluator work, and
-the unique `baseline_key_hash` row remains the durable source of truth.
+A scheduler and an operator can both decide to retry the same non-valid row
+before either persists its result. This overlap is rare, does not hold database
+locks across evaluator work, and converges through the unique
+`baseline_key_hash` row.
 
-## Alternatives Considered
+## Alternatives considered
 
 ### Add retry configuration
 
-Rejected for now.
+Rejected for now. It offers flexibility but expands the public configuration
+surface for behavior that should have a safe default.
 
-It is flexible, but it expands the user-facing configuration surface for behavior that should be a safe default. Most users should not need to know that baseline retry exists.
+### Put retry logic in the scheduler main loop
 
-### Put retry logic in scheduler main loop
+Rejected. The scheduler should ask whether a baseline is ready. The decision to
+reuse or evaluate a baseline belongs in `BaselineBootstrapService`, next to
+baseline keying and persistence.
 
-Rejected.
+### Retry every failed or degraded baseline unconditionally
 
-Scheduler should ask whether the baseline is ready. The decision to reuse or re-evaluate a baseline belongs inside `BaselineBootstrapService`, next to baseline keying and persistence.
-
-### Retry every failed/degraded baseline unconditionally
-
-Rejected.
-
-This can waste evaluator budget on configuration problems such as missing primary metric. A small internal retry classifier gives better default behavior without adding user configuration.
+Rejected. This would spend evaluator budget on contract errors such as a
+missing primary metric. The internal classifier provides safer default behavior
+without new configuration.
