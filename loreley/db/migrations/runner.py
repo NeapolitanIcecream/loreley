@@ -43,6 +43,9 @@ _LORELEY_TABLES = (
     "agent_actions",
     "llm_usage_events",
     "embedding_cache_manifests",
+    "evaluation_measurements",
+    "evaluation_concurrency_contracts",
+    "evaluation_resource_leases",
 )
 _CURRENT_SCHEMA_TABLES = (*_LORELEY_TABLES, _AUDIT_TABLE)
 _CURRENT_SCHEMA_INDEXES = (
@@ -56,6 +59,19 @@ _CURRENT_SCHEMA_INDEXES = (
     "uq_evolution_jobs_island_sampling_ordinal",
     "ix_evaluation_attempts_campaign_program_hash",
     "ix_evaluation_attempts_identity_key",
+    "ix_evaluation_attempts_measurement_id",
+    "ix_evaluation_attempts_reused_from",
+    "uq_evaluation_attempts_job_ordinal",
+    "ix_evaluation_artifacts_attempt_id",
+    "uq_evaluation_artifacts_attempt_key",
+    "uq_evaluation_artifacts_legacy_job_key",
+    "ix_evaluation_measurements_identity_key",
+    "ix_evaluation_measurements_source_attempt",
+    "ix_evaluation_resource_leases_status_requested",
+    "ix_evaluation_resource_leases_job_id",
+    "ix_evaluation_resource_leases_resource",
+    "uq_evolution_jobs_external_submission_key",
+    "uq_evolution_jobs_manual_seed_commit",
     "uq_operator_tasks_active_baseline_ensure",
     "uq_agent_actions_action_idempotency",
     "ix_llm_usage_events_job_created",
@@ -66,11 +82,13 @@ _CURRENT_SCHEMA_INDEXES = (
     "uq_llm_usage_events_external_usage_id",
 )
 _CURRENT_SCHEMA_CONSTRAINTS = (
-    ("evaluation_artifacts", "uq_evaluation_artifacts_job_key"),
+    ("evolution_jobs", "ck_evolution_jobs_execution_input"),
+    ("evolution_jobs", "ck_evolution_jobs_manual_seed_contract"),
     ("candidate_commits", "uq_candidate_commits_commit_hash"),
     ("campaign_baselines", "uq_campaign_baselines_key_hash"),
     ("embedding_cache_manifests", "uq_embedding_cache_manifests_cache_kind"),
     ("map_elites_archive_cells", "uq_map_elites_archive_island_commit"),
+    ("evaluation_measurements", "uq_evaluation_measurements_cache_key"),
 )
 
 log = logger.bind(module="db.migrations")

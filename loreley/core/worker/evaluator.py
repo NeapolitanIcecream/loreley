@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 import inspect
+import json
 import math
-import re
-import sys
 import multiprocessing
+from multiprocessing.connection import Connection, wait as wait_for_connections
+import os
+import re
+import signal
+import sys
+import threading
 import traceback
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -12,18 +18,17 @@ from importlib import import_module
 from pathlib import Path
 from time import monotonic
 from typing import Any, Callable, Literal, Mapping, Protocol, Sequence, cast
-from queue import Empty
 
 from loguru import logger
 from rich.console import Console
 
 from loreley.config import Settings, get_settings
-from loreley.core.worker.evaluator_identity import evaluator_identity_version
 from loreley.core.contracts import clamp_text, normalize_single_line
 from loreley.core.map_elites.objectives import (
     ObjectiveContractError,
     parse_higher_is_better,
 )
+from loreley.core.worker.evaluator_identity import evaluator_identity_version
 
 console = Console()
 log = logger.bind(module="worker.evaluator")
@@ -38,10 +43,15 @@ __all__ = [
     "EvaluationError",
     "EvaluationFailureResult",
     "EvaluationMetric",
+    "EvaluationMeasurement",
     "EvaluationOutcome",
+    "EvaluationPreparation",
     "EvaluationPlugin",
     "EvaluationResult",
     "Evaluator",
+    "MeasurementEvidence",
+    "MeasurementProvenance",
+    "PhasedEvaluationPlugin",
     "coerce_evaluation_artifacts",
     "eval_fail_kind_from_failure_kind",
 ]
@@ -57,6 +67,7 @@ EvaluationOutcomeKind = Literal[
     "inconclusive",
 ]
 EvaluationRepairability = Literal["repairable", "not_repairable", "unknown"]
+EvaluationConcurrencyScope = Literal["whole", "measurement"]
 EvalFailKind = Literal[
     "compile",
     "typecheck",
@@ -348,6 +359,128 @@ class EvaluationContext:
         self.metadata = dict(self.metadata or {})
 
 
+@dataclass(slots=True, frozen=True)
+class MeasurementEvidence:
+    """Hash-linked, location-free evidence for one cacheable measurement."""
+
+    key: str
+    sha256: str
+    size_bytes: int | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        key = _normalise_artifact_key(self.key)
+        digest = normalize_single_line(str(self.sha256 or "")).lower()
+        if not key:
+            raise ValueError("Measurement evidence key must be provided.")
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise ValueError("Measurement evidence sha256 must be 64 lowercase hex characters.")
+        size = self.size_bytes
+        if size is not None and (isinstance(size, bool) or int(size) < 0):
+            raise ValueError("Measurement evidence size_bytes must be non-negative.")
+        object.__setattr__(self, "key", key)
+        object.__setattr__(self, "sha256", digest)
+        object.__setattr__(self, "size_bytes", int(size) if size is not None else None)
+        object.__setattr__(self, "metadata", _coerce_metadata(self.metadata))
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "key": self.key,
+            "sha256": self.sha256,
+            "size_bytes": self.size_bytes,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(slots=True)
+class EvaluationPreparation:
+    """Source-specific preparation returned before any measurement reuse decision."""
+
+    candidate_identity: str
+    measurement_contract_fingerprint: str
+    state: Mapping[str, Any] = field(default_factory=dict)
+    artifacts: tuple[EvaluationArtifact, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        identity = normalize_single_line(str(self.candidate_identity or ""))
+        fingerprint = normalize_single_line(str(self.measurement_contract_fingerprint or ""))
+        if not identity:
+            raise ValueError("Phased evaluator preparation must provide candidate_identity.")
+        if len(identity) > 512:
+            raise ValueError("Phased evaluator candidate_identity cannot exceed 512 characters.")
+        if not fingerprint:
+            raise ValueError(
+                "Phased evaluator preparation must provide measurement_contract_fingerprint."
+            )
+        if len(fingerprint) > 512:
+            raise ValueError(
+                "Phased evaluator measurement_contract_fingerprint cannot exceed 512 characters."
+            )
+        self.candidate_identity = identity
+        self.measurement_contract_fingerprint = fingerprint
+        self.state = _json_mapping(self.state, label="preparation state")
+        self.artifacts = coerce_evaluation_artifacts(self.artifacts)[0]
+
+
+@dataclass(slots=True)
+class EvaluationMeasurement:
+    """Expensive evaluator output that may be reused across source candidates."""
+
+    data: Mapping[str, Any] = field(default_factory=dict)
+    evidence: tuple[MeasurementEvidence, ...] = field(default_factory=tuple)
+    artifacts: tuple[EvaluationArtifact, ...] = field(default_factory=tuple)
+    cacheable: bool = False
+
+    def __post_init__(self) -> None:
+        self.data = _json_mapping(self.data, label="measurement data")
+        self.evidence = tuple(
+            item if isinstance(item, MeasurementEvidence) else MeasurementEvidence(**dict(item))
+            for item in (self.evidence or ())
+        )
+        keys = [item.key for item in self.evidence]
+        if len(keys) != len(set(keys)):
+            raise ValueError("Measurement evidence keys must be unique.")
+        self.cacheable = bool(self.cacheable)
+        if self.cacheable and not self.evidence:
+            raise ValueError("Cacheable measurements must include hash-linked evidence.")
+        self.artifacts = coerce_evaluation_artifacts(self.artifacts)[0]
+
+    def cache_payload(self) -> dict[str, Any]:
+        return {
+            "data": dict(self.data),
+            "evidence": [item.as_dict() for item in self.evidence],
+            "cacheable": bool(self.cacheable),
+        }
+
+    @classmethod
+    def from_cache_payload(cls, payload: Mapping[str, Any]) -> "EvaluationMeasurement":
+        return cls(
+            data=dict(payload.get("data") or {}),
+            evidence=tuple(payload.get("evidence") or ()),
+            cacheable=bool(payload.get("cacheable", True)),
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class MeasurementProvenance:
+    """Provenance supplied to phased finalization for new or reused measurement data."""
+
+    cache_key: str
+    reused: bool
+    measurement_id: str | None = None
+    source_evaluation_attempt_id: str | None = None
+    evidence: tuple[MeasurementEvidence, ...] = field(default_factory=tuple)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "cache_key": self.cache_key,
+            "reused": self.reused,
+            "measurement_id": self.measurement_id,
+            "source_evaluation_attempt_id": self.source_evaluation_attempt_id,
+            "evidence": [item.as_dict() for item in self.evidence],
+        }
+
+
 @dataclass(slots=True)
 class EvaluationResult:
     """Structured evaluation output."""
@@ -527,6 +660,7 @@ class EvaluationOutcome:
     evaluator_name: str | None = None
     evaluator_version: str | None = None
     candidate_commit_hash: str | None = None
+    prepared_candidate_identity: str | None = None
     outcome_kind: EvaluationOutcomeKind = "passed"
     result: EvaluationResult | None = None
     failure: EvaluationFailureResult | None = None
@@ -534,6 +668,25 @@ class EvaluationOutcome:
     artifact_validation_warnings: tuple[ArtifactValidationWarning, ...] = field(default_factory=tuple)
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    protocol: str = "one_shot"
+    measurement_cache_key: str | None = None
+    measurement_contract_fingerprint: str | None = None
+    measurement_reused: bool = False
+    measurement_executed: bool = False
+    reuse_kind: str = "none"
+    measurement_id: str | None = None
+    reused_from_attempt_id: str | None = None
+    measurement_payload: dict[str, Any] | None = None
+    measurement_evidence: tuple[MeasurementEvidence, ...] = field(default_factory=tuple)
+    evaluator_slot: int | None = None
+    evaluator_slot_scope: str | None = None
+    evaluator_slot_wait_seconds: float | None = None
+    evaluator_slot_acquired_at: datetime | None = None
+    evaluator_slot_released_at: datetime | None = None
+    evaluator_slot_lease_id: str | None = None
+    evaluator_slot_release_reason: str | None = None
+    persisted_attempt_id: str | None = None
+    _runtime_leases: list[Any] = field(default_factory=list, repr=False)
 
     def __post_init__(self) -> None:
         outcome_kind = normalize_single_line(str(self.outcome_kind or "")).lower()
@@ -544,6 +697,36 @@ class EvaluationOutcome:
         self.evaluator_name = _optional_bounded_line(self.evaluator_name, 128)
         self.evaluator_version = _optional_bounded_line(self.evaluator_version, 128)
         self.candidate_commit_hash = _optional_bounded_line(self.candidate_commit_hash, 64)
+        self.prepared_candidate_identity = _optional_bounded_line(
+            self.prepared_candidate_identity,
+            512,
+        )
+        self.protocol = _bounded_token(self.protocol, limit=32, default="one_shot")
+        self.measurement_cache_key = _optional_bounded_line(self.measurement_cache_key, 64)
+        self.measurement_contract_fingerprint = _optional_bounded_line(
+            self.measurement_contract_fingerprint,
+            512,
+        )
+        self.measurement_reused = bool(self.measurement_reused)
+        self.measurement_executed = bool(self.measurement_executed)
+        self.reuse_kind = _bounded_token(self.reuse_kind, limit=32, default="none")
+        self.measurement_id = _optional_bounded_line(self.measurement_id, 64)
+        self.reused_from_attempt_id = _optional_bounded_line(self.reused_from_attempt_id, 64)
+        self.measurement_payload = (
+            _json_mapping(self.measurement_payload, label="measurement payload")
+            if self.measurement_payload is not None
+            else None
+        )
+        self.measurement_evidence = tuple(self.measurement_evidence or ())
+        self.evaluator_slot_scope = _optional_bounded_line(self.evaluator_slot_scope, 32)
+        self.evaluator_slot_acquired_at = _coerce_datetime(self.evaluator_slot_acquired_at)
+        self.evaluator_slot_released_at = _coerce_datetime(self.evaluator_slot_released_at)
+        self.evaluator_slot_lease_id = _optional_bounded_line(self.evaluator_slot_lease_id, 64)
+        self.evaluator_slot_release_reason = _optional_bounded_line(
+            self.evaluator_slot_release_reason,
+            64,
+        )
+        self.persisted_attempt_id = _optional_bounded_line(self.persisted_attempt_id, 64)
         artifacts, warnings = coerce_evaluation_artifacts(self.artifacts)
         self.artifacts = artifacts
         self.artifact_validation_warnings = tuple(self.artifact_validation_warnings or ()) + warnings
@@ -568,6 +751,7 @@ class EvaluationOutcome:
             "evaluator_name": self.evaluator_name,
             "evaluator_version": self.evaluator_version,
             "candidate_commit_hash": self.candidate_commit_hash,
+            "prepared_candidate_identity": self.prepared_candidate_identity,
             "outcome_kind": self.outcome_kind,
             "result": _evaluation_result_dict(self.result) if self.result else None,
             "failure": self.failure.as_dict() if self.failure else None,
@@ -577,6 +761,38 @@ class EvaluationOutcome:
             ],
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
+            "protocol": self.protocol,
+            "measurement": {
+                "cache_key": self.measurement_cache_key,
+                "contract_fingerprint": self.measurement_contract_fingerprint,
+                "reused": self.measurement_reused,
+                "executed": self.measurement_executed,
+                "reuse_kind": self.reuse_kind,
+                "measurement_id": self.measurement_id,
+                "reused_from_attempt_id": self.reused_from_attempt_id,
+                "evidence": [item.as_dict() for item in self.measurement_evidence],
+            }
+            if self.protocol == "phased-v1"
+            else None,
+            "evaluator_slot": {
+                "slot": self.evaluator_slot,
+                "scope": self.evaluator_slot_scope,
+                "wait_seconds": self.evaluator_slot_wait_seconds,
+                "acquired_at": (
+                    self.evaluator_slot_acquired_at.isoformat()
+                    if self.evaluator_slot_acquired_at
+                    else None
+                ),
+                "released_at": (
+                    self.evaluator_slot_released_at.isoformat()
+                    if self.evaluator_slot_released_at
+                    else None
+                ),
+                "lease_id": self.evaluator_slot_lease_id,
+                "release_reason": self.evaluator_slot_release_reason,
+            }
+            if self.evaluator_slot_lease_id
+            else None,
         }
 
 
@@ -597,6 +813,35 @@ class EvaluationPlugin(Protocol):
     def __call__(
         self,
         context: EvaluationContext,
+    ) -> EvalPass | EvalFail | EvaluationResult | EvaluationOutcome | Mapping[str, Any]:
+        ...
+
+
+class PhasedEvaluationPlugin(Protocol):
+    """Explicit opt-in protocol for source preparation and cacheable measurement."""
+
+    evaluation_protocol: Literal["phased-v1"]
+    evaluation_concurrency_scope: EvaluationConcurrencyScope
+
+    def prepare(
+        self,
+        context: EvaluationContext,
+    ) -> EvaluationPreparation | EvalFail | EvaluationOutcome:
+        ...
+
+    def measure(
+        self,
+        context: EvaluationContext,
+        preparation: EvaluationPreparation,
+    ) -> EvaluationMeasurement | EvalFail | EvaluationOutcome:
+        ...
+
+    def finalize(
+        self,
+        context: EvaluationContext,
+        preparation: EvaluationPreparation,
+        measurement: EvaluationMeasurement,
+        provenance: MeasurementProvenance,
     ) -> EvalPass | EvalFail | EvaluationResult | EvaluationOutcome | Mapping[str, Any]:
         ...
 
@@ -972,6 +1217,58 @@ def _coerce_metadata(payload: Mapping[str, Any] | None) -> dict[str, Any]:
     return result
 
 
+def _json_mapping(payload: Mapping[str, Any] | None, *, label: str) -> dict[str, Any]:
+    if payload is None:
+        return {}
+    if not isinstance(payload, Mapping):
+        raise ValueError(f"Phased evaluator {label} must be a mapping.")
+    try:
+        encoded = json.dumps(
+            dict(payload),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        decoded = json.loads(encoded)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Phased evaluator {label} must contain only JSON values.") from exc
+    if not isinstance(decoded, dict):  # pragma: no cover - mapping round-trip invariant
+        raise ValueError(f"Phased evaluator {label} must round-trip to a JSON object.")
+    return decoded
+
+
+def _merge_artifact_sets(*groups: Sequence[EvaluationArtifact]) -> tuple[EvaluationArtifact, ...]:
+    merged: list[EvaluationArtifact] = []
+    seen: set[str] = set()
+    for group in groups:
+        for artifact in group:
+            if artifact.key in seen:
+                continue
+            seen.add(artifact.key)
+            merged.append(artifact)
+    return tuple(merged)
+
+
+def _uncached_measurement_key(
+    *,
+    preparation: EvaluationPreparation,
+    evaluator_name: object,
+    evaluator_version: object,
+    campaign_program_hash: object,
+) -> str:
+    payload = {
+        "candidate_identity": preparation.candidate_identity,
+        "measurement_contract_fingerprint": preparation.measurement_contract_fingerprint,
+        "evaluator_name": str(evaluator_name or ""),
+        "evaluator_version": str(evaluator_version or ""),
+        "campaign_program_hash": str(campaign_program_hash or ""),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
 def _bound_metadata_value(value: Any) -> Any:
     if value is None or isinstance(value, bool):
         return value
@@ -1044,6 +1341,7 @@ class Evaluator:
             python_paths=self.settings.worker_evaluator_python_paths,
         )
         self._plugin_callable: EvaluationCallable | None = plugin
+        self._plugin_target: Any | None = plugin
         self._pythonpath_ready = False
 
     def evaluate(self, context: EvaluationContext) -> EvaluationResult:
@@ -1059,8 +1357,16 @@ class Evaluator:
         )
         raise EvaluationError(message)
 
+    @property
+    def evaluator_name(self) -> str:
+        """Return the public plugin identity used by cache and provenance contracts."""
+
+        return self._evaluator_label()
+
     def evaluate_outcome(self, context: EvaluationContext) -> EvaluationOutcome:
         """Execute the configured plugin and return a first-class outcome envelope."""
+        if self.supports_phased_evaluation():
+            return self.evaluate_phased_uncached(context)
         started_at = datetime.now(timezone.utc)
         self._validate_context(context)
         plugin = self._ensure_callable()
@@ -1108,24 +1414,238 @@ class Evaluator:
         )
         return outcome
 
+    def supports_phased_evaluation(self) -> bool:
+        """Return whether the configured plugin explicitly opts into phased-v1."""
+
+        target = self._ensure_plugin_target()
+        protocol = normalize_single_line(str(getattr(target, "evaluation_protocol", ""))).lower()
+        if protocol != "phased-v1":
+            return False
+        missing = [
+            name
+            for name in ("prepare", "measure", "finalize")
+            if not callable(getattr(target, name, None))
+        ]
+        if missing:
+            raise EvaluationError(
+                "phased-v1 evaluator is missing callable method(s): " + ", ".join(missing)
+            )
+        return True
+
+    def evaluation_concurrency_scope(self) -> EvaluationConcurrencyScope:
+        """Return the plugin-declared scope governed by evaluator capacity E."""
+
+        if not self.supports_phased_evaluation():
+            return "whole"
+        raw = normalize_single_line(
+            str(getattr(self._ensure_plugin_target(), "evaluation_concurrency_scope", "measurement"))
+        ).lower()
+        if raw not in {"whole", "measurement"}:
+            raise EvaluationError(
+                "phased-v1 evaluation_concurrency_scope must be 'whole' or 'measurement'."
+            )
+        return cast(EvaluationConcurrencyScope, raw)
+
+    def provides_candidate_identity(self) -> bool:
+        """Return whether the evaluator contract promises a stable identity."""
+
+        if self.supports_phased_evaluation():
+            return True
+        return bool(getattr(self._ensure_plugin_target(), "provides_candidate_identity", False))
+
+    def new_deadline(self) -> float:
+        """Return a monotonic deadline shared by all phases and capacity waits."""
+
+        return monotonic() + float(self.timeout)
+
+    def prepare_phase(
+        self,
+        context: EvaluationContext,
+        *,
+        deadline: float,
+    ) -> EvaluationPreparation | EvaluationOutcome:
+        """Run and validate phased source preparation."""
+
+        started_at = datetime.now(timezone.utc)
+        payload = self._execute_phase_with_deadline(
+            "prepare",
+            context,
+            (),
+            deadline=deadline,
+        )
+        if isinstance(payload, EvaluationPreparation):
+            self._validate_json_size(payload.state, label="preparation state")
+            return payload
+        return self._coerce_phase_failure(
+            payload,
+            context=context,
+            phase="prepare",
+            started_at=started_at,
+        )
+
+    def measure_phase(
+        self,
+        context: EvaluationContext,
+        preparation: EvaluationPreparation,
+        *,
+        deadline: float,
+    ) -> EvaluationMeasurement | EvaluationOutcome:
+        """Run and validate the expensive measurement phase."""
+
+        started_at = datetime.now(timezone.utc)
+        payload = self._execute_phase_with_deadline(
+            "measure",
+            context,
+            (preparation,),
+            deadline=deadline,
+        )
+        if isinstance(payload, EvaluationMeasurement):
+            self._validate_json_size(payload.cache_payload(), label="measurement payload")
+            return payload
+        return self._coerce_phase_failure(
+            payload,
+            context=context,
+            phase="measure",
+            started_at=started_at,
+        )
+
+    def finalize_phase(
+        self,
+        context: EvaluationContext,
+        preparation: EvaluationPreparation,
+        measurement: EvaluationMeasurement,
+        provenance: MeasurementProvenance,
+        *,
+        deadline: float,
+        started_at: datetime | None = None,
+    ) -> EvaluationOutcome:
+        """Run source-specific finalization and return the normal outcome envelope."""
+
+        effective_started = started_at or datetime.now(timezone.utc)
+        payload = self._execute_phase_with_deadline(
+            "finalize",
+            context,
+            (preparation, measurement, provenance),
+            deadline=deadline,
+        )
+        outcome = self._coerce_outcome(
+            payload,
+            context=context,
+            evaluator_name=self._evaluator_label(),
+            started_at=effective_started,
+            finished_at=datetime.now(timezone.utc),
+        )
+        outcome.evaluator_version = outcome.evaluator_version or self.evaluator_version
+        outcome.protocol = "phased-v1"
+        outcome.measurement_cache_key = provenance.cache_key
+        outcome.measurement_contract_fingerprint = preparation.measurement_contract_fingerprint
+        outcome.measurement_reused = provenance.reused
+        outcome.measurement_id = provenance.measurement_id
+        outcome.reused_from_attempt_id = provenance.source_evaluation_attempt_id
+        outcome.measurement_payload = measurement.cache_payload()
+        outcome.measurement_evidence = tuple(measurement.evidence)
+        outcome.prepared_candidate_identity = preparation.candidate_identity
+        outcome.artifacts = _merge_artifact_sets(
+            preparation.artifacts,
+            measurement.artifacts,
+            outcome.artifacts,
+        )
+        if outcome.result is not None:
+            final_identity = normalize_single_line(str(outcome.result.candidate_identity or ""))
+            if final_identity and final_identity != preparation.candidate_identity:
+                raise EvaluationError(
+                    "Phased evaluator finalize changed candidate_identity from prepare."
+                )
+            outcome.result.candidate_identity = preparation.candidate_identity
+            outcome.result.extra.setdefault("measurement_provenance", provenance.as_dict())
+        return outcome
+
+    def evaluate_phased_uncached(self, context: EvaluationContext) -> EvaluationOutcome:
+        """Run phased-v1 end to end without a persistent measurement cache."""
+
+        self._validate_context(context)
+        deadline = self.new_deadline()
+        started_at = datetime.now(timezone.utc)
+        try:
+            preparation = self.prepare_phase(context, deadline=deadline)
+            if isinstance(preparation, EvaluationOutcome):
+                return preparation
+            cache_key = _uncached_measurement_key(
+                preparation=preparation,
+                evaluator_name=self._evaluator_label(),
+                evaluator_version=self.evaluator_version,
+                campaign_program_hash=context.metadata.get("campaign_program_hash"),
+            )
+            measurement = self.measure_phase(context, preparation, deadline=deadline)
+            if isinstance(measurement, EvaluationOutcome):
+                measurement.measurement_cache_key = cache_key
+                measurement.measurement_contract_fingerprint = (
+                    preparation.measurement_contract_fingerprint
+                )
+                measurement.prepared_candidate_identity = preparation.candidate_identity
+                measurement.measurement_executed = True
+                measurement.reuse_kind = "none"
+                return measurement
+            outcome = self.finalize_phase(
+                context,
+                preparation,
+                measurement,
+                MeasurementProvenance(
+                    cache_key=cache_key,
+                    reused=False,
+                    evidence=measurement.evidence,
+                ),
+                deadline=deadline,
+                started_at=started_at,
+            )
+            outcome.measurement_executed = True
+            outcome.reuse_kind = "none"
+            return outcome
+        except EvaluationError as exc:
+            return self._synthetic_failure_outcome(
+                context=context,
+                evaluator_name=self._evaluator_label(),
+                message=str(exc),
+                started_at=started_at,
+                finished_at=datetime.now(timezone.utc),
+            )
+
     # Internal helpers -------------------------------------------------
 
     def _ensure_callable(self) -> EvaluationCallable:
         if self._plugin_callable:
             return self._plugin_callable
 
-        if not self.plugin_ref:
-            raise EvaluationError(
-                "WORKER_EVALUATOR_PLUGIN is not configured. "
-                "Provide a dotted path to a callable plugin.",
-            )
-
-        self._prepare_pythonpath()
-        module_name, attr_path = self._split_reference(self.plugin_ref)
-        target = self._import_object(module_name, attr_path)
+        target = self._ensure_plugin_target()
+        if normalize_single_line(str(getattr(target, "evaluation_protocol", ""))).lower() == "phased-v1":
+            raise EvaluationError("phased-v1 evaluator cannot be resolved as a one-shot callable.")
         callable_plugin = self._resolve_callable(target)
         self._plugin_callable = callable_plugin
         return callable_plugin
+
+    def _ensure_plugin_target(self) -> Any:
+        if self._plugin_target is not None:
+            target = self._plugin_target
+        elif self._plugin_callable is not None:
+            target = self._plugin_callable
+            self._plugin_target = target
+        else:
+            if not self.plugin_ref:
+                raise EvaluationError(
+                    "WORKER_EVALUATOR_PLUGIN is not configured. "
+                    "Provide a dotted path to an evaluator plugin.",
+                )
+            self._prepare_pythonpath()
+            module_name, attr_path = self._split_reference(self.plugin_ref)
+            target = self._import_object(module_name, attr_path)
+            if inspect.isclass(target):
+                target = target()
+            self._plugin_target = target
+        return target
+
+    def _evaluator_label(self) -> str:
+        target = self._ensure_plugin_target()
+        return str(self.plugin_ref or getattr(target, "__name__", target.__class__.__name__))
 
     def _prepare_pythonpath(self) -> None:
         if self._pythonpath_ready:
@@ -1191,7 +1711,8 @@ class Evaluator:
         context: EvaluationContext,
     ) -> Any:
         ctx = multiprocessing.get_context("spawn")
-        result_queue: multiprocessing.Queue[Any] = ctx.Queue()
+        result_receiver, result_sender = ctx.Pipe(duplex=False)
+        child_watch, parent_watch = ctx.Pipe(duplex=False)
         inline_callable = None if self.plugin_ref else plugin
         process = ctx.Process(
             target=_plugin_subprocess_entry,
@@ -1200,40 +1721,26 @@ class Evaluator:
                 inline_callable,
                 tuple(str(path) for path in self.python_paths),
                 context,
-                result_queue,
+                result_sender,
+                child_watch,
             ),
         )
         process.start()
-        process.join(self.timeout)
-
-        if process.is_alive():
-            process.terminate()
-            process.join(5)
-            raise EvaluationError(
-                f"Evaluation plugin timed out after {self.timeout}s.",
-            )
-
-        queue_wait_seconds = max(1.0, min(5.0, self.timeout * 0.1))
+        result_sender.close()
+        child_watch.close()
         try:
-            status, payload = result_queue.get(timeout=queue_wait_seconds)
-        except Empty as exc:
-            if process.exitcode and process.exitcode != 0:
-                raise EvaluationError(
-                    f"Evaluation plugin exited with status {process.exitcode}.",
-                ) from exc
-            raise EvaluationError(
-                "Evaluation plugin did not return any result.",
-            ) from exc
-        except Exception as exc:
-            if process.exitcode and process.exitcode != 0:
-                raise EvaluationError(
-                    f"Evaluation plugin exited with status {process.exitcode}.",
-                ) from exc
-            raise EvaluationError(
-                "Evaluation plugin returned an unreadable payload.",
-            ) from exc
+            status, payload = _receive_plugin_process_result(
+                process,
+                result_receiver,
+                timeout=float(self.timeout),
+                timeout_message=f"Evaluation plugin timed out after {self.timeout}s.",
+                no_result_message="Evaluation plugin did not return any result.",
+                unreadable_message="Evaluation plugin returned an unreadable payload.",
+                exit_label="Evaluation plugin",
+            )
         finally:
-            result_queue.close()
+            result_receiver.close()
+            parent_watch.close()
 
         if status == "ok":
             return payload
@@ -1249,6 +1756,104 @@ class Evaluator:
         if traceback_text:
             log.error("Evaluation plugin traceback:\n{}", traceback_text)
         raise EvaluationError(message)
+
+    def _execute_phase_with_deadline(
+        self,
+        phase: str,
+        context: EvaluationContext,
+        phase_args: tuple[Any, ...],
+        *,
+        deadline: float,
+    ) -> Any:
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            raise EvaluationError(
+                f"Phased evaluation exceeded the shared {self.timeout}s timeout before {phase}."
+            )
+        ctx = multiprocessing.get_context("spawn")
+        result_receiver, result_sender = ctx.Pipe(duplex=False)
+        child_watch, parent_watch = ctx.Pipe(duplex=False)
+        inline_target = None if self.plugin_ref else self._ensure_plugin_target()
+        process = ctx.Process(
+            target=_plugin_phase_subprocess_entry,
+            args=(
+                self.plugin_ref,
+                inline_target,
+                tuple(str(path) for path in self.python_paths),
+                phase,
+                context,
+                phase_args,
+                result_sender,
+                child_watch,
+            ),
+        )
+        process.start()
+        result_sender.close()
+        child_watch.close()
+        try:
+            status, payload = _receive_plugin_process_result(
+                process,
+                result_receiver,
+                timeout=remaining,
+                timeout_message=(
+                    f"Phased evaluator timed out during {phase} after {self.timeout}s total."
+                ),
+                no_result_message=f"Phased evaluator {phase} did not return a result.",
+                unreadable_message=f"Phased evaluator {phase} returned an unreadable payload.",
+                exit_label=f"Phased evaluator {phase}",
+            )
+        finally:
+            result_receiver.close()
+            parent_watch.close()
+        if status == "ok":
+            return payload
+        message = payload.get("message", f"Phased evaluator {phase} failed.")
+        traceback_text = payload.get("traceback")
+        if traceback_text:
+            log.error("Phased evaluator {} traceback:\n{}", phase, traceback_text)
+        raise EvaluationError(message)
+
+    def _coerce_phase_failure(
+        self,
+        payload: Any,
+        *,
+        context: EvaluationContext,
+        phase: str,
+        started_at: datetime,
+    ) -> EvaluationOutcome:
+        if isinstance(payload, (EvalFail, EvaluationOutcome)) or (
+            isinstance(payload, Mapping) and "outcome_kind" in payload
+        ):
+            outcome = self._coerce_outcome(
+                payload,
+                context=context,
+                evaluator_name=self._evaluator_label(),
+                started_at=started_at,
+                finished_at=datetime.now(timezone.utc),
+            )
+            outcome.evaluator_version = outcome.evaluator_version or self.evaluator_version
+            outcome.protocol = "phased-v1"
+            return outcome
+        raise EvaluationError(
+            f"Phased evaluator {phase} must return its typed phase value or a failure outcome."
+        )
+
+    def _validate_json_size(self, payload: Mapping[str, Any], *, label: str) -> None:
+        try:
+            encoded = json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        except (TypeError, ValueError) as exc:
+            raise EvaluationError(f"Phased evaluator {label} must be JSON serializable.") from exc
+        limit = max(1, int(self.settings.worker_evaluator_measurement_max_json_bytes))
+        if len(encoded) > limit:
+            raise EvaluationError(
+                f"Phased evaluator {label} is {len(encoded)} bytes; configured limit is {limit}."
+            )
 
     def _coerce_outcome(
         self,
@@ -1782,14 +2387,58 @@ def _primary_metric_direction_conflict_warning(
     }
 
 
+def _receive_plugin_process_result(
+    process: multiprocessing.Process,
+    receiver: Connection,
+    *,
+    timeout: float,
+    timeout_message: str,
+    no_result_message: str,
+    unreadable_message: str,
+    exit_label: str,
+) -> tuple[str, Any]:
+    """Drain a child result while it is running so large payloads cannot deadlock."""
+
+    ready = wait_for_connections(
+        (receiver, process.sentinel),
+        timeout=max(0.0, float(timeout)),
+    )
+    if receiver not in ready and process.sentinel in ready:
+        process.join(timeout=0)
+        if not receiver.poll(0.2):
+            if process.exitcode and process.exitcode != 0:
+                raise EvaluationError(f"{exit_label} exited with status {process.exitcode}.")
+            raise EvaluationError(no_result_message)
+    elif receiver not in ready:
+        _terminate_plugin_process_tree(process)
+        raise EvaluationError(timeout_message)
+
+    try:
+        result = receiver.recv()
+        status, payload = result
+    except (EOFError, OSError, TypeError, ValueError) as exc:
+        process.join(timeout=0.2)
+        if process.exitcode and process.exitcode != 0:
+            raise EvaluationError(f"{exit_label} exited with status {process.exitcode}.") from exc
+        raise EvaluationError(unreadable_message) from exc
+    process.join(timeout=1.0)
+    if process.is_alive():
+        _terminate_plugin_process_tree(process)
+        raise EvaluationError(f"{exit_label} did not exit after returning a result.")
+    return str(status), payload
+
+
 def _plugin_subprocess_entry(
     plugin_ref: str | None,
     inline_callable: EvaluationCallable | None,
     python_paths: Sequence[str],
     context: EvaluationContext,
-    queue: multiprocessing.Queue[Any],
+    result_connection: Connection,
+    parent_watch: Connection,
 ) -> None:
     try:
+        _start_plugin_process_group()
+        _arm_parent_death_watchdog(parent_watch)
         for entry in python_paths:
             entry_str = str(entry)
             if entry_str and entry_str not in sys.path:
@@ -1805,9 +2454,9 @@ def _plugin_subprocess_entry(
             plugin = Evaluator._resolve_callable(target)
 
         payload = plugin(context)
-        queue.put(("ok", payload))
+        result_connection.send(("ok", payload))
     except Exception as exc:  # pragma: no cover - defensive isolation
-        queue.put(
+        result_connection.send(
             (
                 "error",
                 {
@@ -1816,3 +2465,104 @@ def _plugin_subprocess_entry(
                 },
             )
         )
+
+
+def _plugin_phase_subprocess_entry(
+    plugin_ref: str | None,
+    inline_target: Any | None,
+    python_paths: Sequence[str],
+    phase: str,
+    context: EvaluationContext,
+    phase_args: tuple[Any, ...],
+    result_connection: Connection,
+    parent_watch: Connection,
+) -> None:
+    try:
+        _start_plugin_process_group()
+        _arm_parent_death_watchdog(parent_watch)
+        for entry in python_paths:
+            entry_str = str(entry)
+            if entry_str and entry_str not in sys.path:
+                sys.path.insert(0, entry_str)
+
+        target = inline_target
+        if target is None:
+            if not plugin_ref:
+                raise EvaluationError("Evaluator plugin reference is not configured.")
+            module_name, attr_path = Evaluator._split_reference(plugin_ref)
+            target = Evaluator._import_object(module_name, attr_path)
+        if inspect.isclass(target):
+            target = target()
+        if normalize_single_line(str(getattr(target, "evaluation_protocol", ""))).lower() != "phased-v1":
+            raise EvaluationError("Evaluator plugin does not declare evaluation_protocol='phased-v1'.")
+        method = getattr(target, phase, None)
+        if not callable(method):
+            raise EvaluationError(f"phased-v1 evaluator has no callable {phase} method.")
+        payload = method(context, *phase_args)
+        result_connection.send(("ok", payload))
+    except Exception as exc:  # pragma: no cover - defensive isolation
+        result_connection.send(
+            (
+                "error",
+                {
+                    "message": f"Phased evaluator {phase} raised an exception: {exc}",
+                    "traceback": traceback.format_exc(),
+                },
+            )
+        )
+
+
+def _start_plugin_process_group() -> None:
+    if os.name != "posix":
+        return
+    try:
+        os.setsid()
+    except OSError:
+        return
+
+
+def _arm_parent_death_watchdog(parent_watch: Connection) -> None:
+    """Terminate the evaluator process group if its owning worker disappears."""
+
+    def _watch() -> None:
+        try:
+            parent_watch.recv_bytes()
+        except (EOFError, OSError):
+            if os.name == "posix":
+                try:
+                    os.killpg(os.getpgrp(), signal.SIGTERM)
+                    return
+                except OSError:
+                    pass
+            os._exit(143)
+
+    threading.Thread(
+        target=_watch,
+        name="loreley-evaluator-parent-watch",
+        daemon=True,
+    ).start()
+
+
+def _terminate_plugin_process_tree(process: multiprocessing.Process) -> None:
+    if not process.is_alive():
+        process.join(timeout=0.1)
+        return
+    if os.name == "posix" and process.pid:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except OSError:
+            process.terminate()
+    else:
+        process.terminate()
+    process.join(5)
+    if process.is_alive():
+        if os.name == "posix" and process.pid:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                process.kill()
+        else:
+            process.kill()
+        process.join(5)

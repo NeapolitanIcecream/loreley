@@ -94,8 +94,10 @@ def validate_campaign_scope(
     worktree: Path,
     program: CampaignProgramSnapshot | None,
     git_bin: str = "git",
+    base_commit_hash: str | None = None,
+    candidate_commit_hash: str | None = None,
 ) -> ScopeGateResult:
-    """Validate changed tracked and untracked paths against campaign scope rules."""
+    """Validate worktree and, when supplied, committed candidate changes."""
 
     if program is None:
         return ScopeGateResult(checked_paths=())
@@ -111,6 +113,12 @@ def validate_campaign_scope(
         git_bin=git_bin,
         editable_patterns=editable_patterns,
         protected_patterns=protected_patterns,
+        committed_paths=_committed_changed_paths(
+            worktree=worktree,
+            git_bin=git_bin,
+            base_commit_hash=base_commit_hash,
+            candidate_commit_hash=candidate_commit_hash,
+        ),
     )
     violations.extend(_path_check_violations(path_checks))
 
@@ -220,6 +228,7 @@ def _validate_changed_paths(
     git_bin: str,
     editable_patterns: Sequence[str],
     protected_patterns: Sequence[str],
+    committed_paths: Sequence[str] = (),
 ) -> tuple[_PathScopeCheck, ...]:
     return tuple(
         _validate_changed_path(
@@ -228,7 +237,11 @@ def _validate_changed_paths(
             editable_patterns=editable_patterns,
             protected_patterns=protected_patterns,
         )
-        for raw_path in _changed_paths(worktree=worktree, git_bin=git_bin)
+        for raw_path in tuple(
+            dict.fromkeys(
+                (*_changed_paths(worktree=worktree, git_bin=git_bin), *committed_paths)
+            )
+        )
     )
 
 
@@ -376,6 +389,70 @@ def _changed_paths(*, worktree: Path, git_bin: str) -> tuple[str, ...]:
         stderr = (exc.stderr or b"").decode("utf-8", errors="replace")
         raise RuntimeError(f"Failed to inspect worktree changes for scope gate: {stderr or exc}") from exc
     return _parse_porcelain_z(result.stdout.decode("utf-8", errors="surrogateescape"))
+
+
+def _committed_changed_paths(
+    *,
+    worktree: Path,
+    git_bin: str,
+    base_commit_hash: str | None,
+    candidate_commit_hash: str | None,
+) -> tuple[str, ...]:
+    base = normalize_single_line(str(base_commit_hash or ""))
+    candidate = normalize_single_line(str(candidate_commit_hash or ""))
+    if not base and not candidate:
+        return ()
+    if not base or not candidate:
+        raise RuntimeError(
+            "Both base_commit_hash and candidate_commit_hash are required for committed scope validation."
+        )
+    target = Path(worktree).expanduser().resolve()
+    try:
+        result = subprocess.run(
+            [
+                git_bin or "git",
+                "-C",
+                str(target),
+                "diff",
+                "--name-status",
+                "-z",
+                "--find-renames",
+                base,
+                candidate,
+                "--",
+            ],
+            check=True,
+            capture_output=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or b"").decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"Failed to inspect committed candidate changes for scope gate: {stderr or exc}"
+        ) from exc
+    return _parse_name_status_z(result.stdout.decode("utf-8", errors="surrogateescape"))
+
+
+def _parse_name_status_z(output: str) -> tuple[str, ...]:
+    tokens = [token for token in output.split("\0") if token]
+    paths: list[str] = []
+    index = 0
+    while index < len(tokens):
+        status = tokens[index]
+        index += 1
+        if index >= len(tokens):
+            break
+        if status.startswith(("R", "C")):
+            old_path = tokens[index]
+            index += 1
+            if index >= len(tokens):
+                break
+            new_path = tokens[index]
+            index += 1
+            paths.extend((old_path, new_path))
+            continue
+        paths.append(tokens[index])
+        index += 1
+    return tuple(dict.fromkeys(path for path in paths if path))
 
 
 def _untracked_changed_paths(*, worktree: Path, git_bin: str) -> tuple[str, ...]:

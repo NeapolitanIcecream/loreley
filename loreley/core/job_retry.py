@@ -119,6 +119,8 @@ def retry_job_row(*, job: Any, reason: str, now: datetime) -> dict[str, object]:
     job.candidate_published_at = None
     job.result_commit_hash = None
     job.last_error = str(reason or "").strip() or "manual retry requested"
+    job.failure_stage = None
+    job.failure_kind = None
     return {
         "job_id": str(getattr(job, "id", "")),
         "previous_status": previous_status,

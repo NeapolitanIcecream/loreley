@@ -59,6 +59,7 @@ class JobHealthOut(OrmOutModel):
     job_leases: dict[str, int] = Field(default_factory=dict)
     by_status: dict[str, int] = Field(default_factory=dict)
     by_job_kind: dict[str, int] = Field(default_factory=dict)
+    progress: dict[str, Any] = Field(default_factory=dict)
 
 
 class OperatorStatusOut(OrmOutModel):

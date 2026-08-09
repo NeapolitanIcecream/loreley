@@ -22,6 +22,7 @@ from loreley.core.job_state import pending_ingestion_job_conditions
 from loreley.core.map_elites.manager import MapElitesManager
 from loreley.core.map_elites.sampler import MapElitesSampler
 from loreley.core.repo_lock import repo_lock
+from loreley.core.progress import CampaignProgress, load_campaign_progress
 from loreley.db.base import ensure_database_schema, get_engine, session_scope
 from loreley.db.locks import (
     AdvisoryLock,
@@ -252,6 +253,36 @@ class EvolutionScheduler:
         reclaimed = reclaim_fn() if callable(reclaim_fn) else None
         stats["reclaimed_pending"] = int(getattr(reclaimed, "requeued", 0) or 0)
         stats["reclaimed_failed"] = int(getattr(reclaimed, "failed", 0) or 0)
+        endpoint = self._identity_endpoint_progress()
+        if endpoint is not None and endpoint.identity_target_reached:
+            stats["identity_endpoint_reached"] = 1
+            stats["identity_count"] = endpoint.distinct_passed_evaluation_identities
+            stats["identity_overshoot"] = endpoint.identity_overshoot
+            cancel = getattr(
+                self.job_scheduler,
+                "cancel_pending_for_identity_endpoint",
+                None,
+            )
+            stats["endpoint_cancelled_pending"] = int(cancel() if callable(cancel) else 0)
+            stats["dispatched"] = 0
+            stats["seed_scheduled"] = 0
+            stats["scheduled"] = 0
+            stats["unfinished"] = self.job_scheduler.count_unfinished_jobs()
+            pending_ingestion = self.ingestion.count_pending_ingestion_jobs()
+            stats["pending_ingestion"] = pending_ingestion
+            self.console.log(
+                "[bold magenta]Scheduler identity endpoint[/] "
+                f"identities={endpoint.distinct_passed_evaluation_identities}/"
+                f"{endpoint.identity_target} overshoot={endpoint.identity_overshoot} "
+                f"unfinished={stats['unfinished']} pending_ingestion={pending_ingestion}"
+            )
+            if stats["unfinished"] == 0 and pending_ingestion == 0:
+                self._create_primary_objective_branch_if_possible()
+                self.console.log(
+                    "[bold yellow]Identity endpoint drained; shutting down scheduler[/]"
+                )
+                self.stop()
+            return stats
         baseline = self._ensure_campaign_baseline_ready()
         stats["baseline_blocked"] = 0
         if baseline is not None and not baseline.can_dispatch_or_schedule:
@@ -269,6 +300,8 @@ class EvolutionScheduler:
                 ),
             )
             return stats
+        promote = getattr(self.job_scheduler, "promote_staged_jobs", None)
+        stats["staged_promoted"] = int(promote() if callable(promote) else 0)
         stats["dispatched"] = self.job_scheduler.dispatch_pending_jobs()
         unfinished = self.job_scheduler.count_unfinished_jobs()
         stats["seed_scheduled"] = self._maybe_schedule_seed_jobs(unfinished_jobs=unfinished)
@@ -302,7 +335,8 @@ class EvolutionScheduler:
         self.console.log(
             "[bold magenta]Scheduler tick[/] ingested={ingested} reclaimed_pending={reclaimed_pending} "
             "reclaimed_failed={reclaimed_failed} dispatched={dispatched} seed_scheduled={seed_scheduled} "
-            "scheduled={scheduled} unfinished={unfinished}{remaining_total}"
+            "staged_promoted={staged_promoted} scheduled={scheduled} "
+            "unfinished={unfinished}{remaining_total}"
             "{pending_ingestion_suffix}".format(
                 **stats,
                 remaining_total=remaining_total_str,
@@ -335,6 +369,12 @@ class EvolutionScheduler:
         if total_jobs < self._max_total_jobs or unfinished_jobs > 0:
             return None
         return self.ingestion.count_pending_ingestion_jobs()
+
+    def _identity_endpoint_progress(self) -> CampaignProgress | None:
+        if self.settings.scheduler_max_unique_evaluation_identities is None:
+            return None
+        with session_scope() as session:
+            return load_campaign_progress(session, self.settings)
 
     def stop(self) -> None:
         """Signal the scheduler loop to exit."""
@@ -823,7 +863,12 @@ class EvolutionScheduler:
     def _count_seed_warmup_job_counts(self, *, island_id: str) -> _SeedWarmupJobCounts:
         from loreley.db.models import EvolutionJob, JobStatus  # Local import to avoid cycles.
 
-        unfinished_seed_statuses = (JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING)
+        unfinished_seed_statuses = (
+            JobStatus.STAGED,
+            JobStatus.PENDING,
+            JobStatus.QUEUED,
+            JobStatus.RUNNING,
+        )
         succeeded_seed_requiring_ingestion = and_(
             EvolutionJob.is_seed_job.is_(True),
             *pending_ingestion_job_conditions(

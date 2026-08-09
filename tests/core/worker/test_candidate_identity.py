@@ -30,9 +30,17 @@ def test_evaluation_identity_key_scopes_the_evaluator_contract() -> None:
         evaluator_version="source-sha256:v2",
         campaign_program_hash="campaign-a",
     )
+    changed_measurement = evaluation_identity_key(
+        candidate_identity="binary-sha256:abc",
+        evaluator_name="example:evaluate",
+        evaluator_version="source-sha256:v1",
+        campaign_program_hash="campaign-a",
+        measurement_contract_fingerprint="different-validation-corpus",
+    )
 
     assert base == same
     assert base != changed_protocol
+    assert base == changed_measurement
     assert len(base or "") == 64
 
 

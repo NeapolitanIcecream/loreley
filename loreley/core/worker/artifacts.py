@@ -118,8 +118,8 @@ class JobArtifactWriteResult:
 @dataclass(frozen=True, slots=True)
 class JobArtifactWriteRequest:
     job_id: UUID
-    plan: PlanningAgentResponse
-    coding: CodingAgentResponse
+    plan: PlanningAgentResponse | None
+    coding: CodingAgentResponse | None
     evaluation: EvaluationResult
     base_commit_hash: str
     candidate_commit_hash: str
@@ -859,66 +859,74 @@ def _write_fixed_job_artifacts(
     request: JobArtifactWriteRequest,
     worker: Mapping[str, Any],
 ) -> FixedJobArtifactPaths:
-    planning_prompt = root / "planning_prompt.txt"
-    planning_raw = root / "planning_raw_output.txt"
-    planning_plan = root / "planning_plan.json"
-    _write_text(planning_prompt, request.plan.prompt)
-    _write_text(planning_raw, request.plan.raw_output)
-    _write_json(
-        planning_plan,
-        {
-            "job_id": str(request.job_id),
-            "base_commit_hash": request.base_commit_hash,
-            "candidate_commit_hash": request.candidate_commit_hash,
-            "commit_message": request.commit_message,
-            "campaign_program": dict(request.campaign_program or {}) or None,
-            "worker": worker,
-            "plan": request.plan.plan.as_dict(),
-            "backend": {
-                "command": list(request.plan.command),
-                "working_directory": request.plan.working_directory,
-                "stderr": request.plan.stderr,
-                "attempts": request.plan.attempts,
-                "duration_seconds": request.plan.duration_seconds,
-                "usage_events": _usage_event_summaries(request.plan.usage_events),
-                "usage_summary": _usage_summary(request.plan.usage_events),
+    planning_prompt: Path | None = None
+    planning_raw: Path | None = None
+    planning_plan: Path | None = None
+    if request.plan is not None:
+        planning_prompt = root / "planning_prompt.txt"
+        planning_raw = root / "planning_raw_output.txt"
+        planning_plan = root / "planning_plan.json"
+        _write_text(planning_prompt, request.plan.prompt)
+        _write_text(planning_raw, request.plan.raw_output)
+        _write_json(
+            planning_plan,
+            {
+                "job_id": str(request.job_id),
+                "base_commit_hash": request.base_commit_hash,
+                "candidate_commit_hash": request.candidate_commit_hash,
+                "commit_message": request.commit_message,
+                "campaign_program": dict(request.campaign_program or {}) or None,
+                "worker": worker,
+                "plan": request.plan.plan.as_dict(),
+                "backend": {
+                    "command": list(request.plan.command),
+                    "working_directory": request.plan.working_directory,
+                    "stderr": request.plan.stderr,
+                    "attempts": request.plan.attempts,
+                    "duration_seconds": request.plan.duration_seconds,
+                    "usage_events": _usage_event_summaries(request.plan.usage_events),
+                    "usage_summary": _usage_summary(request.plan.usage_events),
+                },
             },
-        },
-    )
+        )
 
-    coding_prompt = root / "coding_prompt.txt"
-    coding_raw = root / "coding_raw_output.txt"
-    coding_exec = root / "coding_execution.json"
-    _write_text(coding_prompt, request.coding.prompt)
-    _write_text(coding_raw, request.coding.raw_output)
-    _write_json(
-        coding_exec,
-        {
-            "job_id": str(request.job_id),
-            "base_commit_hash": request.base_commit_hash,
-            "candidate_commit_hash": request.candidate_commit_hash,
-            "commit_message": request.commit_message,
-            "campaign_program": dict(request.campaign_program or {}) or None,
-            "worker": worker,
-            "report": request.coding.report.as_dict(),
-            "backend": {
-                "command": list(request.coding.command),
-                "working_directory": request.coding.working_directory,
-                "stderr": request.coding.stderr,
-                "attempts": request.coding.attempts,
-                "duration_seconds": request.coding.duration_seconds,
-                "usage_events": _usage_event_summaries(request.coding.usage_events),
-                "usage_summary": _usage_summary(request.coding.usage_events),
+    coding_prompt: Path | None = None
+    coding_raw: Path | None = None
+    coding_exec: Path | None = None
+    if request.coding is not None:
+        coding_prompt = root / "coding_prompt.txt"
+        coding_raw = root / "coding_raw_output.txt"
+        coding_exec = root / "coding_execution.json"
+        _write_text(coding_prompt, request.coding.prompt)
+        _write_text(coding_raw, request.coding.raw_output)
+        _write_json(
+            coding_exec,
+            {
+                "job_id": str(request.job_id),
+                "base_commit_hash": request.base_commit_hash,
+                "candidate_commit_hash": request.candidate_commit_hash,
+                "commit_message": request.commit_message,
+                "campaign_program": dict(request.campaign_program or {}) or None,
+                "worker": worker,
+                "report": request.coding.report.as_dict(),
+                "backend": {
+                    "command": list(request.coding.command),
+                    "working_directory": request.coding.working_directory,
+                    "stderr": request.coding.stderr,
+                    "attempts": request.coding.attempts,
+                    "duration_seconds": request.coding.duration_seconds,
+                    "usage_events": _usage_event_summaries(request.coding.usage_events),
+                    "usage_summary": _usage_summary(request.coding.usage_events),
+                },
             },
-        },
-    )
+        )
     return FixedJobArtifactPaths(
-        planning_prompt_path=str(planning_prompt),
-        planning_raw_output_path=str(planning_raw),
-        planning_plan_json_path=str(planning_plan),
-        coding_prompt_path=str(coding_prompt),
-        coding_raw_output_path=str(coding_raw),
-        coding_execution_json_path=str(coding_exec),
+        planning_prompt_path=str(planning_prompt) if planning_prompt is not None else None,
+        planning_raw_output_path=str(planning_raw) if planning_raw is not None else None,
+        planning_plan_json_path=str(planning_plan) if planning_plan is not None else None,
+        coding_prompt_path=str(coding_prompt) if coding_prompt is not None else None,
+        coding_raw_output_path=str(coding_raw) if coding_raw is not None else None,
+        coding_execution_json_path=str(coding_exec) if coding_exec is not None else None,
         evaluation_json_path=str(root / "evaluation.json"),
         evaluation_logs_path=str(root / "evaluation_logs.txt"),
     )

@@ -50,6 +50,7 @@ from loreley.api.services.jobs import (
     JobRetryValidationError,
     get_job,
     get_job_artifacts,
+    get_latest_evaluation_attempt_payload,
     list_jobs,
     list_jobs_page,
     retry_failed_stale_jobs,
@@ -175,6 +176,7 @@ def get_job_detail(job_id: UUID) -> JobDetailOut:
             for row in evidence_rows
         ],
         "evaluation_agent_feedback": build_agent_feedback_payload(evidence_rows),
+        "latest_evaluation_attempt": get_latest_evaluation_attempt_payload(job_id=job_id),
     }
     if fate is not None:
         update.update(fate.as_dict())

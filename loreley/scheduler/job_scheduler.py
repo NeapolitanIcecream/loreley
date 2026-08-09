@@ -408,6 +408,55 @@ class JobScheduler:
             stmt = select(func.count(EvolutionJob.id))
             return int(session.execute(stmt).scalar_one())
 
+    def promote_staged_jobs(self) -> int:
+        """Activate staged supplied candidates within algorithmic and job budgets."""
+
+        max_unfinished = max(0, int(self.settings.scheduler_max_unfinished_jobs))
+        raw_max_total = self.settings.scheduler_max_total_jobs
+        max_total = max(0, int(raw_max_total)) if raw_max_total is not None else 0
+        if max_unfinished <= 0 or max_total <= 0:
+            return 0
+        active_statuses = (JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING)
+        with session_scope() as session:
+            active = int(
+                session.execute(
+                    select(func.count(EvolutionJob.id)).where(
+                        EvolutionJob.status.in_(active_statuses)
+                    )
+                ).scalar_one()
+            )
+            terminal_or_active = int(
+                session.execute(
+                    select(func.count(EvolutionJob.id)).where(
+                        EvolutionJob.status != JobStatus.STAGED
+                    )
+                ).scalar_one()
+            )
+            capacity = min(
+                max(0, max_unfinished - active),
+                max(0, max_total - terminal_or_active),
+            )
+            if capacity <= 0:
+                return 0
+            now = _db_utc_now(session)
+            rows = list(
+                session.execute(
+                    select(EvolutionJob)
+                    .where(EvolutionJob.status == JobStatus.STAGED)
+                    .order_by(
+                        EvolutionJob.priority.desc(),
+                        EvolutionJob.created_at.asc(),
+                        EvolutionJob.id.asc(),
+                    )
+                    .limit(capacity)
+                    .with_for_update(skip_locked=True)
+                ).scalars()
+            )
+            for job in rows:
+                job.status = JobStatus.PENDING
+                job.scheduled_at = now
+            return len(rows)
+
     def reclaim_stale_running_jobs(
         self,
         *,
@@ -468,6 +517,8 @@ class JobScheduler:
                 if attempts >= max_recoveries:
                     job.status = JobStatus.FAILED
                     job.completed_at = current_time
+                    job.failure_stage = "infrastructure"
+                    job.failure_kind = "job_lease_exhausted"
                     self._update_repair_source_after_terminal_failure(session=session, job=job)
                     failed += 1
                     self.console.log(
@@ -493,6 +544,26 @@ class JobScheduler:
                     job.recovery_count,
                 )
         return JobLeaseReclaimResult(requeued=requeued, failed=failed)
+
+    def cancel_pending_for_identity_endpoint(self) -> int:
+        """Cancel locally pending rows once the campaign identity endpoint is reached."""
+
+        with session_scope() as session:
+            current_time = _db_utc_now(session)
+            rows = list(
+                session.execute(
+                    select(EvolutionJob)
+                    .where(EvolutionJob.status.in_((JobStatus.STAGED, JobStatus.PENDING)))
+                    .with_for_update(skip_locked=True)
+                ).scalars()
+            )
+            for job in rows:
+                job.status = JobStatus.CANCELLED
+                job.completed_at = current_time
+                job.last_error = "Unique evaluation identity endpoint reached before dispatch."
+                job.failure_stage = None
+                job.failure_kind = None
+            return len(rows)
 
     def _update_repair_source_after_terminal_failure(
         self,
@@ -716,7 +787,7 @@ class JobScheduler:
             )
             .where(
                 EvolutionJob.island_id == island_id,
-                EvolutionJob.job_kind != "seed",
+                EvolutionJob.is_seed_job.is_(False),
                 EvolutionJob.base_commit_hash.is_not(None),
                 EvolutionJob.base_commit_hash != "",
             )

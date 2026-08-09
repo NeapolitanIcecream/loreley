@@ -229,6 +229,11 @@ class Settings(BaseSettings):
         default=None,
         alias="SCHEDULER_MAX_TOTAL_JOBS",
     )
+    scheduler_max_unique_evaluation_identities: int | None = Field(
+        default=None,
+        ge=1,
+        alias="SCHEDULER_MAX_UNIQUE_EVALUATION_IDENTITIES",
+    )
     scheduler_schedule_batch_size: int = Field(
         default=2,
         alias="SCHEDULER_SCHEDULE_BATCH_SIZE",
@@ -381,6 +386,10 @@ class Settings(BaseSettings):
         default=60,
         alias="WORKER_JOB_HEARTBEAT_INTERVAL_SECONDS",
     )
+    worker_processes: PositiveInt = Field(
+        default=1,
+        alias="WORKER_PROCESSES",
+    )
 
     worker_planning_codex_bin: str = Field(
         default="codex",
@@ -531,6 +540,20 @@ class Settings(BaseSettings):
     worker_evaluator_max_metrics: int = Field(
         default=64,
         alias="WORKER_EVALUATOR_MAX_METRICS",
+    )
+    worker_evaluator_max_concurrency: int | None = Field(
+        default=None,
+        ge=1,
+        alias="WORKER_EVALUATOR_MAX_CONCURRENCY",
+    )
+    worker_evaluator_slot_poll_seconds: float = Field(
+        default=0.25,
+        gt=0.0,
+        alias="WORKER_EVALUATOR_SLOT_POLL_SECONDS",
+    )
+    worker_evaluator_measurement_max_json_bytes: PositiveInt = Field(
+        default=8_388_608,
+        alias="WORKER_EVALUATOR_MEASUREMENT_MAX_JSON_BYTES",
     )
     worker_evaluation_artifacts_enabled: bool = Field(
         default=True,
@@ -783,6 +806,10 @@ class Settings(BaseSettings):
     mapelites_code_embedding_model: str = Field(
         default="text-embedding-3-small",
         alias="MAPELITES_CODE_EMBEDDING_MODEL",
+    )
+    mapelites_local_hash_embedding_acknowledged: bool = Field(
+        default=False,
+        alias="MAPELITES_LOCAL_HASH_EMBEDDING_ACKNOWLEDGED",
     )
     # Fixed embedding dimensionality for the entire experiment lifecycle.
     #
@@ -1072,6 +1099,7 @@ def _safe_export_worker_payload(settings: Settings, *, mask_secrets: bool) -> di
         "worker_repo_job_branch_ttl_hours": settings.worker_repo_job_branch_ttl_hours,
         "worker_job_lease_ttl_seconds": settings.worker_job_lease_ttl_seconds,
         "worker_job_heartbeat_interval_seconds": settings.worker_job_heartbeat_interval_seconds,
+        "worker_processes": settings.worker_processes,
         "worker_planning_backend": settings.worker_planning_backend,
         "worker_planning_codex_model": settings.worker_planning_codex_model,
         "worker_planning_max_attempts": settings.worker_planning_max_attempts,
@@ -1106,6 +1134,11 @@ def _safe_export_worker_payload(settings: Settings, *, mask_secrets: bool) -> di
         "worker_evaluator_version": settings.worker_evaluator_version,
         "worker_evaluator_timeout_seconds": settings.worker_evaluator_timeout_seconds,
         "worker_evaluator_max_metrics": settings.worker_evaluator_max_metrics,
+        "worker_evaluator_max_concurrency": settings.worker_evaluator_max_concurrency,
+        "worker_evaluator_slot_poll_seconds": settings.worker_evaluator_slot_poll_seconds,
+        "worker_evaluator_measurement_max_json_bytes": (
+            settings.worker_evaluator_measurement_max_json_bytes
+        ),
         "worker_evolution_global_goal": settings.worker_evolution_global_goal,
         "worker_evolution_commit_author": settings.worker_evolution_commit_author,
         "worker_evolution_commit_email": settings.worker_evolution_commit_email,
@@ -1136,6 +1169,8 @@ def _safe_export_worker_payload(settings: Settings, *, mask_secrets: bool) -> di
 
 
 def _build_safe_export_payload(settings: Settings, *, mask_secrets: bool) -> dict[str, Any]:
+    from loreley.core.model_routes import resolve_effective_routes
+
     task_names = _safe_export_task_names(settings.experiment_id)
     return {
         "app_name": settings.app_name,
@@ -1189,11 +1224,15 @@ def _build_safe_export_payload(settings: Settings, *, mask_secrets: bool) -> dic
         "tasks_worker_max_retries": settings.tasks_worker_max_retries,
         "tasks_worker_time_limit_seconds": settings.tasks_worker_time_limit_seconds,
         "experiment_id": str(settings.experiment_id) if settings.experiment_id else None,
+        "effective_routes": resolve_effective_routes(settings),
         "scheduler_repo_root": settings.scheduler_repo_root,
         "scheduler_poll_interval_seconds": settings.scheduler_poll_interval_seconds,
         **_safe_export_worker_payload(settings, mask_secrets=mask_secrets),
         "mapelites_code_embedding_model": settings.mapelites_code_embedding_model,
         "mapelites_code_embedding_dimensions": settings.mapelites_code_embedding_dimensions,
+        "mapelites_local_hash_embedding_acknowledged": (
+            settings.mapelites_local_hash_embedding_acknowledged
+        ),
         "mapelites_repo_state_embedding_max_line_chars": (
             settings.mapelites_repo_state_embedding_max_line_chars
         ),
@@ -1229,6 +1268,9 @@ def _build_safe_export_payload(settings: Settings, *, mask_secrets: bool) -> dic
         "scheduler_schedule_batch_size": settings.scheduler_schedule_batch_size,
         "scheduler_ingest_batch_size": settings.scheduler_ingest_batch_size,
         "scheduler_max_total_jobs": settings.scheduler_max_total_jobs,
+        "scheduler_max_unique_evaluation_identities": (
+            settings.scheduler_max_unique_evaluation_identities
+        ),
         "scheduler_startup_approve": settings.scheduler_startup_approve,
         "scheduler_stale_running_reclaim_batch_size": (
             settings.scheduler_stale_running_reclaim_batch_size

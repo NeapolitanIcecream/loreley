@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from loreley.core.usage.events import (
+    COST_SOURCE_CATALOG,
     COST_SOURCE_ESTIMATED,
     COST_SOURCE_PROVIDER_REPORTED,
     COST_SOURCE_UNAVAILABLE,
@@ -22,6 +23,7 @@ from loreley.core.usage.normalizers import (
 from loreley.core.usage.recorder import persist_usage_events, record_usage_event
 
 __all__ = [
+    "COST_SOURCE_CATALOG",
     "COST_SOURCE_ESTIMATED",
     "COST_SOURCE_PROVIDER_REPORTED",
     "COST_SOURCE_UNAVAILABLE",

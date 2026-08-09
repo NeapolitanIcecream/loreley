@@ -21,6 +21,27 @@ These notes cover changes merged after `v0.9.0-alpha`.
   thinking, and reasoning controls for trajectory summaries.
 - Evaluator-provided candidate identities and exact Git-tree identities for
   archive deduplication and safe contract-scoped result reuse.
+- A public `phased-v1` evaluator protocol that separates source preparation,
+  reusable measurement, and finalization. Accepted measurements use canonical
+  contract keys, hash-linked provenance, and source-attempt links.
+- PostgreSQL-backed evaluator capacity `E`, independent of scheduler capacity
+  `U` and configured worker processes `W`, with persisted contracts and
+  waiter/acquisition/release telemetry.
+- Shared campaign progress for CLI, operator API, and scheduler decisions,
+  including separate counts for source trees, evaluator identities, real
+  measurements, reuse, archive entries, and occupied coordinates.
+- An optional restart-stable, at-least unique-evaluation-identity endpoint that
+  drains in-flight jobs while retaining the physical job cap.
+- Secret-free effective model-route diagnostics and explicit acknowledgement
+  for non-semantic local-hash embedding fixtures.
+- First-class, idempotent manual-seed manifests backed by pinned remote refs.
+  Seeds use the normal evaluator and archive pipeline while skipping model
+  agents; staged admission preserves the independent unfinished-job limit.
+- Project-neutral fixed-sample and anytime-valid intervals, preweighted
+  stratified estimates, adaptive sample/time budgets, and canonical measurement
+  contract fingerprints for evaluator plugins. Adaptive results distinguish
+  valid inference, completion of the declared evidence target, and evidence
+  that is safe for a final decision.
 
 ## Fixed
 
@@ -41,3 +62,13 @@ These notes cover changes merged after `v0.9.0-alpha`.
   `(base, inspirations)` recipes so scheduler restarts do not replay a campaign.
 - Reuse coding or planning summaries for commit messages instead of making a
   separate commit-summary model request.
+- Terminate evaluator process groups and their compiler/benchmark descendants
+  on timeout or worker death.
+- Classify Kilo SQLite session-tree dollars as catalog values instead of
+  provider-reported invoices, and expose cost-source aggregates through the
+  usage API.
+- Preserve evaluation evidence per attempt across job retries instead of
+  replacing artifact rows by job key, and verify stored measurement evidence
+  before cache acceptance and reuse.
+- Evaluate manual seeds in detached checkouts without requiring or fabricating
+  a worker publication branch.

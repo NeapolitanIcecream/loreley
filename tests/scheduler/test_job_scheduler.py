@@ -51,6 +51,107 @@ class DummyLog:
         return
 
 
+class _ScalarResult:
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def scalar_one(self) -> int:
+        return self.value
+
+
+class _RowsResult:
+    def __init__(self, rows: list[Any]) -> None:
+        self.rows = rows
+
+    def scalars(self) -> list[Any]:
+        return self.rows
+
+
+def test_staged_manual_seeds_promote_only_within_u_and_total_budget(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    monkeypatch.setattr(
+        job_scheduler,
+        "build_evolution_job_sender_actor",
+        lambda **_kwargs: DummySenderActor(),
+    )
+    settings.scheduler_max_unfinished_jobs = 4
+    settings.scheduler_max_total_jobs = 10
+    scheduler = JobScheduler(
+        settings=settings,
+        console=Console(record=True),
+        sampler=cast(MapElitesSampler, object()),
+    )
+    rows = [SimpleNamespace(status=JobStatus.STAGED, scheduled_at=None) for _ in range(2)]
+
+    class _Session:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def execute(self, _statement: Any) -> Any:
+            self.calls += 1
+            if self.calls == 1:
+                return _ScalarResult(2)  # two active jobs leave U capacity 2
+            if self.calls == 2:
+                return _ScalarResult(6)  # four total-job slots remain
+            if self.calls == 3:
+                return _RowsResult(rows)
+            raise AssertionError("unexpected staged-promotion query")
+
+    session = _Session()
+
+    @contextmanager
+    def _scope() -> Any:
+        yield session
+
+    monkeypatch.setattr(job_scheduler, "session_scope", _scope)
+    monkeypatch.setattr(
+        job_scheduler,
+        "_db_utc_now",
+        lambda _session: datetime(2026, 8, 9, tzinfo=timezone.utc),
+    )
+    promoted = scheduler.promote_staged_jobs()
+
+    assert promoted == 2
+    assert all(row.status is JobStatus.PENDING for row in rows)
+    assert all(row.scheduled_at is not None for row in rows)
+
+
+def test_staged_manual_seeds_do_not_promote_after_total_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    monkeypatch.setattr(
+        job_scheduler,
+        "build_evolution_job_sender_actor",
+        lambda **_kwargs: DummySenderActor(),
+    )
+    settings.scheduler_max_unfinished_jobs = 4
+    settings.scheduler_max_total_jobs = 8
+    scheduler = JobScheduler(
+        settings=settings,
+        console=Console(record=True),
+        sampler=cast(MapElitesSampler, object()),
+    )
+
+    class _Session:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def execute(self, _statement: Any) -> Any:
+            self.calls += 1
+            return _ScalarResult(0 if self.calls == 1 else 8)
+
+    @contextmanager
+    def _scope() -> Any:
+        yield _Session()
+
+    monkeypatch.setattr(job_scheduler, "session_scope", _scope)
+
+    assert scheduler.promote_staged_jobs() == 0
+
+
 def test_enqueue_jobs_marks_only_sent_jobs(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,

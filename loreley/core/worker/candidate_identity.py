@@ -24,8 +24,16 @@ def evaluation_identity_key(
     evaluator_name: object,
     evaluator_version: object,
     campaign_program_hash: object,
+    measurement_contract_fingerprint: object = None,
 ) -> str | None:
-    """Hash an identity together with the evaluation contract that gives it meaning."""
+    """Hash the search identity independently of measurement protocol details.
+
+    ``measurement_contract_fingerprint`` remains an accepted keyword for API
+    compatibility, but it deliberately does not affect archive/search identity.
+    The phased measurement cache includes it separately.
+    """
+
+    del measurement_contract_fingerprint
 
     identity = normalize_candidate_identity(candidate_identity)
     if identity is None:

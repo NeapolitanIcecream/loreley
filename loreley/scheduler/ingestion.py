@@ -322,6 +322,7 @@ class MapElitesIngestion:
         stmt = (
             select(EvolutionJob)
             .where(EvolutionJob.status == JobStatus.SUCCEEDED)
+            .where(EvolutionJob.archive_ingestion_enabled.is_(True))
             .where(EvolutionJob.result_commit_hash.is_not(None))
             .where(EvolutionJob.result_commit_hash != "")
         )

@@ -7,6 +7,7 @@ from typing import Any, Iterable, Mapping
 from uuid import UUID
 
 from loreley.core.usage.events import (
+    COST_SOURCE_CATALOG,
     COST_SOURCE_PROVIDER_REPORTED,
     COST_SOURCE_UNAVAILABLE,
     COST_SOURCE_UNPRICED,
@@ -255,6 +256,7 @@ def kilo_usage_event_from_messages(
         metadata_values,
         defaults={"source": "kilo_cli", "api_surface": "kilo_run"},
     )
+    has_catalog_cost = totals.cost_seen and totals.cost_usd > 0
     event = LLMUsageEventPayload(
         source=metadata.source,
         phase=metadata.phase,
@@ -269,8 +271,8 @@ def kilo_usage_event_from_messages(
         output_tokens=totals.output_tokens,
         reasoning_output_tokens=totals.reasoning_output_tokens,
         total_tokens=totals.total_tokens,
-        cost_usd=totals.cost_usd if totals.cost_seen else None,
-        cost_source=COST_SOURCE_PROVIDER_REPORTED if totals.cost_seen else COST_SOURCE_UNPRICED,
+        cost_usd=totals.cost_usd if has_catalog_cost else None,
+        cost_source=COST_SOURCE_CATALOG if has_catalog_cost else COST_SOURCE_UNPRICED,
         raw_usage=_kilo_raw_usage(
             totals=totals,
             title=title,

@@ -416,6 +416,31 @@ class _CleaningRepositoryForRun(_FakeRepositoryForRun):
         target.unlink(missing_ok=True)
 
 
+class _SuppliedRepositoryForRun(_FakeRepositoryForRun):
+    def ensure_remote_commit(self, *, commit_hash: str, remote_ref: str) -> None:
+        self._events.append(f"repo.ensure_remote_commit[{remote_ref}]")
+        self._current_commit = commit_hash
+
+    @contextmanager
+    def checkout_lease_for_job(
+        self,
+        *,
+        job_id: Any,
+        base_commit: str,
+        create_branch: bool = True,
+        attempt_token: Any = None,
+    ) -> Any:  # noqa: ANN401
+        assert create_branch is False
+        self._current_commit = base_commit
+        with super().checkout_lease_for_job(
+            job_id=job_id,
+            base_commit=base_commit,
+            create_branch=create_branch,
+            attempt_token=attempt_token,
+        ) as checkout:
+            yield checkout
+
+
 class _FakeJobStoreForPublishFailure:
     def __init__(
         self,
@@ -528,6 +553,49 @@ class _FakeJobStoreForSuccess(_FakeJobStoreForPublishFailure):
         self.success_calls.append(kwargs)
 
 
+class _ManualSeedJobStore(_FakeJobStoreForSuccess):
+    def __init__(self, *, job_id: uuid.UUID, events: list[str], commit_hash: str) -> None:
+        super().__init__(job_id=job_id, events=events)
+        self._commit_hash = commit_hash
+
+    def start_job(self, job_id: uuid.UUID) -> Any:
+        assert job_id == self._job_id
+        return type(
+            "LockedJob",
+            (),
+            {
+                "job_id": job_id,
+                "run_token": uuid.uuid4(),
+                "worker_id": "worker-01",
+                "base_commit_hash": "a" * 40,
+                "island_id": "island-1",
+                "inspiration_commit_hashes": (),
+                "goal": "Evaluate the supplied seed",
+                "constraints": (),
+                "acceptance_criteria": (),
+                "iteration_hint": None,
+                "notes": (),
+                "tags": ("manual_seed",),
+                "is_seed_job": True,
+                "job_kind": "manual_seed",
+                "execution_mode": "evaluate_existing",
+                "input_candidate_commit_hash": self._commit_hash,
+                "input_candidate_summary": "Independent allocation fast path",
+                "external_submission_key": "b" * 64,
+                "input_provenance": {
+                    "source_type": "manual_seed_manifest",
+                    "remote_ref": "refs/heads/loreley-seeds/allocation",
+                },
+                "archive_ingestion_enabled": True,
+                "sampling_strategy": "manual_seed",
+                "sampling_initial_radius": None,
+                "sampling_radius_used": None,
+                "sampling_fallback_inspirations": None,
+                "campaign_program_hash": None,
+            },
+        )()
+
+
 class _FakeJobStoreForEvaluationFailureRetry(_FakeJobStoreForPublishFailure):
     def __init__(self, *, job_id: uuid.UUID, events: list[str]) -> None:
         super().__init__(
@@ -606,6 +674,56 @@ def _init_scope_repo(repo: Path) -> None:
     (repo / "README.md").write_text("hello\n", encoding="utf-8")
     _git(repo, "add", ".")
     _git(repo, "commit", "-m", "initial")
+
+
+def test_manual_seed_skips_model_agents_and_uses_detached_supplied_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    job_id = uuid.uuid4()
+    commit_hash = "c" * 40
+    events: list[str] = []
+    _patch_empty_planning_context_session(monkeypatch)
+    store = _ManualSeedJobStore(
+        job_id=job_id,
+        events=events,
+        commit_hash=commit_hash,
+    )
+    planning = _FakePlanningAgent()
+    coding = _FakeCodingAgent()
+    worker = EvolutionWorker(
+        settings=settings,
+        repository=_SuppliedRepositoryForRun(worktree=tmp_path, events=events),  # type: ignore[arg-type]
+        planning_agent=planning,  # type: ignore[arg-type]
+        coding_agent=coding,  # type: ignore[arg-type]
+        evaluator=_FakeEvaluator(),  # type: ignore[arg-type]
+        job_store=store,  # type: ignore[arg-type]
+    )
+
+    result = worker.run(job_id)
+
+    assert result.candidate_commit_hash == commit_hash
+    assert planning.requests == []
+    assert coding.requests == []
+    assert "repo.commit" not in events
+    assert "repo.push_branch" not in events
+    assert "repo.ensure_remote_commit[refs/heads/loreley-seeds/allocation]" in events
+    assert store.recorded_candidates == [
+        {
+            "job_id": job_id,
+            "commit_hash": commit_hash,
+            "branch_name": "",
+            "run_token": store.recorded_candidates[0]["run_token"],
+            "published": False,
+            "source_tree_hash": f"tree-{commit_hash}",
+        }
+    ]
+    persisted = store.success_calls[0]
+    assert result.plan is None
+    assert result.coding is None
+    assert persisted["plan"] is None
+    assert persisted["coding"] is None
 
 
 def test_run_planning_batches_context_queries_for_base_and_inspirations_gh_n_plus_1(

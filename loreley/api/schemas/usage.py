@@ -81,6 +81,7 @@ class UsageSummaryOut(OrmOutModel):
     by_source: list[UsageSummaryGroupOut] = Field(default_factory=list)
     by_phase: list[UsageSummaryGroupOut] = Field(default_factory=list)
     by_model: list[UsageSummaryGroupOut] = Field(default_factory=list)
+    by_cost_source: list[UsageSummaryGroupOut] = Field(default_factory=list)
 
     @field_validator("cost_usd", mode="before")
     @classmethod

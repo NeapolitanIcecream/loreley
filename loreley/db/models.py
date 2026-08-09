@@ -20,6 +20,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.ext.mutable import MutableDict, MutableList
@@ -47,6 +48,7 @@ class TimestampMixin:
 class JobStatus(str, enum.Enum):
     """Possible job lifecycle states."""
 
+    STAGED = "staged"
     PENDING = "pending"
     QUEUED = "queued"
     RUNNING = "running"
@@ -590,9 +592,21 @@ class EvaluationAttempt(TimestampMixin, Base):
     __table_args__ = (
         Index("ix_evaluation_attempts_candidate_started", "candidate_commit_id", "started_at"),
         Index("ix_evaluation_attempts_job_id", "job_id"),
+        Index(
+            "uq_evaluation_attempts_job_ordinal",
+            "job_id",
+            "attempt_ordinal",
+            unique=True,
+            postgresql_where=text(
+                "job_id IS NOT NULL AND attempt_ordinal IS NOT NULL"
+            ),
+            sqlite_where=text("job_id IS NOT NULL AND attempt_ordinal IS NOT NULL"),
+        ),
         Index("ix_evaluation_attempts_outcome_kind", "outcome_kind"),
         Index("ix_evaluation_attempts_campaign_program_hash", "campaign_program_hash"),
         Index("ix_evaluation_attempts_identity_key", "evaluation_identity_key"),
+        Index("ix_evaluation_attempts_measurement_id", "measurement_id"),
+        Index("ix_evaluation_attempts_reused_from", "reused_from_attempt_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -610,11 +624,57 @@ class EvaluationAttempt(TimestampMixin, Base):
         ForeignKey("evolution_jobs.id", ondelete="CASCADE"),
         nullable=True,
     )
+    run_token: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    attempt_ordinal: Mapped[int | None] = mapped_column(Integer)
+    artifact_paths: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JSONB),
+        default=dict,
+        nullable=False,
+    )
     evaluator_name: Mapped[str | None] = mapped_column(String(128))
     evaluator_version: Mapped[str | None] = mapped_column(String(128))
     campaign_program_hash: Mapped[str | None] = mapped_column(String(64))
     candidate_identity: Mapped[str | None] = mapped_column(String(512))
     evaluation_identity_key: Mapped[str | None] = mapped_column(String(64))
+    protocol: Mapped[str] = mapped_column(String(32), default="one_shot", nullable=False)
+    measurement_cache_key: Mapped[str | None] = mapped_column(String(64))
+    measurement_contract_fingerprint: Mapped[str | None] = mapped_column(String(512))
+    measurement_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "evaluation_measurements.id",
+            name="fk_evaluation_attempts_measurement_id",
+            use_alter=True,
+            ondelete="SET NULL",
+        ),
+    )
+    measurement_reused: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    measurement_executed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    reuse_kind: Mapped[str] = mapped_column(String(32), default="none", nullable=False)
+    reused_from_attempt_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "evaluation_attempts.id",
+            name="fk_evaluation_attempts_reused_from_attempt_id",
+            use_alter=True,
+            ondelete="SET NULL",
+        ),
+    )
+    evaluator_slot: Mapped[int | None] = mapped_column(Integer)
+    evaluator_slot_scope: Mapped[str | None] = mapped_column(String(32))
+    evaluator_slot_wait_seconds: Mapped[float | None] = mapped_column(Float)
+    evaluator_slot_acquired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    evaluator_slot_released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    evaluator_slot_lease_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "evaluation_resource_leases.id",
+            name="fk_evaluation_attempts_slot_lease_id",
+            use_alter=True,
+            ondelete="SET NULL",
+        ),
+    )
+    evaluator_slot_release_reason: Mapped[str | None] = mapped_column(String(64))
     outcome_kind: Mapped[str] = mapped_column(String(32), nullable=False)
     failure_kind: Mapped[str | None] = mapped_column(String(64))
     failure_stage: Mapped[str | None] = mapped_column(String(32))
@@ -628,6 +688,113 @@ class EvaluationAttempt(TimestampMixin, Base):
     artifact_policy_version: Mapped[str | None] = mapped_column(String(64))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class EvaluationMeasurement(TimestampMixin, Base):
+    """One accepted, cacheable evaluator measurement with immutable provenance."""
+
+    __tablename__ = "evaluation_measurements"
+    __table_args__ = (
+        UniqueConstraint("cache_key", name="uq_evaluation_measurements_cache_key"),
+        Index("ix_evaluation_measurements_identity_key", "evaluation_identity_key"),
+        Index("ix_evaluation_measurements_source_attempt", "source_evaluation_attempt_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    cache_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    candidate_identity: Mapped[str] = mapped_column(String(512), nullable=False)
+    evaluation_identity_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    evaluator_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    evaluator_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    campaign_program_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    measurement_contract_fingerprint: Mapped[str] = mapped_column(String(512), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JSONB),
+        default=dict,
+        nullable=False,
+    )
+    payload_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    evidence_manifest: Mapped[list[dict[str, Any]]] = mapped_column(
+        MutableList.as_mutable(JSONB),
+        default=list,
+        nullable=False,
+    )
+    source_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("evolution_jobs.id", ondelete="SET NULL"),
+    )
+    source_candidate_commit_hash: Mapped[str | None] = mapped_column(String(64))
+    source_evaluation_attempt_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "evaluation_attempts.id",
+            name="fk_evaluation_measurements_source_attempt_id",
+            use_alter=True,
+            ondelete="SET NULL",
+        ),
+    )
+    accepted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
+class EvaluationConcurrencyContract(TimestampMixin, Base):
+    """Single-tenant evaluator concurrency contract shared by all workers."""
+
+    __tablename__ = "evaluation_concurrency_contracts"
+    contract_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    experiment_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    evaluator_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    evaluator_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    campaign_program_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    max_concurrency: Mapped[int | None] = mapped_column(Integer)
+    limit_scope: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class EvaluationResourceLease(TimestampMixin, Base):
+    """Append-only observability row for an evaluator advisory-lock acquisition."""
+
+    __tablename__ = "evaluation_resource_leases"
+    __table_args__ = (
+        Index("ix_evaluation_resource_leases_status_requested", "status", "requested_at"),
+        Index("ix_evaluation_resource_leases_job_id", "job_id"),
+        Index("ix_evaluation_resource_leases_resource", "resource_kind", "resource_key"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    resource_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    resource_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    contract_key: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("evaluation_concurrency_contracts.contract_key", ondelete="SET NULL"),
+    )
+    slot_index: Mapped[int | None] = mapped_column(Integer)
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("evolution_jobs.id", ondelete="SET NULL"),
+    )
+    run_token: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    worker_id: Mapped[str | None] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(String(32), default="waiting", nullable=False)
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    acquired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    wait_seconds: Mapped[float | None] = mapped_column(Float)
+    release_reason: Mapped[str | None] = mapped_column(String(64))
 
 
 class EvolutionJob(TimestampMixin, Base):
@@ -666,6 +833,35 @@ class EvolutionJob(TimestampMixin, Base):
             "island_id",
             "sampling_ordinal",
             unique=True,
+        ),
+        Index(
+            "uq_evolution_jobs_external_submission_key",
+            "external_submission_key",
+            unique=True,
+            postgresql_where=text("external_submission_key <> ''"),
+            sqlite_where=text("external_submission_key <> ''"),
+        ),
+        Index(
+            "uq_evolution_jobs_manual_seed_commit",
+            "input_candidate_commit_hash",
+            unique=True,
+            postgresql_where=text(
+                "job_kind = 'manual_seed' AND input_candidate_commit_hash IS NOT NULL"
+            ),
+            sqlite_where=text(
+                "job_kind = 'manual_seed' AND input_candidate_commit_hash IS NOT NULL"
+            ),
+        ),
+        CheckConstraint(
+            "(execution_mode = 'agent' AND input_candidate_commit_hash IS NULL) OR "
+            "(execution_mode = 'evaluate_existing' AND input_candidate_commit_hash IS NOT NULL)",
+            name="ck_evolution_jobs_execution_input",
+        ),
+        CheckConstraint(
+            "job_kind <> 'manual_seed' OR "
+            "(execution_mode = 'evaluate_existing' AND is_seed_job = TRUE "
+            "AND archive_ingestion_enabled = TRUE)",
+            name="ck_evolution_jobs_manual_seed_contract",
         ),
     )
 
@@ -723,6 +919,24 @@ class EvolutionJob(TimestampMixin, Base):
     sampling_recipe_reused: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_seed_job: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     job_kind: Mapped[str] = mapped_column(String(32), default="evolution", nullable=False)
+    execution_mode: Mapped[str] = mapped_column(String(32), default="agent", nullable=False)
+    input_candidate_commit_hash: Mapped[str | None] = mapped_column(String(64))
+    input_candidate_summary: Mapped[str | None] = mapped_column(Text)
+    external_submission_key: Mapped[str] = mapped_column(
+        String(64),
+        default="",
+        nullable=False,
+    )
+    input_provenance: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JSONB),
+        default=dict,
+        nullable=False,
+    )
+    archive_ingestion_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+        nullable=False,
+    )
     repair_source_candidate_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("candidate_commits.id", ondelete="SET NULL"),
@@ -752,6 +966,8 @@ class EvolutionJob(TimestampMixin, Base):
     recovery_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
+    failure_stage: Mapped[str | None] = mapped_column(String(32))
+    failure_kind: Mapped[str | None] = mapped_column(String(64))
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return f"<EvolutionJob id={self.id} status={self.status}>"
@@ -838,10 +1054,26 @@ class EvaluationArtifactRecord(TimestampMixin, Base):
 
     __tablename__ = "evaluation_artifacts"
     __table_args__ = (
-        UniqueConstraint("job_id", "key", name="uq_evaluation_artifacts_job_key"),
+        Index(
+            "uq_evaluation_artifacts_attempt_key",
+            "evaluation_attempt_id",
+            "key",
+            unique=True,
+            postgresql_where=text("evaluation_attempt_id IS NOT NULL"),
+            sqlite_where=text("evaluation_attempt_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_evaluation_artifacts_legacy_job_key",
+            "job_id",
+            "key",
+            unique=True,
+            postgresql_where=text("evaluation_attempt_id IS NULL"),
+            sqlite_where=text("evaluation_attempt_id IS NULL"),
+        ),
         Index("ix_evaluation_artifacts_job_id", "job_id"),
         Index("ix_evaluation_artifacts_commit_hash", "commit_hash"),
         Index("ix_evaluation_artifacts_commit_card_id", "commit_card_id"),
+        Index("ix_evaluation_artifacts_attempt_id", "evaluation_attempt_id"),
         Index(
             "ix_evaluation_artifacts_visibility_projection",
             "visibility",
@@ -863,6 +1095,10 @@ class EvaluationArtifactRecord(TimestampMixin, Base):
         UUID(as_uuid=True),
         ForeignKey("commit_cards.id", ondelete="SET NULL"),
         nullable=True,
+    )
+    evaluation_attempt_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("evaluation_attempts.id", ondelete="SET NULL"),
     )
     commit_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     key: Mapped[str] = mapped_column(String(128), nullable=False)

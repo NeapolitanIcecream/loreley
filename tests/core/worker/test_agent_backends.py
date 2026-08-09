@@ -986,7 +986,7 @@ def test_kilocode_cli_backend_titles_session_and_reads_usage_db(
     assert event.model == "openai/gpt-5.2"
     assert event.cached_input_tokens == 100
     assert event.cache_write_tokens == 5
-    assert event.cost_source == "provider_reported"
+    assert event.cost_source == "catalog"
     assert str(event.cost_usd) == "0.025"
     assert event.raw_usage["accounting_source"] == "kilo_session_tree"
     assert event.raw_usage["message_count"] == 0

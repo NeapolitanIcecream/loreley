@@ -10,6 +10,7 @@ This CLI is designed to:
 from contextlib import nullcontext, redirect_stdout
 from datetime import datetime
 import os
+from pathlib import Path
 import sys
 import json
 from enum import Enum
@@ -62,6 +63,8 @@ archive_app = typer.Typer(help="Inspect MAP-Elites archives.")
 app.add_typer(archive_app, name="archive")
 embedding_cache_app = typer.Typer(help="Manage repo-state embedding cache manifests and imports.")
 app.add_typer(embedding_cache_app, name="embedding-cache")
+seeds_app = typer.Typer(help="Import and inspect user-supplied seed candidates.")
+app.add_typer(seeds_app, name="seeds")
 
 
 class DoctorRole(str, Enum):
@@ -157,7 +160,13 @@ def _job_summary_payload(
     return {
         "job_id": str(getattr(job, "id", "")),
         "status": _job_status_value(getattr(job, "status", None)),
+        "job_kind": str(getattr(job, "job_kind", "evolution") or "evolution"),
+        "execution_mode": str(getattr(job, "execution_mode", "agent") or "agent"),
         "base_commit_hash": getattr(job, "base_commit_hash", None),
+        "input_candidate_commit_hash": getattr(job, "input_candidate_commit_hash", None),
+        "archive_ingestion_enabled": bool(
+            getattr(job, "archive_ingestion_enabled", True)
+        ),
         "island_id": getattr(job, "island_id", None),
         "recovery_count": int(getattr(job, "recovery_count", 0) or 0),
         "result_commit_hash": getattr(job, "result_commit_hash", None),
@@ -182,6 +191,9 @@ def _job_detail_payload(
         "heartbeat_at": _iso_or_none(getattr(job, "heartbeat_at", None)),
         "lease_expires_at": _iso_or_none(getattr(job, "lease_expires_at", None)),
         "lease": _job_lease_payload(job=job, now=now),
+        "input_candidate_summary": getattr(job, "input_candidate_summary", None),
+        "external_submission_key": getattr(job, "external_submission_key", None),
+        "input_provenance": dict(getattr(job, "input_provenance", {}) or {}),
     }
 
 
@@ -282,8 +294,9 @@ def _status_response_payload(
     archive_stats: dict[str, object],
     best_commit: dict[str, object] | None,
     baseline: dict[str, object] | None = None,
+    progress: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "instance": instance_payload,
         "jobs": jobs_payload,
         "job_leases": lease_payload,
@@ -291,6 +304,9 @@ def _status_response_payload(
         "best_commit": best_commit,
         "baseline": baseline,
     }
+    if progress is not None:
+        payload["progress"] = progress
+    return payload
 
 
 def _failed_stale_job_conditions(
@@ -770,13 +786,13 @@ def scheduler(
 @app.command()
 def worker(
     ctx: typer.Context,
-    processes: int = typer.Option(
-        1,
+    processes: int | None = typer.Option(
+        None,
         "--processes",
         "-p",
         min=1,
-        help="Number of isolated worker processes (one thread each).",
-        show_default=True,
+        help="Override WORKER_PROCESSES for this invocation.",
+        show_default=False,
     ),
     no_preflight: bool = typer.Option(False, "--no-preflight", help="Skip preflight validation."),
     preflight_timeout_seconds: float = typer.Option(
@@ -792,7 +808,7 @@ def worker(
     code = run_worker(
         settings=settings,
         console=console,
-        processes=int(processes),
+        processes=int(processes or settings.worker_processes),
         preflight=not bool(no_preflight),
         preflight_timeout_seconds=float(preflight_timeout_seconds),
     )
@@ -1180,6 +1196,15 @@ def status(
                 settings=settings,
             )
             instance_payload = _instance_status_payload(instance)
+            try:
+                from loreley.core.progress import load_campaign_progress
+
+                progress_payload = load_campaign_progress(session, settings).as_dict()
+            except Exception as exc:
+                # Extended progress is unavailable against older schemas and in
+                # deliberately minimal status clients.  Keep the legacy status
+                # payload usable while migrations are being rolled out.
+                progress_payload = None
     except typer.Exit:
         raise
     except Exception as exc:  # pragma: no cover - defensive
@@ -1195,6 +1220,7 @@ def status(
         archive_stats=archive_stats,
         best_commit=best_commit,
         baseline=baseline,
+        progress=progress_payload,
     )
 
     if json_output:
@@ -1219,6 +1245,22 @@ def status(
     table.add_section()
     table.add_row("unfinished_jobs", str(jobs_payload["unfinished"]))
     table.add_row("pending_ingestion", str(jobs_payload["pending_ingestion"]))
+    if progress_payload:
+        table.add_row("terminal_jobs", str(progress_payload["terminal_jobs"]))
+        table.add_row("staged_jobs", str(progress_payload.get("staged_jobs", 0)))
+        table.add_row("succeeded_jobs", str(progress_payload["succeeded_jobs"]))
+        table.add_row("failed_jobs", str(progress_payload["failed_jobs"]))
+        table.add_row(
+            "distinct_passed_trees",
+            str(progress_payload["distinct_passed_source_trees"]),
+        )
+        table.add_row(
+            "distinct_evaluation_identities",
+            str(progress_payload["distinct_passed_evaluation_identities"]),
+        )
+        table.add_row("real_measurements", str(progress_payload["real_measurements"]))
+        table.add_row("measurement_reuses", str(progress_payload["measurement_reuses"]))
+        table.add_row("exact_tree_reuses", str(progress_payload["exact_tree_reuses"]))
 
     table.add_section()
     table.add_row("running_jobs", str(lease_payload["running"]))
@@ -1228,6 +1270,27 @@ def status(
     table.add_row("lease_ttl_seconds", str(lease_payload["lease_ttl_seconds"]))
     table.add_row("heartbeat_interval_seconds", str(lease_payload["heartbeat_interval_seconds"]))
     table.add_row("max_recovery_attempts", str(lease_payload["max_recovery_attempts"]))
+    if progress_payload:
+        table.add_row(
+            "algorithm_max_unfinished_u",
+            str(progress_payload["scheduler_max_unfinished_jobs"]),
+        )
+        table.add_row(
+            "configured_worker_processes_w",
+            str(progress_payload.get("configured_worker_processes") or "n/a"),
+        )
+        table.add_row(
+            "evaluator_concurrency_e",
+            str(progress_payload.get("evaluator_max_concurrency") or "unlimited"),
+        )
+        table.add_row(
+            "evaluator_slot_holders",
+            str(progress_payload["evaluator_slot_holders"]),
+        )
+        table.add_row(
+            "evaluator_slot_waiters",
+            str(progress_payload["evaluator_slot_waiters"]),
+        )
 
     table.add_section()
     table.add_row("island_id", str(archive_stats.get("island_id") or effective_island))
@@ -1248,6 +1311,26 @@ def status(
         "objectives",
         str(archive_stats.get("objective_count") or "n/a"),
     )
+    if progress_payload:
+        table.add_row("archive_entries_global", str(progress_payload["archive_entries"]))
+        table.add_row(
+            "archive_unique_identities_global",
+            str(progress_payload["archive_unique_evaluation_identities"]),
+        )
+        table.add_row(
+            "occupied_coordinates_global",
+            str(progress_payload["occupied_coordinates"]),
+        )
+        if progress_payload.get("identity_target") is not None:
+            table.add_row(
+                "identity_endpoint",
+                "{}/{} reached={} overshoot={}".format(
+                    progress_payload["distinct_passed_evaluation_identities"],
+                    progress_payload["identity_target"],
+                    progress_payload["identity_target_reached"],
+                    progress_payload["identity_overshoot"],
+                ),
+            )
 
     table.add_section()
     if best_commit:
@@ -1284,6 +1367,52 @@ def status(
             table.add_row("baseline_failure", str(baseline.get("failure_kind")))
 
     console.print(table)
+
+
+@seeds_app.command("import")
+def import_manual_seeds(
+    ctx: typer.Context,
+    manifest: Path = typer.Argument(
+        ...,
+        exists=True,
+        dir_okay=False,
+        readable=True,
+        resolve_path=True,
+        help="YAML or JSON manual-seed manifest.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Print the import result as JSON.",
+        show_default=True,
+    ),
+) -> None:
+    """Create idempotent, archive-eligible jobs for user-supplied seed commits."""
+
+    settings = _load_settings_or_exit()
+    _configure_logging_or_exit(settings=settings, role="seeds", override_level=_get_log_level(ctx))
+    try:
+        from loreley.core.manual_seeds import import_manual_seed_manifest
+
+        result = import_manual_seed_manifest(
+            settings=settings,
+            manifest_path=manifest,
+        )
+    except Exception as exc:
+        console.print(f"[bold red]Failed to import manual seeds[/] reason={exc}")
+        raise typer.Exit(code=1) from exc
+
+    payload = result.as_dict()
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return
+    console.print(
+        "[bold green]Manual seeds imported[/] "
+        f"created={result.created} existing={result.existing} "
+        f"manifest_sha256={result.manifest_sha256}"
+    )
+    if result.created:
+        console.print("Run the scheduler to dispatch the new seed jobs.")
 
 
 @jobs_app.command("retry")
@@ -1461,7 +1590,11 @@ def inspect_job(
     table.add_column("value")
     for key in (
         "status",
+        "job_kind",
+        "execution_mode",
         "base_commit_hash",
+        "input_candidate_commit_hash",
+        "archive_ingestion_enabled",
         "island_id",
         "recovery_count",
         "result_commit_hash",
@@ -1472,6 +1605,8 @@ def inspect_job(
         "started_at",
         "completed_at",
         "last_error",
+        "input_candidate_summary",
+        "external_submission_key",
     ):
         table.add_row(str(key), _display_or_na(payload.get(key)))
     table.add_section()

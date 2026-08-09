@@ -37,6 +37,9 @@ def _load_migrations() -> tuple[SchemaMigration, ...]:
         v0016_candidate_identities,
         v0017_sampling_recipe_and_source_tree,
         v0018_full_change_summaries,
+        v0019_evaluation_runtime,
+        v0020_supplied_candidates,
+        v0021_append_only_evaluation_evidence,
     )
 
     return (
@@ -53,6 +56,9 @@ def _load_migrations() -> tuple[SchemaMigration, ...]:
         v0016_candidate_identities.MIGRATION,
         v0017_sampling_recipe_and_source_tree.MIGRATION,
         v0018_full_change_summaries.MIGRATION,
+        v0019_evaluation_runtime.MIGRATION,
+        v0020_supplied_candidates.MIGRATION,
+        v0021_append_only_evaluation_evidence.MIGRATION,
     )
 
 

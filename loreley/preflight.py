@@ -496,9 +496,6 @@ def _scheduler_requires_openai_api_key(settings: Settings) -> bool:
 
 
 def _worker_requires_openai_api_key(settings: Settings) -> bool:
-    model = str(getattr(settings, "mapelites_code_embedding_model", "") or "").strip().lower()
-    if not model.startswith("local-hash"):
-        return True
     trajectory_enabled = (
         int(getattr(settings, "worker_planning_trajectory_max_chunks", 0) or 0) > 0
     )
@@ -602,16 +599,57 @@ def _check_openai_api_key_for_scheduler(settings: Settings) -> CheckResult:
 
 
 def _check_openai_api_key_for_worker(settings: Settings) -> CheckResult:
-    dynamic_check = _check_dynamic_openai_auth(settings)
-    if dynamic_check is not None:
-        return dynamic_check
-    if not _worker_requires_openai_api_key(settings) and not (settings.openai_api_key or "").strip():
+    if not _worker_requires_openai_api_key(settings):
         return CheckResult(
             "openai_api_key",
             "ok",
-            "not required: local-hash embeddings are enabled and trajectory summarization is disabled.",
+            "not required: global trajectory summarization is disabled; embeddings run in the scheduler.",
         )
+    dynamic_check = _check_dynamic_openai_auth(settings)
+    if dynamic_check is not None:
+        return dynamic_check
     return check_openai_api_key(settings.openai_api_key, required=True)
+
+
+def check_embedding_route(settings: Settings) -> CheckResult:
+    """Require an explicit campaign acknowledgement for non-semantic local hashes."""
+
+    model = str(settings.mapelites_code_embedding_model or "").strip()
+    if not model.lower().startswith("local-hash"):
+        return CheckResult(
+            "embedding_route",
+            "ok",
+            f"semantic embeddings model={model} dimensions={settings.mapelites_code_embedding_dimensions}",
+        )
+    message = (
+        "local-hash embeddings are deterministic test/offline fixtures and do not provide "
+        "semantic diversity"
+    )
+    if not settings.mapelites_local_hash_embedding_acknowledged:
+        return CheckResult(
+            "embedding_route",
+            "fail",
+            message + "; set MAPELITES_LOCAL_HASH_EMBEDDING_ACKNOWLEDGED=true to proceed",
+        )
+    return CheckResult("embedding_route", "warn", message + "; explicitly acknowledged")
+
+
+def check_effective_model_routes(settings: Settings) -> list[CheckResult]:
+    """Expose the secret-free routes used by the worker and scheduler."""
+
+    from loreley.core.model_routes import resolve_effective_routes
+
+    routes = resolve_effective_routes(settings)
+    results: list[CheckResult] = []
+    for name in ("planning", "coding", "trajectory_summary", "embedding", "commit_summary"):
+        route = routes[name]
+        details = " ".join(
+            f"{key}={value}"
+            for key, value in route.items()
+            if value is not None and key not in {"enabled"}
+        )
+        results.append(CheckResult(f"effective_route_{name}", "ok", details))
+    return results
 
 
 def check_evaluator_plugin(
@@ -643,10 +681,47 @@ def check_evaluator_plugin(
         from loreley.core.worker.evaluator import Evaluator
 
         evaluator = Evaluator(settings=settings)
-        evaluator._ensure_callable()  # noqa: SLF001 - preflight intentionally peeks internals
-        return CheckResult("evaluator_plugin", "ok", f"importable: {plugin_ref}")
+        phased = evaluator.supports_phased_evaluation()
+        if not phased:
+            evaluator._ensure_callable()  # noqa: SLF001 - validates legacy extension point
+        protocol = "phased-v1" if phased else "one_shot"
+        identity = evaluator.provides_candidate_identity()
+        return CheckResult(
+            "evaluator_plugin",
+            "ok",
+            f"importable: {plugin_ref} protocol={protocol} provides_identity={identity}",
+        )
     except Exception as exc:
         return CheckResult("evaluator_plugin", "fail", f"failed to import {plugin_ref!r} ({exc})")
+
+
+def check_unique_identity_endpoint(settings: Settings) -> CheckResult:
+    """Reject an identity target that the configured evaluator cannot satisfy."""
+
+    target = settings.scheduler_max_unique_evaluation_identities
+    if target is None:
+        return CheckResult("unique_identity_endpoint", "ok", "disabled")
+    try:
+        from loreley.core.worker.evaluator import Evaluator
+
+        evaluator = Evaluator(settings=settings)
+        if not evaluator.provides_candidate_identity():
+            return CheckResult(
+                "unique_identity_endpoint",
+                "fail",
+                "configured evaluator does not declare a stable candidate identity",
+            )
+    except Exception as exc:
+        return CheckResult(
+            "unique_identity_endpoint",
+            "fail",
+            f"could not validate evaluator identity capability ({exc})",
+        )
+    return CheckResult(
+        "unique_identity_endpoint",
+        "ok",
+        f"at-least target={int(target)} using full evaluation_identity_key",
+    )
 
 
 def _check_agent_backend(
@@ -671,13 +746,14 @@ def _check_agent_backend(
 
     if not backend_ref:
         # Default: Kilocode CLI backend.
+        from loreley.core.model_routes import resolve_kilocode_phase_model
         from loreley.core.worker.agent.backends import KilocodeCliBackend
 
         backend = KilocodeCliBackend(
             bin=str(default_bin),
             mode=settings.worker_kilocode_mode,
             agent=settings.worker_kilocode_agent or settings.worker_kilocode_mode,
-            model=settings.worker_kilocode_model,
+            model=resolve_kilocode_phase_model(settings, kind),
             variant=settings.worker_kilocode_variant,
             pure=bool(settings.worker_kilocode_pure),
             json_output=bool(settings.worker_kilocode_json_output),
@@ -1058,7 +1134,10 @@ def preflight_scheduler(settings: Settings, *, timeout_seconds: float = 2.0) -> 
         )
     )
     results.append(check_embedding_dimensions(settings))
+    results.append(check_embedding_route(settings))
+    results.extend(check_effective_model_routes(settings))
     results.append(check_scheduler_max_total_jobs(settings))
+    results.append(check_unique_identity_endpoint(settings))
     results.append(check_campaign_program(settings))
 
     goal = (settings.worker_evolution_global_goal or "").strip()
@@ -1082,6 +1161,7 @@ def preflight_worker(settings: Settings, *, timeout_seconds: float = 2.0) -> lis
     results.append(check_binary(settings.worker_repo_git_bin or "git", label="git"))
     results.append(_check_openai_api_key_for_worker(settings))
     results.append(check_trajectory_summary_provider(settings))
+    results.extend(check_effective_model_routes(settings))
     _append_database_schema_checks(results, settings=settings, timeout_seconds=timeout_seconds)
     results.append(
         check_redis(

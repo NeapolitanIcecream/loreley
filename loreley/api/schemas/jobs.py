@@ -28,6 +28,9 @@ class JobOut(OrmOutModel):
 
     is_seed_job: bool = False
     job_kind: str = "evolution"
+    execution_mode: str = "agent"
+    input_candidate_commit_hash: str | None = None
+    archive_ingestion_enabled: bool = True
     repair_source_candidate_id: UUID | None = None
     repair_mode: str | None = None
     result_commit_hash: str | None = None
@@ -50,6 +53,9 @@ class JobOut(OrmOutModel):
 
 
 class JobDetailOut(JobOut):
+    input_candidate_summary: str | None = None
+    external_submission_key: str = ""
+    input_provenance: dict[str, object] = Field(default_factory=dict)
     candidate_commit_hash: str | None = None
     candidate_branch_name: str | None = None
     candidate_published_at: datetime | None = None
@@ -77,6 +83,45 @@ class JobDetailOut(JobOut):
     artifacts: "JobArtifactsOut | None" = None
     evaluation_artifacts: list[EvaluationArtifactOut] = Field(default_factory=list)
     evaluation_agent_feedback: EvaluationAgentFeedbackOut | None = None
+    latest_evaluation_attempt: "EvaluationAttemptOut | None" = None
+
+
+class MeasurementEvidenceOut(OrmOutModel):
+    key: str
+    sha256: str
+    size_bytes: int | None = None
+
+
+class EvaluationAttemptOut(OrmOutModel):
+    id: UUID
+    attempt_ordinal: int | None = None
+    protocol: str
+    outcome_kind: str
+    evaluator_name: str | None = None
+    evaluator_version: str | None = None
+    campaign_program_hash: str | None = None
+    candidate_identity: str | None = None
+    evaluation_identity_key: str | None = None
+    measurement_cache_key: str | None = None
+    measurement_contract_fingerprint: str | None = None
+    measurement_id: UUID | None = None
+    measurement_reused: bool = False
+    measurement_executed: bool = False
+    reuse_kind: str = "none"
+    reused_from_attempt_id: UUID | None = None
+    measurement_payload_sha256: str | None = None
+    measurement_evidence: list[MeasurementEvidenceOut] = Field(default_factory=list)
+    evaluator_slot: int | None = None
+    evaluator_slot_scope: str | None = None
+    evaluator_slot_wait_seconds: float | None = None
+    evaluator_slot_acquired_at: datetime | None = None
+    evaluator_slot_released_at: datetime | None = None
+    evaluator_slot_release_reason: str | None = None
+    failure_stage: str | None = None
+    failure_kind: str | None = None
+    safe_failure_summary: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
 
 
 class JobArtifactsOut(OrmOutModel):
