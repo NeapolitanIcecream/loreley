@@ -27,3 +27,88 @@ jobs:
 
       - name: Run pytest
         run: uv run pytest
+
+  package:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository and tags
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Build wheel and source distribution
+        run: uv build
+
+      - name: Verify source distribution scope
+        run: |
+          sdist_path="$(find dist -maxdepth 1 -name '*.tar.gz' -print -quit)"
+          test -n "$sdist_path"
+          if tar -tzf "$sdist_path" | grep -E '/(docs|tests|tools|quality|examples|benchmarks)/'; then
+            exit 1
+          fi
+          scan_dir="$(mktemp -d)"
+          tar -xzf "$sdist_path" -C "$scan_dir"
+          if grep -RIlE '/Users/|chenmohan|BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|Bearer[[:space:]]+[A-Za-z0-9._-]{12,}|sk-[A-Za-z0-9_-]{16,}|postgresql(\+[^:]*)?://[^/@[:space:]]+:[^/@[:space:]]+@' "$scan_dir"; then
+            exit 1
+          fi
+
+      - name: Upload distributions from the clean checkout
+        uses: actions/upload-artifact@v4
+        with:
+          name: loreley-distributions
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  package-smoke:
+    needs: package
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12', '3.13']
+
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Download built distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: loreley-distributions
+          path: dist
+
+      - name: Install the wheel in a clean environment
+        run: |
+          uv venv --python "${{ matrix.python-version }}" .package-venv
+          wheel_path="$(find dist -maxdepth 1 -name '*.whl' -print -quit)"
+          test -n "$wheel_path"
+          uv pip install --python .package-venv/bin/python "$wheel_path"
+
+      - name: Verify package versions and CLI startup
+        run: |
+          .package-venv/bin/python - <<'PY'
+          from importlib.metadata import version
+          from loreley.api import __version__ as api_version
+          from loreley.ui import __version__ as ui_version
+
+          expected = version("loreley")
+          assert api_version == expected
+          assert ui_version == expected
+          PY
+          .package-venv/bin/loreley --help >/dev/null
