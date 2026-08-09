@@ -758,6 +758,7 @@ wheels = [
 name = "loreley"
 source = { editable = "." }
 dependencies = [
+    { name = "click" },
     { name = "dramatiq", extra = ["redis"] },
     { name = "gitpython" },
     { name = "httpx" },
@@ -797,6 +798,7 @@ ui = [
 
 [package.metadata]
 requires-dist = [
+    { name = "click", specifier = ">=8.1" },
     { name = "coverage", marker = "extra == 'dev'", specifier = ">=7.0" },
     { name = "dramatiq", extras = ["redis"], specifier = ">=2.0.0" },
     { name = "fastapi", marker = "extra == 'ui'", specifier = ">=0.124.4" },

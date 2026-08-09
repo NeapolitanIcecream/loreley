@@ -269,6 +269,7 @@ Use this index as a quick map of the rest of the documentation:
 
 - **Releases**
   - [Unreleased](releases/unreleased.md)
+  - [v0.10.0-alpha](releases/v0.10.0-alpha.md)
   - [v0.9.0-alpha](releases/v0.9.0-alpha.md)
   - [v0.8.4-alpha](releases/v0.8.4-alpha.md)
   - [v0.8.3-alpha](releases/v0.8.3-alpha.md)
