@@ -51,6 +51,19 @@ class CachedMeasurement:
     payload_sha256: str
 
 
+@dataclass(frozen=True, slots=True)
+class _LeaseRequest:
+    resource_kind: str
+    resource_key: str
+    contract_key: str
+    job_id: UUID
+    run_token: UUID
+    deadline: float
+    slot_count: int
+    namespace: str
+    scope: str
+
+
 @dataclass(slots=True)
 class AdvisoryLease:
     """Held PostgreSQL advisory lock plus its durable observability row."""
@@ -77,7 +90,9 @@ class AdvisoryLease:
                 ).scalar()
             )
         except Exception as exc:  # connection death itself releases the lock
-            log.warning("Evaluator advisory unlock failed lease={}: {}", self.lease_id, exc)
+            log.warning(
+                "Evaluator advisory unlock failed lease={}: {}", self.lease_id, exc
+            )
         finally:
             self.connection.close()
             self._released = True
@@ -158,7 +173,9 @@ class EvaluationRuntimeCoordinator:
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self.poll_seconds = max(0.01, float(settings.worker_evaluator_slot_poll_seconds))
+        self.poll_seconds = max(
+            0.01, float(settings.worker_evaluator_slot_poll_seconds)
+        )
 
     def ensure_contract(
         self,
@@ -169,8 +186,12 @@ class EvaluationRuntimeCoordinator:
         limit_scope: str,
     ) -> str:
         if limit_scope not in {"whole", "measurement"}:
-            raise EvaluationRuntimeError(f"Unsupported evaluator limit scope: {limit_scope!r}.")
-        experiment_id = str(self.settings.experiment_id or "default").strip() or "default"
+            raise EvaluationRuntimeError(
+                f"Unsupported evaluator limit scope: {limit_scope!r}."
+            )
+        experiment_id = (
+            str(self.settings.experiment_id or "default").strip() or "default"
+        )
         key = evaluation_contract_key(
             experiment_id=experiment_id,
             evaluator_name=evaluator_name,
@@ -199,7 +220,9 @@ class EvaluationRuntimeCoordinator:
             )
             row = session.get(EvaluationConcurrencyContract, key)
             if row is None:  # pragma: no cover - insert/get invariant
-                raise EvaluationRuntimeError("Evaluator runtime contract was not persisted.")
+                raise EvaluationRuntimeError(
+                    "Evaluator runtime contract was not persisted."
+                )
             if row.limit_scope != limit_scope:
                 raise EvaluationRuntimeError(
                     "Evaluator limit scope disagrees with the persisted contract "
@@ -224,15 +247,17 @@ class EvaluationRuntimeCoordinator:
         if limit is None:
             return None
         return self._acquire_any(
-            resource_kind="evaluator_slot",
-            resource_key=contract_key,
-            contract_key=contract_key,
-            job_id=job_id,
-            run_token=run_token,
-            deadline=deadline,
-            slot_count=int(limit),
-            namespace=_EVALUATOR_SLOT_NAMESPACE,
-            scope="evaluator",
+            _LeaseRequest(
+                resource_kind="evaluator_slot",
+                resource_key=contract_key,
+                contract_key=contract_key,
+                job_id=job_id,
+                run_token=run_token,
+                deadline=deadline,
+                slot_count=int(limit),
+                namespace=_EVALUATOR_SLOT_NAMESPACE,
+                scope="evaluator",
+            )
         )
 
     def acquire_measurement_lock(
@@ -245,17 +270,21 @@ class EvaluationRuntimeCoordinator:
         deadline: float,
     ) -> AdvisoryLease:
         lease = self._acquire_any(
-            resource_kind="measurement_key",
-            resource_key=cache_key,
-            contract_key=contract_key,
-            job_id=job_id,
-            run_token=run_token,
-            deadline=deadline,
-            slot_count=1,
-            namespace=_MEASUREMENT_LOCK_NAMESPACE,
-            scope="measurement_key",
+            _LeaseRequest(
+                resource_kind="measurement_key",
+                resource_key=cache_key,
+                contract_key=contract_key,
+                job_id=job_id,
+                run_token=run_token,
+                deadline=deadline,
+                slot_count=1,
+                namespace=_MEASUREMENT_LOCK_NAMESPACE,
+                scope="measurement_key",
+            )
         )
-        if lease is None:  # pragma: no cover - slot_count=1 always yields a lease or raises
+        if (
+            lease is None
+        ):  # pragma: no cover - slot_count=1 always yields a lease or raises
             raise EvaluationRuntimeError("Failed to acquire measurement lock.")
         return lease
 
@@ -317,79 +346,121 @@ class EvaluationRuntimeCoordinator:
 
     def _acquire_any(
         self,
-        *,
-        resource_kind: str,
-        resource_key: str,
-        contract_key: str,
-        job_id: UUID,
-        run_token: UUID,
-        deadline: float,
-        slot_count: int,
-        namespace: str,
-        scope: str,
+        request: _LeaseRequest,
     ) -> AdvisoryLease:
-        if slot_count < 1:
+        if request.slot_count < 1:
             raise EvaluationRuntimeError("Evaluator slot_count must be at least one.")
         lease_id = uuid4()
         requested_at = monotonic()
-        worker_id = f"{socket.gethostname()}:{os.getpid()}"
-        with session_scope() as session:
-            session.add(
-                EvaluationResourceLease(
-                    id=lease_id,
-                    resource_kind=resource_kind,
-                    resource_key=resource_key,
-                    contract_key=contract_key,
-                    job_id=job_id,
-                    run_token=run_token,
-                    worker_id=worker_id,
-                    status="waiting",
-                )
-            )
-
+        _create_waiting_lease(lease_id=lease_id, request=request)
         connection = _lock_engine(self.settings.database_dsn).connect()
-        if connection.dialect.name != "postgresql":
-            connection.close()
-            _mark_lease_released(lease_id, reason="unsupported_database", status="cancelled")
-            raise EvaluationRuntimeError(
-                "Evaluator concurrency and first-measurement locking require PostgreSQL."
-            )
+        _require_postgres_lock_connection(connection=connection, lease_id=lease_id)
         try:
             while True:
-                for slot in range(slot_count):
-                    advisory_key = _advisory_key(namespace, resource_key, slot)
-                    acquired = bool(
-                        connection.execute(
-                            text("SELECT pg_try_advisory_lock(:key)"),
-                            {"key": advisory_key},
-                        ).scalar()
-                    )
-                    if not acquired:
-                        continue
-                    waited = monotonic() - requested_at
-                    acquired_at = _mark_lease_acquired(
-                        lease_id,
-                        slot_index=slot,
-                        wait_seconds=waited,
-                    )
-                    return AdvisoryLease(
-                        connection=connection,
-                        advisory_key=advisory_key,
-                        lease_id=lease_id,
-                        slot_index=slot,
-                        scope=scope,
-                        wait_seconds=waited,
-                        acquired_at=acquired_at,
-                    )
-                if monotonic() >= deadline:
-                    raise EvaluationRuntimeError(
-                        f"Timed out waiting for {resource_kind} capacity."
-                    )
-                sleep(min(self.poll_seconds, max(0.01, deadline - monotonic())))
+                lease = _try_acquire_requested_slot(
+                    connection=connection,
+                    lease_id=lease_id,
+                    request=request,
+                    requested_at=requested_at,
+                )
+                if lease is not None:
+                    return lease
+                self._wait_for_slot(request)
         except Exception:
             connection.close()
-            _mark_lease_released(lease_id, reason="acquisition_failed", status="cancelled")
+            _mark_lease_released(
+                lease_id, reason="acquisition_failed", status="cancelled"
+            )
             raise
+
+    def _wait_for_slot(self, request: _LeaseRequest) -> None:
+        now = monotonic()
+        if now >= request.deadline:
+            raise EvaluationRuntimeError(
+                f"Timed out waiting for {request.resource_kind} capacity."
+            )
+        sleep(min(self.poll_seconds, max(0.01, request.deadline - now)))
+
+
+def _create_waiting_lease(*, lease_id: UUID, request: _LeaseRequest) -> None:
+    with session_scope() as session:
+        session.add(
+            EvaluationResourceLease(
+                id=lease_id,
+                resource_kind=request.resource_kind,
+                resource_key=request.resource_key,
+                contract_key=request.contract_key,
+                job_id=request.job_id,
+                run_token=request.run_token,
+                worker_id=f"{socket.gethostname()}:{os.getpid()}",
+                status="waiting",
+            )
+        )
+
+
+def _require_postgres_lock_connection(
+    *, connection: Connection, lease_id: UUID
+) -> None:
+    if connection.dialect.name == "postgresql":
+        return
+    connection.close()
+    _mark_lease_released(lease_id, reason="unsupported_database", status="cancelled")
+    raise EvaluationRuntimeError(
+        "Evaluator concurrency and first-measurement locking require PostgreSQL."
+    )
+
+
+def _try_acquire_requested_slot(
+    *,
+    connection: Connection,
+    lease_id: UUID,
+    request: _LeaseRequest,
+    requested_at: float,
+) -> AdvisoryLease | None:
+    for slot in range(request.slot_count):
+        advisory_key = _advisory_key(request.namespace, request.resource_key, slot)
+        acquired = bool(
+            connection.execute(
+                text("SELECT pg_try_advisory_lock(:key)"),
+                {"key": advisory_key},
+            ).scalar()
+        )
+        if acquired:
+            return _acquired_lease(
+                connection=connection,
+                lease_id=lease_id,
+                request=request,
+                slot=slot,
+                advisory_key=advisory_key,
+                requested_at=requested_at,
+            )
+    return None
+
+
+def _acquired_lease(
+    *,
+    connection: Connection,
+    lease_id: UUID,
+    request: _LeaseRequest,
+    slot: int,
+    advisory_key: int,
+    requested_at: float,
+) -> AdvisoryLease:
+    waited = monotonic() - requested_at
+    acquired_at = _mark_lease_acquired(
+        lease_id,
+        slot_index=slot,
+        wait_seconds=waited,
+    )
+    return AdvisoryLease(
+        connection=connection,
+        advisory_key=advisory_key,
+        lease_id=lease_id,
+        slot_index=slot,
+        scope=request.scope,
+        wait_seconds=waited,
+        acquired_at=acquired_at,
+    )
 
 
 def _require_intact_cached_evidence(
@@ -418,29 +489,60 @@ def _require_intact_cached_evidence(
             raise EvaluationRuntimeError(
                 f"Accepted measurement {measurement.id} evidence {key!r} has no artifact record."
             )
-        expected_sha = str(item.get("sha256") or "").lower()
-        expected_size = item.get("size_bytes")
-        if str(artifact.sha256 or "").lower() != expected_sha or (
-            expected_size is not None
-            and int(artifact.size_bytes or -1) != int(expected_size)
-        ):
-            raise EvaluationRuntimeError(
-                f"Accepted measurement {measurement.id} evidence {key!r} artifact metadata drifted."
-            )
-        path = Path(str(artifact.storage_path or ""))
-        if not path.is_file():
-            raise EvaluationRuntimeError(
-                f"Accepted measurement {measurement.id} evidence {key!r} payload is unavailable."
-            )
-        if path.stat().st_size != int(artifact.size_bytes or -1):
-            raise EvaluationRuntimeError(
-                f"Accepted measurement {measurement.id} evidence {key!r} payload size drifted."
-            )
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        if digest != expected_sha:
-            raise EvaluationRuntimeError(
-                f"Accepted measurement {measurement.id} evidence {key!r} payload hash drifted."
-            )
+        _require_cached_artifact_metadata(
+            measurement_id=measurement.id,
+            key=key,
+            expected=item,
+            artifact=artifact,
+        )
+        _require_cached_artifact_bytes(
+            measurement_id=measurement.id,
+            key=key,
+            artifact=artifact,
+        )
+
+
+def _require_cached_artifact_metadata(
+    *,
+    measurement_id: UUID,
+    key: str,
+    expected: Mapping[str, Any],
+    artifact: EvaluationArtifactRecord,
+) -> None:
+    expected_sha = str(expected.get("sha256") or "").lower()
+    expected_size = expected.get("size_bytes")
+    sha_matches = str(artifact.sha256 or "").lower() == expected_sha
+    size_matches = expected_size is None or int(artifact.size_bytes or -1) == int(
+        expected_size
+    )
+    if not (sha_matches and size_matches):
+        raise EvaluationRuntimeError(
+            f"Accepted measurement {measurement_id} evidence {key!r} artifact metadata drifted."
+        )
+
+
+def _require_cached_artifact_bytes(
+    *,
+    measurement_id: UUID,
+    key: str,
+    artifact: EvaluationArtifactRecord,
+) -> None:
+    path = Path(str(artifact.storage_path or ""))
+    if not path.is_file():
+        raise EvaluationRuntimeError(
+            f"Accepted measurement {measurement_id} evidence {key!r} payload is unavailable."
+        )
+    if path.stat().st_size != int(artifact.size_bytes or -1):
+        raise EvaluationRuntimeError(
+            f"Accepted measurement {measurement_id} evidence {key!r} payload size drifted."
+        )
+    if (
+        hashlib.sha256(path.read_bytes()).hexdigest()
+        != str(artifact.sha256 or "").lower()
+    ):
+        raise EvaluationRuntimeError(
+            f"Accepted measurement {measurement_id} evidence {key!r} payload hash drifted."
+        )
 
 
 def _mark_lease_acquired(
@@ -487,7 +589,9 @@ def _db_now(session: Any) -> Any:
 
 
 def _advisory_key(namespace: str, resource_key: str, slot: int) -> int:
-    digest = hashlib.sha256(f"{namespace}:{resource_key}:{slot}".encode("utf-8")).digest()
+    digest = hashlib.sha256(
+        f"{namespace}:{resource_key}:{slot}".encode("utf-8")
+    ).digest()
     return int.from_bytes(digest[:8], byteorder="big", signed=True)
 
 
@@ -505,7 +609,9 @@ def _canonical_json(payload: Mapping[str, Any]) -> bytes:
             allow_nan=False,
         ).encode("utf-8")
     except (TypeError, ValueError) as exc:
-        raise EvaluationRuntimeError("Measurement payload must be canonical JSON.") from exc
+        raise EvaluationRuntimeError(
+            "Measurement payload must be canonical JSON."
+        ) from exc
 
 
 __all__ = [

@@ -2,10 +2,20 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from loreley.config import Settings
+
+
+@dataclass(frozen=True, slots=True)
+class _KiloRouteResolution:
+    mode: str
+    provider: str
+    api_spec: object
+    base_url: str | None
+    gateway: bool
 
 
 def resolve_effective_routes(settings: Settings) -> dict[str, dict[str, Any]]:
@@ -83,21 +93,46 @@ def _agent_route(
 ) -> dict[str, Any]:
     backend_ref = str(getattr(settings, f"worker_{phase}_backend", "") or "").strip()
     if not _is_kilocode_backend(backend_ref):
-        return {
-            "backend": backend_ref or "backend_defined",
-            "provider_mode": "backend_defined",
-            "provider": "unknown",
-            "model": _non_empty(
-                getattr(settings, f"worker_{phase}_codex_model", None)
-            ),
-            "variant": None,
-            "reasoning": "backend_defined",
-            "api_surface": "backend_defined",
-            "base_url_host": None,
-        }
-
+        return _backend_defined_route(settings, phase, backend_ref)
     model = resolve_kilocode_phase_model(settings, phase)
-    configured_mode = str(settings.worker_kilocode_provider_config_mode or "auto").strip().lower()
+    route = _resolve_kilo_route(settings, model)
+    variant = _non_empty(settings.worker_kilocode_variant)
+    return {
+        "backend": "kilo",
+        "provider_mode": route.mode,
+        "provider": route.provider,
+        "model": model,
+        "variant": variant,
+        "reasoning": variant or "provider_default",
+        "api_surface": route.api_spec if route.gateway else "kilo_native",
+        "base_url_host": _url_host(route.base_url) if route.gateway else None,
+    }
+
+
+def _backend_defined_route(
+    settings: Settings,
+    phase: Literal["planning", "coding"],
+    backend_ref: str,
+) -> dict[str, Any]:
+    return {
+        "backend": backend_ref or "backend_defined",
+        "provider_mode": "backend_defined",
+        "provider": "unknown",
+        "model": _non_empty(getattr(settings, f"worker_{phase}_codex_model", None)),
+        "variant": None,
+        "reasoning": "backend_defined",
+        "api_surface": "backend_defined",
+        "base_url_host": None,
+    }
+
+
+def _resolve_kilo_route(
+    settings: Settings,
+    model: str | None,
+) -> _KiloRouteResolution:
+    configured_mode = (
+        str(settings.worker_kilocode_provider_config_mode or "auto").strip().lower()
+    )
     provider_input = resolve_kilocode_provider_input(
         settings,
         selected_model=model,
@@ -121,16 +156,13 @@ def _agent_route(
         )
     elif effective_gateway and effective_mode == "native":
         provider = "openai"
-    return {
-        "backend": "kilo",
-        "provider_mode": effective_mode,
-        "provider": provider,
-        "model": model,
-        "variant": _non_empty(settings.worker_kilocode_variant),
-        "reasoning": _non_empty(settings.worker_kilocode_variant) or "provider_default",
-        "api_surface": api_spec if effective_gateway else "kilo_native",
-        "base_url_host": _url_host(base_url) if effective_gateway else None,
-    }
+    return _KiloRouteResolution(
+        mode=effective_mode,
+        provider=provider,
+        api_spec=api_spec,
+        base_url=base_url,
+        gateway=effective_gateway,
+    )
 
 
 def _trajectory_route(settings: Settings) -> dict[str, Any]:
@@ -172,7 +204,9 @@ def _embedding_route(settings: Settings) -> dict[str, Any]:
         "api_surface": "local" if local else "embeddings",
         "base_url_host": host,
         "local_hash_acknowledged": (
-            bool(settings.mapelites_local_hash_embedding_acknowledged) if local else None
+            bool(settings.mapelites_local_hash_embedding_acknowledged)
+            if local
+            else None
         ),
     }
 
@@ -206,9 +240,10 @@ def _kilocode_gateway_model(settings: Settings, *, selected_model: str | None) -
     explicit = _non_empty(settings.worker_kilocode_openai_model)
     if explicit and not selected_model:
         return explicit
-    selected = str(selected_model or "").strip() or str(
-        settings.worker_kilocode_model or ""
-    ).strip()
+    selected = (
+        str(selected_model or "").strip()
+        or str(settings.worker_kilocode_model or "").strip()
+    )
     provider_id, separator, model_id = selected.partition("/")
     if not separator:
         return selected

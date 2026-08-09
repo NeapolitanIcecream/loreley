@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from dataclasses import dataclass
 import hashlib
 import os
 from pathlib import Path
@@ -259,13 +260,36 @@ def _worker(
     return cast(EvolutionWorker, worker)
 
 
-def test_two_source_trees_share_one_measurement_with_public_provenance(
+@dataclass(frozen=True, slots=True)
+class _PhasedE2EContext:
+    settings: Settings
+    session_factory: Any
+    repo: Path
+    root: str
+    candidates: tuple[tuple[str, str, str], ...]
+    campaign_hash: str
+    event_log: Path
+    store: EvolutionJobStore
+    worker: EvolutionWorker
+    plan: PlanningAgentResponse
+    coding: CodingAgentResponse
+
+
+@dataclass(frozen=True, slots=True)
+class _PhasedDatabaseEvidence:
+    attempts: tuple[EvaluationAttempt, ...]
+    measurements: tuple[EvaluationMeasurementRow, ...]
+    candidates: tuple[CandidateCommit, ...]
+    source_artifact_count: int
+    progress: Any
+
+
+def _phased_e2e_context(
+    *,
     postgres_engine: Engine,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-) -> None:
-    """Core-only E2E: prepare twice, benchmark once, finalize twice, then stop by identity."""
-
+) -> _PhasedE2EContext:
     Base.metadata.create_all(postgres_engine)
     with postgres_engine.connect() as connection:
         schema = str(connection.execute(text("SELECT current_schema()")).scalar_one())
@@ -273,9 +297,7 @@ def test_two_source_trees_share_one_measurement_with_public_provenance(
         {"options": f"-csearch_path={schema}"}
     ).render_as_string(hide_password=False)
     session_factory = sessionmaker(
-        bind=postgres_engine,
-        expire_on_commit=False,
-        future=True,
+        bind=postgres_engine, expire_on_commit=False, future=True
     )
 
     @contextmanager
@@ -283,11 +305,9 @@ def test_two_source_trees_share_one_measurement_with_public_provenance(
         with session_factory.begin() as session:
             yield session
 
-    monkeypatch.setattr(runtime_module, "session_scope", scoped_session)
-    monkeypatch.setattr(job_store_module, "session_scope", scoped_session)
-    monkeypatch.setattr(jobs_service, "session_scope", scoped_session)
+    for module in (runtime_module, job_store_module, jobs_service):
+        monkeypatch.setattr(module, "session_scope", scoped_session)
     runtime_module._lock_engine.cache_clear()  # noqa: SLF001
-
     repo = tmp_path / "repo"
     root, candidates = _candidate_repo(repo)
     campaign_hash = "c" * 64
@@ -308,192 +328,329 @@ def test_two_source_trees_share_one_measurement_with_public_provenance(
         plugin=_SharedIdentityPhasedEvaluator(str(event_log)),  # type: ignore[arg-type]
     )
     store = EvolutionJobStore(settings=settings)
-    worker = _worker(settings=settings, evaluator=evaluator, store=store)
-    plan = _plan()
-    coding = _coding()
+    return _PhasedE2EContext(
+        settings=settings,
+        session_factory=session_factory,
+        repo=repo,
+        root=root,
+        candidates=candidates,
+        campaign_hash=campaign_hash,
+        event_log=event_log,
+        store=store,
+        worker=_worker(settings=settings, evaluator=evaluator, store=store),
+        plan=_plan(),
+        coding=_coding(),
+    )
 
-    job_rows = []
-    with session_factory.begin() as session:
-        for _candidate in candidates:
+
+def _prepared_phased_jobs(
+    context: _PhasedE2EContext,
+) -> list[tuple[JobContext, CheckoutContext, str]]:
+    job_ids: list[uuid.UUID] = []
+    with context.session_factory.begin() as session:
+        for _candidate in context.candidates:
             job = EvolutionJob(
                 id=uuid.uuid4(),
                 status=JobStatus.PENDING,
-                base_commit_hash=root,
+                base_commit_hash=context.root,
                 island_id="island-1",
                 goal="exercise phased evaluation",
-                campaign_program_hash=campaign_hash,
+                campaign_program_hash=context.campaign_hash,
             )
             session.add(job)
-            job_rows.append(job.id)
-
-    prepared_jobs: list[tuple[JobContext, CheckoutContext, str]] = []
-    for job_id, (branch, commit, tree) in zip(job_rows, candidates, strict=True):
-        locked = store.start_job(job_id)
-        job_ctx = _job_context(locked=locked, campaign_hash=campaign_hash)
-        store.record_candidate_commit(
-            CandidateCommitRecord(
-                job_id=job_id,
-                run_token=locked.run_token,
-                commit_hash=commit,
-                branch_name=branch,
-                source_tree_hash=tree,
-            )
+            job_ids.append(job.id)
+    prepared = []
+    for job_id, candidate in zip(job_ids, context.candidates, strict=True):
+        prepared.append(
+            _prepare_phased_job(context=context, job_id=job_id, candidate=candidate)
         )
-        prepared_jobs.append(
-            (
-                job_ctx,
-                CheckoutContext(
-                    job_id=str(job_id),
-                    branch_name=branch,
-                    base_commit=root,
-                    worktree=repo,
-                ),
-                commit,
-            )
+    return prepared
+
+
+def _prepare_phased_job(
+    *,
+    context: _PhasedE2EContext,
+    job_id: uuid.UUID,
+    candidate: tuple[str, str, str],
+) -> tuple[JobContext, CheckoutContext, str]:
+    branch, commit, tree = candidate
+    locked = context.store.start_job(job_id)
+    job_context = _job_context(locked=locked, campaign_hash=context.campaign_hash)
+    context.store.record_candidate_commit(
+        CandidateCommitRecord(
+            job_id=job_id,
+            run_token=locked.run_token,
+            commit_hash=commit,
+            branch_name=branch,
+            source_tree_hash=tree,
+        )
+    )
+    checkout = CheckoutContext(
+        job_id=str(job_id),
+        branch_name=branch,
+        base_commit=context.root,
+        worktree=context.repo,
+    )
+    return job_context, checkout, commit
+
+
+def _evaluate_and_persist_phased_job(
+    context: _PhasedE2EContext,
+    item: tuple[JobContext, CheckoutContext, str],
+) -> str:
+    job_context, checkout, commit = item
+    outcome = context.worker._run_evaluation(  # noqa: SLF001
+        job_ctx=job_context,
+        checkout=checkout,
+        plan=context.plan,
+        candidate_commit=commit,
+    )
+    try:
+        attempt_id = context.store.record_evaluation_observation(
+            job_ctx=job_context,
+            candidate_commit_hash=commit,
+            outcome=outcome,
+        )
+        outcome.persisted_attempt_id = str(attempt_id)
+        assert outcome.result is not None
+        context.store.persist_success(
+            job_ctx=job_context,
+            plan=context.plan,
+            coding=context.coding,
+            evaluation=outcome.result,
+            evaluation_outcome=outcome,
+            worktree=context.repo,
+            commit_hash=commit,
+            commit_message="zero-model phased evaluation",
+        )
+        return commit
+    finally:
+        context.worker._release_runtime_leases(  # noqa: SLF001
+            outcome,
+            reason="test_attempt_persisted",
         )
 
-    def evaluate_and_persist(item: tuple[JobContext, CheckoutContext, str]) -> str:
-        job_ctx, checkout, commit = item
-        outcome = worker._run_evaluation(  # noqa: SLF001 - full core phase boundary
-            job_ctx=job_ctx,
-            checkout=checkout,
-            plan=plan,
-            candidate_commit=commit,
-        )
-        try:
-            attempt_id = store.record_evaluation_observation(
-                job_ctx=job_ctx,
-                candidate_commit_hash=commit,
-                outcome=outcome,
-            )
-            outcome.persisted_attempt_id = str(attempt_id)
-            assert outcome.result is not None
-            store.persist_success(
-                job_ctx=job_ctx,
-                plan=plan,
-                coding=coding,
-                evaluation=outcome.result,
-                evaluation_outcome=outcome,
-                worktree=repo,
-                commit_hash=commit,
-                commit_message="zero-model phased evaluation",
-            )
-            return commit
-        finally:
-            worker._release_runtime_leases(  # noqa: SLF001 - mirrors worker terminal path
-                outcome,
-                reason="test_attempt_persisted",
-            )
 
+def _run_prepared_phased_jobs(
+    context: _PhasedE2EContext,
+    prepared: list[tuple[JobContext, CheckoutContext, str]],
+) -> None:
     with ThreadPoolExecutor(max_workers=2) as pool:
-        completed = list(pool.map(evaluate_and_persist, prepared_jobs))
-    assert set(completed) == {candidate[1] for candidate in candidates}
+        completed = list(
+            pool.map(
+                lambda item: _evaluate_and_persist_phased_job(context, item), prepared
+            )
+        )
+    assert set(completed) == {candidate[1] for candidate in context.candidates}
 
-    with session_factory.begin() as session:
-        first_commit = candidates[0][1]
+
+def _add_phased_archive_cell(context: _PhasedE2EContext) -> None:
+    with context.session_factory.begin() as session:
         session.add(
             MapElitesArchiveCell(
                 island_id="island-1",
                 cell_index=0,
-                commit_hash=first_commit,
+                commit_hash=context.candidates[0][1],
                 objective_values=[1.25],
                 measures=[0.0],
                 timestamp=1.0,
             )
         )
 
-    lines = event_log.read_text(encoding="utf-8").splitlines()
-    assert len([line for line in lines if line.startswith("prepare:")]) == 2
-    assert lines.count("measure") == 1
-    assert len([line for line in lines if line.startswith("finalize:")]) == 2
 
-    with session_factory.begin() as session:
-        attempts = list(
+def _load_phased_database_evidence(
+    context: _PhasedE2EContext,
+) -> _PhasedDatabaseEvidence:
+    with context.session_factory.begin() as session:
+        attempts = tuple(
             session.execute(
                 select(EvaluationAttempt).order_by(EvaluationAttempt.created_at)
             ).scalars()
         )
-        measurements = list(session.execute(select(EvaluationMeasurementRow)).scalars())
-        candidates_db = list(session.execute(select(CandidateCommit)).scalars())
-        source_artifacts = session.execute(
-            select(func.count())
-            .select_from(EvaluationArtifactRecord)
-            .where(EvaluationArtifactRecord.key.like("prepare-%"))
-        ).scalar_one()
-        progress = load_campaign_progress(session, settings)
+        measurements = tuple(
+            session.execute(select(EvaluationMeasurementRow)).scalars()
+        )
+        candidates = tuple(session.execute(select(CandidateCommit)).scalars())
+        source_artifact_count = int(
+            session.execute(
+                select(func.count())
+                .select_from(EvaluationArtifactRecord)
+                .where(EvaluationArtifactRecord.key.like("prepare-%"))
+            ).scalar_one()
+        )
+        progress = load_campaign_progress(session, context.settings)
+    return _PhasedDatabaseEvidence(
+        attempts=attempts,
+        measurements=measurements,
+        candidates=candidates,
+        source_artifact_count=source_artifact_count,
+        progress=progress,
+    )
 
-    assert len(attempts) == 2
-    assert len(measurements) == 1
-    source_attempt = next(attempt for attempt in attempts if attempt.measurement_executed)
-    reused_attempt = next(attempt for attempt in attempts if attempt.measurement_reused)
-    measurement = measurements[0]
-    assert source_attempt.measurement_id == measurement.id
-    assert source_attempt.reuse_kind == "none"
-    assert source_attempt.evaluator_slot_release_reason == "measurement_completed"
-    assert reused_attempt.measurement_id == measurement.id
-    assert reused_attempt.reuse_kind == "measurement"
-    assert reused_attempt.reused_from_attempt_id == source_attempt.id
-    assert measurement.source_evaluation_attempt_id == source_attempt.id
-    assert source_artifacts == 2
-    assert len({candidate.source_tree_hash for candidate in candidates_db}) == 2
-    assert len({candidate.evaluation_identity_key for candidate in candidates_db}) == 1
 
-    assert progress.terminal_jobs == 2
-    assert progress.succeeded_jobs == 2
-    assert progress.distinct_passed_source_trees == 2
-    assert progress.real_measurements == 1
-    assert progress.measurement_reuses == 1
-    assert progress.distinct_passed_evaluation_identities == 1
-    assert progress.archive_entries == 1
-    assert progress.archive_unique_evaluation_identities == 1
-    assert progress.occupied_coordinates == 1
+def _assert_phased_events(context: _PhasedE2EContext) -> None:
+    lines = context.event_log.read_text(encoding="utf-8").splitlines()
+    assert len([line for line in lines if line.startswith("prepare:")]) == 2
+    assert lines.count("measure") == 1
+    assert len([line for line in lines if line.startswith("finalize:")]) == 2
+
+
+def _measurement_attempts(
+    evidence: _PhasedDatabaseEvidence,
+) -> tuple[EvaluationAttempt, EvaluationAttempt, EvaluationMeasurementRow]:
+    assert len(evidence.attempts) == 2
+    assert len(evidence.measurements) == 1
+    source = next(
+        attempt for attempt in evidence.attempts if attempt.measurement_executed
+    )
+    reused = next(
+        attempt for attempt in evidence.attempts if attempt.measurement_reused
+    )
+    return source, reused, evidence.measurements[0]
+
+
+def _assert_phased_measurement_evidence(
+    evidence: _PhasedDatabaseEvidence,
+) -> tuple[EvaluationAttempt, EvaluationAttempt, EvaluationMeasurementRow]:
+    source, reused, measurement = _measurement_attempts(evidence)
+    assert source.measurement_id == measurement.id
+    assert source.reuse_kind == "none"
+    assert source.evaluator_slot_release_reason == "measurement_completed"
+    assert reused.measurement_id == measurement.id
+    assert reused.reuse_kind == "measurement"
+    assert reused.reused_from_attempt_id == source.id
+    assert measurement.source_evaluation_attempt_id == source.id
+    assert evidence.source_artifact_count == 2
+    assert len({candidate.source_tree_hash for candidate in evidence.candidates}) == 2
+    assert (
+        len({candidate.evaluation_identity_key for candidate in evidence.candidates})
+        == 1
+    )
+    return source, reused, measurement
+
+
+def _assert_phased_progress(evidence: _PhasedDatabaseEvidence) -> None:
+    progress = evidence.progress
+    expected = {
+        "terminal_jobs": 2,
+        "succeeded_jobs": 2,
+        "distinct_passed_source_trees": 2,
+        "real_measurements": 1,
+        "measurement_reuses": 1,
+        "distinct_passed_evaluation_identities": 1,
+        "archive_entries": 1,
+        "archive_unique_evaluation_identities": 1,
+        "occupied_coordinates": 1,
+        "identity_overshoot": 0,
+        "unfinished_jobs": 0,
+    }
+    assert {key: getattr(progress, key) for key in expected} == expected
     assert progress.identity_target_reached is True
-    assert progress.identity_overshoot == 0
-    assert progress.unfinished_jobs == 0
 
-    public = get_latest_evaluation_attempt_payload(job_id=reused_attempt.job_id)
+
+def _assert_public_measurement_payload(
+    *,
+    reused: EvaluationAttempt,
+    source: EvaluationAttempt,
+    measurement: EvaluationMeasurementRow,
+    tmp_path: Path,
+) -> None:
+    public = get_latest_evaluation_attempt_payload(job_id=reused.job_id)
     assert public is not None
     assert public["measurement_reused"] is True
     assert public["measurement_executed"] is False
-    assert public["reused_from_attempt_id"] == source_attempt.id
+    assert public["reused_from_attempt_id"] == source.id
     assert public["measurement_payload_sha256"] == measurement.payload_sha256
+    payload = b"stable benchmark evidence\n"
     assert public["measurement_evidence"] == [
         {
             "key": "benchmark-report",
-            "sha256": hashlib.sha256(b"stable benchmark evidence\n").hexdigest(),
-            "size_bytes": len(b"stable benchmark evidence\n"),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "size_bytes": len(payload),
         }
     ]
     assert str(tmp_path) not in repr(public)
 
-    with session_factory.begin() as session:
+
+def _assert_measurement_cache_rejects_drift(
+    *,
+    context: _PhasedE2EContext,
+    source: EvaluationAttempt,
+    measurement: EvaluationMeasurementRow,
+) -> None:
+    with context.session_factory.begin() as session:
         row = session.get(EvaluationMeasurementRow, measurement.id)
         assert row is not None
         row.source_evaluation_attempt_id = None
     with pytest.raises(EvaluationRuntimeError, match="no original evaluation attempt"):
-        worker.evaluation_runtime.lookup_measurement(measurement.cache_key)
-    with session_factory.begin() as session:
+        context.worker.evaluation_runtime.lookup_measurement(measurement.cache_key)
+    with context.session_factory.begin() as session:
         row = session.get(EvaluationMeasurementRow, measurement.id)
         assert row is not None
-        row.source_evaluation_attempt_id = source_attempt.id
-
-    with session_factory.begin() as session:
-        evidence_row = session.execute(
-            select(EvaluationArtifactRecord).where(
-                EvaluationArtifactRecord.evaluation_attempt_id == source_attempt.id,
-                EvaluationArtifactRecord.key == "benchmark-report",
-            )
-        ).scalar_one()
-        evidence_path = Path(str(evidence_row.storage_path))
-    original_evidence = evidence_path.read_bytes()
-    evidence_path.write_bytes(b"tampered benchmark evidence\n")
-    with pytest.raises(EvaluationRuntimeError, match="payload (?:size|hash) drifted"):
-        worker.evaluation_runtime.lookup_measurement(measurement.cache_key)
-    evidence_path.write_bytes(original_evidence)
-
-    with session_factory.begin() as session:
+        row.source_evaluation_attempt_id = source.id
+    _assert_cache_rejects_payload_drift(
+        context=context, source=source, measurement=measurement
+    )
+    with context.session_factory.begin() as session:
         row = session.get(EvaluationMeasurementRow, measurement.id)
         assert row is not None
         row.evidence_manifest = [{"key": "tampered", "sha256": "0" * 64}]
     with pytest.raises(EvaluationRuntimeError, match="evidence manifest"):
-        worker.evaluation_runtime.lookup_measurement(measurement.cache_key)
+        context.worker.evaluation_runtime.lookup_measurement(measurement.cache_key)
+
+
+def _assert_cache_rejects_payload_drift(
+    *,
+    context: _PhasedE2EContext,
+    source: EvaluationAttempt,
+    measurement: EvaluationMeasurementRow,
+) -> None:
+    with context.session_factory.begin() as session:
+        evidence_row = session.execute(
+            select(EvaluationArtifactRecord).where(
+                EvaluationArtifactRecord.evaluation_attempt_id == source.id,
+                EvaluationArtifactRecord.key == "benchmark-report",
+            )
+        ).scalar_one()
+        evidence_path = Path(str(evidence_row.storage_path))
+    original = evidence_path.read_bytes()
+    evidence_path.write_bytes(b"tampered benchmark evidence\n")
+    with pytest.raises(EvaluationRuntimeError, match="payload (?:size|hash) drifted"):
+        context.worker.evaluation_runtime.lookup_measurement(measurement.cache_key)
+    evidence_path.write_bytes(original)
+
+
+def test_two_source_trees_share_one_measurement_with_public_provenance(
+    postgres_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Core-only E2E: prepare twice, benchmark once, finalize twice, then stop by identity."""
+
+    context = _phased_e2e_context(
+        postgres_engine=postgres_engine,
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+    )
+
+    _run_prepared_phased_jobs(context, _prepared_phased_jobs(context))
+
+    _add_phased_archive_cell(context)
+    _assert_phased_events(context)
+    evidence = _load_phased_database_evidence(context)
+    source_attempt, reused_attempt, measurement = _assert_phased_measurement_evidence(
+        evidence
+    )
+    _assert_phased_progress(evidence)
+
+    _assert_public_measurement_payload(
+        reused=reused_attempt,
+        source=source_attempt,
+        measurement=measurement,
+        tmp_path=tmp_path,
+    )
+    _assert_measurement_cache_rejects_drift(
+        context=context,
+        source=source_attempt,
+        measurement=measurement,
+    )

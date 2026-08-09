@@ -73,27 +73,11 @@ class AdaptiveSamplingConfig:
     stratum_weights: Mapping[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        for field_name in ("min_samples", "max_samples", "batch_size"):
-            value = getattr(self, field_name)
-            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-                raise ValueError(f"{field_name} must be a positive integer.")
-        if self.min_samples > self.max_samples:
-            raise ValueError("min_samples must not exceed max_samples.")
+        _validate_sampling_counts(self)
         _positive_optional(self.max_wall_time_seconds, "max_wall_time_seconds")
         _positive_optional(self.target_ci_half_width, "target_ci_half_width")
-        confidence_level = float(self.confidence_level)
-        if not math.isfinite(confidence_level) or not 0.0 < confidence_level < 1.0:
-            raise ValueError("confidence_level must be between 0 and 1.")
-        effect_threshold = (
-            None if self.effect_threshold is None else float(self.effect_threshold)
-        )
-        if effect_threshold is not None and not math.isfinite(effect_threshold):
-            raise ValueError("effect_threshold must be finite when provided.")
-        indifference_zone = float(self.indifference_zone)
-        if not math.isfinite(indifference_zone) or indifference_zone < 0:
-            raise ValueError("indifference_zone must be a finite non-negative number.")
-        if effect_threshold is None and indifference_zone != 0:
-            raise ValueError("indifference_zone requires effect_threshold.")
+        confidence_level = _confidence_level(self.confidence_level)
+        effect_threshold, indifference_zone = _decision_contract(self)
         if not isinstance(self.allow_fixed_sample_optional_stopping, bool):
             raise ValueError("allow_fixed_sample_optional_stopping must be bool.")
         stratum_weights = _canonical_stratum_weights(self.stratum_weights)
@@ -276,7 +260,9 @@ class AdaptiveEvaluationResult:
 
     def as_dict(self) -> dict[str, Any]:
         return {
-            "observations": [observation.as_dict() for observation in self.observations],
+            "observations": [
+                observation.as_dict() for observation in self.observations
+            ],
             "config": self.config.as_dict(),
             "estimate": self.estimate.as_dict() if self.estimate is not None else None,
             "effect_classification": self.effect_classification,
@@ -308,7 +294,9 @@ class AdaptiveEvaluationCheckpoint:
             raise ValueError("Checkpoint look and batch counts must be non-negative.")
         elapsed = float(self.elapsed_seconds)
         if not math.isfinite(elapsed) or elapsed < 0:
-            raise ValueError("Checkpoint elapsed_seconds must be finite and non-negative.")
+            raise ValueError(
+                "Checkpoint elapsed_seconds must be finite and non-negative."
+            )
         object.__setattr__(self, "observations", observations)
         object.__setattr__(self, "elapsed_seconds", elapsed)
         object.__setattr__(self, "history", tuple(self.history))
@@ -321,6 +309,17 @@ class AdaptiveEvaluationCheckpoint:
             "elapsed_seconds": self.elapsed_seconds,
             "history": [record.as_dict() for record in self.history],
         }
+
+
+@dataclass(slots=True)
+class _AdaptiveRunState:
+    observations: list[Observation]
+    history: list[AdaptiveDecisionRecord]
+    final_estimate: Estimate | StratifiedEstimate | None
+    classification: EffectClassification
+    look_index: int
+    batch_index: int
+    started_at: float
 
 
 class AdaptiveEvaluationRunner:
@@ -338,7 +337,9 @@ class AdaptiveEvaluationRunner:
             try:
                 capability = IntervalCapability(str(capability))
             except ValueError as exc:
-                raise ValueError("Interval method declares an unknown capability.") from exc
+                raise ValueError(
+                    "Interval method declares an unknown capability."
+                ) from exc
         if (
             capability is IntervalCapability.FIXED_SAMPLE_ONLY
             and config.optional_stopping_possible
@@ -361,6 +362,26 @@ class AdaptiveEvaluationRunner:
         *,
         checkpoint: AdaptiveEvaluationCheckpoint | None = None,
     ) -> AdaptiveEvaluationResult:
+        state = self._resume_state(checkpoint)
+        while True:
+            before_sample = _elapsed(self.clock(), state.started_at)
+            early_result = self._result_before_sampling(state, before_sample)
+            if early_result is not None:
+                return early_result
+
+            request = self._sample_request(state, before_sample)
+            batch, after_sample = self._collect_batch(sample, request, state)
+            if not batch:
+                return self._empty_batch_result(state, request, after_sample)
+
+            result = self._record_batch(state, request, batch, after_sample)
+            if result is not None:
+                return result
+
+    def _resume_state(
+        self,
+        checkpoint: AdaptiveEvaluationCheckpoint | None,
+    ) -> _AdaptiveRunState:
         resumed = checkpoint or AdaptiveEvaluationCheckpoint()
         if len(resumed.observations) > self.config.max_samples:
             raise ValueError("Checkpoint observations exceed max_samples.")
@@ -374,140 +395,124 @@ class AdaptiveEvaluationRunner:
 
         started_at = _finite_clock_value(self.clock()) - resumed.elapsed_seconds
         observations = list(resumed.observations)
-        history = list(resumed.history)
         final_estimate: Estimate | StratifiedEstimate | None = None
         classification: EffectClassification = "not_evaluated"
-        look_index = resumed.completed_looks
-        batch_index = resumed.completed_batches
         if observations and len(observations) >= self.config.min_samples:
-            final_estimate = self._estimate(observations, look_index=look_index)
+            final_estimate = self._estimate(
+                observations,
+                look_index=resumed.completed_looks,
+            )
             classification = self._classify_effect(final_estimate)
+        return _AdaptiveRunState(
+            observations=observations,
+            history=list(resumed.history),
+            final_estimate=final_estimate,
+            classification=classification,
+            look_index=resumed.completed_looks,
+            batch_index=resumed.completed_batches,
+            started_at=started_at,
+        )
 
-        while True:
-            before_sample = _elapsed(self.clock(), started_at)
-            if self._wall_time_exhausted(before_sample):
-                return self._result(
-                    observations,
-                    final_estimate,
-                    classification,
-                    "wall_time_budget_exhausted",
-                    before_sample,
-                    history
-                    + [
-                        self._terminal_record(
-                            step_index=len(history) + 1,
-                            look_index=look_index or None,
-                            total_samples=len(observations),
-                            elapsed_seconds=before_sample,
-                            moments=_moments_or_none(observations),
-                            estimate=final_estimate,
-                            classification=classification,
-                            reasons=("wall_time_budget_exhausted",),
-                        )
-                    ],
-                )
+    def _result_before_sampling(
+        self,
+        state: _AdaptiveRunState,
+        elapsed_seconds: float,
+    ) -> AdaptiveEvaluationResult | None:
+        if self._wall_time_exhausted(elapsed_seconds):
+            reasons: tuple[StopReason, ...] = ("wall_time_budget_exhausted",)
+            state.history.append(self._terminal_record(state, elapsed_seconds, reasons))
+            return self._result(state, reasons[0], elapsed_seconds)
+        if len(state.observations) >= self.config.max_samples:
+            return self._result(state, "maximum_samples_reached", elapsed_seconds)
+        return None
 
-            remaining = self.config.max_samples - len(observations)
-            if remaining <= 0:
-                return self._result(
-                    observations,
-                    final_estimate,
-                    classification,
-                    "maximum_samples_reached",
-                    before_sample,
-                    history,
-                )
+    def _sample_request(
+        self,
+        state: _AdaptiveRunState,
+        elapsed_seconds: float,
+    ) -> SampleRequest:
+        remaining = self.config.max_samples - len(state.observations)
+        state.batch_index += 1
+        return SampleRequest(
+            requested_samples=min(self.config.batch_size, remaining),
+            collected_samples=len(state.observations),
+            remaining_samples=remaining,
+            batch_index=state.batch_index,
+            elapsed_seconds=elapsed_seconds,
+            remaining_wall_time_seconds=self._remaining_wall_time(elapsed_seconds),
+        )
 
-            batch_index += 1
-            requested = min(self.config.batch_size, remaining)
-            request = SampleRequest(
-                requested_samples=requested,
-                collected_samples=len(observations),
-                remaining_samples=remaining,
-                batch_index=batch_index,
-                elapsed_seconds=before_sample,
-                remaining_wall_time_seconds=self._remaining_wall_time(before_sample),
+    def _collect_batch(
+        self,
+        sample: SampleCallback,
+        request: SampleRequest,
+        state: _AdaptiveRunState,
+    ) -> tuple[tuple[Observation, ...], float]:
+        raw_batch = sample(request)
+        if isinstance(raw_batch, (str, bytes)):
+            raise SampleBatchError("Sample callback must return a sequence of samples.")
+        batch = tuple(_coerce_sample(item) for item in raw_batch)
+        if len(batch) > request.requested_samples:
+            raise SampleBatchError(
+                f"Sample callback returned {len(batch)} samples for a request of "
+                f"{request.requested_samples}; no samples were accepted."
             )
-            raw_batch = sample(request)
-            if isinstance(raw_batch, (str, bytes)):
-                raise SampleBatchError("Sample callback must return a sequence of samples.")
-            batch = tuple(_coerce_sample(item) for item in raw_batch)
-            if len(batch) > requested:
-                raise SampleBatchError(
-                    f"Sample callback returned {len(batch)} samples for a request of "
-                    f"{requested}; no samples were accepted."
-                )
+        return batch, _elapsed(self.clock(), state.started_at)
 
-            after_sample = _elapsed(self.clock(), started_at)
-            if not batch:
-                empty_triggers: tuple[StopReason, ...] = (
-                    (
-                        "wall_time_budget_exhausted",
-                        "sampler_exhausted",
-                    )
-                    if self._wall_time_exhausted(after_sample)
-                    else ("sampler_exhausted",)
-                )
-                history.append(
-                    self._terminal_record(
-                        step_index=len(history) + 1,
-                        look_index=look_index or None,
-                        total_samples=len(observations),
-                        elapsed_seconds=after_sample,
-                        moments=_moments_or_none(observations),
-                        estimate=final_estimate,
-                        classification=classification,
-                        reasons=empty_triggers,
-                        request=request,
-                    )
-                )
-                return self._result(
-                    observations,
-                    final_estimate,
-                    classification,
-                    empty_triggers[0],
-                    after_sample,
-                    history,
-                )
+    def _empty_batch_result(
+        self,
+        state: _AdaptiveRunState,
+        request: SampleRequest,
+        elapsed_seconds: float,
+    ) -> AdaptiveEvaluationResult:
+        reasons: tuple[StopReason, ...] = (
+            ("wall_time_budget_exhausted", "sampler_exhausted")
+            if self._wall_time_exhausted(elapsed_seconds)
+            else ("sampler_exhausted",)
+        )
+        state.history.append(
+            self._terminal_record(state, elapsed_seconds, reasons, request=request)
+        )
+        return self._result(state, reasons[0], elapsed_seconds)
 
-            observations.extend(batch)
-            moments = sample_moments(observations)
-            if len(observations) >= self.config.min_samples:
-                look_index += 1
-                final_estimate = self._estimate(observations, look_index=look_index)
-                classification = self._classify_effect(final_estimate)
-
-            triggers = self._stop_triggers(
-                total_samples=len(observations),
-                elapsed_seconds=after_sample,
-                estimate=final_estimate,
-                classification=classification,
+    def _record_batch(
+        self,
+        state: _AdaptiveRunState,
+        request: SampleRequest,
+        batch: tuple[Observation, ...],
+        elapsed_seconds: float,
+    ) -> AdaptiveEvaluationResult | None:
+        state.observations.extend(batch)
+        moments = sample_moments(state.observations)
+        if len(state.observations) >= self.config.min_samples:
+            state.look_index += 1
+            state.final_estimate = self._estimate(
+                state.observations,
+                look_index=state.look_index,
             )
-            stop_reason = triggers[0] if triggers else None
-            history.append(
-                AdaptiveDecisionRecord(
-                    step_index=len(history) + 1,
-                    look_index=look_index or None,
-                    request=request,
-                    received_samples=len(batch),
-                    total_samples=len(observations),
-                    elapsed_seconds=after_sample,
-                    moments=moments,
-                    estimate=final_estimate,
-                    effect_classification=classification,
-                    stop_triggers=triggers,
-                    stopped=stop_reason is not None,
-                )
+            state.classification = self._classify_effect(state.final_estimate)
+        triggers = self._stop_triggers(
+            total_samples=len(state.observations),
+            elapsed_seconds=elapsed_seconds,
+            estimate=state.final_estimate,
+            classification=state.classification,
+        )
+        state.history.append(
+            AdaptiveDecisionRecord(
+                step_index=len(state.history) + 1,
+                look_index=state.look_index or None,
+                request=request,
+                received_samples=len(batch),
+                total_samples=len(state.observations),
+                elapsed_seconds=elapsed_seconds,
+                moments=moments,
+                estimate=state.final_estimate,
+                effect_classification=state.classification,
+                stop_triggers=triggers,
+                stopped=bool(triggers),
             )
-            if stop_reason is not None:
-                return self._result(
-                    observations,
-                    final_estimate,
-                    classification,
-                    stop_reason,
-                    after_sample,
-                    history,
-                )
+        )
+        return self._result(state, triggers[0], elapsed_seconds) if triggers else None
 
     def _estimate(
         self,
@@ -524,7 +529,9 @@ class AdaptiveEvaluationRunner:
                 confidence_level=self.config.confidence_level,
                 look_index=look_index,
             )
-        non_default = sorted({item.stratum for item in observations if item.stratum != "all"})
+        non_default = sorted(
+            {item.stratum for item in observations if item.stratum != "all"}
+        )
         if non_default:
             raise ValueError(
                 "Stratified observations require predeclared stratum_weights; "
@@ -593,45 +600,37 @@ class AdaptiveEvaluationRunner:
 
     def _terminal_record(
         self,
-        *,
-        step_index: int,
-        look_index: int | None,
-        total_samples: int,
+        state: _AdaptiveRunState,
         elapsed_seconds: float,
-        moments: SampleMoments | None,
-        estimate: Estimate | StratifiedEstimate | None,
-        classification: EffectClassification,
         reasons: tuple[StopReason, ...],
+        *,
         request: SampleRequest | None = None,
     ) -> AdaptiveDecisionRecord:
         return AdaptiveDecisionRecord(
-            step_index=step_index,
-            look_index=look_index,
+            step_index=len(state.history) + 1,
+            look_index=state.look_index or None,
             request=request,
             received_samples=0,
-            total_samples=total_samples,
+            total_samples=len(state.observations),
             elapsed_seconds=elapsed_seconds,
-            moments=moments,
-            estimate=estimate,
-            effect_classification=classification,
+            moments=_moments_or_none(state.observations),
+            estimate=state.final_estimate,
+            effect_classification=state.classification,
             stop_triggers=reasons,
             stopped=True,
         )
 
     def _result(
         self,
-        observations: Sequence[Observation],
-        final_estimate: Estimate | StratifiedEstimate | None,
-        classification: EffectClassification,
+        state: _AdaptiveRunState,
         stop_reason: StopReason,
         elapsed_seconds: float,
-        history: Sequence[AdaptiveDecisionRecord],
     ) -> AdaptiveEvaluationResult:
         return AdaptiveEvaluationResult(
-            observations=tuple(observations),
+            observations=tuple(state.observations),
             config=self.config,
-            estimate=final_estimate,
-            effect_classification=classification,
+            estimate=state.final_estimate,
+            effect_classification=state.classification,
             stop_reason=stop_reason,
             elapsed_seconds=elapsed_seconds,
             interval_method=self.interval_method.name,
@@ -640,7 +639,7 @@ class AdaptiveEvaluationRunner:
                 self.interval_capability is IntervalCapability.FIXED_SAMPLE_ONLY
                 and self.config.optional_stopping_possible
             ),
-            history=tuple(history),
+            history=tuple(state.history),
         )
 
 
@@ -650,6 +649,36 @@ def _positive_optional(value: float | None, field_name: str) -> None:
     parsed = float(value)
     if not math.isfinite(parsed) or parsed <= 0:
         raise ValueError(f"{field_name} must be a finite positive number.")
+
+
+def _validate_sampling_counts(config: AdaptiveSamplingConfig) -> None:
+    for field_name in ("min_samples", "max_samples", "batch_size"):
+        value = getattr(config, field_name)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(f"{field_name} must be a positive integer.")
+    if config.min_samples > config.max_samples:
+        raise ValueError("min_samples must not exceed max_samples.")
+
+
+def _confidence_level(value: float) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed) or not 0.0 < parsed < 1.0:
+        raise ValueError("confidence_level must be between 0 and 1.")
+    return parsed
+
+
+def _decision_contract(config: AdaptiveSamplingConfig) -> tuple[float | None, float]:
+    threshold = (
+        None if config.effect_threshold is None else float(config.effect_threshold)
+    )
+    if threshold is not None and not math.isfinite(threshold):
+        raise ValueError("effect_threshold must be finite when provided.")
+    zone = float(config.indifference_zone)
+    if not math.isfinite(zone) or zone < 0:
+        raise ValueError("indifference_zone must be a finite non-negative number.")
+    if threshold is None and zone != 0:
+        raise ValueError("indifference_zone requires effect_threshold.")
+    return threshold, zone
 
 
 def _coerce_sample(item: Observation | float) -> Observation:

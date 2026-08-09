@@ -111,6 +111,28 @@ class _ResolvedManualSeed:
     tags: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class _SeedResolutionContext:
+    settings: Settings
+    repo: Repo
+    root_hash: str
+    campaign_snapshot: Any | None
+    campaign_program_hash: str | None
+    configured_islands: tuple[str, ...]
+    default_island: str
+
+
+@dataclass(frozen=True, slots=True)
+class _ManualSeedImportContext:
+    manifest: ManualSeedManifest
+    root_hash: str
+    campaign_program_hash: str | None
+    campaign_snapshot: Any | None
+    campaign_markdown: str | None
+    resolved: tuple[_ResolvedManualSeed, ...]
+    imported_at: datetime
+
+
 def load_manual_seed_manifest(path: str | Path) -> ManualSeedManifest:
     """Load a strict YAML or JSON manual seed manifest."""
 
@@ -122,21 +144,30 @@ def load_manual_seed_manifest(path: str | Path) -> ManualSeedManifest:
     try:
         payload = yaml.safe_load(raw) or {}
     except yaml.YAMLError as exc:
-        raise ManualSeedError(f"Manual seed manifest is not valid YAML/JSON: {exc}") from exc
+        raise ManualSeedError(
+            f"Manual seed manifest is not valid YAML/JSON: {exc}"
+        ) from exc
     if not isinstance(payload, Mapping):
         raise ManualSeedError("Manual seed manifest must be a mapping.")
 
-    version = _coerce_schema_version(payload.get("schema_version", payload.get("version", 1)))
+    version = _coerce_schema_version(
+        payload.get("schema_version", payload.get("version", 1))
+    )
     raw_seeds = payload.get("seeds")
     if not isinstance(raw_seeds, list) or not raw_seeds:
-        raise ManualSeedError("Manual seed manifest must contain a non-empty 'seeds' list.")
+        raise ManualSeedError(
+            "Manual seed manifest must contain a non-empty 'seeds' list."
+        )
 
-    seeds = tuple(_parse_seed(item, index=index) for index, item in enumerate(raw_seeds))
+    seeds = tuple(
+        _parse_seed(item, index=index) for index, item in enumerate(raw_seeds)
+    )
     keys = [seed.key for seed in seeds]
     duplicate_keys = sorted({key for key in keys if keys.count(key) > 1})
     if duplicate_keys:
         raise ManualSeedError(
-            "Manual seed keys must be unique within a manifest: " + ", ".join(duplicate_keys)
+            "Manual seed keys must be unique within a manifest: "
+            + ", ".join(duplicate_keys)
         )
     return ManualSeedManifest(
         schema_version=version,
@@ -182,11 +213,26 @@ def _import_manual_seed_manifest(
 ) -> ManualSeedImportResult:
     """Import while holding the experiment's scheduler advisory lock."""
 
+    context = _prepare_manual_seed_import(settings, manifest_path)
+    created, existing = _persist_manual_seed_jobs(settings, context)
+    return ManualSeedImportResult(
+        manifest_sha256=context.manifest.sha256,
+        created_job_ids=tuple(created),
+        existing_job_ids=tuple(existing),
+    )
+
+
+def _prepare_manual_seed_import(
+    settings: Settings,
+    manifest_path: str | Path,
+) -> _ManualSeedImportContext:
     manifest = load_manual_seed_manifest(manifest_path)
     repo_root, repo = _load_target_repo(settings)
     root_hash = _resolve_root_commit(settings=settings, repo=repo)
     campaign = load_campaign_program_from_repo(repo_root)
-    campaign_hash = campaign.snapshot.raw_sha256 if campaign.snapshot is not None else None
+    campaign_hash = (
+        campaign.snapshot.raw_sha256 if campaign.snapshot is not None else None
+    )
     resolved = _resolve_seeds(
         settings=settings,
         repo=repo,
@@ -196,126 +242,175 @@ def _import_manual_seed_manifest(
         manifest=manifest,
     )
     _reject_duplicate_commits(resolved)
+    return _ManualSeedImportContext(
+        manifest=manifest,
+        root_hash=root_hash,
+        campaign_program_hash=campaign_hash,
+        campaign_snapshot=campaign.snapshot,
+        campaign_markdown=campaign.raw_markdown,
+        resolved=resolved,
+        imported_at=datetime.now(timezone.utc),
+    )
 
+
+def _persist_manual_seed_jobs(
+    settings: Settings,
+    context: _ManualSeedImportContext,
+) -> tuple[list[str], list[str]]:
     created: list[str] = []
     existing: list[str] = []
-    imported_at = datetime.now(timezone.utc)
     with session_scope() as session:
-        total_jobs = int(
-            session.execute(select(func.count(EvolutionJob.id))).scalar_one()
-        )
-        raw_max_total = settings.scheduler_max_total_jobs
-        if raw_max_total is None or int(raw_max_total) <= 0:
-            raise ManualSeedError(
-                "SCHEDULER_MAX_TOTAL_JOBS must be a positive integer before importing seeds."
-            )
-        max_total_jobs = int(raw_max_total)
-        if campaign.snapshot is not None and campaign.raw_markdown is not None:
+        total_jobs, max_total_jobs = _manual_seed_job_capacity(session, settings)
+        if (
+            context.campaign_snapshot is not None
+            and context.campaign_markdown is not None
+        ):
             persist_campaign_program(
                 session=session,
-                snapshot=campaign.snapshot,
-                raw_markdown=campaign.raw_markdown,
+                snapshot=context.campaign_snapshot,
+                raw_markdown=context.campaign_markdown,
             )
-        for seed in resolved:
-            row = session.execute(
-                select(EvolutionJob).where(
-                    EvolutionJob.external_submission_key == seed.submission_key
-                )
-            ).scalar_one_or_none()
-            if row is not None:
-                _require_matching_existing_seed(row=row, seed=seed)
-                existing.append(str(row.id))
-                continue
-            prior_seed = session.execute(
-                select(EvolutionJob).where(
-                    EvolutionJob.job_kind == "manual_seed",
-                    EvolutionJob.input_candidate_commit_hash == seed.commit_hash,
-                )
-            ).scalar_one_or_none()
-            if prior_seed is not None:
-                raise ManualSeedError(
-                    f"Commit {seed.commit_hash[:12]} is already registered as a manual seed "
-                    "under a different key or island."
-                )
-            prior_candidate = session.execute(
-                select(CandidateCommit.id).where(CandidateCommit.commit_hash == seed.commit_hash)
-            ).scalar_one_or_none()
-            if prior_candidate is not None:
-                raise ManualSeedError(
-                    f"Commit {seed.commit_hash[:12]} is already a campaign candidate; "
-                    "manual seeds must introduce a new candidate commit."
-                )
-            if total_jobs >= max_total_jobs:
-                raise ManualSeedError(
-                    "Manual seed import would exceed SCHEDULER_MAX_TOTAL_JOBS="
-                    f"{max_total_jobs}. Increase the campaign endpoint before importing."
-                )
-            job = EvolutionJob(
-                status=JobStatus.STAGED,
-                base_commit_hash=root_hash,
-                island_id=seed.island_id,
-                inspiration_commit_hashes=[],
-                goal=seed.goal,
-                constraints=list(seed.constraints),
-                acceptance_criteria=list(seed.acceptance_criteria),
-                notes=list(seed.notes),
-                tags=list(seed.tags),
-                iteration_hint="Manual seed: evaluate the supplied commit without agent generation.",
-                sampling_strategy="manual_seed",
-                sampling_initial_radius=None,
-                sampling_radius_used=None,
-                sampling_fallback_inspirations=None,
-                is_seed_job=True,
-                job_kind="manual_seed",
-                execution_mode="evaluate_existing",
-                input_candidate_commit_hash=seed.commit_hash,
-                input_candidate_summary=seed.spec.summary,
-                external_submission_key=seed.submission_key,
-                input_provenance=_seed_provenance(
-                    manifest=manifest,
-                    seed=seed,
-                    campaign_program_hash=campaign_hash,
-                ),
-                archive_ingestion_enabled=True,
-                campaign_program_hash=campaign_hash,
-                priority=int(settings.mapelites_sampler_default_priority) + 1,
-                scheduled_at=None,
-                created_at=imported_at + timedelta(microseconds=seed.ordinal),
+        for seed in context.resolved:
+            outcome, job_id = _persist_one_manual_seed(
+                session,
+                settings,
+                context,
+                seed,
+                total_jobs=total_jobs,
+                max_total_jobs=max_total_jobs,
             )
-            try:
-                with session.begin_nested():
-                    session.add(job)
-                    session.flush()
-            except IntegrityError:
-                row = session.execute(
-                    select(EvolutionJob).where(
-                        EvolutionJob.external_submission_key == seed.submission_key
-                    )
-                ).scalar_one_or_none()
-                if row is None:
-                    conflicting_commit = session.execute(
-                        select(EvolutionJob).where(
-                            EvolutionJob.job_kind == "manual_seed",
-                            EvolutionJob.input_candidate_commit_hash == seed.commit_hash,
-                        )
-                    ).scalar_one_or_none()
-                    if conflicting_commit is not None:
-                        raise ManualSeedError(
-                            f"Commit {seed.commit_hash[:12]} was concurrently registered "
-                            "as a different manual seed."
-                        )
-                    raise
-                _require_matching_existing_seed(row=row, seed=seed)
-                existing.append(str(row.id))
-                continue
-            created.append(str(job.id))
-            total_jobs += 1
+            (created if outcome == "created" else existing).append(job_id)
+            total_jobs += int(outcome == "created")
+    return created, existing
 
-    return ManualSeedImportResult(
-        manifest_sha256=manifest.sha256,
-        created_job_ids=tuple(created),
-        existing_job_ids=tuple(existing),
+
+def _manual_seed_job_capacity(session: Any, settings: Settings) -> tuple[int, int]:
+    total_jobs = int(session.execute(select(func.count(EvolutionJob.id))).scalar_one())
+    raw_limit = settings.scheduler_max_total_jobs
+    if raw_limit is None or int(raw_limit) <= 0:
+        raise ManualSeedError(
+            "SCHEDULER_MAX_TOTAL_JOBS must be a positive integer before importing seeds."
+        )
+    return total_jobs, int(raw_limit)
+
+
+def _seed_job_by_key(session: Any, seed: _ResolvedManualSeed) -> EvolutionJob | None:
+    return session.execute(
+        select(EvolutionJob).where(
+            EvolutionJob.external_submission_key == seed.submission_key
+        )
+    ).scalar_one_or_none()
+
+
+def _reject_registered_seed_commit(session: Any, seed: _ResolvedManualSeed) -> None:
+    prior_seed = session.execute(
+        select(EvolutionJob).where(
+            EvolutionJob.job_kind == "manual_seed",
+            EvolutionJob.input_candidate_commit_hash == seed.commit_hash,
+        )
+    ).scalar_one_or_none()
+    if prior_seed is not None:
+        raise ManualSeedError(
+            f"Commit {seed.commit_hash[:12]} is already registered as a manual seed "
+            "under a different key or island."
+        )
+    prior_candidate = session.execute(
+        select(CandidateCommit.id).where(
+            CandidateCommit.commit_hash == seed.commit_hash
+        )
+    ).scalar_one_or_none()
+    if prior_candidate is not None:
+        raise ManualSeedError(
+            f"Commit {seed.commit_hash[:12]} is already a campaign candidate; "
+            "manual seeds must introduce a new candidate commit."
+        )
+
+
+def _new_manual_seed_job(
+    settings: Settings,
+    context: _ManualSeedImportContext,
+    seed: _ResolvedManualSeed,
+) -> EvolutionJob:
+    return EvolutionJob(
+        status=JobStatus.STAGED,
+        base_commit_hash=context.root_hash,
+        island_id=seed.island_id,
+        inspiration_commit_hashes=[],
+        goal=seed.goal,
+        constraints=list(seed.constraints),
+        acceptance_criteria=list(seed.acceptance_criteria),
+        notes=list(seed.notes),
+        tags=list(seed.tags),
+        iteration_hint="Manual seed: evaluate the supplied commit without agent generation.",
+        sampling_strategy="manual_seed",
+        is_seed_job=True,
+        job_kind="manual_seed",
+        execution_mode="evaluate_existing",
+        input_candidate_commit_hash=seed.commit_hash,
+        input_candidate_summary=seed.spec.summary,
+        external_submission_key=seed.submission_key,
+        input_provenance=_seed_provenance(
+            manifest=context.manifest,
+            seed=seed,
+            campaign_program_hash=context.campaign_program_hash,
+        ),
+        archive_ingestion_enabled=True,
+        campaign_program_hash=context.campaign_program_hash,
+        priority=int(settings.mapelites_sampler_default_priority) + 1,
+        created_at=context.imported_at + timedelta(microseconds=seed.ordinal),
     )
+
+
+def _recover_concurrent_seed_import(
+    session: Any,
+    seed: _ResolvedManualSeed,
+) -> EvolutionJob:
+    row = _seed_job_by_key(session, seed)
+    if row is not None:
+        _require_matching_existing_seed(row=row, seed=seed)
+        return row
+    conflicting_commit = session.execute(
+        select(EvolutionJob).where(
+            EvolutionJob.job_kind == "manual_seed",
+            EvolutionJob.input_candidate_commit_hash == seed.commit_hash,
+        )
+    ).scalar_one_or_none()
+    if conflicting_commit is not None:
+        raise ManualSeedError(
+            f"Commit {seed.commit_hash[:12]} was concurrently registered "
+            "as a different manual seed."
+        )
+    raise ManualSeedError("Manual seed import conflicted with an unknown database row.")
+
+
+def _persist_one_manual_seed(
+    session: Any,
+    settings: Settings,
+    context: _ManualSeedImportContext,
+    seed: _ResolvedManualSeed,
+    *,
+    total_jobs: int,
+    max_total_jobs: int,
+) -> tuple[str, str]:
+    existing = _seed_job_by_key(session, seed)
+    if existing is not None:
+        _require_matching_existing_seed(row=existing, seed=seed)
+        return "existing", str(existing.id)
+    _reject_registered_seed_commit(session, seed)
+    if total_jobs >= max_total_jobs:
+        raise ManualSeedError(
+            "Manual seed import would exceed SCHEDULER_MAX_TOTAL_JOBS="
+            f"{max_total_jobs}. Increase the campaign endpoint before importing."
+        )
+    job = _new_manual_seed_job(settings, context, seed)
+    try:
+        with session.begin_nested():
+            session.add(job)
+            session.flush()
+    except IntegrityError:
+        row = _recover_concurrent_seed_import(session, seed)
+        return "existing", str(row.id)
+    return "created", str(job.id)
 
 
 def _parse_seed(value: object, *, index: int) -> ManualSeedSpec:
@@ -333,7 +428,9 @@ def _parse_seed(value: object, *, index: int) -> ManualSeedSpec:
         limit=512,
     )
     _validate_remote_ref(remote_ref, field=f"seeds[{index}].remote_ref")
-    summary = _required_text(value.get("summary"), field=f"seeds[{index}].summary", limit=4096)
+    summary = _required_text(
+        value.get("summary"), field=f"seeds[{index}].summary", limit=4096
+    )
     goal = _optional_text(value.get("goal"), limit=512)
     island_id = _optional_line(value.get("island_id"), limit=64)
     tags = _string_tuple(value.get("tags", ()), field=f"seeds[{index}].tags", limit=64)
@@ -343,7 +440,9 @@ def _parse_seed(value: object, *, index: int) -> ManualSeedSpec:
     try:
         serialized_metadata = json.loads(json.dumps(dict(metadata), ensure_ascii=True))
     except (TypeError, ValueError) as exc:
-        raise ManualSeedError(f"seeds[{index}].metadata must be JSON-serializable.") from exc
+        raise ManualSeedError(
+            f"seeds[{index}].metadata must be JSON-serializable."
+        ) from exc
     if len(json.dumps(serialized_metadata, separators=(",", ":"))) > 65536:
         raise ManualSeedError(f"seeds[{index}].metadata exceeds 64 KiB.")
     return ManualSeedSpec(
@@ -362,7 +461,9 @@ def _coerce_schema_version(value: object) -> int:
     try:
         version = int(value)
     except (TypeError, ValueError) as exc:
-        raise ManualSeedError("Manual seed manifest schema_version must be an integer.") from exc
+        raise ManualSeedError(
+            "Manual seed manifest schema_version must be an integer."
+        ) from exc
     if version != MANUAL_SEED_MANIFEST_SCHEMA_VERSION:
         raise ManualSeedError(
             "Unsupported manual seed manifest schema_version="
@@ -372,14 +473,20 @@ def _coerce_schema_version(value: object) -> int:
 
 
 def _load_target_repo(settings: Settings) -> tuple[Path, Repo]:
-    raw = str(settings.scheduler_repo_root or settings.worker_repo_worktree or "").strip()
+    raw = str(
+        settings.scheduler_repo_root or settings.worker_repo_worktree or ""
+    ).strip()
     if not raw:
-        raise ManualSeedError("SCHEDULER_REPO_ROOT or WORKER_REPO_WORKTREE is required.")
+        raise ManualSeedError(
+            "SCHEDULER_REPO_ROOT or WORKER_REPO_WORKTREE is required."
+        )
     root = Path(raw).expanduser().resolve()
     try:
         repo = Repo(root, search_parent_directories=True)
     except (InvalidGitRepositoryError, NoSuchPathError) as exc:
-        raise ManualSeedError(f"Manual seed repository is not a Git repository: {root}") from exc
+        raise ManualSeedError(
+            f"Manual seed repository is not a Git repository: {root}"
+        ) from exc
     worktree = Path(repo.working_tree_dir or root).resolve()
     return worktree, repo
 
@@ -388,7 +495,9 @@ def _resolve_root_commit(*, settings: Settings, repo: Repo) -> str:
     raw = normalize_single_line(str(settings.mapelites_experiment_root_commit or ""))
     if not raw:
         raise ManualSeedError("MAPELITES_EXPERIMENT_ROOT_COMMIT is required.")
-    return _resolve_commit(repo=repo, value=raw, field="MAPELITES_EXPERIMENT_ROOT_COMMIT")
+    return _resolve_commit(
+        repo=repo, value=raw, field="MAPELITES_EXPERIMENT_ROOT_COMMIT"
+    )
 
 
 def _resolve_seeds(
@@ -400,59 +509,100 @@ def _resolve_seeds(
     campaign_program_hash: str | None,
     manifest: ManualSeedManifest,
 ) -> tuple[_ResolvedManualSeed, ...]:
-    configured_islands = tuple(str(item).strip() for item in settings.mapelites_islands if str(item).strip())
-    default_island = resolve_default_island_id(settings)
-    resolved: list[_ResolvedManualSeed] = []
-    for ordinal, spec in enumerate(manifest.seeds, start=1):
-        commit_hash = _resolve_commit(repo=repo, value=spec.commit, field=f"seed {spec.key!r}")
-        _require_worker_remote_ref(
-            repo=repo,
-            remote_url=str(settings.worker_repo_remote_url or ""),
-            remote_ref=spec.remote_ref,
-            commit_hash=commit_hash,
-            seed_key=spec.key,
+    configured_islands = tuple(
+        str(item).strip() for item in settings.mapelites_islands if str(item).strip()
+    )
+    context = _SeedResolutionContext(
+        settings=settings,
+        repo=repo,
+        root_hash=root_hash,
+        campaign_snapshot=campaign_snapshot,
+        campaign_program_hash=campaign_program_hash,
+        configured_islands=configured_islands,
+        default_island=resolve_default_island_id(settings),
+    )
+    return tuple(
+        _resolve_one_seed(context, spec, ordinal)
+        for ordinal, spec in enumerate(manifest.seeds, start=1)
+    )
+
+
+def _resolve_seed_commit(
+    context: _SeedResolutionContext,
+    spec: ManualSeedSpec,
+) -> str:
+    commit_hash = _resolve_commit(
+        repo=context.repo,
+        value=spec.commit,
+        field=f"seed {spec.key!r}",
+    )
+    _require_worker_remote_ref(
+        repo=context.repo,
+        remote_url=str(context.settings.worker_repo_remote_url or ""),
+        remote_ref=spec.remote_ref,
+        commit_hash=commit_hash,
+        seed_key=spec.key,
+    )
+    if commit_hash == context.root_hash:
+        raise ManualSeedError(
+            f"Manual seed {spec.key!r} resolves to the experiment root commit."
         )
-        if commit_hash == root_hash:
-            raise ManualSeedError(f"Manual seed {spec.key!r} resolves to the experiment root commit.")
-        try:
-            repo.git.merge_base("--is-ancestor", root_hash, commit_hash)
-        except GitCommandError as exc:
-            raise ManualSeedError(
-                f"Manual seed {spec.key!r} commit is not a descendant of the experiment root."
-            ) from exc
-        commit_object = repo.commit(commit_hash)
-        parent_hashes = tuple(str(parent.hexsha) for parent in commit_object.parents)
-        if parent_hashes != (root_hash,):
-            raise ManualSeedError(
-                f"Manual seed {spec.key!r} must be a single commit directly on the "
-                "experiment root; observed parents="
-                f"{[parent[:12] for parent in parent_hashes]}."
-            )
-        island_id = spec.island_id or default_island
-        if configured_islands and island_id not in configured_islands:
-            raise ManualSeedError(
-                f"Manual seed {spec.key!r} targets unconfigured island {island_id!r}."
-            )
-        projection = apply_campaign_program_projection(
-            CampaignProjectionInput(
-                snapshot=campaign_snapshot,
-                goal=spec.goal or "",
-                constraints=(),
-                acceptance_criteria=(),
-                notes=(),
-                default_goal=(settings.worker_evolution_global_goal or "").strip(),
-                preserve_existing_goal=True,
-            )
+    try:
+        context.repo.git.merge_base("--is-ancestor", context.root_hash, commit_hash)
+    except GitCommandError as exc:
+        raise ManualSeedError(
+            f"Manual seed {spec.key!r} commit is not a descendant of the experiment root."
+        ) from exc
+    parent_hashes = tuple(
+        str(parent.hexsha) for parent in context.repo.commit(commit_hash).parents
+    )
+    if parent_hashes != (context.root_hash,):
+        raise ManualSeedError(
+            f"Manual seed {spec.key!r} must be a single commit directly on the "
+            f"experiment root; observed parents={[parent[:12] for parent in parent_hashes]}."
         )
-        goal = (
-            projection.goal
-            or "Evaluate a user-supplied seed candidate against the campaign contract."
+    return commit_hash
+
+
+def _resolve_seed_island(
+    context: _SeedResolutionContext,
+    spec: ManualSeedSpec,
+) -> str:
+    island_id = spec.island_id or context.default_island
+    if context.configured_islands and island_id not in context.configured_islands:
+        raise ManualSeedError(
+            f"Manual seed {spec.key!r} targets unconfigured island {island_id!r}."
         )
-        tags = tuple(_manual_seed_tags(spec.tags))
-        definition = {
+    return island_id
+
+
+def _resolve_one_seed(
+    context: _SeedResolutionContext,
+    spec: ManualSeedSpec,
+    ordinal: int,
+) -> _ResolvedManualSeed:
+    commit_hash = _resolve_seed_commit(context, spec)
+    island_id = _resolve_seed_island(context, spec)
+    projection = apply_campaign_program_projection(
+        CampaignProjectionInput(
+            snapshot=context.campaign_snapshot,
+            goal=spec.goal or "",
+            constraints=(),
+            acceptance_criteria=(),
+            notes=(),
+            default_goal=(context.settings.worker_evolution_global_goal or "").strip(),
+            preserve_existing_goal=True,
+        )
+    )
+    goal = projection.goal or (
+        "Evaluate a user-supplied seed candidate against the campaign contract."
+    )
+    tags = tuple(_manual_seed_tags(spec.tags))
+    definition_sha256 = _canonical_sha256(
+        {
             "acceptance_criteria": list(projection.acceptance_criteria),
             "archive_ingestion_enabled": True,
-            "campaign_program_hash": campaign_program_hash or "",
+            "campaign_program_hash": context.campaign_program_hash or "",
             "commit_hash": commit_hash,
             "constraints": list(projection.constraints),
             "execution_mode": "evaluate_existing",
@@ -466,38 +616,37 @@ def _resolve_seeds(
             "summary": spec.summary,
             "tags": list(tags),
         }
-        definition_sha256 = _canonical_sha256(definition)
-        submission_key = _canonical_sha256(
-            {
-                "experiment_id": str(settings.experiment_id or ""),
-                "kind": "manual_seed",
-                "seed_key": spec.key,
-            }
-        )
-        resolved.append(
-            _ResolvedManualSeed(
-                spec=spec,
-                ordinal=ordinal,
-                commit_hash=commit_hash,
-                remote_ref=spec.remote_ref,
-                island_id=island_id,
-                submission_key=submission_key,
-                definition_sha256=definition_sha256,
-                goal=goal,
-                constraints=tuple(projection.constraints),
-                acceptance_criteria=tuple(projection.acceptance_criteria),
-                notes=tuple(projection.notes),
-                tags=tags,
-            )
-        )
-    return tuple(resolved)
+    )
+    submission_key = _canonical_sha256(
+        {
+            "experiment_id": str(context.settings.experiment_id or ""),
+            "kind": "manual_seed",
+            "seed_key": spec.key,
+        }
+    )
+    return _ResolvedManualSeed(
+        spec=spec,
+        ordinal=ordinal,
+        commit_hash=commit_hash,
+        remote_ref=spec.remote_ref,
+        island_id=island_id,
+        submission_key=submission_key,
+        definition_sha256=definition_sha256,
+        goal=goal,
+        constraints=tuple(projection.constraints),
+        acceptance_criteria=tuple(projection.acceptance_criteria),
+        notes=tuple(projection.notes),
+        tags=tags,
+    )
 
 
 def _resolve_commit(*, repo: Repo, value: str, field: str) -> str:
     try:
         commit = repo.commit(value)
     except (BadName, ValueError) as exc:
-        raise ManualSeedError(f"{field} does not resolve to a Git commit: {value!r}.") from exc
+        raise ManualSeedError(
+            f"{field} does not resolve to a Git commit: {value!r}."
+        ) from exc
     return str(commit.hexsha)
 
 
@@ -507,29 +656,49 @@ def _reject_duplicate_commits(seeds: Sequence[_ResolvedManualSeed]) -> None:
         by_commit.setdefault(seed.commit_hash, []).append(seed.spec.key)
     duplicates = {commit: keys for commit, keys in by_commit.items() if len(keys) > 1}
     if duplicates:
-        detail = "; ".join(f"{commit[:12]}: {', '.join(keys)}" for commit, keys in duplicates.items())
-        raise ManualSeedError(f"Manual seed commits must be unique within a manifest: {detail}")
+        detail = "; ".join(
+            f"{commit[:12]}: {', '.join(keys)}" for commit, keys in duplicates.items()
+        )
+        raise ManualSeedError(
+            f"Manual seed commits must be unique within a manifest: {detail}"
+        )
 
 
-def _require_matching_existing_seed(*, row: EvolutionJob, seed: _ResolvedManualSeed) -> None:
+def _require_matching_existing_seed(
+    *, row: EvolutionJob, seed: _ResolvedManualSeed
+) -> None:
     provenance = dict(getattr(row, "input_provenance", {}) or {})
-    matches = (
-        str(getattr(row, "job_kind", "") or "") == "manual_seed"
-        and bool(getattr(row, "is_seed_job", False))
-        and str(getattr(row, "execution_mode", "") or "") == "evaluate_existing"
-        and str(getattr(row, "input_candidate_commit_hash", "") or "") == seed.commit_hash
-        and str(getattr(row, "island_id", "") or "") == seed.island_id
-        and bool(getattr(row, "archive_ingestion_enabled", False))
-        and str(getattr(row, "input_candidate_summary", "") or "") == seed.spec.summary
-        and str(getattr(row, "goal", "") or "") == seed.goal
-        and tuple(getattr(row, "constraints", ()) or ()) == seed.constraints
-        and tuple(getattr(row, "acceptance_criteria", ()) or ())
-        == seed.acceptance_criteria
-        and tuple(getattr(row, "notes", ()) or ()) == seed.notes
-        and tuple(getattr(row, "tags", ()) or ()) == seed.tags
-        and str(provenance.get("definition_sha256") or "") == seed.definition_sha256
-    )
-    if not matches:
+    observed = {
+        "archive_ingestion_enabled": bool(row.archive_ingestion_enabled),
+        "commit_hash": str(row.input_candidate_commit_hash or ""),
+        "criteria": tuple(row.acceptance_criteria or ()),
+        "definition_sha256": str(provenance.get("definition_sha256") or ""),
+        "execution_mode": str(row.execution_mode or ""),
+        "goal": str(row.goal or ""),
+        "is_seed_job": bool(row.is_seed_job),
+        "island_id": str(row.island_id or ""),
+        "job_kind": str(row.job_kind or ""),
+        "notes": tuple(row.notes or ()),
+        "summary": str(row.input_candidate_summary or ""),
+        "tags": tuple(row.tags or ()),
+        "constraints": tuple(row.constraints or ()),
+    }
+    expected = {
+        "archive_ingestion_enabled": True,
+        "commit_hash": seed.commit_hash,
+        "criteria": seed.acceptance_criteria,
+        "definition_sha256": seed.definition_sha256,
+        "execution_mode": "evaluate_existing",
+        "goal": seed.goal,
+        "is_seed_job": True,
+        "island_id": seed.island_id,
+        "job_kind": "manual_seed",
+        "notes": seed.notes,
+        "summary": seed.spec.summary,
+        "tags": seed.tags,
+        "constraints": seed.constraints,
+    }
+    if observed != expected:
         raise ManualSeedError(
             f"Manual seed key {seed.spec.key!r} was already imported with a different definition. "
             "Use a new key for a materially different seed."
@@ -586,10 +755,14 @@ def _validate_remote_ref(remote_ref: str, *, field: str) -> None:
         r"refs/(?:heads|tags)/[A-Za-z0-9][A-Za-z0-9._/-]*",
         remote_ref,
     )
-    if not valid_shape or any(
-        token in remote_ref
-        for token in ("..", "@{", "\\", " ", "//", "~", "^", ":", "?", "[")
-    ) or remote_ref.endswith(("/", ".", ".lock")):
+    if (
+        not valid_shape
+        or any(
+            token in remote_ref
+            for token in ("..", "@{", "\\", " ", "//", "~", "^", ":", "?", "[")
+        )
+        or remote_ref.endswith(("/", ".", ".lock"))
+    ):
         raise ManualSeedError(
             f"{field} must be a full, fetchable Git ref such as refs/heads/loreley-seeds/foo."
         )

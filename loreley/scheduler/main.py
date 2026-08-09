@@ -31,7 +31,10 @@ from loreley.db.locks import (
     uuid_to_pg_bigint_lock_key,
 )
 from loreley.db.models import CommitCard, MapElitesArchiveCell, Metric
-from loreley.scheduler.baselines import BaselineBootstrapResult, BaselineBootstrapService
+from loreley.scheduler.baselines import (
+    BaselineBootstrapResult,
+    BaselineBootstrapService,
+)
 from loreley.naming import resolve_experiment_namespace, resolve_experiment_uuid
 from loreley.scheduler.ingestion import MapElitesIngestion
 from loreley.scheduler.job_scheduler import JobScheduler
@@ -157,10 +160,14 @@ class EvolutionScheduler:
         self.settings = effective_settings
         self._repo = self._init_repo()
         try:
-            require_repo_writable(repo_root=self.repo_root, repo=self._repo, console=self.console)
+            require_repo_writable(
+                repo_root=self.repo_root, repo=self._repo, console=self.console
+            )
         except ValueError as exc:
             raise SchedulerError(str(exc)) from exc
-        self._root_commit_hash = (self.settings.mapelites_experiment_root_commit or "").strip() or None
+        self._root_commit_hash = (
+            self.settings.mapelites_experiment_root_commit or ""
+        ).strip() or None
         self._max_total_jobs = self._require_max_total_jobs()
 
         # Enforce single-scheduler-per-experiment using a session-level Postgres advisory lock.
@@ -247,118 +254,181 @@ class EvolutionScheduler:
     def tick(self) -> dict[str, int]:
         """Execute a full scheduler cycle."""
 
-        stats: dict[str, int] = {}
-        stats["ingested"] = self.ingestion.ingest_completed_jobs()
-        reclaim_fn = getattr(self.job_scheduler, "reclaim_stale_running_jobs", None)
-        reclaimed = reclaim_fn() if callable(reclaim_fn) else None
-        stats["reclaimed_pending"] = int(getattr(reclaimed, "requeued", 0) or 0)
-        stats["reclaimed_failed"] = int(getattr(reclaimed, "failed", 0) or 0)
+        stats = self._tick_recovery_stats()
         endpoint = self._identity_endpoint_progress()
         if endpoint is not None and endpoint.identity_target_reached:
-            stats["identity_endpoint_reached"] = 1
-            stats["identity_count"] = endpoint.distinct_passed_evaluation_identities
-            stats["identity_overshoot"] = endpoint.identity_overshoot
-            cancel = getattr(
-                self.job_scheduler,
-                "cancel_pending_for_identity_endpoint",
-                None,
-            )
-            stats["endpoint_cancelled_pending"] = int(cancel() if callable(cancel) else 0)
-            stats["dispatched"] = 0
-            stats["seed_scheduled"] = 0
-            stats["scheduled"] = 0
-            stats["unfinished"] = self.job_scheduler.count_unfinished_jobs()
-            pending_ingestion = self.ingestion.count_pending_ingestion_jobs()
-            stats["pending_ingestion"] = pending_ingestion
-            self.console.log(
-                "[bold magenta]Scheduler identity endpoint[/] "
-                f"identities={endpoint.distinct_passed_evaluation_identities}/"
-                f"{endpoint.identity_target} overshoot={endpoint.identity_overshoot} "
-                f"unfinished={stats['unfinished']} pending_ingestion={pending_ingestion}"
-            )
-            if stats["unfinished"] == 0 and pending_ingestion == 0:
-                self._create_primary_objective_branch_if_possible()
-                self.console.log(
-                    "[bold yellow]Identity endpoint drained; shutting down scheduler[/]"
-                )
-                self.stop()
-            return stats
+            return self._drain_identity_endpoint(stats=stats, endpoint=endpoint)
         baseline = self._ensure_campaign_baseline_ready()
-        stats["baseline_blocked"] = 0
         if baseline is not None and not baseline.can_dispatch_or_schedule:
-            stats["baseline_blocked"] = 1
-            stats["dispatched"] = 0
-            stats["seed_scheduled"] = 0
-            stats["scheduled"] = 0
-            stats["unfinished"] = self.job_scheduler.count_unfinished_jobs()
+            return self._baseline_blocked_stats(stats=stats, baseline=baseline)
+        stats["baseline_blocked"] = 0
+        total_jobs_after = self._schedule_tick_jobs(stats)
+        pending_ingestion = self._record_terminal_ingestion(
+            stats=stats,
+            total_jobs=total_jobs_after,
+        )
+        self._log_tick_stats(
+            stats=stats,
+            total_jobs=total_jobs_after,
+            pending_ingestion=pending_ingestion,
+        )
+        self._stop_if_fully_drained(
+            total_jobs=total_jobs_after,
+            pending_ingestion=pending_ingestion,
+        )
+        return stats
+
+    def _tick_recovery_stats(self) -> dict[str, int]:
+        ingested = self.ingestion.ingest_completed_jobs()
+        reclaim = getattr(self.job_scheduler, "reclaim_stale_running_jobs", None)
+        reclaimed = reclaim() if callable(reclaim) else None
+        return {
+            "ingested": ingested,
+            "reclaimed_pending": int(getattr(reclaimed, "requeued", 0) or 0),
+            "reclaimed_failed": int(getattr(reclaimed, "failed", 0) or 0),
+        }
+
+    def _drain_identity_endpoint(
+        self,
+        *,
+        stats: dict[str, int],
+        endpoint: CampaignProgress,
+    ) -> dict[str, int]:
+        cancel = getattr(
+            self.job_scheduler, "cancel_pending_for_identity_endpoint", None
+        )
+        stats.update(
+            identity_endpoint_reached=1,
+            identity_count=endpoint.distinct_passed_evaluation_identities,
+            identity_overshoot=endpoint.identity_overshoot,
+            endpoint_cancelled_pending=int(cancel() if callable(cancel) else 0),
+            dispatched=0,
+            seed_scheduled=0,
+            scheduled=0,
+            unfinished=self.job_scheduler.count_unfinished_jobs(),
+            pending_ingestion=self.ingestion.count_pending_ingestion_jobs(),
+        )
+        self._log_identity_endpoint(stats=stats, endpoint=endpoint)
+        if stats["unfinished"] == 0 and stats["pending_ingestion"] == 0:
+            self._create_primary_objective_branch_if_possible()
             self.console.log(
-                "[bold yellow]Scheduler tick blocked by campaign baseline[/] "
-                "status={} key={} reason={}".format(
-                    baseline.status,
-                    baseline.baseline_key_hash[:12],
-                    baseline.failure_kind or baseline.failure_summary or "n/a",
-                ),
+                "[bold yellow]Identity endpoint drained; shutting down scheduler[/]"
             )
-            return stats
+            self.stop()
+        return stats
+
+    def _log_identity_endpoint(
+        self,
+        *,
+        stats: dict[str, int],
+        endpoint: CampaignProgress,
+    ) -> None:
+        self.console.log(
+            "[bold magenta]Scheduler identity endpoint[/] "
+            f"identities={endpoint.distinct_passed_evaluation_identities}/"
+            f"{endpoint.identity_target} overshoot={endpoint.identity_overshoot} "
+            f"unfinished={stats['unfinished']} pending_ingestion={stats['pending_ingestion']}"
+        )
+
+    def _baseline_blocked_stats(
+        self,
+        *,
+        stats: dict[str, int],
+        baseline: BaselineBootstrapResult,
+    ) -> dict[str, int]:
+        stats.update(
+            baseline_blocked=1,
+            dispatched=0,
+            seed_scheduled=0,
+            scheduled=0,
+            unfinished=self.job_scheduler.count_unfinished_jobs(),
+        )
+        self.console.log(
+            "[bold yellow]Scheduler tick blocked by campaign baseline[/] "
+            "status={} key={} reason={}".format(
+                baseline.status,
+                baseline.baseline_key_hash[:12],
+                baseline.failure_kind or baseline.failure_summary or "n/a",
+            ),
+        )
+        return stats
+
+    def _schedule_tick_jobs(self, stats: dict[str, int]) -> int:
         promote = getattr(self.job_scheduler, "promote_staged_jobs", None)
         stats["staged_promoted"] = int(promote() if callable(promote) else 0)
         stats["dispatched"] = self.job_scheduler.dispatch_pending_jobs()
         unfinished = self.job_scheduler.count_unfinished_jobs()
-        stats["seed_scheduled"] = self._maybe_schedule_seed_jobs(unfinished_jobs=unfinished)
+        stats["seed_scheduled"] = self._maybe_schedule_seed_jobs(
+            unfinished_jobs=unfinished
+        )
         effective_unfinished = unfinished + stats["seed_scheduled"]
         total_jobs = self._get_total_jobs_count()
-        if stats["seed_scheduled"] > 0:
+        if stats["seed_scheduled"]:
             total_jobs = self._adjust_total_jobs_count(stats["seed_scheduled"])
         stats["scheduled"] = self.job_scheduler.schedule_jobs(
             unfinished_jobs=effective_unfinished,
             total_jobs=total_jobs,
             refresh_campaign_program=False,
         )
-        stats["unfinished"] = unfinished + stats["seed_scheduled"] + stats["scheduled"]
-        if stats["scheduled"] > 0:
-            total_jobs_after = self._adjust_total_jobs_count(stats["scheduled"])
-        else:
-            total_jobs_after = total_jobs
+        stats["unfinished"] = effective_unfinished + stats["scheduled"]
+        if stats["scheduled"]:
+            return self._adjust_total_jobs_count(stats["scheduled"])
+        return total_jobs
 
-        pending_ingestion = self._terminal_pending_ingestion(
-            total_jobs=total_jobs_after,
+    def _record_terminal_ingestion(
+        self,
+        *,
+        stats: dict[str, int],
+        total_jobs: int,
+    ) -> int | None:
+        pending = self._terminal_pending_ingestion(
+            total_jobs=total_jobs,
             unfinished_jobs=stats["unfinished"],
         )
-        if pending_ingestion is not None:
-            stats["pending_ingestion"] = pending_ingestion
+        if pending is not None:
+            stats["pending_ingestion"] = pending
+        return pending
 
-        remaining_total_str = ""
-        max_total = self._max_total_jobs
-        remaining_total = max(0, max_total - total_jobs_after)
-        remaining_total_str = f" remaining_total={remaining_total}/{max_total}"
-
+    def _log_tick_stats(
+        self,
+        *,
+        stats: dict[str, int],
+        total_jobs: int,
+        pending_ingestion: int | None,
+    ) -> None:
+        remaining = max(0, self._max_total_jobs - total_jobs)
         self.console.log(
             "[bold magenta]Scheduler tick[/] ingested={ingested} reclaimed_pending={reclaimed_pending} "
             "reclaimed_failed={reclaimed_failed} dispatched={dispatched} seed_scheduled={seed_scheduled} "
             "staged_promoted={staged_promoted} scheduled={scheduled} "
-            "unfinished={unfinished}{remaining_total}"
-            "{pending_ingestion_suffix}".format(
+            "unfinished={unfinished} remaining_total={remaining}/{maximum}"
+            "{pending_suffix}".format(
                 **stats,
-                remaining_total=remaining_total_str,
-                pending_ingestion_suffix=_pending_ingestion_log_suffix(
-                    pending_ingestion
-                ),
-            ),
+                remaining=remaining,
+                maximum=self._max_total_jobs,
+                pending_suffix=_pending_ingestion_log_suffix(pending_ingestion),
+            )
         )
 
-        if pending_ingestion == 0:
-            self._create_primary_objective_branch_if_possible()
-            self.console.log(
-                "[bold yellow]Scheduler reached max total jobs and all jobs finished; shutting down[/] "
-                f"limit={max_total}",
-            )
-            log.info(
-                "Scheduler stopping after reaching max_total_jobs={} (total_jobs={})",
-                max_total,
-                total_jobs_after,
-            )
-            self.stop()
-        return stats
+    def _stop_if_fully_drained(
+        self,
+        *,
+        total_jobs: int,
+        pending_ingestion: int | None,
+    ) -> None:
+        if pending_ingestion != 0:
+            return
+        self._create_primary_objective_branch_if_possible()
+        self.console.log(
+            "[bold yellow]Scheduler reached max total jobs and all jobs finished; shutting down[/] "
+            f"limit={self._max_total_jobs}",
+        )
+        log.info(
+            "Scheduler stopping after reaching max_total_jobs={} (total_jobs={})",
+            self._max_total_jobs,
+            total_jobs,
+        )
+        self.stop()
 
     def _terminal_pending_ingestion(
         self,
@@ -391,7 +461,9 @@ class EvolutionScheduler:
         try:
             release_pg_advisory_lock(self._advisory_lock)
         except Exception as exc:  # pragma: no cover - best-effort cleanup
-            self.console.log(f"[yellow]Failed to release scheduler advisory lock[/] reason={exc}")
+            self.console.log(
+                f"[yellow]Failed to release scheduler advisory lock[/] reason={exc}"
+            )
             log.warning("Failed to release scheduler advisory lock: {}", exc)
         finally:
             self._advisory_lock = None
@@ -458,10 +530,14 @@ class EvolutionScheduler:
         root_hash = getattr(self, "_root_commit_hash", None)
         if not root_hash:
             return None
-        refresh = getattr(self.job_scheduler, "refresh_campaign_program_for_policy", None)
+        refresh = getattr(
+            self.job_scheduler, "refresh_campaign_program_for_policy", None
+        )
         if callable(refresh):
             refresh()
-        campaign_program = getattr(self.job_scheduler, "campaign_program_snapshot", None)
+        campaign_program = getattr(
+            self.job_scheduler, "campaign_program_snapshot", None
+        )
         return self.baseline_bootstrap.ensure_or_load_baseline(
             root_commit_hash=root_hash,
             campaign_program=campaign_program,
@@ -484,7 +560,11 @@ class EvolutionScheduler:
                 key,
             )
         )
-        log.info("Acquired scheduler advisory lock for experiment {} (key={})", experiment_id, key)
+        log.info(
+            "Acquired scheduler advisory lock for experiment {} (key={})",
+            experiment_id,
+            key,
+        )
         return lock
 
     def _startup_scan_and_validate_repo_state_approval(self) -> None:
@@ -522,7 +602,9 @@ class EvolutionScheduler:
             with repo_lock(self.repo_root):
                 return require_commit(self._repo, root_commit, console=self.console)
         except RepositoryError as exc:
-            raise SchedulerError(f"Cannot resolve root commit {root_commit!r} for repo-state scan: {exc}") from exc
+            raise SchedulerError(
+                f"Cannot resolve root commit {root_commit!r} for repo-state scan: {exc}"
+            ) from exc
 
     def _scan_repo_state_startup_root(self, canonical_root_commit: str):
         return scan_repo_state_root(
@@ -534,10 +616,18 @@ class EvolutionScheduler:
 
     def _repo_state_startup_filters(self) -> dict[str, object]:
         return {
-            "allowed_extensions": list(self.settings.mapelites_preprocess_allowed_extensions or []),
-            "allowed_filenames": list(self.settings.mapelites_preprocess_allowed_filenames or []),
-            "excluded_globs": list(self.settings.mapelites_preprocess_excluded_globs or []),
-            "max_file_size_kb": int(self.settings.mapelites_preprocess_max_file_size_kb),
+            "allowed_extensions": list(
+                self.settings.mapelites_preprocess_allowed_extensions or []
+            ),
+            "allowed_filenames": list(
+                self.settings.mapelites_preprocess_allowed_filenames or []
+            ),
+            "excluded_globs": list(
+                self.settings.mapelites_preprocess_excluded_globs or []
+            ),
+            "max_file_size_kb": int(
+                self.settings.mapelites_preprocess_max_file_size_kb
+            ),
             "root_ignore_files": [".gitignore", ".loreleyignore"],
         }
 
@@ -552,18 +642,40 @@ class EvolutionScheduler:
         details = {
             "profile": str(getattr(self.settings, "profile", "default")),
             "embedding_model": str(self.settings.mapelites_code_embedding_model),
-            "embedding_dimensions": getattr(self.settings, "mapelites_code_embedding_dimensions", None),
-            "embedding_batch_size": int(getattr(self.settings, "mapelites_code_embedding_batch_size", 0) or 0),
-            "chunk_target_lines": int(getattr(self.settings, "mapelites_chunk_target_lines", 0) or 0),
-            "chunk_min_lines": int(getattr(self.settings, "mapelites_chunk_min_lines", 0) or 0),
-            "chunk_overlap_lines": int(getattr(self.settings, "mapelites_chunk_overlap_lines", 0) or 0),
+            "embedding_dimensions": getattr(
+                self.settings, "mapelites_code_embedding_dimensions", None
+            ),
+            "embedding_batch_size": int(
+                getattr(self.settings, "mapelites_code_embedding_batch_size", 0) or 0
+            ),
+            "chunk_target_lines": int(
+                getattr(self.settings, "mapelites_chunk_target_lines", 0) or 0
+            ),
+            "chunk_min_lines": int(
+                getattr(self.settings, "mapelites_chunk_min_lines", 0) or 0
+            ),
+            "chunk_overlap_lines": int(
+                getattr(self.settings, "mapelites_chunk_overlap_lines", 0) or 0
+            ),
             "chunk_max_chunks_per_file": max_chunks_per_file,
             "root_chunk_upper_bound": int(eligible_files) * max_chunks_per_file,
-            "pca_target_dims": int(getattr(self.settings, "mapelites_dimensionality_target_dims", 0) or 0),
-            "pca_min_fit_samples": int(getattr(self.settings, "mapelites_dimensionality_min_fit_samples", 0) or 0),
-            "pca_history_size": int(getattr(self.settings, "mapelites_dimensionality_history_size", 0) or 0),
-            "pca_refit_interval": int(getattr(self.settings, "mapelites_dimensionality_refit_interval", 0) or 0),
-            "seed_population_size": int(getattr(self.settings, "mapelites_seed_population_size", 0) or 0),
+            "pca_target_dims": int(
+                getattr(self.settings, "mapelites_dimensionality_target_dims", 0) or 0
+            ),
+            "pca_min_fit_samples": int(
+                getattr(self.settings, "mapelites_dimensionality_min_fit_samples", 0)
+                or 0
+            ),
+            "pca_history_size": int(
+                getattr(self.settings, "mapelites_dimensionality_history_size", 0) or 0
+            ),
+            "pca_refit_interval": int(
+                getattr(self.settings, "mapelites_dimensionality_refit_interval", 0)
+                or 0
+            ),
+            "seed_population_size": int(
+                getattr(self.settings, "mapelites_seed_population_size", 0) or 0
+            ),
             **dict(filters),
         }
         return _RepoStateStartupApproval(
@@ -573,7 +685,9 @@ class EvolutionScheduler:
         )
 
     def _repo_state_startup_max_chunks_per_file(self) -> int:
-        max_chunks_per_file = int(getattr(self.settings, "mapelites_chunk_max_chunks_per_file", 0) or 0)
+        max_chunks_per_file = int(
+            getattr(self.settings, "mapelites_chunk_max_chunks_per_file", 0) or 0
+        )
         if max_chunks_per_file <= 0:
             return 1
         return max_chunks_per_file
@@ -591,7 +705,9 @@ class EvolutionScheduler:
             dict(filters),
         )
 
-    def _request_repo_state_startup_approval(self, approval: _RepoStateStartupApproval) -> None:
+    def _request_repo_state_startup_approval(
+        self, approval: _RepoStateStartupApproval
+    ) -> None:
         auto_approve = bool(getattr(self.settings, "scheduler_startup_approve", False))
         try:
             require_interactive_repo_state_root_approval(
@@ -608,7 +724,9 @@ class EvolutionScheduler:
     # Git helpers -----------------------------------------------------------
 
     def _resolve_repo_root(self) -> Path:
-        candidate = self.settings.scheduler_repo_root or self.settings.worker_repo_worktree
+        candidate = (
+            self.settings.scheduler_repo_root or self.settings.worker_repo_worktree
+        )
         if candidate:
             return Path(candidate).expanduser().resolve()
         return Path.cwd()
@@ -616,8 +734,14 @@ class EvolutionScheduler:
     def _init_repo(self) -> Repo:
         try:
             return Repo(self.repo_root)
-        except (NoSuchPathError, InvalidGitRepositoryError) as exc:  # pragma: no cover - filesystem
-            raise SchedulerError(f"Scheduler repo {self.repo_root} is not a git repository.") from exc
+        except (
+            NoSuchPathError,
+            InvalidGitRepositoryError,
+        ) as exc:  # pragma: no cover - filesystem
+            raise SchedulerError(
+                f"Scheduler repo {self.repo_root} is not a git repository."
+            ) from exc
+
     # Primary-objective deliverable -----------------------------------------
 
     def _create_primary_objective_branch_if_possible(self) -> bool:
@@ -684,9 +808,7 @@ class EvolutionScheduler:
 
         with session_scope() as session:
             order_column = (
-                Metric.value.desc()
-                if primary.higher_is_better
-                else Metric.value.asc()
+                Metric.value.desc() if primary.higher_is_better else Metric.value.asc()
             )
 
             conditions: list[Any] = [
@@ -754,7 +876,12 @@ class EvolutionScheduler:
             return 0
         warmup_required = max(
             0,
-            int(getattr(self.settings, "mapelites_feature_normalization_warmup_samples", 0) or 0),
+            int(
+                getattr(
+                    self.settings, "mapelites_feature_normalization_warmup_samples", 0
+                )
+                or 0
+            ),
         )
         return max(configured_seed_population, warmup_required)
 
@@ -861,7 +988,10 @@ class EvolutionScheduler:
         return created_total
 
     def _count_seed_warmup_job_counts(self, *, island_id: str) -> _SeedWarmupJobCounts:
-        from loreley.db.models import EvolutionJob, JobStatus  # Local import to avoid cycles.
+        from loreley.db.models import (
+            EvolutionJob,
+            JobStatus,
+        )  # Local import to avoid cycles.
 
         unfinished_seed_statuses = (
             JobStatus.STAGED,
@@ -965,7 +1095,9 @@ class EvolutionScheduler:
 
         try:
             with repo_lock(self.repo_root):
-                canonical = require_commit(self._repo, best_commit_hash, console=self.console)
+                canonical = require_commit(
+                    self._repo, best_commit_hash, console=self.console
+                )
                 # Keep the deliverable stable across restarts by force-updating the branch.
                 self._repo.git.branch("-f", branch_name, canonical)
         except RepositoryError as exc:
@@ -985,6 +1117,7 @@ class EvolutionScheduler:
         )
 
         return branch_name
+
 
 def main(
     *,

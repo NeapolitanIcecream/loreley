@@ -50,6 +50,34 @@ class JobRetryValidationError(RuntimeError):
     """Raised when a bulk retry request is invalid."""
 
 
+def _public_measurement_evidence(
+    measurement: EvaluationMeasurement | None,
+) -> list[dict[str, object]]:
+    evidence: list[dict[str, object]] = []
+    if measurement is None:
+        return evidence
+    for item in measurement.evidence_manifest or ():
+        if isinstance(item, dict):
+            evidence.append(
+                {
+                    "key": str(item.get("key") or ""),
+                    "sha256": str(item.get("sha256") or ""),
+                    "size_bytes": item.get("size_bytes"),
+                }
+            )
+    return evidence
+
+
+def _attempt_lease_value(
+    attempt: EvaluationAttempt,
+    lease: EvaluationResourceLease | None,
+    attempt_attribute: str,
+    lease_attribute: str,
+) -> object:
+    value = getattr(attempt, attempt_attribute)
+    return value if value is not None or lease is None else getattr(lease, lease_attribute)
+
+
 def get_latest_evaluation_attempt_payload(*, job_id: UUID) -> dict[str, object] | None:
     """Return public, hash-linked provenance for the job's latest evaluator attempt."""
 
@@ -75,18 +103,6 @@ def get_latest_evaluation_attempt_payload(*, job_id: UUID) -> dict[str, object] 
         if row is None:
             return None
         attempt, measurement, lease = row
-        evidence = []
-        if measurement is not None:
-            for item in measurement.evidence_manifest or ():
-                if not isinstance(item, dict):
-                    continue
-                evidence.append(
-                    {
-                        "key": str(item.get("key") or ""),
-                        "sha256": str(item.get("sha256") or ""),
-                        "size_bytes": item.get("size_bytes"),
-                    }
-                )
         return {
             "id": attempt.id,
             "attempt_ordinal": attempt.attempt_ordinal,
@@ -107,21 +123,18 @@ def get_latest_evaluation_attempt_payload(*, job_id: UUID) -> dict[str, object] 
             "measurement_payload_sha256": (
                 measurement.payload_sha256 if measurement is not None else None
             ),
-            "measurement_evidence": evidence,
+            "measurement_evidence": _public_measurement_evidence(measurement),
             "evaluator_slot": attempt.evaluator_slot,
             "evaluator_slot_scope": attempt.evaluator_slot_scope,
             "evaluator_slot_wait_seconds": attempt.evaluator_slot_wait_seconds,
-            "evaluator_slot_acquired_at": (
-                attempt.evaluator_slot_acquired_at
-                or (lease.acquired_at if lease is not None else None)
+            "evaluator_slot_acquired_at": _attempt_lease_value(
+                attempt, lease, "evaluator_slot_acquired_at", "acquired_at"
             ),
-            "evaluator_slot_released_at": (
-                attempt.evaluator_slot_released_at
-                or (lease.released_at if lease is not None else None)
+            "evaluator_slot_released_at": _attempt_lease_value(
+                attempt, lease, "evaluator_slot_released_at", "released_at"
             ),
-            "evaluator_slot_release_reason": (
-                attempt.evaluator_slot_release_reason
-                or (lease.release_reason if lease is not None else None)
+            "evaluator_slot_release_reason": _attempt_lease_value(
+                attempt, lease, "evaluator_slot_release_reason", "release_reason"
             ),
             "failure_stage": attempt.failure_stage,
             "failure_kind": attempt.failure_kind,

@@ -10,7 +10,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 import math
-from typing import Any, ClassVar, Iterable, Mapping, Protocol, Sequence, runtime_checkable
+from typing import (
+    Any,
+    ClassVar,
+    Iterable,
+    Mapping,
+    Protocol,
+    Sequence,
+    runtime_checkable,
+)
 
 __all__ = [
     "ConfidenceInterval",
@@ -110,7 +118,9 @@ class ConfidenceInterval:
             raise ValueError("Confidence interval look_index must be positive.")
         parameter_names = [name for name, _ in self.method_parameters]
         if len(parameter_names) != len(set(parameter_names)):
-            raise ValueError("Confidence interval method parameter names must be unique.")
+            raise ValueError(
+                "Confidence interval method parameter names must be unique."
+            )
 
     @property
     def half_width(self) -> float:
@@ -395,53 +405,109 @@ def aggregate_by_stratum(
     values = _coerce_observations(observations)
     if not values:
         raise InsufficientSamplesError("At least one observation is required.")
-    groups: dict[str, list[Observation]] = {}
-    for observation in values:
-        groups.setdefault(observation.stratum, []).append(observation)
-
     _validate_confidence_level(confidence_level)
     weights = _validated_stratum_weights(stratum_weights)
+    groups = _group_observations_by_stratum(values)
+    _require_expected_strata(groups, weights)
+    per_interval_confidence = 1.0 - (1.0 - confidence_level) / len(weights)
+    strata = _estimate_strata(
+        groups,
+        weights,
+        interval_method=interval_method,
+        confidence_level=per_interval_confidence,
+        look_index=look_index,
+    )
+    overall = _weighted_stratified_estimate(
+        strata,
+        weights,
+        interval_method=interval_method,
+        confidence_level=confidence_level,
+        look_index=look_index,
+    )
+    return StratifiedEstimate(
+        overall=overall,
+        strata=strata,
+        stratum_weights=tuple((name, weights[name]) for name in sorted(weights)),
+        family_confidence_level=confidence_level,
+        per_interval_confidence_level=per_interval_confidence,
+        simultaneous=True,
+    )
+
+
+def _group_observations_by_stratum(
+    observations: Sequence[Observation],
+) -> dict[str, list[Observation]]:
+    groups: dict[str, list[Observation]] = {}
+    for observation in observations:
+        groups.setdefault(observation.stratum, []).append(observation)
+    return groups
+
+
+def _require_expected_strata(
+    groups: Mapping[str, Sequence[Observation]],
+    weights: Mapping[str, float],
+) -> None:
     observed = set(groups)
     expected = set(weights)
-    if observed != expected:
-        missing = sorted(expected - observed)
-        unexpected = sorted(observed - expected)
-        raise ValueError(
-            "Observed strata do not match the predeclared estimand "
-            f"(missing={missing}, unexpected={unexpected})."
-        )
-    per_interval_confidence = 1.0 - (1.0 - confidence_level) / len(weights)
-    strata = tuple(
+    if observed == expected:
+        return
+    raise ValueError(
+        "Observed strata do not match the predeclared estimand "
+        f"(missing={sorted(expected - observed)}, unexpected={sorted(observed - expected)})."
+    )
+
+
+def _estimate_strata(
+    groups: Mapping[str, Sequence[Observation]],
+    weights: Mapping[str, float],
+    *,
+    interval_method: IntervalMethod,
+    confidence_level: float,
+    look_index: int,
+) -> tuple[StratumEstimate, ...]:
+    return tuple(
         StratumEstimate(
             stratum=stratum,
             estimate=estimate(
                 groups[stratum],
                 interval_method=interval_method,
-                confidence_level=per_interval_confidence,
+                confidence_level=confidence_level,
                 look_index=look_index,
             ),
         )
         for stratum in sorted(weights)
     )
+
+
+def _weighted_stratified_estimate(
+    strata: Sequence[StratumEstimate],
+    weights: Mapping[str, float],
+    *,
+    interval_method: IntervalMethod,
+    confidence_level: float,
+    look_index: int,
+) -> Estimate:
     by_stratum = {item.stratum: item.estimate for item in strata}
     mean = sum(weights[name] * by_stratum[name].mean for name in weights)
     lower = sum(
-        weights[name] * by_stratum[name].confidence_interval.lower
-        for name in weights
+        weights[name] * by_stratum[name].confidence_interval.lower for name in weights
     )
     upper = sum(
-        weights[name] * by_stratum[name].confidence_interval.upper
-        for name in weights
+        weights[name] * by_stratum[name].confidence_interval.upper for name in weights
     )
     standard_errors = [
         (weights[name], by_stratum[name].standard_error) for name in weights
     ]
     standard_error = (
-        math.sqrt(sum(weight * weight * float(error) ** 2 for weight, error in standard_errors))
+        math.sqrt(
+            sum(
+                weight * weight * float(error) ** 2 for weight, error in standard_errors
+            )
+        )
         if all(error is not None for _, error in standard_errors)
         else None
     )
-    overall = Estimate(
+    return Estimate(
         moments=SampleMoments(
             n=sum(item.estimate.n for item in strata),
             mean=mean,
@@ -461,14 +527,6 @@ def aggregate_by_stratum(
                 ("weighting", "predeclared_population_weights"),
             ),
         ),
-    )
-    return StratifiedEstimate(
-        overall=overall,
-        strata=strata,
-        stratum_weights=tuple((name, weights[name]) for name in sorted(weights)),
-        family_confidence_level=confidence_level,
-        per_interval_confidence_level=per_interval_confidence,
-        simultaneous=True,
     )
 
 
@@ -576,9 +634,7 @@ def _beta_continued_fraction(a: float, b: float, x: float) -> float:
     result = d
     for iteration in range(1, maximum_iterations + 1):
         even = 2 * iteration
-        coefficient = iteration * (b - iteration) * x / (
-            (qam + even) * (a + even)
-        )
+        coefficient = iteration * (b - iteration) * x / ((qam + even) * (a + even))
         d = 1.0 + coefficient * d
         if abs(d) < minimum_float:
             d = minimum_float
@@ -589,10 +645,7 @@ def _beta_continued_fraction(a: float, b: float, x: float) -> float:
         result *= d * c
 
         coefficient = -(
-            (a + iteration)
-            * (qab + iteration)
-            * x
-            / ((a + even) * (qap + even))
+            (a + iteration) * (qab + iteration) * x / ((a + even) * (qap + even))
         )
         d = 1.0 + coefficient * d
         if abs(d) < minimum_float:

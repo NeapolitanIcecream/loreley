@@ -104,6 +104,32 @@ _VALID_EVAL_FAIL_KINDS: set[str] = {
     "benchmark",
     "other",
 }
+
+
+@dataclass(frozen=True, slots=True)
+class FinalizationTiming:
+    deadline: float
+    started_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _PluginResultMessages:
+    timeout: str
+    no_result: str
+    unreadable: str
+    exit_label: str
+
+
+@dataclass(frozen=True, slots=True)
+class _PluginPhaseInvocation:
+    plugin_ref: str | None
+    inline_target: Any | None
+    python_paths: tuple[str, ...]
+    phase: str
+    context: "EvaluationContext"
+    phase_args: tuple[Any, ...]
+
+
 _EVAL_FAIL_KIND_TO_FAILURE_KIND: dict[str, str] = {
     "compile": "compile_failed",
     "typecheck": "typecheck_failed",
@@ -209,14 +235,18 @@ class EvaluationArtifact:
         kind = clamp_text(normalize_single_line(str(self.kind or "")).lower(), 64)
         if not kind:
             raise ValueError("Evaluation artifact kind must be provided.")
-        mime_type = clamp_text(normalize_single_line(str(self.mime_type or "")).lower(), 128)
+        mime_type = clamp_text(
+            normalize_single_line(str(self.mime_type or "")).lower(), 128
+        )
         if not mime_type:
             raise ValueError("Evaluation artifact mime_type must be provided.")
 
         visibility = normalize_single_line(str(self.visibility or "human_only")).lower()
         if visibility not in _VALID_VISIBILITIES:
             raise ValueError("Evaluation artifact visibility is invalid.")
-        projection = normalize_single_line(str(self.agent_projection or "summary")).lower()
+        projection = normalize_single_line(
+            str(self.agent_projection or "summary")
+        ).lower()
         if projection not in _VALID_AGENT_PROJECTIONS:
             raise ValueError("Evaluation artifact agent_projection is invalid.")
 
@@ -275,7 +305,9 @@ EvaluatorArtifactInput = EvaluationArtifact | Mapping[str, Any]
 
 
 def _coerce_public_metrics(metrics_payload: Any) -> tuple[EvaluationMetric, ...]:
-    return tuple(_coerce_public_metric(item) for item in _iter_public_metrics(metrics_payload))
+    return tuple(
+        _coerce_public_metric(item) for item in _iter_public_metrics(metrics_payload)
+    )
 
 
 def _iter_public_metrics(metrics_payload: Any) -> tuple[Any, ...]:
@@ -374,7 +406,9 @@ class MeasurementEvidence:
         if not key:
             raise ValueError("Measurement evidence key must be provided.")
         if not re.fullmatch(r"[0-9a-f]{64}", digest):
-            raise ValueError("Measurement evidence sha256 must be 64 lowercase hex characters.")
+            raise ValueError(
+                "Measurement evidence sha256 must be 64 lowercase hex characters."
+            )
         size = self.size_bytes
         if size is not None and (isinstance(size, bool) or int(size) < 0):
             raise ValueError("Measurement evidence size_bytes must be non-negative.")
@@ -403,11 +437,17 @@ class EvaluationPreparation:
 
     def __post_init__(self) -> None:
         identity = normalize_single_line(str(self.candidate_identity or ""))
-        fingerprint = normalize_single_line(str(self.measurement_contract_fingerprint or ""))
+        fingerprint = normalize_single_line(
+            str(self.measurement_contract_fingerprint or "")
+        )
         if not identity:
-            raise ValueError("Phased evaluator preparation must provide candidate_identity.")
+            raise ValueError(
+                "Phased evaluator preparation must provide candidate_identity."
+            )
         if len(identity) > 512:
-            raise ValueError("Phased evaluator candidate_identity cannot exceed 512 characters.")
+            raise ValueError(
+                "Phased evaluator candidate_identity cannot exceed 512 characters."
+            )
         if not fingerprint:
             raise ValueError(
                 "Phased evaluator preparation must provide measurement_contract_fingerprint."
@@ -434,7 +474,9 @@ class EvaluationMeasurement:
     def __post_init__(self) -> None:
         self.data = _json_mapping(self.data, label="measurement data")
         self.evidence = tuple(
-            item if isinstance(item, MeasurementEvidence) else MeasurementEvidence(**dict(item))
+            item
+            if isinstance(item, MeasurementEvidence)
+            else MeasurementEvidence(**dict(item))
             for item in (self.evidence or ())
         )
         keys = [item.key for item in self.evidence]
@@ -442,7 +484,9 @@ class EvaluationMeasurement:
             raise ValueError("Measurement evidence keys must be unique.")
         self.cacheable = bool(self.cacheable)
         if self.cacheable and not self.evidence:
-            raise ValueError("Cacheable measurements must include hash-linked evidence.")
+            raise ValueError(
+                "Cacheable measurements must include hash-linked evidence."
+            )
         self.artifacts = coerce_evaluation_artifacts(self.artifacts)[0]
 
     def cache_payload(self) -> dict[str, Any]:
@@ -491,7 +535,9 @@ class EvaluationResult:
     logs: tuple[str, ...] = field(default_factory=tuple)
     extra: dict[str, Any] = field(default_factory=dict)
     artifacts: tuple[EvaluationArtifact, ...] = field(default_factory=tuple)
-    artifact_validation_warnings: tuple[ArtifactValidationWarning, ...] = field(default_factory=tuple)
+    artifact_validation_warnings: tuple[ArtifactValidationWarning, ...] = field(
+        default_factory=tuple
+    )
     candidate_identity: str | None = None
 
     def __post_init__(self) -> None:
@@ -506,7 +552,9 @@ class EvaluationResult:
         self.extra = dict(self.extra or {})
         artifacts, warnings = coerce_evaluation_artifacts(self.artifacts)
         self.artifacts = artifacts
-        self.artifact_validation_warnings = tuple(self.artifact_validation_warnings or ()) + warnings
+        self.artifact_validation_warnings = (
+            tuple(self.artifact_validation_warnings or ()) + warnings
+        )
 
 
 @dataclass(slots=True)
@@ -514,11 +562,15 @@ class EvalPass:
     """Simple public evaluator success result."""
 
     summary: str
-    metrics: EvalPassMetricInput | Sequence[EvalPassMetricInput] | None = field(default_factory=tuple)
+    metrics: EvalPassMetricInput | Sequence[EvalPassMetricInput] | None = field(
+        default_factory=tuple
+    )
     tests_executed: str | Sequence[str] | None = field(default_factory=tuple)
     logs: str | Sequence[str] | None = field(default_factory=tuple)
     extra: dict[str, Any] | None = None
-    artifacts: EvaluatorArtifactInput | Sequence[EvaluatorArtifactInput] | None = field(default_factory=tuple)
+    artifacts: EvaluatorArtifactInput | Sequence[EvaluatorArtifactInput] | None = field(
+        default_factory=tuple
+    )
     candidate_identity: str | None = None
 
     def __post_init__(self) -> None:
@@ -558,7 +610,9 @@ class EvalFail:
     kind: EvalFailKind
     summary: str
     details: str | None = None
-    artifacts: EvaluatorArtifactInput | Sequence[EvaluatorArtifactInput] | None = field(default_factory=tuple)
+    artifacts: EvaluatorArtifactInput | Sequence[EvaluatorArtifactInput] | None = field(
+        default_factory=tuple
+    )
 
     def __post_init__(self) -> None:
         kind = normalize_single_line(str(self.kind or "")).lower()
@@ -597,15 +651,25 @@ class EvaluationFailureResult:
     policy_version: str = "diagnostic-capsule-v1"
 
     def __post_init__(self) -> None:
-        self.failure_stage = _bounded_token(self.failure_stage, limit=32, default="unknown")
-        self.failure_kind = _bounded_token(self.failure_kind, limit=64, default="unknown")
-        repairability = normalize_single_line(str(self.repairability or "unknown")).lower()
+        self.failure_stage = _bounded_token(
+            self.failure_stage, limit=32, default="unknown"
+        )
+        self.failure_kind = _bounded_token(
+            self.failure_kind, limit=64, default="unknown"
+        )
+        repairability = normalize_single_line(
+            str(self.repairability or "unknown")
+        ).lower()
         if repairability not in _VALID_REPAIRABILITY:
             repairability = "unknown"
         self.repairability = cast(EvaluationRepairability, repairability)
-        self.repairability_reason = _optional_bounded_line(self.repairability_reason, 512)
+        self.repairability_reason = _optional_bounded_line(
+            self.repairability_reason, 512
+        )
         self.safe_failure_summary = (
-            clamp_text(normalize_single_line(str(self.safe_failure_summary or "")), 4096)
+            clamp_text(
+                normalize_single_line(str(self.safe_failure_summary or "")), 4096
+            )
             or "Evaluator reported a candidate failure without a bounded summary."
         )
         self.agent_visible_evidence_refs = _bounded_string_tuple(
@@ -625,9 +689,15 @@ class EvaluationFailureResult:
         )
         self.exit_code = _optional_int(self.exit_code)
         self.timeout_seconds = _optional_int(self.timeout_seconds)
-        self.failing_tests_summary = _optional_bounded_line(self.failing_tests_summary, 2048)
-        self.compiler_errors_summary = _optional_bounded_line(self.compiler_errors_summary, 2048)
-        self.stack_trace_summary = _optional_bounded_line(self.stack_trace_summary, 2048)
+        self.failing_tests_summary = _optional_bounded_line(
+            self.failing_tests_summary, 2048
+        )
+        self.compiler_errors_summary = _optional_bounded_line(
+            self.compiler_errors_summary, 2048
+        )
+        self.stack_trace_summary = _optional_bounded_line(
+            self.stack_trace_summary, 2048
+        )
         self.policy_version = (
             clamp_text(normalize_single_line(str(self.policy_version or "")), 64)
             or "diagnostic-capsule-v1"
@@ -665,7 +735,9 @@ class EvaluationOutcome:
     result: EvaluationResult | None = None
     failure: EvaluationFailureResult | None = None
     artifacts: tuple[EvaluationArtifact, ...] = field(default_factory=tuple)
-    artifact_validation_warnings: tuple[ArtifactValidationWarning, ...] = field(default_factory=tuple)
+    artifact_validation_warnings: tuple[ArtifactValidationWarning, ...] = field(
+        default_factory=tuple
+    )
     started_at: datetime | None = None
     finished_at: datetime | None = None
     protocol: str = "one_shot"
@@ -696,13 +768,17 @@ class EvaluationOutcome:
         self.schema_version = int(self.schema_version or 1)
         self.evaluator_name = _optional_bounded_line(self.evaluator_name, 128)
         self.evaluator_version = _optional_bounded_line(self.evaluator_version, 128)
-        self.candidate_commit_hash = _optional_bounded_line(self.candidate_commit_hash, 64)
+        self.candidate_commit_hash = _optional_bounded_line(
+            self.candidate_commit_hash, 64
+        )
         self.prepared_candidate_identity = _optional_bounded_line(
             self.prepared_candidate_identity,
             512,
         )
         self.protocol = _bounded_token(self.protocol, limit=32, default="one_shot")
-        self.measurement_cache_key = _optional_bounded_line(self.measurement_cache_key, 64)
+        self.measurement_cache_key = _optional_bounded_line(
+            self.measurement_cache_key, 64
+        )
         self.measurement_contract_fingerprint = _optional_bounded_line(
             self.measurement_contract_fingerprint,
             512,
@@ -711,25 +787,39 @@ class EvaluationOutcome:
         self.measurement_executed = bool(self.measurement_executed)
         self.reuse_kind = _bounded_token(self.reuse_kind, limit=32, default="none")
         self.measurement_id = _optional_bounded_line(self.measurement_id, 64)
-        self.reused_from_attempt_id = _optional_bounded_line(self.reused_from_attempt_id, 64)
+        self.reused_from_attempt_id = _optional_bounded_line(
+            self.reused_from_attempt_id, 64
+        )
         self.measurement_payload = (
             _json_mapping(self.measurement_payload, label="measurement payload")
             if self.measurement_payload is not None
             else None
         )
         self.measurement_evidence = tuple(self.measurement_evidence or ())
-        self.evaluator_slot_scope = _optional_bounded_line(self.evaluator_slot_scope, 32)
-        self.evaluator_slot_acquired_at = _coerce_datetime(self.evaluator_slot_acquired_at)
-        self.evaluator_slot_released_at = _coerce_datetime(self.evaluator_slot_released_at)
-        self.evaluator_slot_lease_id = _optional_bounded_line(self.evaluator_slot_lease_id, 64)
+        self.evaluator_slot_scope = _optional_bounded_line(
+            self.evaluator_slot_scope, 32
+        )
+        self.evaluator_slot_acquired_at = _coerce_datetime(
+            self.evaluator_slot_acquired_at
+        )
+        self.evaluator_slot_released_at = _coerce_datetime(
+            self.evaluator_slot_released_at
+        )
+        self.evaluator_slot_lease_id = _optional_bounded_line(
+            self.evaluator_slot_lease_id, 64
+        )
         self.evaluator_slot_release_reason = _optional_bounded_line(
             self.evaluator_slot_release_reason,
             64,
         )
-        self.persisted_attempt_id = _optional_bounded_line(self.persisted_attempt_id, 64)
+        self.persisted_attempt_id = _optional_bounded_line(
+            self.persisted_attempt_id, 64
+        )
         artifacts, warnings = coerce_evaluation_artifacts(self.artifacts)
         self.artifacts = artifacts
-        self.artifact_validation_warnings = tuple(self.artifact_validation_warnings or ()) + warnings
+        self.artifact_validation_warnings = (
+            tuple(self.artifact_validation_warnings or ()) + warnings
+        )
 
         if self.outcome_kind == "passed":
             if self.result is None:
@@ -813,8 +903,9 @@ class EvaluationPlugin(Protocol):
     def __call__(
         self,
         context: EvaluationContext,
-    ) -> EvalPass | EvalFail | EvaluationResult | EvaluationOutcome | Mapping[str, Any]:
-        ...
+    ) -> (
+        EvalPass | EvalFail | EvaluationResult | EvaluationOutcome | Mapping[str, Any]
+    ): ...
 
 
 class PhasedEvaluationPlugin(Protocol):
@@ -826,15 +917,13 @@ class PhasedEvaluationPlugin(Protocol):
     def prepare(
         self,
         context: EvaluationContext,
-    ) -> EvaluationPreparation | EvalFail | EvaluationOutcome:
-        ...
+    ) -> EvaluationPreparation | EvalFail | EvaluationOutcome: ...
 
     def measure(
         self,
         context: EvaluationContext,
         preparation: EvaluationPreparation,
-    ) -> EvaluationMeasurement | EvalFail | EvaluationOutcome:
-        ...
+    ) -> EvaluationMeasurement | EvalFail | EvaluationOutcome: ...
 
     def finalize(
         self,
@@ -842,8 +931,9 @@ class PhasedEvaluationPlugin(Protocol):
         preparation: EvaluationPreparation,
         measurement: EvaluationMeasurement,
         provenance: MeasurementProvenance,
-    ) -> EvalPass | EvalFail | EvaluationResult | EvaluationOutcome | Mapping[str, Any]:
-        ...
+    ) -> (
+        EvalPass | EvalFail | EvaluationResult | EvaluationOutcome | Mapping[str, Any]
+    ): ...
 
 
 EvaluationCallable = Callable[
@@ -975,8 +1065,12 @@ def _artifact_from_mapping(
         metadata = None
 
     try:
-        raw_visibility = normalize_single_line(str(payload.get("visibility", "human_only"))).lower()
-        raw_projection = normalize_single_line(str(payload.get("agent_projection", "summary"))).lower()
+        raw_visibility = normalize_single_line(
+            str(payload.get("visibility", "human_only"))
+        ).lower()
+        raw_projection = normalize_single_line(
+            str(payload.get("agent_projection", "summary"))
+        ).lower()
         artifact = EvaluationArtifact(
             key=key,
             kind=payload.get("kind", ""),
@@ -1002,7 +1096,8 @@ def _artifact_from_mapping(
                     artifact_key=key,
                     code="invalid_artifact",
                     action="skipped",
-                    message=normalize_single_line(str(exc)) or "Artifact declaration is invalid.",
+                    message=normalize_single_line(str(exc))
+                    or "Artifact declaration is invalid.",
                     input_ref=f"artifacts[{artifact_index}]",
                 ),
             ]
@@ -1068,7 +1163,9 @@ def _coerce_diagnostics(
                     code="invalid_diagnostic_type",
                     action="downgraded",
                     message="Artifact diagnostic entry must be a mapping and was omitted.",
-                    input_ref=_artifact_input_ref(artifact_index, f"diagnostics[{index}]"),
+                    input_ref=_artifact_input_ref(
+                        artifact_index, f"diagnostics[{index}]"
+                    ),
                 )
             )
             continue
@@ -1092,7 +1189,9 @@ def _coerce_diagnostics(
                     code="invalid_diagnostic",
                     action="downgraded",
                     message="Artifact diagnostic entry is invalid and was omitted.",
-                    input_ref=_artifact_input_ref(artifact_index, f"diagnostics[{index}]"),
+                    input_ref=_artifact_input_ref(
+                        artifact_index, f"diagnostics[{index}]"
+                    ),
                 )
             )
     if len(candidates) > 20:
@@ -1128,7 +1227,9 @@ def _optional_bounded_line(value: Any, limit: int) -> str | None:
     return text or None
 
 
-def _bounded_string_tuple(values: Any, *, limit: int, max_items: int) -> tuple[str, ...]:
+def _bounded_string_tuple(
+    values: Any, *, limit: int, max_items: int
+) -> tuple[str, ...]:
     if values is None:
         return ()
     if isinstance(values, str):
@@ -1180,13 +1281,16 @@ def _outcome_identity(mapping: _OutcomeMappingInput) -> dict[str, Any]:
             _optional_bounded_line(payload.get("evaluator_name"), 128)
             or mapping.evaluator_name
         ),
-        "evaluator_version": _optional_bounded_line(payload.get("evaluator_version"), 128),
+        "evaluator_version": _optional_bounded_line(
+            payload.get("evaluator_version"), 128
+        ),
         "candidate_commit_hash": (
             _optional_bounded_line(payload.get("candidate_commit_hash"), 64)
             or mapping.context.candidate_commit_hash
         ),
         "started_at": _coerce_datetime(payload.get("started_at")) or mapping.started_at,
-        "finished_at": _coerce_datetime(payload.get("finished_at")) or mapping.finished_at,
+        "finished_at": _coerce_datetime(payload.get("finished_at"))
+        or mapping.finished_at,
     }
 
 
@@ -1232,13 +1336,17 @@ def _json_mapping(payload: Mapping[str, Any] | None, *, label: str) -> dict[str,
         )
         decoded = json.loads(encoded)
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"Phased evaluator {label} must contain only JSON values.") from exc
+        raise ValueError(
+            f"Phased evaluator {label} must contain only JSON values."
+        ) from exc
     if not isinstance(decoded, dict):  # pragma: no cover - mapping round-trip invariant
         raise ValueError(f"Phased evaluator {label} must round-trip to a JSON object.")
     return decoded
 
 
-def _merge_artifact_sets(*groups: Sequence[EvaluationArtifact]) -> tuple[EvaluationArtifact, ...]:
+def _merge_artifact_sets(
+    *groups: Sequence[EvaluationArtifact],
+) -> tuple[EvaluationArtifact, ...]:
     merged: list[EvaluationArtifact] = []
     seen: set[str] = set()
     for group in groups:
@@ -1315,7 +1423,11 @@ def _artifact_input_ref(artifact_index: int | None, suffix: str) -> str:
     if artifact_index is None:
         return suffix
     suffix = suffix.strip(".")
-    return f"artifacts[{artifact_index}].{suffix}" if suffix else f"artifacts[{artifact_index}]"
+    return (
+        f"artifacts[{artifact_index}].{suffix}"
+        if suffix
+        else f"artifacts[{artifact_index}]"
+    )
 
 
 class Evaluator:
@@ -1386,7 +1498,9 @@ class Evaluator:
                 started_at=started_at,
                 finished_at=datetime.now(timezone.utc),
             )
-            outcome.evaluator_version = outcome.evaluator_version or self.evaluator_version
+            outcome.evaluator_version = (
+                outcome.evaluator_version or self.evaluator_version
+            )
         except EvaluationError as exc:
             outcome = self._synthetic_failure_outcome(
                 context=context,
@@ -1397,7 +1511,9 @@ class Evaluator:
             )
         duration = monotonic() - start
         if outcome.result is not None:
-            outcome.result.extra.setdefault("evaluator_duration_seconds", float(duration))
+            outcome.result.extra.setdefault(
+                "evaluator_duration_seconds", float(duration)
+            )
             _record_campaign_primary_metric_warnings(outcome=outcome, context=context)
         metrics_count = len(outcome.result.metrics) if outcome.result is not None else 0
         console.log(
@@ -1418,7 +1534,9 @@ class Evaluator:
         """Return whether the configured plugin explicitly opts into phased-v1."""
 
         target = self._ensure_plugin_target()
-        protocol = normalize_single_line(str(getattr(target, "evaluation_protocol", ""))).lower()
+        protocol = normalize_single_line(
+            str(getattr(target, "evaluation_protocol", ""))
+        ).lower()
         if protocol != "phased-v1":
             return False
         missing = [
@@ -1428,7 +1546,8 @@ class Evaluator:
         ]
         if missing:
             raise EvaluationError(
-                "phased-v1 evaluator is missing callable method(s): " + ", ".join(missing)
+                "phased-v1 evaluator is missing callable method(s): "
+                + ", ".join(missing)
             )
         return True
 
@@ -1438,7 +1557,13 @@ class Evaluator:
         if not self.supports_phased_evaluation():
             return "whole"
         raw = normalize_single_line(
-            str(getattr(self._ensure_plugin_target(), "evaluation_concurrency_scope", "measurement"))
+            str(
+                getattr(
+                    self._ensure_plugin_target(),
+                    "evaluation_concurrency_scope",
+                    "measurement",
+                )
+            )
         ).lower()
         if raw not in {"whole", "measurement"}:
             raise EvaluationError(
@@ -1451,7 +1576,9 @@ class Evaluator:
 
         if self.supports_phased_evaluation():
             return True
-        return bool(getattr(self._ensure_plugin_target(), "provides_candidate_identity", False))
+        return bool(
+            getattr(self._ensure_plugin_target(), "provides_candidate_identity", False)
+        )
 
     def new_deadline(self) -> float:
         """Return a monotonic deadline shared by all phases and capacity waits."""
@@ -1500,7 +1627,9 @@ class Evaluator:
             deadline=deadline,
         )
         if isinstance(payload, EvaluationMeasurement):
-            self._validate_json_size(payload.cache_payload(), label="measurement payload")
+            self._validate_json_size(
+                payload.cache_payload(), label="measurement payload"
+            )
             return payload
         return self._coerce_phase_failure(
             payload,
@@ -1516,17 +1645,16 @@ class Evaluator:
         measurement: EvaluationMeasurement,
         provenance: MeasurementProvenance,
         *,
-        deadline: float,
-        started_at: datetime | None = None,
+        timing: FinalizationTiming,
     ) -> EvaluationOutcome:
         """Run source-specific finalization and return the normal outcome envelope."""
 
-        effective_started = started_at or datetime.now(timezone.utc)
+        effective_started = timing.started_at or datetime.now(timezone.utc)
         payload = self._execute_phase_with_deadline(
             "finalize",
             context,
             (preparation, measurement, provenance),
-            deadline=deadline,
+            deadline=timing.deadline,
         )
         outcome = self._coerce_outcome(
             payload,
@@ -1538,7 +1666,9 @@ class Evaluator:
         outcome.evaluator_version = outcome.evaluator_version or self.evaluator_version
         outcome.protocol = "phased-v1"
         outcome.measurement_cache_key = provenance.cache_key
-        outcome.measurement_contract_fingerprint = preparation.measurement_contract_fingerprint
+        outcome.measurement_contract_fingerprint = (
+            preparation.measurement_contract_fingerprint
+        )
         outcome.measurement_reused = provenance.reused
         outcome.measurement_id = provenance.measurement_id
         outcome.reused_from_attempt_id = provenance.source_evaluation_attempt_id
@@ -1551,13 +1681,17 @@ class Evaluator:
             outcome.artifacts,
         )
         if outcome.result is not None:
-            final_identity = normalize_single_line(str(outcome.result.candidate_identity or ""))
+            final_identity = normalize_single_line(
+                str(outcome.result.candidate_identity or "")
+            )
             if final_identity and final_identity != preparation.candidate_identity:
                 raise EvaluationError(
                     "Phased evaluator finalize changed candidate_identity from prepare."
                 )
             outcome.result.candidate_identity = preparation.candidate_identity
-            outcome.result.extra.setdefault("measurement_provenance", provenance.as_dict())
+            outcome.result.extra.setdefault(
+                "measurement_provenance", provenance.as_dict()
+            )
         return outcome
 
     def evaluate_phased_uncached(self, context: EvaluationContext) -> EvaluationOutcome:
@@ -1595,8 +1729,7 @@ class Evaluator:
                     reused=False,
                     evidence=measurement.evidence,
                 ),
-                deadline=deadline,
-                started_at=started_at,
+                timing=FinalizationTiming(deadline=deadline, started_at=started_at),
             )
             outcome.measurement_executed = True
             outcome.reuse_kind = "none"
@@ -1617,8 +1750,15 @@ class Evaluator:
             return self._plugin_callable
 
         target = self._ensure_plugin_target()
-        if normalize_single_line(str(getattr(target, "evaluation_protocol", ""))).lower() == "phased-v1":
-            raise EvaluationError("phased-v1 evaluator cannot be resolved as a one-shot callable.")
+        if (
+            normalize_single_line(
+                str(getattr(target, "evaluation_protocol", ""))
+            ).lower()
+            == "phased-v1"
+        ):
+            raise EvaluationError(
+                "phased-v1 evaluator cannot be resolved as a one-shot callable."
+            )
         callable_plugin = self._resolve_callable(target)
         self._plugin_callable = callable_plugin
         return callable_plugin
@@ -1645,7 +1785,9 @@ class Evaluator:
 
     def _evaluator_label(self) -> str:
         target = self._ensure_plugin_target()
-        return str(self.plugin_ref or getattr(target, "__name__", target.__class__.__name__))
+        return str(
+            self.plugin_ref or getattr(target, "__name__", target.__class__.__name__)
+        )
 
     def _prepare_pythonpath(self) -> None:
         if self._pythonpath_ready:
@@ -1733,10 +1875,12 @@ class Evaluator:
                 process,
                 result_receiver,
                 timeout=float(self.timeout),
-                timeout_message=f"Evaluation plugin timed out after {self.timeout}s.",
-                no_result_message="Evaluation plugin did not return any result.",
-                unreadable_message="Evaluation plugin returned an unreadable payload.",
-                exit_label="Evaluation plugin",
+                messages=_PluginResultMessages(
+                    timeout=f"Evaluation plugin timed out after {self.timeout}s.",
+                    no_result="Evaluation plugin did not return any result.",
+                    unreadable="Evaluation plugin returned an unreadable payload.",
+                    exit_label="Evaluation plugin",
+                ),
             )
         finally:
             result_receiver.close()
@@ -1777,12 +1921,14 @@ class Evaluator:
         process = ctx.Process(
             target=_plugin_phase_subprocess_entry,
             args=(
-                self.plugin_ref,
-                inline_target,
-                tuple(str(path) for path in self.python_paths),
-                phase,
-                context,
-                phase_args,
+                _PluginPhaseInvocation(
+                    plugin_ref=self.plugin_ref,
+                    inline_target=inline_target,
+                    python_paths=tuple(str(path) for path in self.python_paths),
+                    phase=phase,
+                    context=context,
+                    phase_args=phase_args,
+                ),
                 result_sender,
                 child_watch,
             ),
@@ -1795,12 +1941,14 @@ class Evaluator:
                 process,
                 result_receiver,
                 timeout=remaining,
-                timeout_message=(
-                    f"Phased evaluator timed out during {phase} after {self.timeout}s total."
+                messages=_PluginResultMessages(
+                    timeout=(
+                        f"Phased evaluator timed out during {phase} after {self.timeout}s total."
+                    ),
+                    no_result=f"Phased evaluator {phase} did not return a result.",
+                    unreadable=f"Phased evaluator {phase} returned an unreadable payload.",
+                    exit_label=f"Phased evaluator {phase}",
                 ),
-                no_result_message=f"Phased evaluator {phase} did not return a result.",
-                unreadable_message=f"Phased evaluator {phase} returned an unreadable payload.",
-                exit_label=f"Phased evaluator {phase}",
             )
         finally:
             result_receiver.close()
@@ -1831,7 +1979,9 @@ class Evaluator:
                 started_at=started_at,
                 finished_at=datetime.now(timezone.utc),
             )
-            outcome.evaluator_version = outcome.evaluator_version or self.evaluator_version
+            outcome.evaluator_version = (
+                outcome.evaluator_version or self.evaluator_version
+            )
             outcome.protocol = "phased-v1"
             return outcome
         raise EvaluationError(
@@ -1848,7 +1998,9 @@ class Evaluator:
                 allow_nan=False,
             ).encode("utf-8")
         except (TypeError, ValueError) as exc:
-            raise EvaluationError(f"Phased evaluator {label} must be JSON serializable.") from exc
+            raise EvaluationError(
+                f"Phased evaluator {label} must be JSON serializable."
+            ) from exc
         limit = max(1, int(self.settings.worker_evaluator_measurement_max_json_bytes))
         if len(encoded) > limit:
             raise EvaluationError(
@@ -1967,9 +2119,13 @@ class Evaluator:
         started_at: datetime,
         finished_at: datetime,
     ) -> EvaluationOutcome:
-        outcome_kind = normalize_single_line(str(payload.get("outcome_kind") or "")).lower()
+        outcome_kind = normalize_single_line(
+            str(payload.get("outcome_kind") or "")
+        ).lower()
         if outcome_kind not in _VALID_OUTCOME_KINDS:
-            raise EvaluationError(f"Evaluator returned invalid outcome_kind={outcome_kind!r}.")
+            raise EvaluationError(
+                f"Evaluator returned invalid outcome_kind={outcome_kind!r}."
+            )
 
         artifacts, artifact_warnings = coerce_evaluation_artifacts(
             payload.get("artifact_records", payload.get("artifacts"))
@@ -2028,7 +2184,9 @@ class Evaluator:
             artifact_validation_warnings=mapping.artifact_warnings,
         )
 
-    def _failure_from_mapping(self, payload: Mapping[str, Any]) -> EvaluationFailureResult:
+    def _failure_from_mapping(
+        self, payload: Mapping[str, Any]
+    ) -> EvaluationFailureResult:
         return EvaluationFailureResult(
             failure_stage=str(payload.get("failure_stage") or "unknown"),
             failure_kind=str(payload.get("failure_kind") or "unknown"),
@@ -2055,10 +2213,16 @@ class Evaluator:
             ),
             exit_code=_optional_int(payload.get("exit_code")),
             timeout_seconds=_optional_int(payload.get("timeout_seconds")),
-            failing_tests_summary=cast(str | None, payload.get("failing_tests_summary")),
-            compiler_errors_summary=cast(str | None, payload.get("compiler_errors_summary")),
+            failing_tests_summary=cast(
+                str | None, payload.get("failing_tests_summary")
+            ),
+            compiler_errors_summary=cast(
+                str | None, payload.get("compiler_errors_summary")
+            ),
             stack_trace_summary=cast(str | None, payload.get("stack_trace_summary")),
-            policy_version=str(payload.get("policy_version") or "diagnostic-capsule-v1"),
+            policy_version=str(
+                payload.get("policy_version") or "diagnostic-capsule-v1"
+            ),
         )
 
     def _synthetic_failure_outcome(
@@ -2085,7 +2249,8 @@ class Evaluator:
                 failure_kind=failure_kind,
                 repairability="unknown",
                 repairability_reason="Synthetic fallback outcomes are not repairable by default.",
-                safe_failure_summary=bounded or "Evaluator failed before producing a valid outcome.",
+                safe_failure_summary=bounded
+                or "Evaluator failed before producing a valid outcome.",
             ),
             started_at=started_at,
             finished_at=finished_at,
@@ -2099,14 +2264,20 @@ class Evaluator:
             if not summary:
                 raise EvaluationError("Evaluator plugin did not return a summary.")
             metrics = self._coerce_metrics(payload.get("metrics"))
-            tests = self._normalise_sequence(payload.get("tests_executed"), "tests_executed")
+            tests = self._normalise_sequence(
+                payload.get("tests_executed"), "tests_executed"
+            )
             logs = self._normalise_sequence(payload.get("logs"), "logs")
             extra = self._coerce_extra(payload.get("extra"))
-            artifacts, artifact_warnings = coerce_evaluation_artifacts(payload.get("artifacts"))
+            artifacts, artifact_warnings = coerce_evaluation_artifacts(
+                payload.get("artifacts")
+            )
             try:
                 result = EvaluationResult(
                     summary=summary,
-                    candidate_identity=cast(str | None, payload.get("candidate_identity")),
+                    candidate_identity=cast(
+                        str | None, payload.get("candidate_identity")
+                    ),
                     metrics=metrics,
                     tests_executed=tests,
                     logs=logs,
@@ -2305,10 +2476,16 @@ class _CampaignPrimaryMetricSpec:
     expected_higher: bool | None
 
 
-def _campaign_primary_metric_spec(context: EvaluationContext) -> _CampaignPrimaryMetricSpec | None:
+def _campaign_primary_metric_spec(
+    context: EvaluationContext,
+) -> _CampaignPrimaryMetricSpec | None:
     campaign_program = _mapping_or_none(context.payload.get("campaign_program"))
-    snapshot = _mapping_or_none(campaign_program.get("snapshot") if campaign_program else None)
-    primary_metric = _mapping_or_none(snapshot.get("primary_metric") if snapshot else None)
+    snapshot = _mapping_or_none(
+        campaign_program.get("snapshot") if campaign_program else None
+    )
+    primary_metric = _mapping_or_none(
+        snapshot.get("primary_metric") if snapshot else None
+    )
     metric_name = _campaign_primary_metric_name(primary_metric)
     if campaign_program is None or not metric_name:
         return None
@@ -2329,10 +2506,14 @@ def _campaign_primary_metric_name(primary_metric: Mapping[str, Any] | None) -> s
     return normalize_single_line(str(primary_metric.get("name") or ""))
 
 
-def _campaign_primary_metric_expected_higher(primary_metric: Mapping[str, Any] | None) -> bool | None:
+def _campaign_primary_metric_expected_higher(
+    primary_metric: Mapping[str, Any] | None,
+) -> bool | None:
     if primary_metric is None:
         return None
-    direction = normalize_single_line(str(primary_metric.get("direction") or "")).lower()
+    direction = normalize_single_line(
+        str(primary_metric.get("direction") or "")
+    ).lower()
     return {"higher_is_better": True, "lower_is_better": False}.get(direction)
 
 
@@ -2354,7 +2535,9 @@ def _matching_evaluation_metric(
     result: EvaluationResult,
     metric_name: str,
 ) -> EvaluationMetric | None:
-    return next((metric for metric in result.metrics if metric.name == metric_name), None)
+    return next(
+        (metric for metric in result.metrics if metric.name == metric_name), None
+    )
 
 
 def _metric_direction_matches(
@@ -2392,10 +2575,7 @@ def _receive_plugin_process_result(
     receiver: Connection,
     *,
     timeout: float,
-    timeout_message: str,
-    no_result_message: str,
-    unreadable_message: str,
-    exit_label: str,
+    messages: _PluginResultMessages,
 ) -> tuple[str, Any]:
     """Drain a child result while it is running so large payloads cannot deadlock."""
 
@@ -2407,11 +2587,13 @@ def _receive_plugin_process_result(
         process.join(timeout=0)
         if not receiver.poll(0.2):
             if process.exitcode and process.exitcode != 0:
-                raise EvaluationError(f"{exit_label} exited with status {process.exitcode}.")
-            raise EvaluationError(no_result_message)
+                raise EvaluationError(
+                    f"{messages.exit_label} exited with status {process.exitcode}."
+                )
+            raise EvaluationError(messages.no_result)
     elif receiver not in ready:
         _terminate_plugin_process_tree(process)
-        raise EvaluationError(timeout_message)
+        raise EvaluationError(messages.timeout)
 
     try:
         result = receiver.recv()
@@ -2419,12 +2601,16 @@ def _receive_plugin_process_result(
     except (EOFError, OSError, TypeError, ValueError) as exc:
         process.join(timeout=0.2)
         if process.exitcode and process.exitcode != 0:
-            raise EvaluationError(f"{exit_label} exited with status {process.exitcode}.") from exc
-        raise EvaluationError(unreadable_message) from exc
+            raise EvaluationError(
+                f"{messages.exit_label} exited with status {process.exitcode}."
+            ) from exc
+        raise EvaluationError(messages.unreadable) from exc
     process.join(timeout=1.0)
     if process.is_alive():
         _terminate_plugin_process_tree(process)
-        raise EvaluationError(f"{exit_label} did not exit after returning a result.")
+        raise EvaluationError(
+            f"{messages.exit_label} did not exit after returning a result."
+        )
     return str(status), payload
 
 
@@ -2468,44 +2654,50 @@ def _plugin_subprocess_entry(
 
 
 def _plugin_phase_subprocess_entry(
-    plugin_ref: str | None,
-    inline_target: Any | None,
-    python_paths: Sequence[str],
-    phase: str,
-    context: EvaluationContext,
-    phase_args: tuple[Any, ...],
+    invocation: _PluginPhaseInvocation,
     result_connection: Connection,
     parent_watch: Connection,
 ) -> None:
     try:
         _start_plugin_process_group()
         _arm_parent_death_watchdog(parent_watch)
-        for entry in python_paths:
+        for entry in invocation.python_paths:
             entry_str = str(entry)
             if entry_str and entry_str not in sys.path:
                 sys.path.insert(0, entry_str)
 
-        target = inline_target
+        target = invocation.inline_target
         if target is None:
-            if not plugin_ref:
+            if not invocation.plugin_ref:
                 raise EvaluationError("Evaluator plugin reference is not configured.")
-            module_name, attr_path = Evaluator._split_reference(plugin_ref)
+            module_name, attr_path = Evaluator._split_reference(invocation.plugin_ref)
             target = Evaluator._import_object(module_name, attr_path)
         if inspect.isclass(target):
             target = target()
-        if normalize_single_line(str(getattr(target, "evaluation_protocol", ""))).lower() != "phased-v1":
-            raise EvaluationError("Evaluator plugin does not declare evaluation_protocol='phased-v1'.")
-        method = getattr(target, phase, None)
+        if (
+            normalize_single_line(
+                str(getattr(target, "evaluation_protocol", ""))
+            ).lower()
+            != "phased-v1"
+        ):
+            raise EvaluationError(
+                "Evaluator plugin does not declare evaluation_protocol='phased-v1'."
+            )
+        method = getattr(target, invocation.phase, None)
         if not callable(method):
-            raise EvaluationError(f"phased-v1 evaluator has no callable {phase} method.")
-        payload = method(context, *phase_args)
+            raise EvaluationError(
+                f"phased-v1 evaluator has no callable {invocation.phase} method."
+            )
+        payload = method(invocation.context, *invocation.phase_args)
         result_connection.send(("ok", payload))
     except Exception as exc:  # pragma: no cover - defensive isolation
         result_connection.send(
             (
                 "error",
                 {
-                    "message": f"Phased evaluator {phase} raised an exception: {exc}",
+                    "message": (
+                        f"Phased evaluator {invocation.phase} raised an exception: {exc}"
+                    ),
                     "traceback": traceback.format_exc(),
                 },
             )
@@ -2547,22 +2739,25 @@ def _terminate_plugin_process_tree(process: multiprocessing.Process) -> None:
     if not process.is_alive():
         process.join(timeout=0.1)
         return
-    if os.name == "posix" and process.pid:
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        except OSError:
-            process.terminate()
-    else:
-        process.terminate()
+    _signal_plugin_process_tree(process, signal.SIGTERM)
     process.join(5)
     if process.is_alive():
-        if os.name == "posix" and process.pid:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except (ProcessLookupError, OSError):
-                process.kill()
-        else:
-            process.kill()
+        _signal_plugin_process_tree(process, signal.SIGKILL)
         process.join(5)
+
+
+def _signal_plugin_process_tree(
+    process: multiprocessing.Process, signal_number: int
+) -> None:
+    if os.name == "posix" and process.pid:
+        try:
+            os.killpg(process.pid, signal_number)
+            return
+        except ProcessLookupError:
+            return
+        except OSError:
+            pass
+    if signal_number == signal.SIGTERM:
+        process.terminate()
+    else:
+        process.kill()

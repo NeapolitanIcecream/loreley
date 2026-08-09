@@ -30,10 +30,17 @@ from loreley.core.worker.commit_card import build_commit_card_from_git
 from loreley.config import Settings, get_settings
 from loreley.core.worker.coding import CodingAgentResponse
 from loreley.core.campaign_program import campaign_program_artifact_payload
-from loreley.core.worker.evaluator import EvaluationMetric, EvaluationOutcome, EvaluationResult
+from loreley.core.worker.evaluator import (
+    EvaluationMetric,
+    EvaluationOutcome,
+    EvaluationResult,
+)
 from loreley.core.worker.evaluation_runtime import measurement_payload_sha256
 from loreley.core.worker.planning import PlanningAgentResponse
-from loreley.core.worker.repair import build_diagnostic_capsule, repair_failure_kind_allowlist
+from loreley.core.worker.repair import (
+    build_diagnostic_capsule,
+    repair_failure_kind_allowlist,
+)
 from loreley.db.base import session_scope
 from loreley.db.models import (
     CandidateCommit,
@@ -54,7 +61,9 @@ if TYPE_CHECKING:
 
 log = logger.bind(module="worker.job_store")
 
-_WORKER_ID_MAX_CHARS = int(getattr(EvolutionJob.__table__.c.worker_id.type, "length", 128) or 128)
+_WORKER_ID_MAX_CHARS = int(
+    getattr(EvolutionJob.__table__.c.worker_id.type, "length", 128) or 128
+)
 _WORKER_ID_HASH_CHARS = 12
 _FAILURE_ARTIFACT_KEY = "evaluation_failure"
 
@@ -70,6 +79,7 @@ def _unique_evaluation_artifact_record_key(base_key: str, used_keys: set[str]) -
     digest = hashlib.sha256(base.encode("utf-8")).hexdigest()[:8]
     suffix = f"_{digest}"
     return f"{base[: max(1, 128 - len(suffix))]}{suffix}"
+
 
 __all__ = [
     "EvolutionJobStore",
@@ -195,7 +205,10 @@ class _CandidateCommitUpsertInput:
 
     @property
     def publication_status(self) -> str:
-        if str(getattr(self.job, "execution_mode", "agent") or "agent") == "evaluate_existing":
+        if (
+            str(getattr(self.job, "execution_mode", "agent") or "agent")
+            == "evaluate_existing"
+        ):
             return "available"
         return "published" if self.published else "created"
 
@@ -217,6 +230,34 @@ class _SuccessEvaluationInput:
 
 
 @dataclass(slots=True, frozen=True)
+class _FreshMeasurementInput:
+    session: Any
+    job_ctx: "JobContext"
+    commit_hash: str
+    outcome: EvaluationOutcome
+    attempt: EvaluationAttempt
+    candidate_identity: str | None
+    identity_key: str | None
+    artifacts: tuple[Any, ...]
+
+    def can_accept(self, payload: dict[str, Any]) -> bool:
+        outcome = self.outcome
+        return all(
+            (
+                outcome.measurement_executed,
+                payload.get("cacheable") is True,
+                bool(outcome.measurement_cache_key),
+                bool(outcome.measurement_contract_fingerprint),
+                bool(self.candidate_identity),
+                bool(self.identity_key),
+                bool(outcome.evaluator_name),
+                bool(outcome.evaluator_version),
+                bool(self.job_ctx.campaign_program_hash),
+            )
+        )
+
+
+@dataclass(slots=True, frozen=True)
 class _FailedCandidateUpdateInput:
     session: Any
     job: EvolutionJob
@@ -225,6 +266,21 @@ class _FailedCandidateUpdateInput:
     outcome: EvaluationOutcome
     attempt: EvaluationAttempt
     capsule: DiagnosticCapsule | None
+
+
+@dataclass(slots=True, frozen=True)
+class _FailureAttemptInput:
+    session: Any
+    job_ctx: "JobContext"
+    outcome: EvaluationOutcome
+    candidate: CandidateCommit | None
+    capsule: DiagnosticCapsule | None
+    candidate_identity: str | None
+    identity_key: str | None
+
+    @property
+    def failure(self) -> Any:
+        return self.outcome.failure
 
 
 @dataclass(slots=True, frozen=True)
@@ -256,8 +312,12 @@ class EvolutionJobStore:
                 run_token = uuid4()
                 worker_id = _bounded_worker_instance_id(resolve_worker_instance_id())
                 job_kind = _job_kind_from_job(job)
-                self._mark_job_row_running(job, now=now, run_token=run_token, worker_id=worker_id)
-                self._mark_repair_source_running(session=session, job=job, job_kind=job_kind)
+                self._mark_job_row_running(
+                    job, now=now, run_token=run_token, worker_id=worker_id
+                )
+                self._mark_repair_source_running(
+                    session=session, job=job, job_kind=job_kind
+                )
                 return _locked_job_from_row(
                     job=job,
                     run_token=run_token,
@@ -266,11 +326,17 @@ class EvolutionJobStore:
                 )
         except SQLAlchemyError as exc:
             if self._is_lock_conflict(exc):
-                raise JobLockConflict(f"Evolution job {job_id} is locked by another worker.") from exc
+                raise JobLockConflict(
+                    f"Evolution job {job_id} is locked by another worker."
+                ) from exc
             raise EvolutionWorkerError(f"Failed to start job {job_id}: {exc}") from exc
 
     def _lock_startable_job(self, *, session: Any, job_id: UUID) -> EvolutionJob:
-        job_stmt = select(EvolutionJob).where(EvolutionJob.id == job_id).with_for_update(nowait=True)
+        job_stmt = (
+            select(EvolutionJob)
+            .where(EvolutionJob.id == job_id)
+            .with_for_update(nowait=True)
+        )
         job = session.execute(job_stmt).scalar_one_or_none()
         if not job:
             raise JobPreconditionError(f"Evolution job {job_id} does not exist.")
@@ -331,41 +397,18 @@ class EvolutionJobStore:
 
         try:
             with session_scope() as session:
-                if record.run_token is not None:
-                    job = self._lock_active_job_for_run(
-                        session=session,
-                        job_id=record.job_id,
-                        run_token=record.run_token,
-                        action="recording candidate metadata",
-                    )
-                else:
-                    job = session.get(EvolutionJob, record.job_id)
-                    if not job:
-                        raise EvolutionWorkerError(
-                            f"Evolution job {record.job_id} disappeared while recording candidate metadata.",
-                        )
-                if record.run_token is None and job.status in {
-                    JobStatus.SUCCEEDED,
-                    JobStatus.FAILED,
-                    JobStatus.CANCELLED,
-                }:
-                    raise EvolutionWorkerError(
-                        f"Evolution job {record.job_id} cannot record a candidate in status {job.status}.",
-                    )
-                supplied_candidate = (
-                    str(getattr(job, "execution_mode", "agent") or "agent").strip().lower()
-                    == "evaluate_existing"
+                job = self._job_for_candidate_record(session=session, record=record)
+                _validate_candidate_record(
+                    job=job,
+                    record=record,
+                    candidate_branch=candidate_branch,
                 )
-                if not candidate_branch and not supplied_candidate:
-                    raise EvolutionWorkerError("Candidate branch name must be provided.")
-                if supplied_candidate and record.published:
-                    raise EvolutionWorkerError(
-                        "A supplied candidate is already remote-reachable and must not be "
-                        "published as a worker branch."
-                    )
-                job.candidate_commit_hash = candidate_hash
-                job.candidate_branch_name = candidate_branch or None
-                job.candidate_published_at = _utc_now() if record.published else None
+                _apply_candidate_record_to_job(
+                    job=job,
+                    record=record,
+                    candidate_hash=candidate_hash,
+                    candidate_branch=candidate_branch,
+                )
                 self._upsert_candidate_commit_row(
                     session=session,
                     job=job,
@@ -379,6 +422,26 @@ class EvolutionJobStore:
             raise EvolutionWorkerError(
                 f"Failed to record candidate metadata for job {record.job_id}: {exc}",
             ) from exc
+
+    def _job_for_candidate_record(
+        self,
+        *,
+        session: Any,
+        record: CandidateCommitRecord,
+    ) -> EvolutionJob:
+        if record.run_token is not None:
+            return self._lock_active_job_for_run(
+                session=session,
+                job_id=record.job_id,
+                run_token=record.run_token,
+                action="recording candidate metadata",
+            )
+        job = session.get(EvolutionJob, record.job_id)
+        if job is None:
+            raise EvolutionWorkerError(
+                f"Evolution job {record.job_id} disappeared while recording candidate metadata."
+            )
+        return job
 
     def find_reusable_evaluation(
         self,
@@ -400,7 +463,8 @@ class EvolutionJobStore:
                 .join(CommitCard, CandidateCommit.commit_card_id == CommitCard.id)
                 .join(
                     EvaluationAttempt,
-                    CandidateCommit.latest_evaluation_attempt_id == EvaluationAttempt.id,
+                    CandidateCommit.latest_evaluation_attempt_id
+                    == EvaluationAttempt.id,
                 )
                 .where(
                     CandidateCommit.source_tree_hash == tree_hash,
@@ -411,7 +475,9 @@ class EvolutionJobStore:
                     EvaluationAttempt.protocol == "one_shot",
                     EvaluationAttempt.outcome_kind == "passed",
                 )
-                .order_by(CandidateCommit.evaluated_at.desc(), CandidateCommit.id.desc())
+                .order_by(
+                    CandidateCommit.evaluated_at.desc(), CandidateCommit.id.desc()
+                )
                 .limit(1)
             ).first()
             if row is None:
@@ -568,7 +634,9 @@ class EvolutionJobStore:
                         f"Evolution job {job_id} lease is no longer active for run_token={run_token}.",
                     )
         except SQLAlchemyError as exc:
-            raise EvolutionWorkerError(f"Failed to renew job lease for {job_id}: {exc}") from exc
+            raise EvolutionWorkerError(
+                f"Failed to renew job lease for {job_id}: {exc}"
+            ) from exc
         return lease_expires_at
 
     def _upsert_candidate_commit_row(
@@ -596,7 +664,9 @@ class EvolutionJobStore:
         published_at = request.published_at
         row = CandidateCommit(
             commit_hash=request.commit_hash,
-            git_parent_commit_hash=str(getattr(job, "base_commit_hash", "") or "").strip(),
+            git_parent_commit_hash=str(
+                getattr(job, "base_commit_hash", "") or ""
+            ).strip(),
             nearest_viable_ancestor_hash=_nearest_viable_ancestor_for_job(job),
             island_id=getattr(job, "island_id", None),
             produced_by_job_id=getattr(job, "id", None),
@@ -613,7 +683,9 @@ class EvolutionJobStore:
             archive_status="not_considered",
             lifecycle_status="active",
             repair_state="audit_only",
-            failed_depth=_candidate_failed_depth_for_job(session=request.session, job=job),
+            failed_depth=_candidate_failed_depth_for_job(
+                session=request.session, job=job
+            ),
             repair_attempts=0,
             repo_state_aggregate_status="not_required",
             published_at=published_at,
@@ -632,15 +704,25 @@ class EvolutionJobStore:
         request: _CandidateCommitUpsertInput,
     ) -> CandidateCommit:
         job = request.job
-        row.git_parent_commit_hash = row.git_parent_commit_hash or _base_commit_hash(job)
-        row.nearest_viable_ancestor_hash = row.nearest_viable_ancestor_hash or _nearest_viable_ancestor_for_job(job)
+        row.git_parent_commit_hash = row.git_parent_commit_hash or _base_commit_hash(
+            job
+        )
+        row.nearest_viable_ancestor_hash = (
+            row.nearest_viable_ancestor_hash or _nearest_viable_ancestor_for_job(job)
+        )
         row.island_id = row.island_id or getattr(job, "island_id", None)
         row.produced_by_job_id = row.produced_by_job_id or getattr(job, "id", None)
-        row.run_token = row.run_token or request.run_token or getattr(job, "run_token", None)
+        row.run_token = (
+            row.run_token or request.run_token or getattr(job, "run_token", None)
+        )
         row.job_kind = row.job_kind or request.job_kind
-        row.repair_source_candidate_id = row.repair_source_candidate_id or getattr(job, "repair_source_candidate_id", None)
+        row.repair_source_candidate_id = row.repair_source_candidate_id or getattr(
+            job, "repair_source_candidate_id", None
+        )
         row.repair_mode = row.repair_mode or getattr(job, "repair_mode", None)
-        row.campaign_program_hash = row.campaign_program_hash or getattr(job, "campaign_program_hash", None)
+        row.campaign_program_hash = row.campaign_program_hash or getattr(
+            job, "campaign_program_hash", None
+        )
         row.source_tree_hash = row.source_tree_hash or request.source_tree_hash
         row.candidate_branch_name = request.branch_name
         row.publication_status = request.publication_status
@@ -688,7 +770,9 @@ class EvolutionJobStore:
                     commit_hash=request.commit_hash,
                     payload=payload,
                 )
-                self._add_metric_rows(session=session, card=card, evaluation=request.evaluation)
+                self._add_metric_rows(
+                    session=session, card=card, evaluation=request.evaluation
+                )
                 self._flush_session(session)
                 self._merge_fixed_artifacts(
                     session=session,
@@ -727,7 +811,9 @@ class EvolutionJobStore:
                 f"Failed to persist results for job {request.job_ctx.job_id}: {exc}"
             ) from exc
 
-    def _build_success_payload(self, request: _PersistSuccessInput) -> _PersistSuccessPayload:
+    def _build_success_payload(
+        self, request: _PersistSuccessInput
+    ) -> _PersistSuccessPayload:
         subject = _success_subject(request.job_ctx.job_id, request.commit_message)
         build = build_commit_card_from_git(
             worktree=Path(request.worktree),
@@ -737,7 +823,10 @@ class EvolutionJobStore:
         return _PersistSuccessPayload(
             subject=subject,
             change_summary=_change_summary(request),
-            eval_summary=clamp_text(normalize_single_line(request.evaluation.summary), 512) or None,
+            eval_summary=clamp_text(
+                normalize_single_line(request.evaluation.summary), 512
+            )
+            or None,
             key_files=_commit_card_key_files(build.key_files),
             highlights=_commit_card_highlights(build.highlights),
             tags=_bounded_tags(request.job_ctx.tags),
@@ -775,7 +864,9 @@ class EvolutionJobStore:
                 )
             )
         except Exception as exc:  # pragma: no cover - best-effort artifact store
-            log.warning("Failed to write artifacts for job {}: {}", request.job_ctx.job_id, exc)
+            log.warning(
+                "Failed to write artifacts for job {}: {}", request.job_ctx.job_id, exc
+            )
         return JobArtifactWriteResult(fixed=FixedJobArtifactPaths())
 
     @staticmethod
@@ -941,7 +1032,9 @@ class EvolutionJobStore:
             )
             for artifact in artifacts
         ]
-        EvolutionJobStore._replace_evaluation_artifact_records(session=session, records=records)
+        EvolutionJobStore._replace_evaluation_artifact_records(
+            session=session, records=records
+        )
 
     @staticmethod
     def _evaluation_artifact_record(
@@ -1002,9 +1095,9 @@ class EvolutionJobStore:
     @staticmethod
     def _next_evaluation_attempt_ordinal(*, session: Any, job_id: UUID) -> int:
         result = session.execute(
-            select(func.coalesce(func.max(EvaluationAttempt.attempt_ordinal), 0) + 1).where(
-                EvaluationAttempt.job_id == job_id
-            )
+            select(
+                func.coalesce(func.max(EvaluationAttempt.attempt_ordinal), 0) + 1
+            ).where(EvaluationAttempt.job_id == job_id)
         )
         scalar_one = getattr(result, "scalar_one", None)
         if not callable(scalar_one):  # pragma: no cover - simplified unit-test sessions
@@ -1104,14 +1197,16 @@ class EvolutionJobStore:
             attempt.outcome_kind = "passed"
             attempt.finished_at = effective_outcome.finished_at
         self._accept_fresh_measurement(
-            session=request.session,
-            job_ctx=request.job_ctx,
-            commit_hash=request.commit_hash,
-            outcome=effective_outcome,
-            attempt=attempt,
-            candidate_identity=candidate_identity,
-            identity_key=identity_key,
-            artifacts=request.artifacts,
+            _FreshMeasurementInput(
+                session=request.session,
+                job_ctx=request.job_ctx,
+                commit_hash=request.commit_hash,
+                outcome=effective_outcome,
+                attempt=attempt,
+                candidate_identity=candidate_identity,
+                identity_key=identity_key,
+                artifacts=request.artifacts,
+            )
         )
         candidate.latest_evaluation_attempt_id = attempt.id
         candidate.evaluation_status = "passed"
@@ -1123,7 +1218,9 @@ class EvolutionJobStore:
         candidate.failure_kind = None
         candidate.failure_summary = None
         candidate.failure_evidence_id = None
-        candidate.repair_state = "repaired" if candidate.job_kind == "repair" else "audit_only"
+        candidate.repair_state = (
+            "repaired" if candidate.job_kind == "repair" else "audit_only"
+        )
         candidate.commit_card_id = request.card.id
         candidate.evaluated_at = effective_outcome.finished_at or _utc_now()
         log.info(
@@ -1131,7 +1228,9 @@ class EvolutionJobStore:
             effective_outcome.evaluator_name or "unknown",
         )
         if request.job_ctx.repair_source_candidate_id is not None:
-            source = request.session.get(CandidateCommit, request.job_ctx.repair_source_candidate_id)
+            source = request.session.get(
+                CandidateCommit, request.job_ctx.repair_source_candidate_id
+            )
             if source is not None:
                 source.repair_state = "repaired"
         return attempt
@@ -1150,40 +1249,25 @@ class EvolutionJobStore:
 
     def _accept_fresh_measurement(
         self,
-        *,
-        session: Any,
-        job_ctx: "JobContext",
-        commit_hash: str,
-        outcome: EvaluationOutcome,
-        attempt: EvaluationAttempt,
-        candidate_identity: str | None,
-        identity_key: str | None,
-        artifacts: tuple[Any, ...],
+        request: _FreshMeasurementInput,
     ) -> None:
+        outcome = request.outcome
         if outcome.protocol != "phased-v1":
             return
         if outcome.measurement_reused:
-            attempt.measurement_id = _optional_uuid(outcome.measurement_id)
-            attempt.reused_from_attempt_id = _optional_uuid(outcome.reused_from_attempt_id)
+            request.attempt.measurement_id = _optional_uuid(outcome.measurement_id)
+            request.attempt.reused_from_attempt_id = _optional_uuid(
+                outcome.reused_from_attempt_id
+            )
             return
         payload = dict(outcome.measurement_payload or {})
-        if not (
-            outcome.measurement_executed
-            and payload.get("cacheable") is True
-            and outcome.measurement_cache_key
-            and outcome.measurement_contract_fingerprint
-            and candidate_identity
-            and identity_key
-            and outcome.evaluator_name
-            and outcome.evaluator_version
-            and job_ctx.campaign_program_hash
-        ):
+        if not request.can_accept(payload):
             return
         _require_intact_measurement_evidence(
             evidence=outcome.measurement_evidence,
-            artifacts=artifacts,
+            artifacts=request.artifacts,
         )
-        existing = session.execute(
+        existing = request.session.execute(
             select(EvaluationMeasurementRow).where(
                 EvaluationMeasurementRow.cache_key == outcome.measurement_cache_key
             )
@@ -1191,27 +1275,31 @@ class EvolutionJobStore:
         if existing is None:
             existing = EvaluationMeasurementRow(
                 cache_key=outcome.measurement_cache_key,
-                candidate_identity=candidate_identity,
-                evaluation_identity_key=identity_key,
+                candidate_identity=request.candidate_identity,
+                evaluation_identity_key=request.identity_key,
                 evaluator_name=outcome.evaluator_name,
                 evaluator_version=outcome.evaluator_version,
-                campaign_program_hash=job_ctx.campaign_program_hash,
+                campaign_program_hash=request.job_ctx.campaign_program_hash,
                 measurement_contract_fingerprint=(
                     outcome.measurement_contract_fingerprint
                 ),
                 payload=payload,
                 payload_sha256=measurement_payload_sha256(payload),
-                evidence_manifest=[item.as_dict() for item in outcome.measurement_evidence],
-                source_job_id=job_ctx.job_id,
-                source_candidate_commit_hash=commit_hash,
-                source_evaluation_attempt_id=attempt.id,
+                evidence_manifest=[
+                    item.as_dict() for item in outcome.measurement_evidence
+                ],
+                source_job_id=request.job_ctx.job_id,
+                source_candidate_commit_hash=request.commit_hash,
+                source_evaluation_attempt_id=request.attempt.id,
             )
-            session.add(existing)
-            self._flush_session(session)
-        attempt.measurement_id = existing.id
+            request.session.add(existing)
+            self._flush_session(request.session)
+        request.attempt.measurement_id = existing.id
 
     @staticmethod
-    def _candidate_for_commit(*, session: Any, commit_hash: str) -> CandidateCommit | None:
+    def _candidate_for_commit(
+        *, session: Any, commit_hash: str
+    ) -> CandidateCommit | None:
         row = session.execute(
             select(CandidateCommit).where(CandidateCommit.commit_hash == commit_hash)
         ).scalar_one_or_none()
@@ -1454,8 +1542,9 @@ class EvolutionJobStore:
         candidate: CandidateCommit | None,
         capsule: DiagnosticCapsule | None,
     ) -> EvaluationAttempt:
-        failure = outcome.failure
-        candidate_identity = normalize_candidate_identity(outcome.prepared_candidate_identity)
+        candidate_identity = normalize_candidate_identity(
+            outcome.prepared_candidate_identity
+        )
         identity_key = evaluation_identity_key(
             candidate_identity=candidate_identity,
             evaluator_name=outcome.evaluator_name,
@@ -1463,60 +1552,28 @@ class EvolutionJobStore:
             campaign_program_hash=job_ctx.campaign_program_hash,
             measurement_contract_fingerprint=outcome.measurement_contract_fingerprint,
         )
+        request = _FailureAttemptInput(
+            session=session,
+            job_ctx=job_ctx,
+            outcome=outcome,
+            candidate=candidate,
+            capsule=capsule,
+            candidate_identity=candidate_identity,
+            identity_key=identity_key,
+        )
         attempt = self._existing_observation_attempt(session=session, outcome=outcome)
         if attempt is None:
-            attempt = EvaluationAttempt(
-                candidate_commit_id=candidate.id if candidate is not None else None,
-                job_id=job_ctx.job_id,
-                run_token=job_ctx.run_token,
+            attempt = _new_failure_attempt(
+                request=request,
                 attempt_ordinal=self._next_evaluation_attempt_ordinal(
                     session=session,
                     job_id=job_ctx.job_id,
                 ),
-                evaluator_name=outcome.evaluator_name,
-                evaluator_version=outcome.evaluator_version,
-                campaign_program_hash=job_ctx.campaign_program_hash,
-                candidate_identity=candidate_identity,
-                evaluation_identity_key=identity_key,
-                protocol=outcome.protocol,
-                measurement_cache_key=outcome.measurement_cache_key,
-                measurement_contract_fingerprint=(
-                    outcome.measurement_contract_fingerprint
-                ),
-                measurement_id=_optional_uuid(outcome.measurement_id),
-                measurement_reused=outcome.measurement_reused,
-                measurement_executed=outcome.measurement_executed,
-                reuse_kind=outcome.reuse_kind,
-                reused_from_attempt_id=_optional_uuid(outcome.reused_from_attempt_id),
-                evaluator_slot=outcome.evaluator_slot,
-                evaluator_slot_scope=outcome.evaluator_slot_scope,
-                evaluator_slot_wait_seconds=outcome.evaluator_slot_wait_seconds,
-                evaluator_slot_acquired_at=outcome.evaluator_slot_acquired_at,
-                evaluator_slot_released_at=outcome.evaluator_slot_released_at,
-                evaluator_slot_lease_id=_optional_uuid(outcome.evaluator_slot_lease_id),
-                evaluator_slot_release_reason=outcome.evaluator_slot_release_reason,
-                outcome_kind=outcome.outcome_kind,
-                failure_kind=failure.failure_kind if failure else None,
-                failure_stage=failure.failure_stage if failure else None,
-                repairability=failure.repairability if failure else None,
-                safe_failure_summary=failure.safe_failure_summary if failure else None,
-                diagnostic_capsule_id=capsule.id if capsule is not None else None,
-                artifact_policy_version=failure.policy_version if failure else None,
-                started_at=outcome.started_at,
-                finished_at=outcome.finished_at,
             )
             session.add(attempt)
             self._flush_session(session)
         else:
-            attempt.candidate_commit_id = candidate.id if candidate is not None else None
-            attempt.outcome_kind = outcome.outcome_kind
-            attempt.failure_kind = failure.failure_kind if failure else None
-            attempt.failure_stage = failure.failure_stage if failure else None
-            attempt.repairability = failure.repairability if failure else None
-            attempt.safe_failure_summary = failure.safe_failure_summary if failure else None
-            attempt.diagnostic_capsule_id = capsule.id if capsule is not None else None
-            attempt.artifact_policy_version = failure.policy_version if failure else None
-            attempt.finished_at = outcome.finished_at
+            _update_failure_attempt(attempt=attempt, request=request)
         log.info(
             "EvaluationAttempt recorded outcome_kind={} evaluator={}",
             outcome.outcome_kind,
@@ -1539,8 +1596,12 @@ class EvolutionJobStore:
         job.run_token = None
         job.worker_id = None
         job.last_error = message
-        job.failure_stage = clamp_text(normalize_single_line(failure_stage or ""), 32) or None
-        job.failure_kind = clamp_text(normalize_single_line(failure_kind or ""), 64) or None
+        job.failure_stage = (
+            clamp_text(normalize_single_line(failure_stage or ""), 32) or None
+        )
+        job.failure_kind = (
+            clamp_text(normalize_single_line(failure_kind or ""), 64) or None
+        )
 
     @staticmethod
     def _failure_artifact_record(
@@ -1639,7 +1700,9 @@ class EvolutionJobStore:
             )
 
     @staticmethod
-    def _apply_failure_status_to_candidate(request: _FailedCandidateUpdateInput) -> None:
+    def _apply_failure_status_to_candidate(
+        request: _FailedCandidateUpdateInput,
+    ) -> None:
         candidate = request.candidate
         failure = request.outcome.failure
         candidate.latest_evaluation_attempt_id = request.attempt.id
@@ -1656,7 +1719,9 @@ class EvolutionJobStore:
         candidate.failure_stage = failure.failure_stage
         candidate.failure_kind = failure.failure_kind
         candidate.failure_summary = failure.safe_failure_summary
-        candidate.failure_evidence_id = request.capsule.id if request.capsule is not None else None
+        candidate.failure_evidence_id = (
+            request.capsule.id if request.capsule is not None else None
+        )
 
     def _decide_repair_state(
         self,
@@ -1668,7 +1733,10 @@ class EvolutionJobStore:
         candidate = request.candidate
         if not candidate.commit_hash:
             return "audit_only"
-        if _job_kind_from_job(request.job) == "repair" or request.job_ctx.repair_source_candidate_id is not None:
+        if (
+            _job_kind_from_job(request.job) == "repair"
+            or request.job_ctx.repair_source_candidate_id is not None
+        ):
             return "ineligible"
         if request.outcome.outcome_kind != "candidate_failed" or failure is None:
             return "audit_only"
@@ -1684,7 +1752,9 @@ class EvolutionJobStore:
             return "audit_only"
         if failure is None or not _failure_allows_repair(
             failure,
-            allowed=repair_failure_kind_allowlist(self.settings.failed_candidate_repair_failure_kinds),
+            allowed=repair_failure_kind_allowlist(
+                self.settings.failed_candidate_repair_failure_kinds
+            ),
         ):
             return "ineligible"
         if request.capsule is None or not request.capsule.policy_passed:
@@ -1700,9 +1770,14 @@ class EvolutionJobStore:
 
     def _repair_budget_state(self, request: _RepairStateDecision) -> str:
         candidate = request.candidate
-        if candidate.repair_source_candidate_id is not None or int(candidate.failed_depth or 0) != 0:
+        if (
+            candidate.repair_source_candidate_id is not None
+            or int(candidate.failed_depth or 0) != 0
+        ):
             return "ineligible"
-        if int(candidate.repair_attempts or 0) >= max(0, int(self.settings.failed_candidate_repair_max_attempts)):
+        if int(candidate.repair_attempts or 0) >= max(
+            0, int(self.settings.failed_candidate_repair_max_attempts)
+        ):
             return "exhausted"
         if candidate.lifecycle_status != "active":
             return "quarantined"
@@ -1729,7 +1804,9 @@ class EvolutionJobStore:
         if source is None:
             return
         max_attempts = max(0, int(self.settings.failed_candidate_repair_max_attempts))
-        source.repair_state = "exhausted" if source.repair_attempts >= max_attempts else "eligible"
+        source.repair_state = (
+            "exhausted" if source.repair_attempts >= max_attempts else "eligible"
+        )
 
     def _update_repair_source_after_terminal_failure(
         self,
@@ -1742,7 +1819,9 @@ class EvolutionJobStore:
         source_id = getattr(job, "repair_source_candidate_id", None)
         if source_id is None:
             return
-        self._update_repair_source_after_failed_attempt(session=session, source_id=source_id)
+        self._update_repair_source_after_failed_attempt(
+            session=session, source_id=source_id
+        )
 
     def mark_job_failed(
         self,
@@ -1771,7 +1850,11 @@ class EvolutionJobStore:
                     job = session.get(EvolutionJob, job_id)
                     if not job:
                         return False
-                    if job.status in {JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELLED}:
+                    if job.status in {
+                        JobStatus.SUCCEEDED,
+                        JobStatus.FAILED,
+                        JobStatus.CANCELLED,
+                    }:
                         return False
                 self._mark_job_row_failed(
                     job=job,
@@ -1779,7 +1862,9 @@ class EvolutionJobStore:
                     failure_stage=failure_stage,
                     failure_kind=failure_kind,
                 )
-                self._update_repair_source_after_terminal_failure(session=session, job=job)
+                self._update_repair_source_after_terminal_failure(
+                    session=session, job=job
+                )
                 return True
         except SQLAlchemyError as exc:
             log.error("Failed to record failure for job {}: {}", job_id, exc)
@@ -1835,7 +1920,9 @@ def _utc_now() -> datetime:
 def _db_utc_now(session: Any) -> datetime:
     value = session.execute(select(func.now())).scalar_one()
     if not isinstance(value, datetime):
-        raise RuntimeError(f"Database current timestamp returned unsupported value: {value!r}")
+        raise RuntimeError(
+            f"Database current timestamp returned unsupported value: {value!r}"
+        )
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
@@ -1900,16 +1987,16 @@ def _locked_job_from_row(
             getattr(job, "external_submission_key", "") or ""
         ).strip(),
         input_provenance=dict(getattr(job, "input_provenance", {}) or {}),
-        archive_ingestion_enabled=bool(
-            getattr(job, "archive_ingestion_enabled", True)
-        ),
+        archive_ingestion_enabled=bool(getattr(job, "archive_ingestion_enabled", True)),
         repair_source_candidate_id=getattr(job, "repair_source_candidate_id", None),
         repair_mode=getattr(job, "repair_mode", None),
         campaign_program_hash=getattr(job, "campaign_program_hash", None),
         sampling_strategy=getattr(job, "sampling_strategy", None),
         sampling_initial_radius=getattr(job, "sampling_initial_radius", None),
         sampling_radius_used=getattr(job, "sampling_radius_used", None),
-        sampling_fallback_inspirations=getattr(job, "sampling_fallback_inspirations", None),
+        sampling_fallback_inspirations=getattr(
+            job, "sampling_fallback_inspirations", None
+        ),
         sampling_ordinal=getattr(job, "sampling_ordinal", None),
         sampling_recipe_hash=getattr(job, "sampling_recipe_hash", None),
         sampling_recipe_reused=bool(getattr(job, "sampling_recipe_reused", False)),
@@ -1979,12 +2066,119 @@ def _failed_candidate_archive_status(outcome: EvaluationOutcome) -> str:
     return "not_applicable"
 
 
+def _is_supplied_candidate_job(job: EvolutionJob) -> bool:
+    return (
+        str(getattr(job, "execution_mode", "agent") or "agent").strip().lower()
+        == "evaluate_existing"
+    )
+
+
+def _validate_candidate_record(
+    *,
+    job: EvolutionJob,
+    record: CandidateCommitRecord,
+    candidate_branch: str,
+) -> None:
+    terminal = {JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELLED}
+    if record.run_token is None and job.status in terminal:
+        raise EvolutionWorkerError(
+            f"Evolution job {record.job_id} cannot record a candidate in status {job.status}."
+        )
+    supplied = _is_supplied_candidate_job(job)
+    if not candidate_branch and not supplied:
+        raise EvolutionWorkerError("Candidate branch name must be provided.")
+    if supplied and record.published:
+        raise EvolutionWorkerError(
+            "A supplied candidate is already remote-reachable and must not be "
+            "published as a worker branch."
+        )
+
+
+def _apply_candidate_record_to_job(
+    *,
+    job: EvolutionJob,
+    record: CandidateCommitRecord,
+    candidate_hash: str,
+    candidate_branch: str,
+) -> None:
+    job.candidate_commit_hash = candidate_hash
+    job.candidate_branch_name = candidate_branch or None
+    job.candidate_published_at = _utc_now() if record.published else None
+
+
 def _failure_allows_repair(failure: Any, *, allowed: set[str]) -> bool:
     return (
         failure.failure_stage == "evaluation"
         and failure.failure_kind in allowed
         and failure.repairability == "repairable"
     )
+
+
+def _optional_failure_value(failure: Any, name: str) -> Any:
+    return getattr(failure, name, None) if failure is not None else None
+
+
+def _new_failure_attempt(
+    *,
+    request: _FailureAttemptInput,
+    attempt_ordinal: int,
+) -> EvaluationAttempt:
+    outcome = request.outcome
+    failure = request.failure
+    return EvaluationAttempt(
+        candidate_commit_id=getattr(request.candidate, "id", None),
+        job_id=request.job_ctx.job_id,
+        run_token=request.job_ctx.run_token,
+        attempt_ordinal=attempt_ordinal,
+        evaluator_name=outcome.evaluator_name,
+        evaluator_version=outcome.evaluator_version,
+        campaign_program_hash=request.job_ctx.campaign_program_hash,
+        candidate_identity=request.candidate_identity,
+        evaluation_identity_key=request.identity_key,
+        protocol=outcome.protocol,
+        measurement_cache_key=outcome.measurement_cache_key,
+        measurement_contract_fingerprint=outcome.measurement_contract_fingerprint,
+        measurement_id=_optional_uuid(outcome.measurement_id),
+        measurement_reused=outcome.measurement_reused,
+        measurement_executed=outcome.measurement_executed,
+        reuse_kind=outcome.reuse_kind,
+        reused_from_attempt_id=_optional_uuid(outcome.reused_from_attempt_id),
+        evaluator_slot=outcome.evaluator_slot,
+        evaluator_slot_scope=outcome.evaluator_slot_scope,
+        evaluator_slot_wait_seconds=outcome.evaluator_slot_wait_seconds,
+        evaluator_slot_acquired_at=outcome.evaluator_slot_acquired_at,
+        evaluator_slot_released_at=outcome.evaluator_slot_released_at,
+        evaluator_slot_lease_id=_optional_uuid(outcome.evaluator_slot_lease_id),
+        evaluator_slot_release_reason=outcome.evaluator_slot_release_reason,
+        outcome_kind=outcome.outcome_kind,
+        failure_kind=_optional_failure_value(failure, "failure_kind"),
+        failure_stage=_optional_failure_value(failure, "failure_stage"),
+        repairability=_optional_failure_value(failure, "repairability"),
+        safe_failure_summary=_optional_failure_value(failure, "safe_failure_summary"),
+        diagnostic_capsule_id=getattr(request.capsule, "id", None),
+        artifact_policy_version=_optional_failure_value(failure, "policy_version"),
+        started_at=outcome.started_at,
+        finished_at=outcome.finished_at,
+    )
+
+
+def _update_failure_attempt(
+    *,
+    attempt: EvaluationAttempt,
+    request: _FailureAttemptInput,
+) -> None:
+    failure = request.failure
+    attempt.candidate_commit_id = getattr(request.candidate, "id", None)
+    attempt.outcome_kind = request.outcome.outcome_kind
+    attempt.failure_kind = _optional_failure_value(failure, "failure_kind")
+    attempt.failure_stage = _optional_failure_value(failure, "failure_stage")
+    attempt.repairability = _optional_failure_value(failure, "repairability")
+    attempt.safe_failure_summary = _optional_failure_value(
+        failure, "safe_failure_summary"
+    )
+    attempt.diagnostic_capsule_id = getattr(request.capsule, "id", None)
+    attempt.artifact_policy_version = _optional_failure_value(failure, "policy_version")
+    attempt.finished_at = request.outcome.finished_at
 
 
 def _require_intact_measurement_evidence(
@@ -2001,31 +2195,45 @@ def _require_intact_measurement_evidence(
     }
     for item in evidence:
         key = str(getattr(item, "key", "") or "")
-        expected_sha = str(getattr(item, "sha256", "") or "").lower()
-        expected_size = getattr(item, "size_bytes", None)
         artifact = artifacts_by_key.get(key)
         if artifact is None:
             raise EvolutionWorkerError(
                 f"Cacheable measurement evidence {key!r} has no stored evaluator artifact."
             )
-        observed_sha = str(getattr(artifact, "sha256", "") or "").lower()
-        observed_size = getattr(artifact, "size_bytes", None)
-        storage_path = str(getattr(artifact, "storage_path", "") or "").strip()
-        if observed_sha != expected_sha or (
-            expected_size is not None and int(observed_size or -1) != int(expected_size)
-        ):
-            raise EvolutionWorkerError(
-                f"Cacheable measurement evidence {key!r} does not match its stored artifact."
-            )
-        path = Path(storage_path) if storage_path else None
-        if path is None or not path.is_file():
-            raise EvolutionWorkerError(
-                f"Cacheable measurement evidence {key!r} has no intact stored payload."
-            )
-        if path.stat().st_size != int(observed_size or -1) or _sha256_path(path) != observed_sha:
-            raise EvolutionWorkerError(
-                f"Cacheable measurement evidence {key!r} stored payload changed before acceptance."
-            )
+        _require_measurement_artifact_metadata(item=item, artifact=artifact, key=key)
+        _require_measurement_artifact_payload(artifact=artifact, key=key)
+
+
+def _require_measurement_artifact_metadata(
+    *, item: Any, artifact: Any, key: str
+) -> None:
+    expected_sha = str(getattr(item, "sha256", "") or "").lower()
+    expected_size = getattr(item, "size_bytes", None)
+    observed_sha = str(getattr(artifact, "sha256", "") or "").lower()
+    observed_size = getattr(artifact, "size_bytes", None)
+    sha_matches = observed_sha == expected_sha
+    size_matches = expected_size is None or int(observed_size or -1) == int(
+        expected_size
+    )
+    if not (sha_matches and size_matches):
+        raise EvolutionWorkerError(
+            f"Cacheable measurement evidence {key!r} does not match its stored artifact."
+        )
+
+
+def _require_measurement_artifact_payload(*, artifact: Any, key: str) -> None:
+    storage_path = str(getattr(artifact, "storage_path", "") or "").strip()
+    path = Path(storage_path) if storage_path else None
+    if path is None or not path.is_file():
+        raise EvolutionWorkerError(
+            f"Cacheable measurement evidence {key!r} has no intact stored payload."
+        )
+    observed_size = int(getattr(artifact, "size_bytes", None) or -1)
+    observed_sha = str(getattr(artifact, "sha256", "") or "").lower()
+    if path.stat().st_size != observed_size or _sha256_path(path) != observed_sha:
+        raise EvolutionWorkerError(
+            f"Cacheable measurement evidence {key!r} stored payload changed before acceptance."
+        )
 
 
 def _sha256_path(path: Path) -> str:
@@ -2063,12 +2271,12 @@ def _success_subject(job_id: UUID, commit_message: str) -> str:
 
 def _change_summary(request: _PersistSuccessInput) -> str:
     source = (
-        request.coding.report.summary if request.coding is not None else ""
-    ) or (
-        request.plan.plan.summary if request.plan is not None else ""
-    ) or (
-        request.job_ctx.input_candidate_summary
-        or f"Evolution job {request.job_ctx.job_id}"
+        (request.coding.report.summary if request.coding is not None else "")
+        or (request.plan.plan.summary if request.plan is not None else "")
+        or (
+            request.job_ctx.input_candidate_summary
+            or f"Evolution job {request.job_ctx.job_id}"
+        )
     )
     # Coding summaries are already bounded to 800 characters.  Preserve that
     # complete projection so later trajectory compression does not discard a
@@ -2086,7 +2294,9 @@ def _commit_card_highlights(lines: Sequence[str]) -> list[str]:
 
 
 def _bounded_tags(tags: Sequence[str]) -> list[str]:
-    return [clamp_text(normalize_single_line(tag), 64) for tag in tags if str(tag).strip()]
+    return [
+        clamp_text(normalize_single_line(tag), 64) for tag in tags if str(tag).strip()
+    ]
 
 
 def _merge_success_outcome_artifacts(
