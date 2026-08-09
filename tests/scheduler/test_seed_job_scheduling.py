@@ -367,15 +367,23 @@ def test_seed_scheduling_treats_failed_ingestion_as_a_pending_retry(
 
     engine = create_engine("sqlite+pysqlite:///:memory:")
     with engine.begin() as connection:
-        connection.exec_driver_sql(
-            "CREATE TABLE evolution_jobs ("
-            "island_id VARCHAR, is_seed_job BOOLEAN NOT NULL, status VARCHAR NOT NULL, "
-            "result_commit_hash VARCHAR, ingestion_status VARCHAR)"
-        )
-        connection.exec_driver_sql(
-            "INSERT INTO evolution_jobs VALUES (?, ?, ?, ?, ?)",
-            ("main", True, JobStatus.SUCCEEDED.name, "candidate-commit", "failed"),
-        )
+            connection.exec_driver_sql(
+                "CREATE TABLE evolution_jobs ("
+                "island_id VARCHAR, is_seed_job BOOLEAN NOT NULL, status VARCHAR NOT NULL, "
+                "result_commit_hash VARCHAR, ingestion_status VARCHAR, "
+                "archive_ingestion_enabled BOOLEAN NOT NULL)"
+            )
+            connection.exec_driver_sql(
+                "INSERT INTO evolution_jobs VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    "main",
+                    True,
+                    JobStatus.SUCCEEDED.name,
+                    "candidate-commit",
+                    "failed",
+                    True,
+                ),
+            )
 
     @contextmanager
     def _session_scope() -> Iterator[Session]:

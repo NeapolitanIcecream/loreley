@@ -772,77 +772,19 @@ def _kilocode_provider_config_mode(settings) -> KiloProviderConfigMode:
     return normalized  # type: ignore[return-value]
 
 
-def _stripped_setting(settings, name: str) -> str:
-    return str(getattr(settings, name, "") or "").strip()
-
-
-def _has_kilocode_api_key_source(settings, *, api_key: str | None = None) -> bool:
-    values = (
-        api_key,
-        getattr(settings, "worker_kilocode_openai_api_key", ""),
-        getattr(settings, "openai_api_key", ""),
-        getattr(settings, "openai_dynamic_api_key_provider", ""),
-    )
-    return any(str(value or "").strip() for value in values)
-
-
 def _kilocode_provider_input(
     settings,
     *,
     api_key: str | None = None,
     selected_model: str | None = None,
 ) -> dict[str, object]:
-    worker_base_url = _stripped_setting(settings, "worker_kilocode_openai_base_url")
-    worker_model = _kilocode_gateway_model(settings, selected_model=selected_model)
-    worker_api_spec = getattr(settings, "worker_kilocode_openai_api_spec", None)
+    from loreley.core.model_routes import resolve_kilocode_provider_input
 
-    base_url = worker_base_url or _stripped_setting(settings, "openai_base_url")
-    api_spec = worker_api_spec or getattr(settings, "openai_api_spec", None)
-    has_api_key_source = _has_kilocode_api_key_source(settings, api_key=api_key)
-    has_provider_config = any(
-        (has_api_key_source, base_url, worker_model, worker_api_spec)
+    return resolve_kilocode_provider_input(
+        settings,
+        api_key=api_key,
+        selected_model=selected_model,
     )
-    provider_id = _kilocode_provider_id(
-        api_spec=api_spec, has_provider_config=has_provider_config
-    )
-    return {
-        "api_spec": api_spec,
-        "base_url": base_url,
-        "model": worker_model,
-        "provider_id": provider_id,
-        "has_api_key_source": has_api_key_source,
-        "has_provider_config": has_provider_config,
-    }
-
-
-def _kilocode_provider_id(*, api_spec: object, has_provider_config: bool) -> str | None:
-    if api_spec == "responses":
-        return KILO_RESPONSES_PROVIDER_ID
-    if api_spec == "chat_completions":
-        return KILO_CHAT_COMPLETIONS_PROVIDER_ID
-    if has_provider_config:
-        return KILO_CHAT_COMPLETIONS_PROVIDER_ID
-    return None
-
-
-def _kilocode_gateway_model(settings, *, selected_model: str | None = None) -> str:
-    explicit = _stripped_setting(settings, "worker_kilocode_openai_model")
-    if explicit and not selected_model:
-        return explicit
-    selected = str(selected_model or "").strip() or _stripped_setting(
-        settings, "worker_kilocode_model"
-    )
-    provider_id, separator, model_id = selected.partition("/")
-    if not separator:
-        return selected
-    if provider_id in {
-        "openai",
-        "openai-responses",
-        KILO_CHAT_COMPLETIONS_PROVIDER_ID,
-        KILO_RESPONSES_PROVIDER_ID,
-    }:
-        return model_id
-    return ""
 
 
 def _build_kilocode_legacy_openai_env(
@@ -1114,9 +1056,9 @@ def _kilocode_backend_model(
 
 
 def _phase_kilocode_model(settings, phase: Literal["planning", "coding"]) -> str | None:
-    phase_model = getattr(settings, f"worker_kilocode_{phase}_model", None)
-    selected = phase_model or getattr(settings, "worker_kilocode_model", None) or ""
-    return str(selected).strip() or None
+    from loreley.core.model_routes import resolve_kilocode_phase_model
+
+    return resolve_kilocode_phase_model(settings, phase)
 
 
 def _has_explicit_kilocode_api_key(env: dict[str, str]) -> bool:

@@ -8,8 +8,10 @@ This CLI is designed to:
 """
 
 from contextlib import nullcontext, redirect_stdout
+from dataclasses import dataclass
 from datetime import datetime
 import os
+from pathlib import Path
 import sys
 import json
 from enum import Enum
@@ -37,7 +39,14 @@ from loreley.core.job_retry import (
     retry_job_row,
 )
 from loreley.core.job_state import pending_ingestion_job_conditions
-from loreley.entrypoints import configure_process_logging, reset_database, run_api, run_scheduler, run_ui, run_worker
+from loreley.entrypoints import (
+    configure_process_logging,
+    reset_database,
+    run_api,
+    run_scheduler,
+    run_ui,
+    run_worker,
+)
 from loreley.preflight import (
     CheckResult,
     preflight_all,
@@ -60,8 +69,12 @@ app.add_typer(db_app, name="db")
 app.add_typer(jobs_app, name="jobs")
 archive_app = typer.Typer(help="Inspect MAP-Elites archives.")
 app.add_typer(archive_app, name="archive")
-embedding_cache_app = typer.Typer(help="Manage repo-state embedding cache manifests and imports.")
+embedding_cache_app = typer.Typer(
+    help="Manage repo-state embedding cache manifests and imports."
+)
 app.add_typer(embedding_cache_app, name="embedding-cache")
+seeds_app = typer.Typer(help="Import and inspect user-supplied seed candidates.")
+app.add_typer(seeds_app, name="seeds")
 
 
 class DoctorRole(str, Enum):
@@ -83,7 +96,9 @@ def _load_settings_or_exit() -> Settings:
         raise typer.Exit(code=1) from exc
 
 
-def _configure_logging_or_exit(*, settings: Settings, role: str, override_level: str | None) -> None:
+def _configure_logging_or_exit(
+    *, settings: Settings, role: str, override_level: str | None
+) -> None:
     try:
         configure_process_logging(
             settings=settings,
@@ -103,7 +118,9 @@ def _resolve_effective_island(*, settings: Settings, island_id: str | None) -> s
     return resolve_default_island_id(settings)
 
 
-def _load_archive_stats_or_exit(*, settings: Settings, island_id: str) -> dict[str, object]:
+def _load_archive_stats_or_exit(
+    *, settings: Settings, island_id: str
+) -> dict[str, object]:
     try:
         from loreley.core.map_elites.manager import MapElitesManager
 
@@ -143,7 +160,9 @@ def _job_lease_payload(*, job: Any, now: datetime) -> dict[str, object]:
     return job_lease_payload(job=job, now=now)
 
 
-def _candidate_fate_fields(*, job: Any, candidate_fate: CandidateFate | None) -> dict[str, object]:
+def _candidate_fate_fields(
+    *, job: Any, candidate_fate: CandidateFate | None
+) -> dict[str, object]:
     fate = candidate_fate or derive_candidate_fate(job=job)
     return fate.as_dict()
 
@@ -157,7 +176,15 @@ def _job_summary_payload(
     return {
         "job_id": str(getattr(job, "id", "")),
         "status": _job_status_value(getattr(job, "status", None)),
+        "job_kind": str(getattr(job, "job_kind", "evolution") or "evolution"),
+        "execution_mode": str(getattr(job, "execution_mode", "agent") or "agent"),
         "base_commit_hash": getattr(job, "base_commit_hash", None),
+        "input_candidate_commit_hash": getattr(
+            job, "input_candidate_commit_hash", None
+        ),
+        "archive_ingestion_enabled": bool(
+            getattr(job, "archive_ingestion_enabled", True)
+        ),
         "island_id": getattr(job, "island_id", None),
         "recovery_count": int(getattr(job, "recovery_count", 0) or 0),
         "result_commit_hash": getattr(job, "result_commit_hash", None),
@@ -182,6 +209,9 @@ def _job_detail_payload(
         "heartbeat_at": _iso_or_none(getattr(job, "heartbeat_at", None)),
         "lease_expires_at": _iso_or_none(getattr(job, "lease_expires_at", None)),
         "lease": _job_lease_payload(job=job, now=now),
+        "input_candidate_summary": getattr(job, "input_candidate_summary", None),
+        "external_submission_key": getattr(job, "external_submission_key", None),
+        "input_provenance": dict(getattr(job, "input_provenance", {}) or {}),
     }
 
 
@@ -191,11 +221,15 @@ def _instance_status_payload(instance: Any) -> dict[str, object]:
         "experiment_uuid": str(getattr(instance, "experiment_uuid", "") or ""),
         "root_commit_hash": str(getattr(instance, "root_commit_hash", "") or ""),
         "repository_slug": getattr(instance, "repository_slug", None),
-        "repository_canonical_origin": getattr(instance, "repository_canonical_origin", None),
+        "repository_canonical_origin": getattr(
+            instance, "repository_canonical_origin", None
+        ),
     }
 
 
-def _jobs_status_payload(*, unfinished_jobs: int, pending_ingestion_jobs: int) -> dict[str, int]:
+def _jobs_status_payload(
+    *, unfinished_jobs: int, pending_ingestion_jobs: int
+) -> dict[str, int]:
     return {
         "unfinished": int(unfinished_jobs),
         "pending_ingestion": int(pending_ingestion_jobs),
@@ -212,8 +246,12 @@ def _lease_status_payload(
 ) -> dict[str, int]:
     return {
         "lease_ttl_seconds": int(settings.worker_job_lease_ttl_seconds),
-        "heartbeat_interval_seconds": int(settings.worker_job_heartbeat_interval_seconds),
-        "max_recovery_attempts": int(settings.scheduler_stale_running_max_recovery_attempts),
+        "heartbeat_interval_seconds": int(
+            settings.worker_job_heartbeat_interval_seconds
+        ),
+        "max_recovery_attempts": int(
+            settings.scheduler_stale_running_max_recovery_attempts
+        ),
         "running": int(running_jobs),
         "stale_running": int(stale_running_jobs),
         "running_without_lease": int(running_without_lease_jobs),
@@ -237,7 +275,9 @@ def _baseline_status_payload(*, row: Any | None) -> dict[str, object] | None:
     if row is None:
         return None
     return {
-        "campaign_baseline_id": str(getattr(row, "id", "")) if getattr(row, "id", None) else None,
+        "campaign_baseline_id": str(getattr(row, "id", ""))
+        if getattr(row, "id", None)
+        else None,
         "baseline_key_hash": getattr(row, "baseline_key_hash", None),
         "root_baseline_commit": getattr(row, "root_commit_hash", None),
         "root_baseline_metric": getattr(row, "primary_metric_name", None),
@@ -254,7 +294,9 @@ def _baseline_status_payload(*, row: Any | None) -> dict[str, object] | None:
     }
 
 
-def _load_status_baseline_payload(*, session: Any, settings: Settings) -> dict[str, object] | None:
+def _load_status_baseline_payload(
+    *, session: Any, settings: Settings
+) -> dict[str, object] | None:
     from loreley.scheduler.baselines import (
         load_latest_matching_baseline,
         resolve_status_campaign_program_hash,
@@ -281,16 +323,26 @@ def _status_response_payload(
     lease_payload: dict[str, int],
     archive_stats: dict[str, object],
     best_commit: dict[str, object] | None,
-    baseline: dict[str, object] | None = None,
+    supplement: "_StatusSupplement | None" = None,
 ) -> dict[str, object]:
-    return {
+    supplement = supplement or _StatusSupplement()
+    payload: dict[str, object] = {
         "instance": instance_payload,
         "jobs": jobs_payload,
         "job_leases": lease_payload,
         "archive": archive_stats,
         "best_commit": best_commit,
-        "baseline": baseline,
+        "baseline": supplement.baseline,
     }
+    if supplement.progress is not None:
+        payload["progress"] = supplement.progress
+    return payload
+
+
+@dataclass(frozen=True, slots=True)
+class _StatusSupplement:
+    baseline: dict[str, object] | None = None
+    progress: dict[str, object] | None = None
 
 
 def _failed_stale_job_conditions(
@@ -331,7 +383,9 @@ def _count_unfinished_jobs(
     return _count_status_rows(
         session,
         select(func.count(EvolutionJob.id)).where(
-            EvolutionJob.status.in_((JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING)),
+            EvolutionJob.status.in_(
+                (JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING)
+            ),
         ),
     )
 
@@ -344,14 +398,11 @@ def _count_pending_ingestion_jobs(
     select: Any,
     func: Any,
 ) -> int:
-    stmt = (
-        select(func.count(EvolutionJob.id))
-        .where(
-            *pending_ingestion_job_conditions(
-                EvolutionJob=EvolutionJob,
-                JobStatus=JobStatus,
-                func=func,
-            )
+    stmt = select(func.count(EvolutionJob.id)).where(
+        *pending_ingestion_job_conditions(
+            EvolutionJob=EvolutionJob,
+            JobStatus=JobStatus,
+            func=func,
         )
     )
     return _count_status_rows(session, stmt)
@@ -365,7 +416,9 @@ def _count_running_jobs(
     select: Any,
     func: Any,
 ) -> int:
-    stmt = select(func.count(EvolutionJob.id)).where(EvolutionJob.status == JobStatus.RUNNING)
+    stmt = select(func.count(EvolutionJob.id)).where(
+        EvolutionJob.status == JobStatus.RUNNING
+    )
     return _count_status_rows(session, stmt)
 
 
@@ -481,7 +534,9 @@ def _load_status_job_payloads(
         JobStatus=JobStatus,
         select=select,
         func=func,
-        max_recovery_attempts=int(settings.scheduler_stale_running_max_recovery_attempts),
+        max_recovery_attempts=int(
+            settings.scheduler_stale_running_max_recovery_attempts
+        ),
     )
 
     return (
@@ -514,9 +569,7 @@ def _load_best_commit_status_payload(
     metric_name = primary.name
 
     order_column = (
-        Metric.value.desc()
-        if primary.higher_is_better
-        else Metric.value.asc()
+        Metric.value.desc() if primary.higher_is_better else Metric.value.asc()
     )
     conditions = [
         Metric.name == metric_name,
@@ -571,7 +624,9 @@ def _retry_failed_stale_jobs_payload(
 ) -> dict[str, object]:
     return retry_failed_stale_jobs_payload(
         session=session,
-        max_recovery_attempts=int(settings.scheduler_stale_running_max_recovery_attempts),
+        max_recovery_attempts=int(
+            settings.scheduler_stale_running_max_recovery_attempts
+        ),
         retry_all=retry_all,
         limit=limit,
         reason=str(reason or "").strip() or "manual retry requested via CLI",
@@ -626,7 +681,9 @@ def _run_doctor(
         console.print(f"[bold red]Doctor failed[/] ok={ok} warn={warn} fail={fail}")
         return 1
     if warn and strict:
-        console.print(f"[bold yellow]Doctor warnings (strict)[/] ok={ok} warn={warn} fail={fail}")
+        console.print(
+            f"[bold yellow]Doctor warnings (strict)[/] ok={ok} warn={warn} fail={fail}"
+        )
         return 2
     console.print(f"[bold green]Doctor passed[/] ok={ok} warn={warn} fail={fail}")
     return 0
@@ -725,7 +782,9 @@ def doctor(
 ) -> None:
     """Run environment preflight checks."""
     settings = _load_settings_or_exit()
-    _configure_logging_or_exit(settings=settings, role="doctor", override_level=_get_log_level(ctx))
+    _configure_logging_or_exit(
+        settings=settings, role="doctor", override_level=_get_log_level(ctx)
+    )
     code = _run_doctor(
         settings=settings,
         role=str(role.value),
@@ -739,13 +798,17 @@ def doctor(
 @app.command()
 def scheduler(
     ctx: typer.Context,
-    once: bool = typer.Option(False, "--once", help="Execute a single scheduling tick and exit."),
+    once: bool = typer.Option(
+        False, "--once", help="Execute a single scheduling tick and exit."
+    ),
     yes: bool = typer.Option(
         False,
         "--yes",
         help="Auto-approve startup approval and start without prompting (useful for CI/containers).",
     ),
-    no_preflight: bool = typer.Option(False, "--no-preflight", help="Skip preflight validation."),
+    no_preflight: bool = typer.Option(
+        False, "--no-preflight", help="Skip preflight validation."
+    ),
     preflight_timeout_seconds: float = typer.Option(
         2.0,
         "--preflight-timeout-seconds",
@@ -755,7 +818,9 @@ def scheduler(
 ) -> None:
     """Run the evolution scheduler."""
     settings = _load_settings_or_exit()
-    _configure_logging_or_exit(settings=settings, role="scheduler", override_level=_get_log_level(ctx))
+    _configure_logging_or_exit(
+        settings=settings, role="scheduler", override_level=_get_log_level(ctx)
+    )
     code = run_scheduler(
         settings=settings,
         console=console,
@@ -770,15 +835,17 @@ def scheduler(
 @app.command()
 def worker(
     ctx: typer.Context,
-    processes: int = typer.Option(
-        1,
+    processes: int | None = typer.Option(
+        None,
         "--processes",
         "-p",
         min=1,
-        help="Number of isolated worker processes (one thread each).",
-        show_default=True,
+        help="Override WORKER_PROCESSES for this invocation.",
+        show_default=False,
     ),
-    no_preflight: bool = typer.Option(False, "--no-preflight", help="Skip preflight validation."),
+    no_preflight: bool = typer.Option(
+        False, "--no-preflight", help="Skip preflight validation."
+    ),
     preflight_timeout_seconds: float = typer.Option(
         2.0,
         "--preflight-timeout-seconds",
@@ -788,11 +855,13 @@ def worker(
 ) -> None:
     """Run the evolution worker (Dramatiq consumer)."""
     settings = _load_settings_or_exit()
-    _configure_logging_or_exit(settings=settings, role="worker", override_level=_get_log_level(ctx))
+    _configure_logging_or_exit(
+        settings=settings, role="worker", override_level=_get_log_level(ctx)
+    )
     code = run_worker(
         settings=settings,
         console=console,
-        processes=int(processes),
+        processes=int(processes or settings.worker_processes),
         preflight=not bool(no_preflight),
         preflight_timeout_seconds=float(preflight_timeout_seconds),
     )
@@ -802,10 +871,16 @@ def worker(
 @app.command()
 def api(
     ctx: typer.Context,
-    host: str = typer.Option("127.0.0.1", "--host", help="Bind host.", show_default=True),
+    host: str = typer.Option(
+        "127.0.0.1", "--host", help="Bind host.", show_default=True
+    ),
     port: int = typer.Option(8000, "--port", help="Bind port.", show_default=True),
-    reload: bool = typer.Option(False, "--reload", help="Enable auto-reload (dev only)."),
-    no_preflight: bool = typer.Option(False, "--no-preflight", help="Skip preflight validation."),
+    reload: bool = typer.Option(
+        False, "--reload", help="Enable auto-reload (dev only)."
+    ),
+    no_preflight: bool = typer.Option(
+        False, "--no-preflight", help="Skip preflight validation."
+    ),
     preflight_timeout_seconds: float = typer.Option(
         2.0,
         "--preflight-timeout-seconds",
@@ -816,7 +891,9 @@ def api(
     """Run the UI API (FastAPI via uvicorn)."""
     settings = _load_settings_or_exit()
     log_level = _get_log_level(ctx)
-    _configure_logging_or_exit(settings=settings, role="ui_api", override_level=log_level)
+    _configure_logging_or_exit(
+        settings=settings, role="ui_api", override_level=log_level
+    )
     code = run_api(
         settings=settings,
         console=console,
@@ -839,10 +916,18 @@ def ui(
         help="Base URL of the Loreley UI API.",
         show_default=False,
     ),
-    host: str = typer.Option("127.0.0.1", "--host", help="Streamlit bind host.", show_default=True),
-    port: int = typer.Option(8501, "--port", help="Streamlit bind port.", show_default=True),
-    headless: bool = typer.Option(False, "--headless", help="Run without opening a browser."),
-    no_preflight: bool = typer.Option(False, "--no-preflight", help="Skip preflight validation."),
+    host: str = typer.Option(
+        "127.0.0.1", "--host", help="Streamlit bind host.", show_default=True
+    ),
+    port: int = typer.Option(
+        8501, "--port", help="Streamlit bind port.", show_default=True
+    ),
+    headless: bool = typer.Option(
+        False, "--headless", help="Run without opening a browser."
+    ),
+    no_preflight: bool = typer.Option(
+        False, "--no-preflight", help="Skip preflight validation."
+    ),
     preflight_timeout_seconds: float = typer.Option(
         2.0,
         "--preflight-timeout-seconds",
@@ -852,9 +937,13 @@ def ui(
 ) -> None:
     """Run the Streamlit UI."""
     settings = _load_settings_or_exit()
-    _configure_logging_or_exit(settings=settings, role="ui", override_level=_get_log_level(ctx))
+    _configure_logging_or_exit(
+        settings=settings, role="ui", override_level=_get_log_level(ctx)
+    )
 
-    api_base_url = (api_base_url or "").strip() or os.getenv("LORELEY_UI_API_BASE_URL", "http://127.0.0.1:8000")
+    api_base_url = (api_base_url or "").strip() or os.getenv(
+        "LORELEY_UI_API_BASE_URL", "http://127.0.0.1:8000"
+    )
     code = run_ui(
         settings=settings,
         console=console,
@@ -906,12 +995,16 @@ def db_current(
 
     with redirect_stdout(sys.stderr):
         settings = _load_settings_or_exit()
-        _configure_logging_or_exit(settings=settings, role="db", override_level=_get_log_level(ctx))
+        _configure_logging_or_exit(
+            settings=settings, role="db", override_level=_get_log_level(ctx)
+        )
         try:
             from loreley.db.base import INSTANCE_SCHEMA_VERSION, get_engine
             from loreley.db.migrations.runner import describe_schema
 
-            status = describe_schema(engine=get_engine(), target_version=INSTANCE_SCHEMA_VERSION)
+            status = describe_schema(
+                engine=get_engine(), target_version=INSTANCE_SCHEMA_VERSION
+            )
         except Exception as exc:  # pragma: no cover - defensive
             _print_db_error_and_exit(exc)
 
@@ -934,10 +1027,15 @@ def db_migrate(ctx: typer.Context) -> None:
     """Migrate the database schema to the current Loreley version."""
 
     settings = _load_settings_or_exit()
-    _configure_logging_or_exit(settings=settings, role="db", override_level=_get_log_level(ctx))
+    _configure_logging_or_exit(
+        settings=settings, role="db", override_level=_get_log_level(ctx)
+    )
     try:
         from loreley.db.base import INSTANCE_SCHEMA_VERSION, get_engine
-        from loreley.db.migrations.runner import ensure_schema_current, validate_database_schema
+        from loreley.db.migrations.runner import (
+            ensure_schema_current,
+            validate_database_schema,
+        )
 
         engine = get_engine()
         result = ensure_schema_current(
@@ -971,7 +1069,9 @@ def db_validate(ctx: typer.Context) -> None:
     """Validate that the database schema is current and usable."""
 
     settings = _load_settings_or_exit()
-    _configure_logging_or_exit(settings=settings, role="db", override_level=_get_log_level(ctx))
+    _configure_logging_or_exit(
+        settings=settings, role="db", override_level=_get_log_level(ctx)
+    )
     try:
         from loreley.db.base import INSTANCE_SCHEMA_VERSION, get_engine
         from loreley.db.migrations.runner import validate_database_schema
@@ -983,7 +1083,9 @@ def db_validate(ctx: typer.Context) -> None:
         )
     except Exception as exc:
         _print_db_error_and_exit(exc)
-    typer.echo(f"valid schema_version={status.schema_version} target={status.target_version}")
+    typer.echo(
+        f"valid schema_version={status.schema_version} target={status.target_version}"
+    )
 
 
 @embedding_cache_app.command("attest")
@@ -1024,7 +1126,9 @@ def embedding_cache_attest(
             override_level=_get_log_level(ctx),
         )
         if not from_current_settings and not str(fingerprint or "").strip():
-            console.print("[bold red]Provide --from-current-settings or --fingerprint[/]")
+            console.print(
+                "[bold red]Provide --from-current-settings or --fingerprint[/]"
+            )
             raise typer.Exit(code=1)
 
         try:
@@ -1112,9 +1216,293 @@ def reset_db(
 ) -> None:
     """Drop and recreate all Loreley DB tables."""
     settings = _load_settings_or_exit()
-    _configure_logging_or_exit(settings=settings, role="db", override_level=_get_log_level(ctx))
+    _configure_logging_or_exit(
+        settings=settings, role="db", override_level=_get_log_level(ctx)
+    )
     code = reset_database(console=console, yes=bool(yes))
     raise typer.Exit(code=int(code))
+
+
+@dataclass(frozen=True, slots=True)
+class _StatusDatabaseSections:
+    instance: dict[str, object]
+    jobs: dict[str, int]
+    leases: dict[str, int]
+    best_commit: dict[str, object] | None
+    baseline: dict[str, object] | None
+    progress: dict[str, object] | None
+
+
+def _short_status_hash(value: object) -> str:
+    raw = str(value or "").strip()
+    return raw[:12] if raw else "n/a"
+
+
+def _load_optional_progress(
+    *, session: Any, settings: Settings
+) -> dict[str, object] | None:
+    try:
+        from loreley.core.progress import load_campaign_progress
+
+        return load_campaign_progress(session, settings).as_dict()
+    except Exception:
+        # Older schemas and minimal status clients still support the legacy payload.
+        return None
+
+
+def _load_status_database_sections(settings: Settings) -> _StatusDatabaseSections:
+    from loreley.db.base import session_scope
+    from loreley.db.models import (
+        CommitCard,
+        InstanceMetadata,
+        MapElitesArchiveCell,
+        Metric,
+    )
+
+    with session_scope() as session:
+        instance = session.get(InstanceMetadata, 1)
+        if instance is None:
+            from loreley.db.instance import INIT_DB_HINT
+
+            raise RuntimeError(f"Instance metadata is missing. {INIT_DB_HINT}")
+        jobs, leases = _load_status_job_payloads(
+            session=session,
+            settings=settings,
+            current_time=_db_utc_now(session),
+        )
+        best_commit = _load_best_commit_status_payload(
+            session=session,
+            settings=settings,
+            instance=instance,
+            CommitCard=CommitCard,
+            MapElitesArchiveCell=MapElitesArchiveCell,
+            Metric=Metric,
+        )
+        return _StatusDatabaseSections(
+            instance=_instance_status_payload(instance),
+            jobs=jobs,
+            leases=leases,
+            best_commit=best_commit,
+            baseline=_load_status_baseline_payload(session=session, settings=settings),
+            progress=_load_optional_progress(session=session, settings=settings),
+        )
+
+
+def _status_payload_or_exit(
+    *,
+    settings: Settings,
+    effective_island: str,
+) -> dict[str, object]:
+    try:
+        sections = _load_status_database_sections(settings)
+        archive = _load_archive_stats_or_exit(
+            settings=settings, island_id=effective_island
+        )
+    except typer.Exit:
+        raise
+    except Exception as exc:  # pragma: no cover - defensive
+        console.print(f"[bold red]Failed to load status[/] reason={exc}")
+        raise typer.Exit(code=1) from exc
+    return _status_response_payload(
+        instance_payload=sections.instance,
+        jobs_payload=sections.jobs,
+        lease_payload=sections.leases,
+        archive_stats=archive,
+        best_commit=sections.best_commit,
+        supplement=_StatusSupplement(
+            baseline=sections.baseline,
+            progress=sections.progress,
+        ),
+    )
+
+
+def _add_instance_status_rows(table: Any, instance: dict[str, object]) -> None:
+    table.add_row("experiment_id", str(instance.get("experiment_id_raw") or "n/a"))
+    table.add_row("root_commit", _short_status_hash(instance.get("root_commit_hash")))
+    for label, key in (
+        ("repository", "repository_slug"),
+        ("origin", "repository_canonical_origin"),
+    ):
+        if instance.get(key):
+            table.add_row(label, str(instance[key]))
+
+
+def _add_job_status_rows(
+    table: Any,
+    jobs: dict[str, object],
+    progress: dict[str, object] | None,
+) -> None:
+    table.add_section()
+    table.add_row("unfinished_jobs", str(jobs["unfinished"]))
+    table.add_row("pending_ingestion", str(jobs["pending_ingestion"]))
+    if not progress:
+        return
+    fields = (
+        ("terminal_jobs", "terminal_jobs"),
+        ("staged_jobs", "staged_jobs"),
+        ("succeeded_jobs", "succeeded_jobs"),
+        ("failed_jobs", "failed_jobs"),
+        ("distinct_passed_trees", "distinct_passed_source_trees"),
+        ("distinct_evaluation_identities", "distinct_passed_evaluation_identities"),
+        ("real_measurements", "real_measurements"),
+        ("measurement_reuses", "measurement_reuses"),
+        ("exact_tree_reuses", "exact_tree_reuses"),
+    )
+    for label, key in fields:
+        table.add_row(label, str(progress.get(key, 0)))
+
+
+def _add_lease_status_rows(
+    table: Any,
+    leases: dict[str, object],
+    progress: dict[str, object] | None,
+) -> None:
+    table.add_section()
+    for label in (
+        "running",
+        "stale_running",
+        "running_without_lease",
+        "recovery_exhausted_failed",
+        "lease_ttl_seconds",
+        "heartbeat_interval_seconds",
+        "max_recovery_attempts",
+    ):
+        table.add_row(
+            "running_jobs" if label == "running" else label, str(leases[label])
+        )
+    if not progress:
+        return
+    table.add_row(
+        "algorithm_max_unfinished_u", str(progress["scheduler_max_unfinished_jobs"])
+    )
+    table.add_row(
+        "configured_worker_processes_w",
+        str(progress.get("configured_worker_processes") or "n/a"),
+    )
+    table.add_row(
+        "evaluator_concurrency_e",
+        str(progress.get("evaluator_max_concurrency") or "unlimited"),
+    )
+    table.add_row("evaluator_slot_holders", str(progress["evaluator_slot_holders"]))
+    table.add_row("evaluator_slot_waiters", str(progress["evaluator_slot_waiters"]))
+
+
+def _archive_occupancy(archive: dict[str, object]) -> str:
+    occupied = archive.get("occupied")
+    cells = archive.get("cells")
+    if (
+        isinstance(occupied, (int, float))
+        and isinstance(cells, (int, float))
+        and int(cells) > 0
+    ):
+        return f"{int(occupied)}/{int(cells)}"
+    return "n/a"
+
+
+def _add_archive_progress_rows(table: Any, progress: dict[str, object]) -> None:
+    table.add_row("archive_entries_global", str(progress["archive_entries"]))
+    table.add_row(
+        "archive_unique_identities_global",
+        str(progress["archive_unique_evaluation_identities"]),
+    )
+    table.add_row("occupied_coordinates_global", str(progress["occupied_coordinates"]))
+    if progress.get("identity_target") is not None:
+        table.add_row(
+            "identity_endpoint",
+            "{}/{} reached={} overshoot={}".format(
+                progress["distinct_passed_evaluation_identities"],
+                progress["identity_target"],
+                progress["identity_target_reached"],
+                progress["identity_overshoot"],
+            ),
+        )
+
+
+def _add_archive_status_rows(
+    table: Any,
+    archive: dict[str, object],
+    progress: dict[str, object] | None,
+    effective_island: str,
+) -> None:
+    table.add_section()
+    table.add_row("island_id", str(archive.get("island_id") or effective_island))
+    table.add_row("occupied", _archive_occupancy(archive))
+    coverage = archive.get("coverage")
+    table.add_row(
+        "coverage",
+        f"{float(coverage) * 100.0:.2f}%"
+        if isinstance(coverage, (int, float))
+        else "n/a",
+    )
+    elites = archive.get("elites")
+    table.add_row(
+        "elites", str(int(elites)) if isinstance(elites, (int, float)) else "n/a"
+    )
+    table.add_row("objectives", str(archive.get("objective_count") or "n/a"))
+    if progress:
+        _add_archive_progress_rows(table, progress)
+
+
+def _add_best_commit_status_rows(
+    table: Any, best_commit: dict[str, object] | None
+) -> None:
+    table.add_section()
+    if not best_commit:
+        table.add_row("best_commit", "n/a")
+        return
+    table.add_row("best_commit", _short_status_hash(best_commit.get("commit_hash")))
+    table.add_row("primary_metric", str(best_commit.get("primary_metric") or "n/a"))
+    primary_value = best_commit.get("primary_value")
+    table.add_row(
+        "best_primary_value",
+        f"{float(primary_value):.6f}"
+        if isinstance(primary_value, (int, float))
+        else "n/a",
+    )
+    for label, key in (("best_island", "island_id"), ("best_subject", "subject")):
+        if best_commit.get(key):
+            table.add_row(label, str(best_commit[key]))
+
+
+def _add_baseline_status_rows(table: Any, baseline: dict[str, object] | None) -> None:
+    if not baseline:
+        return
+    table.add_section()
+    table.add_row(
+        "root_baseline_status", str(baseline.get("root_baseline_status") or "n/a")
+    )
+    table.add_row(
+        "root_baseline_metric", str(baseline.get("root_baseline_metric") or "n/a")
+    )
+    value = baseline.get("root_baseline_value")
+    table.add_row(
+        "root_baseline_value",
+        f"{float(value):.6f}" if isinstance(value, (int, float)) else "n/a",
+    )
+    table.add_row("baseline_key", _short_status_hash(baseline.get("baseline_key_hash")))
+    if baseline.get("failure_kind"):
+        table.add_row("baseline_failure", str(baseline["failure_kind"]))
+
+
+def _render_status_table(payload: dict[str, object], *, effective_island: str) -> None:
+    from rich.table import Table
+
+    table = Table(title="Loreley status")
+    table.add_column("field", style="bold")
+    table.add_column("value")
+    instance = dict(payload["instance"])
+    jobs = dict(payload["jobs"])
+    leases = dict(payload["job_leases"])
+    archive = dict(payload["archive"])
+    progress = payload.get("progress")
+    progress_payload = dict(progress) if isinstance(progress, dict) else None
+    _add_instance_status_rows(table, instance)
+    _add_job_status_rows(table, jobs, progress_payload)
+    _add_lease_status_rows(table, leases, progress_payload)
+    _add_archive_status_rows(table, archive, progress_payload, effective_island)
+    _add_best_commit_status_rows(table, payload.get("best_commit"))
+    _add_baseline_status_rows(table, payload.get("baseline"))
+    console.print(table)
 
 
 @app.command()
@@ -1135,155 +1523,76 @@ def status(
 ) -> None:
     """Print a high-level operational status summary."""
     settings = _load_settings_or_exit()
-    _configure_logging_or_exit(settings=settings, role="status", override_level=_get_log_level(ctx))
-    effective_island = _resolve_effective_island(settings=settings, island_id=island_id)
-
-    def _short_hash(value: str | None) -> str:
-        raw = str(value or "").strip()
-        if not raw:
-            return "n/a"
-        return raw[:12] if len(raw) > 12 else raw
-
-    try:
-        from loreley.db.base import session_scope
-        from loreley.db.models import (
-            CommitCard,
-            InstanceMetadata,
-            MapElitesArchiveCell,
-            Metric,
-        )
-
-        with session_scope() as session:
-            instance = session.get(InstanceMetadata, 1)
-            if instance is None:
-                from loreley.db.instance import INIT_DB_HINT
-
-                console.print(f"[bold red]Instance metadata is missing[/] {INIT_DB_HINT}")
-                raise typer.Exit(code=1)
-
-            current_time = _db_utc_now(session)
-            jobs_payload, lease_payload = _load_status_job_payloads(
-                session=session,
-                settings=settings,
-                current_time=current_time,
-            )
-            best_commit = _load_best_commit_status_payload(
-                session=session,
-                settings=settings,
-                instance=instance,
-                CommitCard=CommitCard,
-                MapElitesArchiveCell=MapElitesArchiveCell,
-                Metric=Metric,
-            )
-            baseline = _load_status_baseline_payload(
-                session=session,
-                settings=settings,
-            )
-            instance_payload = _instance_status_payload(instance)
-    except typer.Exit:
-        raise
-    except Exception as exc:  # pragma: no cover - defensive
-        console.print(f"[bold red]Failed to load status[/] reason={exc}")
-        raise typer.Exit(code=1) from exc
-
-    archive_stats = _load_archive_stats_or_exit(settings=settings, island_id=effective_island)
-
-    payload = _status_response_payload(
-        instance_payload=instance_payload,
-        jobs_payload=jobs_payload,
-        lease_payload=lease_payload,
-        archive_stats=archive_stats,
-        best_commit=best_commit,
-        baseline=baseline,
+    _configure_logging_or_exit(
+        settings=settings, role="status", override_level=_get_log_level(ctx)
     )
-
+    effective_island = _resolve_effective_island(settings=settings, island_id=island_id)
+    payload = _status_payload_or_exit(
+        settings=settings, effective_island=effective_island
+    )
     if json_output:
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         return
+    _render_status_table(payload, effective_island=effective_island)
 
-    from rich.table import Table
 
-    table = Table(title="Loreley status")
-    table.add_column("field", style="bold")
-    table.add_column("value")
+_MANUAL_SEED_MANIFEST_ARGUMENT = typer.Argument(
+    ...,
+    exists=True,
+    dir_okay=False,
+    readable=True,
+    resolve_path=True,
+    help="YAML or JSON manual-seed manifest.",
+)
+_MANUAL_SEED_JSON_OPTION = typer.Option(
+    False,
+    "--json",
+    help="Print the import result as JSON.",
+    show_default=True,
+)
 
-    table.add_row("experiment_id", str(instance_payload.get("experiment_id_raw") or "n/a"))
-    table.add_row("root_commit", _short_hash(str(instance_payload.get("root_commit_hash") or "")))
-    repo_slug = instance_payload.get("repository_slug")
-    if repo_slug:
-        table.add_row("repository", str(repo_slug))
-    origin = instance_payload.get("repository_canonical_origin")
-    if origin:
-        table.add_row("origin", str(origin))
 
-    table.add_section()
-    table.add_row("unfinished_jobs", str(jobs_payload["unfinished"]))
-    table.add_row("pending_ingestion", str(jobs_payload["pending_ingestion"]))
+def _import_manual_seeds_or_exit(*, settings: Settings, manifest: Path) -> Any:
+    try:
+        from loreley.core.manual_seeds import import_manual_seed_manifest
 
-    table.add_section()
-    table.add_row("running_jobs", str(lease_payload["running"]))
-    table.add_row("stale_running", str(lease_payload["stale_running"]))
-    table.add_row("running_without_lease", str(lease_payload["running_without_lease"]))
-    table.add_row("recovery_exhausted_failed", str(lease_payload["recovery_exhausted_failed"]))
-    table.add_row("lease_ttl_seconds", str(lease_payload["lease_ttl_seconds"]))
-    table.add_row("heartbeat_interval_seconds", str(lease_payload["heartbeat_interval_seconds"]))
-    table.add_row("max_recovery_attempts", str(lease_payload["max_recovery_attempts"]))
-
-    table.add_section()
-    table.add_row("island_id", str(archive_stats.get("island_id") or effective_island))
-    occupied = archive_stats.get("occupied")
-    cells = archive_stats.get("cells")
-    if isinstance(occupied, (int, float)) and isinstance(cells, (int, float)) and int(cells) > 0:
-        table.add_row("occupied", f"{int(occupied)}/{int(cells)}")
-    else:
-        table.add_row("occupied", "n/a")
-    coverage = archive_stats.get("coverage")
-    if isinstance(coverage, (int, float)):
-        table.add_row("coverage", f"{float(coverage) * 100.0:.2f}%")
-    else:
-        table.add_row("coverage", "n/a")
-    elites = archive_stats.get("elites")
-    table.add_row("elites", str(int(elites)) if isinstance(elites, (int, float)) else "n/a")
-    table.add_row(
-        "objectives",
-        str(archive_stats.get("objective_count") or "n/a"),
-    )
-
-    table.add_section()
-    if best_commit:
-        table.add_row("best_commit", _short_hash(str(best_commit.get("commit_hash") or "")))
-        table.add_row(
-            "primary_metric",
-            str(best_commit.get("primary_metric") or "n/a"),
+        return import_manual_seed_manifest(
+            settings=settings,
+            manifest_path=manifest,
         )
-        primary_value = best_commit.get("primary_value")
-        if isinstance(primary_value, (int, float)):
-            table.add_row("best_primary_value", f"{float(primary_value):.6f}")
-        else:
-            table.add_row("best_primary_value", "n/a")
-        best_island = best_commit.get("island_id")
-        if best_island:
-            table.add_row("best_island", str(best_island))
-        subject = best_commit.get("subject")
-        if subject:
-            table.add_row("best_subject", str(subject))
-    else:
-        table.add_row("best_commit", "n/a")
+    except Exception as exc:
+        console.print(f"[bold red]Failed to import manual seeds[/] reason={exc}")
+        raise typer.Exit(code=1) from exc
 
-    if baseline:
-        table.add_section()
-        table.add_row("root_baseline_status", str(baseline.get("root_baseline_status") or "n/a"))
-        table.add_row("root_baseline_metric", str(baseline.get("root_baseline_metric") or "n/a"))
-        baseline_value = baseline.get("root_baseline_value")
-        if isinstance(baseline_value, (int, float)):
-            table.add_row("root_baseline_value", f"{float(baseline_value):.6f}")
-        else:
-            table.add_row("root_baseline_value", "n/a")
-        table.add_row("baseline_key", _short_hash(str(baseline.get("baseline_key_hash") or "")))
-        if baseline.get("failure_kind"):
-            table.add_row("baseline_failure", str(baseline.get("failure_kind")))
 
-    console.print(table)
+def _emit_manual_seed_import(result: Any, *, json_output: bool) -> None:
+    payload = result.as_dict()
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return
+    console.print(
+        "[bold green]Manual seeds imported[/] "
+        f"created={result.created} existing={result.existing} "
+        f"manifest_sha256={result.manifest_sha256}"
+    )
+    if result.created:
+        console.print("Run the scheduler to dispatch the new seed jobs.")
+
+
+@seeds_app.command("import")
+def import_manual_seeds(
+    ctx: typer.Context,
+    manifest: Path = _MANUAL_SEED_MANIFEST_ARGUMENT,
+    json_output: bool = _MANUAL_SEED_JSON_OPTION,
+) -> None:
+    """Create idempotent, archive-eligible jobs for user-supplied seed commits."""
+
+    settings = _load_settings_or_exit()
+    _configure_logging_or_exit(
+        settings=settings, role="seeds", override_level=_get_log_level(ctx)
+    )
+    result = _import_manual_seeds_or_exit(settings=settings, manifest=manifest)
+    _emit_manual_seed_import(result, json_output=json_output)
 
 
 @jobs_app.command("retry")
@@ -1324,7 +1633,9 @@ def retry_job(
 ) -> None:
     """Requeue a failed or stuck evolution job."""
     settings = _load_settings_or_exit()
-    _configure_logging_or_exit(settings=settings, role="jobs", override_level=_get_log_level(ctx))
+    _configure_logging_or_exit(
+        settings=settings, role="jobs", override_level=_get_log_level(ctx)
+    )
 
     raw_job_id = str(job_id or "").strip()
     if raw_job_id and failed_stale:
@@ -1338,7 +1649,9 @@ def retry_job(
         raise typer.Exit(code=1)
     if failed_stale:
         if retry_all and limit is not None:
-            console.print("[bold red]Choose either --all or --limit with --failed-stale[/]")
+            console.print(
+                "[bold red]Choose either --all or --limit with --failed-stale[/]"
+            )
             raise typer.Exit(code=1)
         if not retry_all and limit is None:
             console.print("[bold red]Use --all or --limit with --failed-stale[/]")
@@ -1417,7 +1730,9 @@ def inspect_job(
 ) -> None:
     """Print detailed status and lease information for one evolution job."""
     settings = _load_settings_or_exit()
-    _configure_logging_or_exit(settings=settings, role="jobs", override_level=_get_log_level(ctx))
+    _configure_logging_or_exit(
+        settings=settings, role="jobs", override_level=_get_log_level(ctx)
+    )
 
     raw_job_id = str(job_id).strip()
     try:
@@ -1461,7 +1776,11 @@ def inspect_job(
     table.add_column("value")
     for key in (
         "status",
+        "job_kind",
+        "execution_mode",
         "base_commit_hash",
+        "input_candidate_commit_hash",
+        "archive_ingestion_enabled",
         "island_id",
         "recovery_count",
         "result_commit_hash",
@@ -1472,6 +1791,8 @@ def inspect_job(
         "started_at",
         "completed_at",
         "last_error",
+        "input_candidate_summary",
+        "external_submission_key",
     ):
         table.add_row(str(key), _display_or_na(payload.get(key)))
     table.add_section()
@@ -1506,7 +1827,9 @@ def list_jobs(
 ) -> None:
     """List recent evolution jobs, with optional stale-failure filtering."""
     settings = _load_settings_or_exit()
-    _configure_logging_or_exit(settings=settings, role="jobs", override_level=_get_log_level(ctx))
+    _configure_logging_or_exit(
+        settings=settings, role="jobs", override_level=_get_log_level(ctx)
+    )
 
     try:
         from sqlalchemy import func, select
@@ -1528,13 +1851,10 @@ def list_jobs(
                         ),
                     )
                 )
-            stmt = (
-                stmt.order_by(
-                    EvolutionJob.completed_at.desc().nullslast(),
-                    EvolutionJob.created_at.desc(),
-                )
-                .limit(int(limit))
-            )
+            stmt = stmt.order_by(
+                EvolutionJob.completed_at.desc().nullslast(),
+                EvolutionJob.created_at.desc(),
+            ).limit(int(limit))
             rows = list(session.execute(stmt).scalars())
             now = _db_utc_now(session)
             fates = load_candidate_fates_for_jobs(rows)
@@ -1599,7 +1919,9 @@ def archive_stats(
 ) -> None:
     """Print MAP-Elites archive stats for an island."""
     settings = _load_settings_or_exit()
-    _configure_logging_or_exit(settings=settings, role="archive", override_level=_get_log_level(ctx))
+    _configure_logging_or_exit(
+        settings=settings, role="archive", override_level=_get_log_level(ctx)
+    )
     effective_island = _resolve_effective_island(settings=settings, island_id=island_id)
     stats = _load_archive_stats_or_exit(settings=settings, island_id=effective_island)
 

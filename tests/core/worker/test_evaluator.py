@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import signal
+import subprocess
+import sys
+import time
 from typing import Any, Mapping
 
 import pytest
@@ -15,11 +20,101 @@ from loreley.core.worker.evaluator import (
     EvaluationError,
     EvaluationFailureResult,
     EvaluationMetric,
+    EvaluationMeasurement,
     EvaluationOutcome,
+    EvaluationPreparation,
     EvaluationResult,
     Evaluator,
+    MeasurementEvidence,
+    MeasurementProvenance,
     coerce_evaluation_artifacts,
 )
+
+
+class _PhasedPlugin:
+    evaluation_protocol = "phased-v1"
+    evaluation_concurrency_scope = "measurement"
+
+    def prepare(self, _context: EvaluationContext) -> EvaluationPreparation:
+        return EvaluationPreparation(
+            candidate_identity="binary:abc",
+            measurement_contract_fingerprint="benchmark-v1",
+            state={"release": True},
+        )
+
+    def measure(
+        self,
+        _context: EvaluationContext,
+        preparation: EvaluationPreparation,
+    ) -> EvaluationMeasurement:
+        assert preparation.state == {"release": True}
+        return EvaluationMeasurement(
+            data={"score": 1.25},
+            evidence=(MeasurementEvidence(key="report", sha256="a" * 64),),
+            cacheable=True,
+        )
+
+    def finalize(
+        self,
+        _context: EvaluationContext,
+        preparation: EvaluationPreparation,
+        measurement: EvaluationMeasurement,
+        provenance: MeasurementProvenance,
+    ) -> EvalPass:
+        assert provenance.reused is False
+        return EvalPass(
+            summary="phased evaluation passed",
+            candidate_identity=preparation.candidate_identity,
+            metrics=({"name": "score", "value": measurement.data["score"]},),
+        )
+
+
+class _LargePhasedPlugin(_PhasedPlugin):
+    def prepare(self, _context: EvaluationContext) -> EvaluationPreparation:
+        return EvaluationPreparation(
+            candidate_identity="binary:large",
+            measurement_contract_fingerprint="benchmark-v1",
+            state={"blob": "p" * 262_144},
+        )
+
+    def measure(
+        self,
+        _context: EvaluationContext,
+        preparation: EvaluationPreparation,
+    ) -> EvaluationMeasurement:
+        assert len(str(preparation.state["blob"])) == 262_144
+        return EvaluationMeasurement(
+            data={"score": 1.25, "blob": "m" * 262_144},
+            evidence=(MeasurementEvidence(key="report", sha256="b" * 64),),
+            cacheable=True,
+        )
+
+
+class _IncompletePhasedPlugin:
+    evaluation_protocol = "phased-v1"
+
+    def prepare(self, _context: EvaluationContext) -> EvaluationPreparation:
+        raise AssertionError("not called")
+
+
+def _spawn_descendant_and_block(context: EvaluationContext) -> dict[str, str]:
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+    )
+    Path(str(context.payload["pid_file"])).write_text(str(child.pid), encoding="utf-8")
+    time.sleep(60)
+    return {"summary": "unreachable"}
+
+
+def _process_is_running(pid: int) -> bool:
+    result = subprocess.run(
+        ["ps", "-o", "stat=", "-p", str(pid)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    state = result.stdout.strip()
+    return bool(state) and not state.startswith("Z")
 
 
 def test_evaluation_metric_as_dict_serialises_fields() -> None:
@@ -85,6 +180,87 @@ def test_resolve_callable_supports_class_instance_and_function() -> None:
 
     with pytest.raises(EvaluationError):
         Evaluator._resolve_callable(object())  # type: ignore[attr-defined]
+
+
+def test_phased_evaluator_runs_explicit_prepare_measure_finalize_contract(
+    tmp_path: Path,
+    settings: Settings,
+) -> None:
+    settings.worker_evaluator_plugin = None
+    settings.worker_evaluator_version = "test-v1"
+    evaluator = Evaluator(settings=settings, plugin=_PhasedPlugin())
+
+    outcome = evaluator.evaluate_outcome(
+        EvaluationContext(
+            worktree=tmp_path,
+            candidate_commit_hash="abc",
+            metadata={"campaign_program_hash": "b" * 64},
+        )
+    )
+
+    assert evaluator.supports_phased_evaluation() is True
+    assert evaluator.evaluation_concurrency_scope() == "measurement"
+    assert outcome.outcome_kind == "passed"
+    assert outcome.protocol == "phased-v1"
+    assert outcome.prepared_candidate_identity == "binary:abc"
+    assert outcome.measurement_executed is True
+    assert outcome.measurement_payload == {
+        "data": {"score": 1.25},
+        "evidence": [
+            {"key": "report", "sha256": "a" * 64, "size_bytes": None, "metadata": {}}
+        ],
+        "cacheable": True,
+    }
+    assert outcome.result is not None
+    assert outcome.result.candidate_identity == "binary:abc"
+
+
+def test_phased_evaluator_drains_large_phase_payloads_without_pipe_deadlock(
+    tmp_path: Path,
+    settings: Settings,
+) -> None:
+    settings.worker_evaluator_plugin = None
+    settings.worker_evaluator_version = "large-payload-v1"
+    settings.worker_evaluator_timeout_seconds = 5
+    evaluator = Evaluator(settings=settings, plugin=_LargePhasedPlugin())
+
+    outcome = evaluator.evaluate_outcome(
+        EvaluationContext(
+            worktree=tmp_path,
+            candidate_commit_hash="large",
+            metadata={"campaign_program_hash": "b" * 64},
+        )
+    )
+
+    assert outcome.outcome_kind == "passed"
+    assert outcome.result is not None
+    assert outcome.result.candidate_identity == "binary:large"
+
+
+def test_phased_evaluator_requires_all_three_methods(settings: Settings) -> None:
+    settings.worker_evaluator_plugin = None
+    evaluator = Evaluator(settings=settings, plugin=_IncompletePhasedPlugin())
+
+    with pytest.raises(EvaluationError, match="measure, finalize"):
+        evaluator.supports_phased_evaluation()
+
+
+def test_phased_preparation_rejects_identity_truncation_collisions() -> None:
+    with pytest.raises(ValueError, match="cannot exceed 512"):
+        EvaluationPreparation(
+            candidate_identity="x" * 513,
+            measurement_contract_fingerprint="bench-v1",
+        )
+
+
+def test_phased_payload_rejects_non_json_values() -> None:
+    with pytest.raises(ValueError, match="JSON values"):
+        EvaluationMeasurement(data={"bad": {1, 2, 3}})
+
+
+def test_cacheable_phased_measurement_requires_hash_linked_evidence() -> None:
+    with pytest.raises(ValueError, match="hash-linked evidence"):
+        EvaluationMeasurement(data={"score": 1.0}, cacheable=True)
 
 
 def test_coerce_result_from_mapping_and_truncates_metrics(settings: Settings) -> None:
@@ -270,6 +446,34 @@ def test_evaluate_outcome_synthesizes_nonrepairable_failure_on_plugin_error(
     assert isinstance(outcome.failure, EvaluationFailureResult)
     assert outcome.failure.repairability == "unknown"
     assert "not repairable" in str(outcome.failure.repairability_reason)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process-group containment is POSIX-specific")
+def test_timeout_terminates_evaluator_descendants(
+    tmp_path: Path,
+    settings: Settings,
+) -> None:
+    settings.worker_evaluator_timeout_seconds = 1
+    pid_file = tmp_path / "descendant.pid"
+    evaluator = Evaluator(settings=settings, plugin=_spawn_descendant_and_block)
+
+    outcome = evaluator.evaluate_outcome(
+        EvaluationContext(worktree=tmp_path, payload={"pid_file": str(pid_file)})
+    )
+
+    assert outcome.outcome_kind == "infrastructure_failed"
+    assert outcome.failure is not None
+    assert "timed out" in outcome.failure.safe_failure_summary
+    assert pid_file.exists()
+    pid = int(pid_file.read_text(encoding="utf-8"))
+    try:
+        deadline = time.monotonic() + 5
+        while _process_is_running(pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not _process_is_running(pid)
+    finally:
+        if _process_is_running(pid):
+            os.kill(pid, signal.SIGKILL)
 
 
 def test_coerce_metrics_and_normalise_sequence(settings: Settings) -> None:

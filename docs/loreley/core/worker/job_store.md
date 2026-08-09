@@ -33,11 +33,24 @@ Large, audit/debug oriented payloads (prompts, raw outputs, logs) are written to
   - When `published=False`, records the candidate pointer while leaving `candidate_published_at` unset.
   - When `published=True`, stamps `candidate_published_at` so post-push failures still leave a durable recovery pointer.
   - Stores the exact Git `source_tree_hash` used for evaluation-reuse lookup.
+  - For a supplied manual seed, accepts the detached checkout with no worker
+    branch, records publication state as `available`, and rejects a request to
+    fabricate a worker publication.
   - Raises `EvolutionWorkerError` if the job disappears, is already terminal, or a database error prevents recording the candidate metadata.
 
 - **`find_reusable_evaluation(...)`**:
   - Finds a passed candidate with the same exact source tree, evaluator name/version, and campaign program.
-  - Copies its metric values and candidate identity into a new passed outcome while recording the source commit. It does not copy path-backed evaluator artifacts.
+  - Copies its metric values and candidate identity into a new passed outcome while recording the source evaluation attempt. It does not copy path-backed evaluator artifacts.
+  - This shortcut applies to legacy one-shot evaluators. Phased evaluators run
+    `prepare` first and use the accepted-measurement cache instead.
+
+- **`record_evaluation_observation(...)`**:
+  - Creates a durable `EvaluationAttempt` for every evaluator observation,
+    including intermediate rework, exact-tree reuse, and measurement reuse.
+  - Records `measurement_executed` separately from `measurement_reused`, links
+    reuse to its source attempt and accepted measurement, and persists evaluator
+    capacity wait/slot telemetry. Each attempt also receives a stable per-job
+    ordinal, run token, and its own fixed-artifact links.
 
 - **`renew_job_lease(job_id, run_token)`**:
   - Extends `heartbeat_at` and `lease_expires_at` for the active `RUNNING` row owned by `run_token`.
@@ -51,7 +64,13 @@ Large, audit/debug oriented payloads (prompts, raw outputs, logs) are written to
   - Inserts one `Metric` row per evaluation metric for the new commit, copying numeric `value`, `unit`, `higher_is_better`, and any structured `details`.
   - Writes planning/coding/evaluation artifacts to disk under a per-`job_id` and per-`run_token` directory, then inserts a `JobArtifacts` row containing the corresponding filesystem paths when artifact writing succeeds.
   - Inserts `EvaluationArtifactRecord` rows for accepted evaluator-declared
-    artifacts and replaces prior rows with the same `(job_id, key)` on retry.
+    artifacts and links them to the evaluation attempt. Attempt-linked rows are
+    append-only, so a retry cannot erase an earlier attempt's evidence.
+  - For a fresh cacheable phased pass, inserts the immutable accepted
+    measurement, payload hash, evidence manifest, and source-attempt link in the
+    same terminal transaction. The worker releases the per-measurement advisory
+    lock only after this transaction commits. Evidence keys, sizes, digests,
+    artifact records, and stored bytes are checked before acceptance and reuse.
   - Wraps SQLAlchemy errors into `EvolutionWorkerError` so the caller can surface persistence failures cleanly.
 
 - **`mark_job_failed(job_id, message)`**:

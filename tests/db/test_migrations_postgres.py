@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import multiprocessing
 import os
 import uuid
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from time import monotonic, sleep
 
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.orm import sessionmaker
 
 from loreley.db.base import INSTANCE_SCHEMA_VERSION
 from loreley.db.migrations.runner import (
@@ -14,11 +19,37 @@ from loreley.db.migrations.runner import (
     ensure_schema_current,
     validate_database_schema,
 )
+from loreley.core.worker.evaluation_runtime import (
+    EvaluationRuntimeCoordinator,
+    EvaluationRuntimeError,
+)
+from loreley.db.base import Base
+from loreley.db.models import EvolutionJob, JobStatus
 from loreley.naming import resolve_experiment_identity
 from tests.support import TestSettings
 
 
 POSTGRES_TEST_DSN = os.getenv("LORELEY_TEST_DATABASE_URL") or os.getenv("LORELEY_POSTGRES_TEST_DSN")
+
+
+def _hold_postgres_advisory_lock(
+    database_dsn: str,
+    advisory_key: int,
+    ready: object,
+) -> None:
+    """Child-process helper used to prove session-lock death recovery."""
+
+    engine = create_engine(database_dsn, future=True)
+    try:
+        with engine.connect() as connection:
+            connection.execute(
+                text("SELECT pg_advisory_lock(:key)"),
+                {"key": advisory_key},
+            )
+            ready.send_bytes(b"held")  # type: ignore[attr-defined]
+            sleep(60)
+    finally:
+        engine.dispose()
 
 
 @pytest.fixture
@@ -416,6 +447,9 @@ def test_v5_fixture_migrates_to_current_preserves_rows_and_backfills_candidates(
         16,
         17,
         18,
+        19,
+        20,
+        21,
     )
     validate_database_schema(
         engine=postgres_engine,
@@ -505,7 +539,24 @@ def test_v5_fixture_migrates_to_current_preserves_rows_and_backfills_candidates(
     assert candidates["commit-b"]["repair_state"] == "audit_only"
     assert candidates["commit-b"]["repair_source_candidate_id"] is None
     assert candidates["commit-b"]["campaign_program_hash"] is None
-    assert audit_versions == [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+    assert audit_versions == [
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+    ]
     assert change_summary_limit == 800
 
 
@@ -553,3 +604,136 @@ def test_auto_migrate_disabled_fails_with_migrate_hint(
     with postgres_engine.connect() as conn:
         version = conn.execute(text("SELECT schema_version FROM instance_metadata WHERE id = 1")).scalar_one()
     assert version == 5
+
+
+def test_evaluator_slots_are_global_and_release_for_waiters(
+    postgres_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two worker coordinators share E=1 through a PostgreSQL advisory slot."""
+
+    import loreley.core.worker.evaluation_runtime as runtime
+
+    Base.metadata.create_all(postgres_engine)
+    with postgres_engine.connect() as conn:
+        schema = str(conn.execute(text("SELECT current_schema()")).scalar_one())
+    scoped_dsn = postgres_engine.url.update_query_dict(
+        {"options": f"-csearch_path={schema}"}
+    ).render_as_string(hide_password=False)
+    session_factory = sessionmaker(bind=postgres_engine, expire_on_commit=False, future=True)
+
+    @contextmanager
+    def scoped_session():
+        with session_factory.begin() as session:
+            yield session
+
+    monkeypatch.setattr(runtime, "session_scope", scoped_session)
+    runtime._lock_engine.cache_clear()  # noqa: SLF001 - isolated schema contract
+    first_job, second_job = uuid.uuid4(), uuid.uuid4()
+    first_token, second_token = uuid.uuid4(), uuid.uuid4()
+    with session_factory.begin() as session:
+        session.add_all(
+            [
+                EvolutionJob(id=first_job, status=JobStatus.RUNNING, run_token=first_token),
+                EvolutionJob(id=second_job, status=JobStatus.RUNNING, run_token=second_token),
+            ]
+        )
+    settings = TestSettings(
+        DATABASE_URL=scoped_dsn,
+        EXPERIMENT_ID="slot-test",
+        WORKER_EVALUATOR_MAX_CONCURRENCY=1,
+    )
+    first = EvaluationRuntimeCoordinator(settings)
+    second = EvaluationRuntimeCoordinator(settings)
+    contract = first.ensure_contract(
+        evaluator_name="demo",
+        evaluator_version="1",
+        campaign_program_hash="a" * 64,
+        limit_scope="measurement",
+    )
+    held = first.acquire_evaluator_slot(
+        contract_key=contract,
+        job_id=first_job,
+        run_token=first_token,
+        deadline=monotonic() + 5,
+    )
+    assert held is not None
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        waiting = pool.submit(
+            second.acquire_evaluator_slot,
+            contract_key=contract,
+            job_id=second_job,
+            run_token=second_token,
+            deadline=monotonic() + 5,
+        )
+        sleep(0.1)
+        assert not waiting.done()
+        held.release("test_release")
+        acquired = waiting.result(timeout=5)
+    assert acquired is not None
+    assert acquired.slot_index == 0
+    assert acquired.wait_seconds >= 0.05
+    acquired.release("test_complete")
+    mismatched_e = EvaluationRuntimeCoordinator(
+        TestSettings(
+            DATABASE_URL=scoped_dsn,
+            EXPERIMENT_ID="slot-test",
+            WORKER_EVALUATOR_MAX_CONCURRENCY=2,
+        )
+    )
+    with pytest.raises(EvaluationRuntimeError, match="MAX_CONCURRENCY disagrees"):
+        mismatched_e.ensure_contract(
+            evaluator_name="demo",
+            evaluator_version="1",
+            campaign_program_hash="a" * 64,
+            limit_scope="measurement",
+        )
+    with pytest.raises(EvaluationRuntimeError, match="limit scope disagrees"):
+        first.ensure_contract(
+            evaluator_name="demo",
+            evaluator_version="1",
+            campaign_program_hash="a" * 64,
+            limit_scope="whole",
+        )
+    runtime._lock_engine.cache_clear()  # noqa: SLF001
+
+
+def test_postgres_evaluator_slot_is_released_when_holder_process_dies(
+    postgres_engine: Engine,
+) -> None:
+    """PostgreSQL releases the framework's session lock after an abrupt worker death."""
+
+    database_dsn = postgres_engine.url.render_as_string(hide_password=False)
+    advisory_key = int.from_bytes(uuid.uuid4().bytes[:8], byteorder="big", signed=True)
+    context = multiprocessing.get_context("spawn")
+    child_watch, parent_watch = context.Pipe(duplex=False)
+    process = context.Process(
+        target=_hold_postgres_advisory_lock,
+        args=(database_dsn, advisory_key, parent_watch),
+    )
+    process.start()
+    parent_watch.close()
+    try:
+        assert child_watch.poll(10), "child did not acquire the advisory lock"
+        assert child_watch.recv_bytes() == b"held"
+        process.kill()
+        process.join(timeout=10)
+        assert not process.is_alive()
+
+        with postgres_engine.connect() as connection:
+            acquired = bool(
+                connection.execute(
+                    text("SELECT pg_try_advisory_lock(:key)"),
+                    {"key": advisory_key},
+                ).scalar_one()
+            )
+            assert acquired
+            connection.execute(
+                text("SELECT pg_advisory_unlock(:key)"),
+                {"key": advisory_key},
+            )
+    finally:
+        child_watch.close()
+        if process.is_alive():
+            process.kill()
+            process.join(timeout=10)

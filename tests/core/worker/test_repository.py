@@ -305,6 +305,54 @@ def test_prepare_base_repo_for_checkout_skips_full_upstream_sync(
     ]
 
 
+def test_supplied_commit_is_fetched_from_pinned_remote_ref_and_drift_fails(
+    tmp_path: Path,
+    settings: Settings,
+) -> None:
+    remote = tmp_path / "remote.git"
+    source = tmp_path / "source"
+    source.mkdir()
+    _git(tmp_path, "init", "--bare", str(remote))
+    _git(source, "init", "-b", "main")
+    _git(source, "config", "user.email", "test@example.invalid")
+    _git(source, "config", "user.name", "Test User")
+    (source / "value.txt").write_text("root\n", encoding="utf-8")
+    _git(source, "add", ".")
+    _git(source, "commit", "-m", "root")
+    _git(source, "remote", "add", "origin", str(remote))
+    _git(source, "push", "origin", "main")
+    _git(remote, "symbolic-ref", "HEAD", "refs/heads/main")
+
+    (source / "value.txt").write_text("seed one\n", encoding="utf-8")
+    _git(source, "commit", "-am", "seed one")
+    seed_commit = _git(source, "rev-parse", "HEAD").stdout.strip()
+    remote_ref = "refs/heads/loreley-seeds/one"
+    _git(source, "push", "origin", f"HEAD:{remote_ref}")
+
+    settings.worker_repo_remote_url = str(remote)
+    settings.worker_repo_worktree = str(tmp_path / "worker")
+    settings.worker_repo_branch = "main"
+    worker_repo = WorkerRepository(settings=settings)
+
+    worker_repo.ensure_remote_commit(
+        commit_hash=seed_commit,
+        remote_ref=remote_ref,
+    )
+    fetched = Repo(settings.worker_repo_worktree).commit(
+        f"refs/loreley/supplied/{seed_commit}"
+    )
+    assert fetched.hexsha == seed_commit
+
+    (source / "value.txt").write_text("seed two\n", encoding="utf-8")
+    _git(source, "commit", "-am", "seed two")
+    _git(source, "push", "origin", f"HEAD:{remote_ref}")
+    with pytest.raises(RepositoryError, match="drifted"):
+        worker_repo.ensure_remote_commit(
+            commit_hash=seed_commit,
+            remote_ref=remote_ref,
+        )
+
+
 def test_prepare_holds_shared_repo_lock_during_base_repo_mutations(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
@@ -372,6 +420,7 @@ def test_load_protected_job_branch_state_collects_archive_and_job_refs(
                     [
                         (
                             "base-commit",
+                            "input-commit",
                             "result-commit",
                             "candidate-commit",
                             archived_branch,
@@ -382,6 +431,7 @@ def test_load_protected_job_branch_state_collects_archive_and_job_refs(
                         ),
                         (
                             "pending-base",
+                            "pending-input",
                             "pending-result",
                             "pending-candidate",
                             pending_ingestion_branch,
@@ -392,6 +442,7 @@ def test_load_protected_job_branch_state_collects_archive_and_job_refs(
                         ),
                         (
                             "ignored-base",
+                            "ignored-input",
                             "ignored-result",
                             "ignored-candidate",
                             "other/prefix",
@@ -417,11 +468,13 @@ def test_load_protected_job_branch_state_collects_archive_and_job_refs(
     assert protected_commits >= {
         "archive-commit",
         "base-commit",
+        "input-commit",
         "result-commit",
         "candidate-commit",
         "insp-1",
         "insp-2",
         "pending-base",
+        "pending-input",
         "pending-result",
         "pending-candidate",
         "pending-insp",
@@ -453,6 +506,7 @@ def test_load_protected_job_branch_state_keeps_failed_published_candidate_refs(
                     [
                         (
                             "failed-base",
+                            "failed-input",
                             None,
                             "failed-candidate",
                             failed_branch,
@@ -475,7 +529,7 @@ def test_load_protected_job_branch_state_keeps_failed_published_candidate_refs(
 
     protected_commits, protected_branches = repo._load_protected_job_branch_state()
 
-    assert protected_commits == {"failed-candidate"}
+    assert protected_commits == {"failed-input", "failed-candidate"}
     assert protected_branches == {failed_branch}
 
 
@@ -502,6 +556,7 @@ def test_load_protected_job_branch_state_keeps_failed_candidate_refs_when_publis
                     [
                         (
                             "failed-base",
+                            "failed-input",
                             None,
                             "failed-candidate",
                             failed_branch,
@@ -524,7 +579,7 @@ def test_load_protected_job_branch_state_keeps_failed_candidate_refs_when_publis
 
     protected_commits, protected_branches = repo._load_protected_job_branch_state()
 
-    assert protected_commits == {"failed-candidate"}
+    assert protected_commits == {"failed-input", "failed-candidate"}
     assert protected_branches == {failed_branch}
 
 

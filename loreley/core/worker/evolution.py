@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import threading
 from time import monotonic
@@ -31,9 +31,18 @@ from loreley.core.worker.evaluator import (
     EvaluationContext,
     EvaluationError,
     EvaluationFailureResult,
+    FinalizationTiming,
     EvaluationOutcome,
     EvaluationResult,
+    EvaluationMeasurement,
+    EvaluationPreparation,
+    MeasurementProvenance,
     eval_fail_kind_from_failure_kind,
+)
+from loreley.core.worker.evaluation_runtime import (
+    EvaluationRuntimeCoordinator,
+    EvaluationRuntimeError,
+    measurement_cache_key,
 )
 from loreley.core.worker.artifacts import freeze_evaluation_outcome_artifact_paths
 from loreley.core.worker.planning import (
@@ -58,7 +67,11 @@ from loreley.core.worker.job_store import (
     JobLockConflict,
     JobPreconditionError,
 )
-from loreley.core.worker.repository import CheckoutContext, WorkerRepository, RepositoryError
+from loreley.core.worker.repository import (
+    CheckoutContext,
+    WorkerRepository,
+    RepositoryError,
+)
 from loreley.core.worker.repair import (
     REPAIR_MODE_REBASE_FROM_NEAREST_VIABLE,
     build_diagnostic_capsule,
@@ -107,6 +120,12 @@ class JobContext:
     sampling_initial_radius: int | None
     sampling_radius_used: int | None
     sampling_fallback_inspirations: int | None
+    execution_mode: str = "agent"
+    input_candidate_commit_hash: str | None = None
+    input_candidate_summary: str | None = None
+    external_submission_key: str = ""
+    input_provenance: dict[str, Any] = field(default_factory=dict)
+    archive_ingestion_enabled: bool = True
     job_kind: str = "evolution"
     repair_source_candidate_id: UUID | None = None
     repair_mode: str | None = None
@@ -124,8 +143,8 @@ class EvolutionWorkerResult:
     job_id: UUID
     base_commit_hash: str
     candidate_commit_hash: str
-    plan: PlanningAgentResponse
-    coding: CodingAgentResponse
+    plan: PlanningAgentResponse | None
+    coding: CodingAgentResponse | None
     evaluation: EvaluationResult
     checkout: CheckoutContext
     commit_message: str
@@ -190,6 +209,57 @@ class _EvolutionRunState:
     candidate_commit: str | None = None
     source_tree_hash: str | None = None
     failure_persisted: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _JobExecutionFields:
+    mode: str
+    input_commit_hash: str | None
+    archive_ingestion_enabled: bool
+    provenance: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class _StartedJobFields:
+    base_commit_hash: str
+    inspiration_commit_hashes: tuple[str, ...]
+    goal: str
+    iteration_hint: str | None
+    is_seed_job: bool
+    campaign_program_hash: str | None
+    job_kind: str
+    execution: _JobExecutionFields
+
+
+@dataclass(slots=True)
+class _PhasedEvaluationState:
+    evaluator: Any
+    evaluator_name: str
+    evaluator_version: str
+    campaign_hash: str
+    scope: str
+    contract_key: str
+    deadline: float
+    started_at: datetime
+    slot_lease: Any | None = None
+    measurement_lease: Any | None = None
+    slot_trace: (
+        tuple[
+            int | None,
+            str,
+            float,
+            str,
+            datetime | None,
+            datetime | None,
+            str,
+        ]
+        | None
+    ) = None
+    preparation: EvaluationPreparation | None = None
+    measured: EvaluationMeasurement | None = None
+    cached: Any | None = None
+    cache_key: str | None = None
+    measurement_executed: bool = False
 
 
 @dataclass(slots=True, frozen=True)
@@ -300,7 +370,9 @@ class _JobLeaseHeartbeat:
                 )
                 self._stop.set()
                 return
-            except Exception as exc:  # pragma: no cover - defensive / transient DB failures
+            except (
+                Exception
+            ) as exc:  # pragma: no cover - defensive / transient DB failures
                 log.warning(
                     "Lease heartbeat failed for job {} run_token={}: {}",
                     self._job_id,
@@ -328,6 +400,7 @@ class EvolutionWorker:
         self.coding_agent = coding_agent or CodingAgent(self.settings)
         self.evaluator = evaluator or Evaluator(self.settings)
         self.job_store = job_store or EvolutionJobStore(settings=self.settings)
+        self.evaluation_runtime = EvaluationRuntimeCoordinator(self.settings)
 
     def run(self, job_id: str | UUID) -> EvolutionWorkerResult:
         """Execute the full evolution loop for the requested job."""
@@ -360,13 +433,20 @@ class EvolutionWorker:
                         job_ctx=job_ctx,
                         plan=state.plan_response,
                         coding=state.coding_response,
-                        worktree=state.checkout.worktree if state.checkout is not None else None,
+                        worktree=state.checkout.worktree
+                        if state.checkout is not None
+                        else None,
                         candidate_commit_hash=state.candidate_commit,
                         evaluation_outcome=state.evaluation_outcome,
                         rework_attempts=state.rework_attempts,
                     ),
                 )
             raise
+        finally:
+            self._release_runtime_leases(
+                state.evaluation_outcome,
+                reason="worker_finished",
+            )
 
     def _start_job_for_run(self, job_uuid: UUID) -> JobContext:
         try:
@@ -394,6 +474,17 @@ class EvolutionWorker:
             raise
 
     def _run_with_lease(self, job_ctx: JobContext, state: _EvolutionRunState) -> None:
+        checkout_commit = (
+            job_ctx.input_candidate_commit_hash
+            if job_ctx.execution_mode == "evaluate_existing"
+            else job_ctx.base_commit_hash
+        )
+        if job_ctx.execution_mode == "evaluate_existing":
+            remote_ref = str(job_ctx.input_provenance.get("remote_ref") or "").strip()
+            self.repository.ensure_remote_commit(
+                commit_hash=_required(checkout_commit, "checkout_commit"),
+                remote_ref=remote_ref,
+            )
         with _JobLeaseHeartbeat(
             job_store=self.job_store,
             job_id=job_ctx.job_id,
@@ -402,7 +493,8 @@ class EvolutionWorker:
         ) as heartbeat:
             with self.repository.checkout_lease_for_job(
                 job_id=job_ctx.job_id,
-                base_commit=job_ctx.base_commit_hash,
+                base_commit=_required(checkout_commit, "checkout_commit"),
+                create_branch=job_ctx.execution_mode != "evaluate_existing",
                 attempt_token=job_ctx.run_token,
             ) as checkout:
                 state.checkout = checkout
@@ -415,10 +507,73 @@ class EvolutionWorker:
         heartbeat: _JobLeaseHeartbeat,
         state: _EvolutionRunState,
     ) -> None:
+        if job_ctx.execution_mode == "evaluate_existing":
+            self._run_supplied_candidate_attempt(job_ctx, checkout, heartbeat, state)
+            return
         prompt_context = self._prepare_attempt_context(job_ctx, checkout, heartbeat)
         state.plan_response = self._run_planning(job_ctx, checkout, prompt_context)
         heartbeat.raise_if_lease_lost()
-        self._run_coding_evaluator_loop(job_ctx, checkout, prompt_context, heartbeat, state)
+        self._run_coding_evaluator_loop(
+            job_ctx, checkout, prompt_context, heartbeat, state
+        )
+
+    def _run_supplied_candidate_attempt(
+        self,
+        job_ctx: JobContext,
+        checkout: CheckoutContext,
+        heartbeat: _JobLeaseHeartbeat,
+        state: _EvolutionRunState,
+    ) -> None:
+        """Evaluate a pre-existing commit without invoking planning or coding agents."""
+
+        candidate_commit = _required(
+            job_ctx.input_candidate_commit_hash,
+            "input_candidate_commit_hash",
+        )
+        current_commit = self.repository.current_commit(worktree=checkout.worktree)
+        if current_commit != candidate_commit:
+            raise EvolutionWorkerError(
+                "Supplied-candidate checkout resolved to an unexpected commit: "
+                f"expected={candidate_commit} actual={current_commit}."
+            )
+        state.candidate_commit = candidate_commit
+        state.commit_message = (
+            job_ctx.input_candidate_summary
+            or f"Evaluate supplied candidate {candidate_commit[:12]}"
+        )
+        heartbeat.raise_if_lease_lost()
+        self._enforce_campaign_scope(job_ctx, checkout, state)
+        heartbeat.raise_if_lease_lost()
+        state.source_tree_hash = self.repository.tree_hash(
+            candidate_commit,
+            worktree=checkout.worktree,
+        )
+        state.evaluation_outcome = self._evaluate_or_reuse(
+            job_ctx=job_ctx,
+            checkout=checkout,
+            plan=None,
+            candidate_commit=candidate_commit,
+            source_tree_hash=state.source_tree_hash,
+        )
+        self._record_evaluation_observation(job_ctx, state)
+        heartbeat.raise_if_lease_lost()
+        outcome = _required(state.evaluation_outcome, "evaluation_outcome")
+        if outcome.outcome_kind == "passed" and outcome.result is not None:
+            freeze_evaluation_outcome_artifact_paths(
+                outcome=outcome,
+                worktree=checkout.worktree,
+                settings=self.settings,
+            )
+            self.repository.clean_worktree(worktree=checkout.worktree)
+            current_commit = self.repository.current_commit(worktree=checkout.worktree)
+            if current_commit != candidate_commit:
+                raise EvolutionWorkerError(
+                    "Evaluator cleanup moved away from the supplied candidate commit."
+                )
+            self._record_candidate_publication(
+                job_ctx, checkout, state, published=False
+            )
+        self._persist_evaluation_outcome(job_ctx, checkout, state)
 
     def _prepare_attempt_context(
         self,
@@ -434,7 +589,9 @@ class EvolutionWorker:
             run_token=job_ctx.run_token,
             phase="trajectory_summary",
         ):
-            prompt_context = self._build_prompt_context(job_ctx, repair_context=repair_context)
+            prompt_context = self._build_prompt_context(
+                job_ctx, repair_context=repair_context
+            )
         heartbeat.raise_if_lease_lost()
         return prompt_context
 
@@ -576,6 +733,7 @@ class EvolutionWorker:
             candidate_commit=_required(state.candidate_commit, "candidate_commit"),
             source_tree_hash=_required(state.source_tree_hash, "source_tree_hash"),
         )
+        self._record_evaluation_observation(job_ctx, state)
         heartbeat.raise_if_lease_lost()
 
     def _finalize_passing_attempt(
@@ -656,6 +814,7 @@ class EvolutionWorker:
             candidate_commit=_required(state.candidate_commit, "candidate_commit"),
             source_tree_hash=_required(state.source_tree_hash, "source_tree_hash"),
         )
+        self._record_evaluation_observation(job_ctx, state)
         heartbeat.raise_if_lease_lost()
 
     def _record_candidate_publication(
@@ -682,10 +841,18 @@ class EvolutionWorker:
         *,
         job_ctx: JobContext,
         checkout: CheckoutContext,
-        plan: PlanningAgentResponse,
+        plan: PlanningAgentResponse | None,
         candidate_commit: str,
         source_tree_hash: str,
     ) -> EvaluationOutcome:
+        supports_phased = getattr(self.evaluator, "supports_phased_evaluation", None)
+        if callable(supports_phased) and bool(supports_phased()):
+            return self._run_evaluation(
+                job_ctx=job_ctx,
+                checkout=checkout,
+                plan=plan,
+                candidate_commit=candidate_commit,
+            )
         evaluator_name, evaluator_version = self._evaluator_contract()
         lookup = getattr(self.job_store, "find_reusable_evaluation", None)
         if callable(lookup):
@@ -712,16 +879,26 @@ class EvolutionWorker:
         )
 
     def _evaluator_contract(self) -> tuple[str | None, str | None]:
-        evaluator_name = str(
-            getattr(self.evaluator, "plugin_ref", None)
-            or self.evaluator.__class__.__name__
-            or "evaluator"
-        ).strip() or None
-        evaluator_version = str(
-            getattr(self.evaluator, "evaluator_version", None)
-            or getattr(self.settings, "worker_evaluator_version", None)
-            or ""
-        ).strip() or None
+        public_name = getattr(self.evaluator, "evaluator_name", None)
+        if callable(public_name):
+            public_name = public_name()
+        evaluator_name = (
+            str(
+                public_name
+                or getattr(self.evaluator, "plugin_ref", None)
+                or self.evaluator.__class__.__name__
+                or "evaluator"
+            ).strip()
+            or None
+        )
+        evaluator_version = (
+            str(
+                getattr(self.evaluator, "evaluator_version", None)
+                or getattr(self.settings, "worker_evaluator_version", None)
+                or ""
+            ).strip()
+            or None
+        )
         return evaluator_name, evaluator_version
 
     def _enforce_campaign_scope(
@@ -749,11 +926,25 @@ class EvolutionWorker:
             worktree=checkout.worktree,
             program=job_ctx.campaign_program,
             git_bin=self.settings.worker_repo_git_bin,
+            base_commit_hash=(
+                job_ctx.base_commit_hash
+                if job_ctx.execution_mode == "evaluate_existing"
+                else None
+            ),
+            candidate_commit_hash=(
+                job_ctx.input_candidate_commit_hash
+                if job_ctx.execution_mode == "evaluate_existing"
+                else None
+            ),
         )
         if result.passed:
             return
         outcome = _campaign_scope_failure_outcome(result)
-        message = outcome.failure.safe_failure_summary if outcome.failure else result.summary()
+        message = (
+            outcome.failure.safe_failure_summary
+            if outcome.failure
+            else result.summary()
+        )
         state.evaluation_outcome = outcome
         state.failure_persisted = self.job_store.persist_failure(
             job_ctx=job_ctx,
@@ -762,7 +953,7 @@ class EvolutionWorker:
             plan=state.plan_response,
             coding=state.coding_response,
             worktree=checkout.worktree,
-            candidate_commit_hash=None,
+            candidate_commit_hash=state.candidate_commit,
         )
         raise EvolutionWorkerError(message)
 
@@ -772,7 +963,9 @@ class EvolutionWorker:
         job_ctx: JobContext,
         checkout: CheckoutContext,
     ) -> ScopeCleanupResult:
-        patterns = _scope_cleanup_patterns(self.settings.worker_scope_gate_cleanup_paths)
+        patterns = _scope_cleanup_patterns(
+            self.settings.worker_scope_gate_cleanup_paths
+        )
         if not patterns:
             return ScopeCleanupResult()
         return cleanup_scope_gate_untracked_paths(
@@ -788,97 +981,41 @@ class EvolutionWorker:
         state: _EvolutionRunState,
     ) -> None:
         outcome = _required(state.evaluation_outcome, "evaluation_outcome")
-        if outcome.outcome_kind != "passed" or outcome.result is None:
-            state.failure_persisted = self.job_store.persist_failure(
+        try:
+            if outcome.outcome_kind != "passed" or outcome.result is None:
+                state.failure_persisted = self.job_store.persist_failure(
+                    job_ctx=job_ctx,
+                    plan=state.plan_response,
+                    coding=state.coding_response,
+                    outcome=outcome,
+                    worktree=checkout.worktree,
+                    candidate_commit_hash=state.candidate_commit,
+                    message=self._failure_message(outcome),
+                )
+                raise EvolutionWorkerError(self._failure_message(outcome))
+            state.evaluation_result = outcome.result
+            self.job_store.persist_success(
                 job_ctx=job_ctx,
                 plan=state.plan_response,
                 coding=state.coding_response,
-                outcome=outcome,
+                evaluation=state.evaluation_result,
+                evaluation_outcome=outcome,
                 worktree=checkout.worktree,
-                candidate_commit_hash=state.candidate_commit,
-                message=self._failure_message(outcome),
+                commit_hash=_required(state.candidate_commit, "candidate_commit"),
+                commit_message=_required(state.commit_message, "commit_message"),
             )
-            raise EvolutionWorkerError(self._failure_message(outcome))
-        state.evaluation_result = outcome.result
-        self.job_store.persist_success(
-            job_ctx=job_ctx,
-            plan=_required(state.plan_response, "plan_response"),
-            coding=_required(state.coding_response, "coding_response"),
-            evaluation=state.evaluation_result,
-            evaluation_outcome=outcome,
-            worktree=checkout.worktree,
-            commit_hash=_required(state.candidate_commit, "candidate_commit"),
-            commit_message=_required(state.commit_message, "commit_message"),
-        )
+        finally:
+            self._release_runtime_leases(outcome, reason="attempt_persisted")
 
     # Internal orchestration helpers -------------------------------------
 
     def _start_job(self, job_id: UUID) -> JobContext:
-        locked_job = self.job_store.start_job(
-            job_id,
-        )
-
-        base_commit_hash = (locked_job.base_commit_hash or "").strip()
-        if not base_commit_hash:
-            raise EvolutionWorkerError(
-                f"Evolution job {locked_job.job_id} has no base commit hash configured."
-            )
-        inspiration_commit_hashes = tuple(
-            commit_hash.strip()
-            for commit_hash in (locked_job.inspiration_commit_hashes or ())
-            if (commit_hash or "").strip()
-        )
-
-        goal = (locked_job.goal or "").strip()
-        if not goal:
-            goal = (self.settings.worker_evolution_global_goal or "").strip()
-        if not goal:
-            raise EvolutionWorkerError(
-                "No evolution goal configured. "
-                "Set WORKER_EVOLUTION_GLOBAL_GOAL or provide a per-job goal.",
-            )
-
-        iteration_hint = (locked_job.iteration_hint or "").strip() or None
-        is_seed_job = bool(getattr(locked_job, "is_seed_job", False))
-        if not is_seed_job:
-            root_hash = (self.settings.mapelites_experiment_root_commit or "").strip()
-            is_seed_job = bool(
-                root_hash
-                and base_commit_hash == root_hash
-                and not inspiration_commit_hashes
-            )
-        campaign_program_hash = (
-            str(getattr(locked_job, "campaign_program_hash", "") or "").strip() or None
-        )
-        campaign_program = self._load_campaign_program(campaign_program_hash)
-
-        return JobContext(
-            job_id=locked_job.job_id,
-            run_token=locked_job.run_token,
-            base_commit_hash=base_commit_hash,
-            island_id=locked_job.island_id,
-            inspiration_commit_hashes=inspiration_commit_hashes,
-            goal=goal,
-            constraints=tuple(locked_job.constraints or ()),
-            acceptance_criteria=tuple(locked_job.acceptance_criteria or ()),
-            iteration_hint=iteration_hint,
-            notes=tuple(locked_job.notes or ()),
-            tags=tuple(locked_job.tags or ()),
-            is_seed_job=is_seed_job,
-            sampling_strategy=locked_job.sampling_strategy,
-            sampling_initial_radius=locked_job.sampling_initial_radius,
-            sampling_radius_used=locked_job.sampling_radius_used,
-            sampling_fallback_inspirations=locked_job.sampling_fallback_inspirations,
-            job_kind=getattr(locked_job, "job_kind", "seed" if is_seed_job else "evolution"),
-            repair_source_candidate_id=getattr(locked_job, "repair_source_candidate_id", None),
-            repair_mode=getattr(locked_job, "repair_mode", None),
-            campaign_program_hash=campaign_program_hash,
-            campaign_program=campaign_program,
-            sampling_ordinal=getattr(locked_job, "sampling_ordinal", None),
-            sampling_recipe_hash=getattr(locked_job, "sampling_recipe_hash", None),
-            sampling_recipe_reused=bool(
-                getattr(locked_job, "sampling_recipe_reused", False)
-            ),
+        job = self.job_store.start_job(job_id)
+        fields = _resolve_started_job_fields(settings=self.settings, job=job)
+        return _job_context_from_started_fields(
+            job=job,
+            fields=fields,
+            campaign_program=self._load_campaign_program(fields.campaign_program_hash),
         )
 
     def _load_campaign_program(
@@ -910,10 +1047,15 @@ class EvolutionWorker:
         repair_context: RepairSourceContext | None = None,
     ) -> WorkerPromptContext:
         planning_contexts = self._load_commit_planning_contexts(
-            commit_hashes=(job_ctx.base_commit_hash, *job_ctx.inspiration_commit_hashes),
+            commit_hashes=(
+                job_ctx.base_commit_hash,
+                *job_ctx.inspiration_commit_hashes,
+            ),
         )
         if not planning_contexts:
-            raise EvolutionWorkerError("Planning context loading returned no commit contexts.")
+            raise EvolutionWorkerError(
+                "Planning context loading returned no commit contexts."
+            )
         base_context = planning_contexts[0]
         inspiration_contexts = list(planning_contexts[1:])
         if inspiration_contexts:
@@ -928,7 +1070,9 @@ class EvolutionWorker:
                         )
                         ctx.trajectory = rollup.lines
                         ctx.trajectory_meta = rollup.meta
-                    except Exception as exc:  # pragma: no cover - best-effort enrichment
+                    except (
+                        Exception
+                    ) as exc:  # pragma: no cover - best-effort enrichment
                         log.warning(
                             "Failed to build trajectory rollup for base={} insp={}: {}",
                             base_context.commit_hash[:12],
@@ -974,9 +1118,16 @@ class EvolutionWorker:
         if job_ctx.job_kind != "repair":
             return None
         if job_ctx.repair_source_candidate_id is None:
-            raise EvolutionWorkerError("Repair job is missing repair_source_candidate_id.")
-        if job_ctx.repair_mode and job_ctx.repair_mode != REPAIR_MODE_REBASE_FROM_NEAREST_VIABLE:
-            raise EvolutionWorkerError(f"Unsupported repair_mode={job_ctx.repair_mode!r}.")
+            raise EvolutionWorkerError(
+                "Repair job is missing repair_source_candidate_id."
+            )
+        if (
+            job_ctx.repair_mode
+            and job_ctx.repair_mode != REPAIR_MODE_REBASE_FROM_NEAREST_VIABLE
+        ):
+            raise EvolutionWorkerError(
+                f"Unsupported repair_mode={job_ctx.repair_mode!r}."
+            )
         source = self._load_repair_source_context(
             source_candidate_id=job_ctx.repair_source_candidate_id,
             expected_parent=job_ctx.base_commit_hash,
@@ -1049,7 +1200,9 @@ class EvolutionWorker:
                 job_ctx=job_ctx,
                 events=self._usage_events_from_exception(exc),
             )
-            raise EvolutionWorkerError(f"Planning agent failed for job {job_ctx.job_id}: {exc}") from exc
+            raise EvolutionWorkerError(
+                f"Planning agent failed for job {job_ctx.job_id}: {exc}"
+            ) from exc
 
     def _run_coding(
         self,
@@ -1073,13 +1226,17 @@ class EvolutionWorker:
                 run_token=job_ctx.run_token,
                 phase="coding",
             ):
-                return self.coding_agent.implement(request, working_dir=checkout.worktree)
+                return self.coding_agent.implement(
+                    request, working_dir=checkout.worktree
+                )
         except CodingError as exc:
             self._persist_agent_usage_events_best_effort(
                 job_ctx=job_ctx,
                 events=(*plan.usage_events, *self._usage_events_from_exception(exc)),
             )
-            raise EvolutionWorkerError(f"Coding agent failed for job {job_ctx.job_id}: {exc}") from exc
+            raise EvolutionWorkerError(
+                f"Coding agent failed for job {job_ctx.job_id}: {exc}"
+            ) from exc
 
     def _build_coding_request(
         self,
@@ -1170,9 +1327,19 @@ class EvolutionWorker:
         *,
         job_ctx: JobContext,
         checkout: CheckoutContext,
-        plan: PlanningAgentResponse,
+        plan: PlanningAgentResponse | None,
         candidate_commit: str,
     ) -> EvaluationOutcome:
+        supplied_summary = str(job_ctx.input_candidate_summary or "").strip() or None
+        plan_payload = (
+            {
+                "summary": plan.plan.summary,
+                "focus_metrics": list(plan.plan.focus_metrics),
+                "guardrails": list(plan.plan.guardrails),
+            }
+            if plan is not None
+            else None
+        )
         payload = {
             "job": {
                 "id": str(job_ctx.job_id),
@@ -1183,12 +1350,11 @@ class EvolutionWorker:
                 "notes": list(job_ctx.notes),
                 "tags": list(job_ctx.tags),
             },
-            "campaign_program": campaign_program_evaluator_payload(job_ctx.campaign_program),
-            "plan": {
-                "summary": plan.plan.summary,
-                "focus_metrics": list(plan.plan.focus_metrics),
-                "guardrails": list(plan.plan.guardrails),
-            },
+            "campaign_program": campaign_program_evaluator_payload(
+                job_ctx.campaign_program
+            ),
+            "plan": plan_payload,
+            "supplied_candidate_summary": supplied_summary,
         }
         try:
             context = EvaluationContext(  # type: ignore[call-arg]
@@ -1198,11 +1364,15 @@ class EvolutionWorker:
                 job_id=str(job_ctx.job_id),
                 goal=job_ctx.goal,
                 payload=payload,
-                plan_summary=plan.plan.summary,
+                plan_summary=plan.plan.summary
+                if plan is not None
+                else supplied_summary,
                 metadata={
                     "is_seed_job": bool(job_ctx.is_seed_job),
                     "campaign_program_hash": job_ctx.campaign_program_hash,
-                    "runtime_profile": str(getattr(self.settings, "profile", "default")),
+                    "runtime_profile": str(
+                        getattr(self.settings, "profile", "default")
+                    ),
                     "effective_settings_fingerprint": self.settings.effective_fingerprint(),
                     "sampling": {
                         "strategy": job_ctx.sampling_strategy,
@@ -1215,16 +1385,20 @@ class EvolutionWorker:
                     },
                 },
             )
+            supports_phased = getattr(
+                self.evaluator, "supports_phased_evaluation", None
+            )
+            if callable(supports_phased) and bool(supports_phased()):
+                return self._run_phased_evaluation(
+                    job_ctx=job_ctx,
+                    context=context,
+                )
             evaluate_outcome = getattr(self.evaluator, "evaluate_outcome", None)
             if callable(evaluate_outcome):
-                started_at = datetime.now(timezone.utc)
-                payload = evaluate_outcome(context)
-                finished_at = datetime.now(timezone.utc)
-                return self._coerce_evaluation_payload(
-                    payload,
+                return self._run_one_shot_evaluation(
+                    job_ctx=job_ctx,
                     context=context,
-                    started_at=started_at,
-                    finished_at=finished_at,
+                    evaluate_outcome=evaluate_outcome,
                 )
             result = self.evaluator.evaluate(context)
             evaluator_name, evaluator_version = self._evaluator_contract()
@@ -1235,8 +1409,435 @@ class EvolutionWorker:
                 outcome_kind="passed",
                 result=result,
             )
-        except EvaluationError as exc:
-            raise EvolutionWorkerError(f"Evaluator failed for job {job_ctx.job_id}: {exc}") from exc
+        except (EvaluationError, EvaluationRuntimeError) as exc:
+            raise EvolutionWorkerError(
+                f"Evaluator failed for job {job_ctx.job_id}: {exc}"
+            ) from exc
+
+    def _run_one_shot_evaluation(
+        self,
+        *,
+        job_ctx: JobContext,
+        context: EvaluationContext,
+        evaluate_outcome: Any,
+    ) -> EvaluationOutcome:
+        evaluator_name, evaluator_version = self._evaluator_contract()
+        lease = None
+        if self.settings.worker_evaluator_max_concurrency is not None:
+            if not evaluator_name or not evaluator_version:
+                raise EvaluationRuntimeError(
+                    "Evaluator concurrency requires a non-empty evaluator name and version."
+                )
+            campaign_hash = str(job_ctx.campaign_program_hash or "unscoped")
+            contract_key = self.evaluation_runtime.ensure_contract(
+                evaluator_name=evaluator_name,
+                evaluator_version=evaluator_version,
+                campaign_program_hash=campaign_hash,
+                limit_scope="whole",
+            )
+            lease = self.evaluation_runtime.acquire_evaluator_slot(
+                contract_key=contract_key,
+                job_id=job_ctx.job_id,
+                run_token=job_ctx.run_token,
+                deadline=monotonic()
+                + float(self.settings.worker_evaluator_timeout_seconds),
+            )
+        started_at = datetime.now(timezone.utc)
+        try:
+            payload = evaluate_outcome(context)
+            finished_at = datetime.now(timezone.utc)
+            outcome = self._coerce_evaluation_payload(
+                payload,
+                context=context,
+                started_at=started_at,
+                finished_at=finished_at,
+            )
+            if lease is not None:
+                self._apply_slot_trace(
+                    outcome,
+                    self._release_slot_trace(lease, reason="evaluation_completed"),
+                )
+                lease = None
+            return outcome
+        finally:
+            if lease is not None:
+                lease.release("evaluation_error")
+
+    def _run_phased_evaluation(
+        self,
+        *,
+        job_ctx: JobContext,
+        context: EvaluationContext,
+    ) -> EvaluationOutcome:
+        state = self._new_phased_evaluation_state(job_ctx)
+        try:
+            prepared = self._prepare_phased_evaluation(state, job_ctx, context)
+            if prepared is not None:
+                return prepared
+            reused = self._reuse_phased_measurement(state, context)
+            if reused is not None:
+                return reused
+            return self._measure_phased_candidate(state, job_ctx, context)
+        except (EvaluationError, EvaluationRuntimeError) as exc:
+            return self._phased_evaluation_failure(state, context, exc)
+        finally:
+            self._release_phased_leases(state)
+
+    def _new_phased_evaluation_state(
+        self,
+        job_ctx: JobContext,
+    ) -> _PhasedEvaluationState:
+        evaluator_name, evaluator_version = self._evaluator_contract()
+        if not evaluator_name or not evaluator_version:
+            raise EvaluationRuntimeError(
+                "phased-v1 requires a non-empty evaluator name and version."
+            )
+        campaign_hash = str(job_ctx.campaign_program_hash or "").strip()
+        if not campaign_hash:
+            raise EvaluationRuntimeError(
+                "phased-v1 persistent coordination requires a campaign program hash."
+            )
+        scope = self.evaluator.evaluation_concurrency_scope()
+        contract_key = self.evaluation_runtime.ensure_contract(
+            evaluator_name=evaluator_name,
+            evaluator_version=evaluator_version,
+            campaign_program_hash=campaign_hash,
+            limit_scope=scope,
+        )
+        return _PhasedEvaluationState(
+            evaluator=self.evaluator,
+            evaluator_name=evaluator_name,
+            evaluator_version=evaluator_version,
+            campaign_hash=campaign_hash,
+            scope=scope,
+            contract_key=contract_key,
+            deadline=self.evaluator.new_deadline(),
+            started_at=datetime.now(timezone.utc),
+        )
+
+    def _acquire_phased_slot(
+        self,
+        state: _PhasedEvaluationState,
+        job_ctx: JobContext,
+    ) -> None:
+        state.slot_lease = self.evaluation_runtime.acquire_evaluator_slot(
+            contract_key=state.contract_key,
+            job_id=job_ctx.job_id,
+            run_token=job_ctx.run_token,
+            deadline=state.deadline,
+        )
+
+    def _prepare_phased_evaluation(
+        self,
+        state: _PhasedEvaluationState,
+        job_ctx: JobContext,
+        context: EvaluationContext,
+    ) -> EvaluationOutcome | None:
+        if state.scope == "whole":
+            self._acquire_phased_slot(state, job_ctx)
+        prepared = state.evaluator.prepare_phase(context, deadline=state.deadline)
+        if isinstance(prepared, EvaluationOutcome):
+            return self._finish_phased_state(state, prepared)
+        state.preparation = prepared
+        state.cache_key = measurement_cache_key(
+            preparation=prepared,
+            evaluator_name=state.evaluator_name,
+            evaluator_version=state.evaluator_version,
+            campaign_program_hash=state.campaign_hash,
+        )
+        state.measurement_lease = self.evaluation_runtime.acquire_measurement_lock(
+            cache_key=state.cache_key,
+            contract_key=state.contract_key,
+            job_id=job_ctx.job_id,
+            run_token=job_ctx.run_token,
+            deadline=state.deadline,
+        )
+        state.cached = self.evaluation_runtime.lookup_measurement(state.cache_key)
+        return None
+
+    def _reuse_phased_measurement(
+        self,
+        state: _PhasedEvaluationState,
+        context: EvaluationContext,
+    ) -> EvaluationOutcome | None:
+        cached = state.cached
+        if cached is None:
+            return None
+        self._release_phased_measurement_lease(state, "cache_hit")
+        provenance = MeasurementProvenance(
+            cache_key=str(state.cache_key),
+            reused=True,
+            measurement_id=str(cached.id),
+            source_evaluation_attempt_id=_cached_source_attempt_id(cached),
+            evidence=cached.measurement.evidence,
+        )
+        outcome = state.evaluator.finalize_phase(
+            context,
+            _required(state.preparation, "phased preparation"),
+            cached.measurement,
+            provenance,
+            timing=FinalizationTiming(
+                deadline=state.deadline,
+                started_at=state.started_at,
+            ),
+        )
+        outcome.measurement_executed = False
+        outcome.reuse_kind = "measurement"
+        return self._finish_phased_state(state, outcome)
+
+    def _measure_phased_candidate(
+        self,
+        state: _PhasedEvaluationState,
+        job_ctx: JobContext,
+        context: EvaluationContext,
+    ) -> EvaluationOutcome:
+        if state.scope == "measurement":
+            self._acquire_phased_slot(state, job_ctx)
+        state.measurement_executed = True
+        preparation = _required(state.preparation, "phased preparation")
+        result = state.evaluator.measure_phase(
+            context,
+            preparation,
+            deadline=state.deadline,
+        )
+        if isinstance(result, EvaluationOutcome):
+            return self._finish_failed_phased_measurement(state, result)
+        state.measured = result
+        self._release_measurement_scope_slot(state)
+        outcome = self._finalize_fresh_phased_measurement(state, context)
+        self._retain_or_release_measurement_lease(state, outcome)
+        return self._finish_phased_state(state, outcome)
+
+    def _finish_failed_phased_measurement(
+        self,
+        state: _PhasedEvaluationState,
+        outcome: EvaluationOutcome,
+    ) -> EvaluationOutcome:
+        self._release_phased_measurement_lease(state, "measurement_failed")
+        preparation = _required(state.preparation, "phased preparation")
+        outcome.measurement_cache_key = state.cache_key
+        outcome.measurement_contract_fingerprint = (
+            preparation.measurement_contract_fingerprint
+        )
+        outcome.prepared_candidate_identity = preparation.candidate_identity
+        outcome.measurement_executed = True
+        return self._finish_phased_state(state, outcome)
+
+    def _release_measurement_scope_slot(self, state: _PhasedEvaluationState) -> None:
+        if state.scope != "measurement" or state.slot_lease is None:
+            return
+        state.slot_trace = self._release_slot_trace(
+            state.slot_lease,
+            reason="measurement_completed",
+        )
+        state.slot_lease = None
+
+    def _finalize_fresh_phased_measurement(
+        self,
+        state: _PhasedEvaluationState,
+        context: EvaluationContext,
+    ) -> EvaluationOutcome:
+        measured = _required(state.measured, "phased measurement")
+        outcome = state.evaluator.finalize_phase(
+            context,
+            _required(state.preparation, "phased preparation"),
+            measured,
+            MeasurementProvenance(
+                cache_key=str(state.cache_key),
+                reused=False,
+                evidence=measured.evidence,
+            ),
+            timing=FinalizationTiming(
+                deadline=state.deadline,
+                started_at=state.started_at,
+            ),
+        )
+        outcome.measurement_executed = True
+        outcome.reuse_kind = "none"
+        if state.slot_trace is not None:
+            self._apply_slot_trace(outcome, state.slot_trace)
+        return outcome
+
+    def _retain_or_release_measurement_lease(
+        self,
+        state: _PhasedEvaluationState,
+        outcome: EvaluationOutcome,
+    ) -> None:
+        measured = _required(state.measured, "phased measurement")
+        if outcome.outcome_kind == "passed" and measured.cacheable:
+            outcome._runtime_leases.append(state.measurement_lease)
+            state.measurement_lease = None
+            return
+        self._release_phased_measurement_lease(state, "measurement_not_accepted")
+
+    def _phased_evaluation_failure(
+        self,
+        state: _PhasedEvaluationState,
+        context: EvaluationContext,
+        error: Exception,
+    ) -> EvaluationOutcome:
+        measurement = (
+            state.cached.measurement if state.cached is not None else state.measured
+        )
+        preparation = state.preparation
+        outcome = EvaluationOutcome(
+            evaluator_name=state.evaluator_name,
+            evaluator_version=state.evaluator_version,
+            candidate_commit_hash=context.candidate_commit_hash,
+            prepared_candidate_identity=(
+                preparation.candidate_identity if preparation is not None else None
+            ),
+            outcome_kind="infrastructure_failed",
+            failure=EvaluationFailureResult(
+                failure_stage="evaluation",
+                failure_kind="phased_evaluator_failed",
+                repairability="unknown",
+                safe_failure_summary=str(error),
+            ),
+            started_at=state.started_at,
+            finished_at=datetime.now(timezone.utc),
+            protocol="phased-v1",
+            measurement_cache_key=state.cache_key,
+            measurement_contract_fingerprint=(
+                preparation.measurement_contract_fingerprint
+                if preparation is not None
+                else None
+            ),
+            measurement_reused=state.cached is not None,
+            measurement_executed=state.measurement_executed,
+            reuse_kind="measurement" if state.cached is not None else "none",
+            measurement_id=str(state.cached.id) if state.cached is not None else None,
+            reused_from_attempt_id=_cached_source_attempt_id(state.cached),
+            measurement_payload=(
+                measurement.cache_payload() if measurement is not None else None
+            ),
+            measurement_evidence=(
+                measurement.evidence if measurement is not None else ()
+            ),
+        )
+        if state.slot_trace is not None:
+            self._apply_slot_trace(outcome, state.slot_trace)
+        return self._finish_phased_state(state, outcome)
+
+    def _finish_phased_state(
+        self,
+        state: _PhasedEvaluationState,
+        outcome: EvaluationOutcome,
+    ) -> EvaluationOutcome:
+        result = self._finish_phased_slot(outcome, state.slot_lease, scope=state.scope)
+        state.slot_lease = None
+        return result
+
+    @staticmethod
+    def _release_phased_measurement_lease(
+        state: _PhasedEvaluationState,
+        reason: str,
+    ) -> None:
+        if state.measurement_lease is not None:
+            state.measurement_lease.release(reason)
+            state.measurement_lease = None
+
+    @classmethod
+    def _release_phased_leases(cls, state: _PhasedEvaluationState) -> None:
+        if state.slot_lease is not None:
+            state.slot_lease.release("phase_error")
+            state.slot_lease = None
+        cls._release_phased_measurement_lease(state, "phase_error")
+
+    @staticmethod
+    def _release_slot_trace(
+        lease: Any,
+        *,
+        reason: str,
+    ) -> tuple[int | None, str, float, str, datetime | None, datetime | None, str]:
+        released_at = lease.release(reason)
+        return (
+            lease.slot_index,
+            lease.scope,
+            lease.wait_seconds,
+            str(lease.lease_id),
+            lease.acquired_at,
+            released_at,
+            reason,
+        )
+
+    def _finish_phased_slot(
+        self,
+        outcome: EvaluationOutcome,
+        lease: Any | None,
+        *,
+        scope: str,
+    ) -> EvaluationOutcome:
+        if lease is not None:
+            reason = (
+                "evaluation_completed"
+                if outcome.outcome_kind == "passed"
+                else "evaluation_failed"
+            )
+            trace = self._release_slot_trace(lease, reason=reason)
+            self._apply_slot_trace(outcome, trace)
+        outcome.evaluator_slot_scope = outcome.evaluator_slot_scope or scope
+        return outcome
+
+    @staticmethod
+    def _apply_slot_trace(
+        outcome: EvaluationOutcome,
+        trace: tuple[
+            int | None,
+            str,
+            float,
+            str,
+            datetime | None,
+            datetime | None,
+            str,
+        ],
+    ) -> None:
+        (
+            slot,
+            scope,
+            wait_seconds,
+            lease_id,
+            acquired_at,
+            released_at,
+            release_reason,
+        ) = trace
+        outcome.evaluator_slot = slot
+        outcome.evaluator_slot_scope = scope
+        outcome.evaluator_slot_wait_seconds = wait_seconds
+        outcome.evaluator_slot_acquired_at = acquired_at
+        outcome.evaluator_slot_released_at = released_at
+        outcome.evaluator_slot_lease_id = lease_id
+        outcome.evaluator_slot_release_reason = release_reason
+
+    def _record_evaluation_observation(
+        self,
+        job_ctx: JobContext,
+        state: _EvolutionRunState,
+    ) -> None:
+        outcome = _required(state.evaluation_outcome, "evaluation_outcome")
+        record = getattr(self.job_store, "record_evaluation_observation", None)
+        if not callable(record):
+            return
+        attempt_id = record(
+            job_ctx=job_ctx,
+            candidate_commit_hash=state.candidate_commit,
+            outcome=outcome,
+        )
+        outcome.persisted_attempt_id = str(attempt_id)
+
+    @staticmethod
+    def _release_runtime_leases(
+        outcome: EvaluationOutcome | None,
+        *,
+        reason: str,
+    ) -> None:
+        if outcome is None:
+            return
+        leases = list(outcome._runtime_leases)
+        outcome._runtime_leases.clear()
+        for lease in leases:
+            if lease is not None:
+                lease.release(reason)
 
     def _coerce_evaluation_payload(
         self,
@@ -1270,7 +1871,10 @@ class EvolutionWorker:
     def _max_rework_attempts(self) -> int:
         if not bool(getattr(self.settings, "worker_evaluator_rework_enabled", False)):
             return 0
-        return max(0, int(getattr(self.settings, "worker_evaluator_rework_max_attempts", 0) or 0))
+        return max(
+            0,
+            int(getattr(self.settings, "worker_evaluator_rework_max_attempts", 0) or 0),
+        )
 
     def _should_rework(
         self,
@@ -1290,13 +1894,18 @@ class EvolutionWorker:
         kind = eval_fail_kind_from_failure_kind(outcome.failure.failure_kind)
         if kind is None or kind not in self._rework_failure_kind_allowlist():
             return False
-        max_seconds = max(0, int(getattr(self.settings, "worker_evaluator_rework_max_seconds", 0) or 0))
+        max_seconds = max(
+            0,
+            int(getattr(self.settings, "worker_evaluator_rework_max_seconds", 0) or 0),
+        )
         if max_seconds <= 0:
             return False
         return (monotonic() - started) < float(max_seconds)
 
     def _rework_failure_kind_allowlist(self) -> set[str]:
-        raw = str(getattr(self.settings, "worker_evaluator_rework_failure_kinds", "") or "")
+        raw = str(
+            getattr(self.settings, "worker_evaluator_rework_failure_kinds", "") or ""
+        )
         kinds: set[str] = set()
         for part in raw.split(","):
             kind = eval_fail_kind_from_failure_kind(part)
@@ -1486,7 +2095,27 @@ class EvolutionWorker:
         if self._persist_structured_worker_failure(run_token, message, context):
             return
         self._persist_failure_context_agent_usage(context)
-        recorded = self.job_store.mark_job_failed(job_id, message, run_token=run_token)
+        failure_stage, failure_kind = _worker_failure_classification(exc)
+        try:
+            recorded = self.job_store.mark_job_failed(
+                job_id,
+                message,
+                run_token=run_token,
+                failure_stage=failure_stage,
+                failure_kind=failure_kind,
+            )
+        except TypeError as compatibility_error:
+            # Third-party job stores written against the pre-v19 protocol may
+            # not accept the stable failure classification yet.  Preserve the
+            # existing worker extension point while the built-in store records
+            # the richer fields.
+            if "unexpected keyword argument" not in str(compatibility_error):
+                raise
+            recorded = self.job_store.mark_job_failed(
+                job_id,
+                message,
+                run_token=run_token,
+            )
         if not recorded and run_token is not None:
             log.warning(
                 "Skipped failure persistence for job {} because run_token={} is no longer active.",
@@ -1509,8 +2138,12 @@ class EvolutionWorker:
             return False
         outcome = context.evaluation_outcome
         if outcome is None or outcome.outcome_kind == "passed":
-            outcome = _infrastructure_failure_outcome(message, context.candidate_commit_hash)
-        outcome = self._attach_rework_history_to_outcome(outcome, context.rework_attempts)
+            outcome = _infrastructure_failure_outcome(
+                message, context.candidate_commit_hash
+            )
+        outcome = self._attach_rework_history_to_outcome(
+            outcome, context.rework_attempts
+        )
         return bool(
             persist_failure(
                 job_ctx=context.job_ctx,
@@ -1523,7 +2156,9 @@ class EvolutionWorker:
             )
         )
 
-    def _persist_failure_context_agent_usage(self, context: _JobFailureContext | None) -> None:
+    def _persist_failure_context_agent_usage(
+        self, context: _JobFailureContext | None
+    ) -> None:
         if context is None:
             return
         events = []
@@ -1531,7 +2166,9 @@ class EvolutionWorker:
             events.extend(context.plan.usage_events or ())
         if context.coding is not None:
             events.extend(context.coding.usage_events or ())
-        self._persist_agent_usage_events_best_effort(job_ctx=context.job_ctx, events=events)
+        self._persist_agent_usage_events_best_effort(
+            job_ctx=context.job_ctx, events=events
+        )
 
     def _persist_agent_usage_events_best_effort(
         self,
@@ -1551,7 +2188,9 @@ class EvolutionWorker:
         try:
             inserted = persist_usage_events(materialized, settings=self.settings)
         except Exception as exc:  # pragma: no cover - best-effort observability
-            log.warning("Failed to persist agent LLM usage for job {}: {}", job_ctx.job_id, exc)
+            log.warning(
+                "Failed to persist agent LLM usage for job {}: {}", job_ctx.job_id, exc
+            )
             return
         if inserted:
             log.info(
@@ -1576,7 +2215,9 @@ class EvolutionWorker:
         *,
         commit_hashes: Sequence[str],
     ) -> tuple[CommitPlanningContext, ...]:
-        ordered_hashes = tuple(commit_hash for commit_hash in commit_hashes if commit_hash)
+        ordered_hashes = tuple(
+            commit_hash for commit_hash in commit_hashes if commit_hash
+        )
         if not ordered_hashes:
             return ()
         unique_hashes = tuple(dict.fromkeys(ordered_hashes))
@@ -1586,7 +2227,9 @@ class EvolutionWorker:
                 session=session,
                 commit_hashes=unique_hashes,
             )
-        return self._planning_contexts_from_rows(ordered_hashes=ordered_hashes, rows=rows)
+        return self._planning_contexts_from_rows(
+            ordered_hashes=ordered_hashes, rows=rows
+        )
 
     def _load_commit_planning_rows(
         self,
@@ -1600,7 +2243,9 @@ class EvolutionWorker:
         cards_by_hash = {card.commit_hash: card for card in cards}
         return _CommitPlanningRows(
             cards_by_hash=cards_by_hash,
-            metrics_by_card_id=self._load_metrics_by_card_id(session=session, cards=cards),
+            metrics_by_card_id=self._load_metrics_by_card_id(
+                session=session, cards=cards
+            ),
             artifacts_by_hash=self._load_artifacts_by_hash(
                 session=session,
                 commit_hashes=commit_hashes,
@@ -1658,7 +2303,9 @@ class EvolutionWorker:
             self._build_commit_planning_context(
                 commit_hash=commit_hash,
                 card=card,
-                metric_rows=tuple(rows.metrics_by_card_id.get(card.id, ())) if card else (),
+                metric_rows=tuple(rows.metrics_by_card_id.get(card.id, ()))
+                if card
+                else (),
                 artifact_rows=tuple(rows.artifacts_by_hash.get(commit_hash, ())),
             )
             for commit_hash in ordered_hashes
@@ -1673,7 +2320,9 @@ class EvolutionWorker:
         metric_rows: Sequence[Metric],
         artifact_rows: Sequence[EvaluationArtifactRecord] = (),
     ) -> CommitPlanningContext:
-        subject = (getattr(card, "subject", None) or "").strip() or f"Commit {commit_hash}"
+        subject = (
+            getattr(card, "subject", None) or ""
+        ).strip() or f"Commit {commit_hash}"
         change_summary = (getattr(card, "change_summary", None) or "").strip() or "N/A"
         key_files = tuple(getattr(card, "key_files", None) or ())
         highlights = tuple(getattr(card, "highlights", None) or ())
@@ -1736,7 +2385,9 @@ class EvolutionWorker:
         )
 
     @staticmethod
-    def _diagnostic_brief_from_mapping(payload: dict[str, object]) -> EvaluationDiagnosticBrief:
+    def _diagnostic_brief_from_mapping(
+        payload: dict[str, object],
+    ) -> EvaluationDiagnosticBrief:
         return EvaluationDiagnosticBrief(
             kind=str(payload.get("kind") or ""),
             message=str(payload.get("message") or ""),
@@ -1757,9 +2408,7 @@ class EvolutionWorker:
                 else None
             ),
             unit=(
-                str(payload.get("unit"))
-                if payload.get("unit") is not None
-                else None
+                str(payload.get("unit")) if payload.get("unit") is not None else None
             ),
         )
 
@@ -1787,7 +2436,9 @@ class EvolutionWorker:
         sampling_strategy = job_ctx.sampling_strategy
         if repair_context is not None:
             sampling_strategy = "repair"
-            facts.append("Repair job: preserve useful failed-candidate work while restoring validation.")
+            facts.append(
+                "Repair job: preserve useful failed-candidate work while restoring validation."
+            )
             repair_block = repair_context.prompt_block()
         return IterationContext(
             seed_job=bool(job_ctx.is_seed_job),
@@ -1802,10 +2453,194 @@ class EvolutionWorker:
         return UUID(str(value))
 
 
+def _required_job_base_commit(job: Any) -> str:
+    value = str(job.base_commit_hash or "").strip()
+    if not value:
+        raise EvolutionWorkerError(
+            f"Evolution job {job.job_id} has no base commit hash configured."
+        )
+    return value
+
+
+def _job_inspiration_hashes(job: Any) -> tuple[str, ...]:
+    return tuple(
+        value
+        for commit_hash in (job.inspiration_commit_hashes or ())
+        if (value := str(commit_hash or "").strip())
+    )
+
+
+def _required_job_goal(*, settings: Settings, job: Any) -> str:
+    value = (
+        str(job.goal or "").strip()
+        or str(settings.worker_evolution_global_goal or "").strip()
+    )
+    if not value:
+        raise EvolutionWorkerError(
+            "No evolution goal configured. "
+            "Set WORKER_EVOLUTION_GLOBAL_GOAL or provide a per-job goal."
+        )
+    return value
+
+
+def _is_seed_job(
+    *,
+    settings: Settings,
+    job: Any,
+    base_commit_hash: str,
+    inspirations: tuple[str, ...],
+) -> bool:
+    if bool(getattr(job, "is_seed_job", False)):
+        return True
+    root_hash = str(settings.mapelites_experiment_root_commit or "").strip()
+    return bool(root_hash and base_commit_hash == root_hash and not inspirations)
+
+
+def _job_execution_fields(job: Any) -> _JobExecutionFields:
+    mode = str(getattr(job, "execution_mode", "agent") or "agent").strip().lower()
+    if mode not in {"agent", "evaluate_existing"}:
+        raise EvolutionWorkerError(f"Unsupported job execution_mode={mode!r}.")
+    input_commit_hash = (
+        str(getattr(job, "input_candidate_commit_hash", "") or "").strip() or None
+    )
+    if mode == "evaluate_existing" and input_commit_hash is None:
+        raise EvolutionWorkerError(
+            "Evaluation-only job is missing input_candidate_commit_hash."
+        )
+    if mode == "agent" and input_commit_hash is not None:
+        raise EvolutionWorkerError(
+            "Agent-generated jobs cannot declare input_candidate_commit_hash."
+        )
+    return _JobExecutionFields(
+        mode=mode,
+        input_commit_hash=input_commit_hash,
+        archive_ingestion_enabled=bool(getattr(job, "archive_ingestion_enabled", True)),
+        provenance=dict(getattr(job, "input_provenance", {}) or {}),
+    )
+
+
+def _require_supported_supplied_job(
+    *,
+    job: Any,
+    job_kind: str,
+    is_seed: bool,
+    execution: _JobExecutionFields,
+) -> None:
+    if execution.mode != "evaluate_existing":
+        return
+    valid = (
+        job_kind == "manual_seed"
+        and is_seed
+        and execution.archive_ingestion_enabled
+        and str(getattr(job, "external_submission_key", "") or "").strip()
+        and str(execution.provenance.get("remote_ref") or "").strip()
+    )
+    if not valid:
+        raise EvolutionWorkerError(
+            "evaluate_existing is currently reserved for archive-eligible manual seeds "
+            "with persisted submission and remote-ref provenance."
+        )
+
+
+def _resolve_started_job_fields(*, settings: Settings, job: Any) -> _StartedJobFields:
+    base_commit_hash = _required_job_base_commit(job)
+    inspirations = _job_inspiration_hashes(job)
+    is_seed = _is_seed_job(
+        settings=settings,
+        job=job,
+        base_commit_hash=base_commit_hash,
+        inspirations=inspirations,
+    )
+    job_kind = str(
+        getattr(job, "job_kind", "seed" if is_seed else "evolution") or ""
+    ).strip()
+    execution = _job_execution_fields(job)
+    _require_supported_supplied_job(
+        job=job,
+        job_kind=job_kind,
+        is_seed=is_seed,
+        execution=execution,
+    )
+    return _StartedJobFields(
+        base_commit_hash=base_commit_hash,
+        inspiration_commit_hashes=inspirations,
+        goal=_required_job_goal(settings=settings, job=job),
+        iteration_hint=str(job.iteration_hint or "").strip() or None,
+        is_seed_job=is_seed,
+        campaign_program_hash=(
+            str(getattr(job, "campaign_program_hash", "") or "").strip() or None
+        ),
+        job_kind=job_kind,
+        execution=execution,
+    )
+
+
+def _job_context_from_started_fields(
+    *,
+    job: Any,
+    fields: _StartedJobFields,
+    campaign_program: CampaignProgramSnapshot | None,
+) -> JobContext:
+    return JobContext(
+        job_id=job.job_id,
+        run_token=job.run_token,
+        base_commit_hash=fields.base_commit_hash,
+        island_id=job.island_id,
+        inspiration_commit_hashes=fields.inspiration_commit_hashes,
+        goal=fields.goal,
+        constraints=tuple(job.constraints or ()),
+        acceptance_criteria=tuple(job.acceptance_criteria or ()),
+        iteration_hint=fields.iteration_hint,
+        notes=tuple(job.notes or ()),
+        tags=tuple(job.tags or ()),
+        is_seed_job=fields.is_seed_job,
+        sampling_strategy=job.sampling_strategy,
+        sampling_initial_radius=job.sampling_initial_radius,
+        sampling_radius_used=job.sampling_radius_used,
+        sampling_fallback_inspirations=job.sampling_fallback_inspirations,
+        execution_mode=fields.execution.mode,
+        input_candidate_commit_hash=fields.execution.input_commit_hash,
+        input_candidate_summary=getattr(job, "input_candidate_summary", None),
+        external_submission_key=str(
+            getattr(job, "external_submission_key", "") or ""
+        ).strip(),
+        input_provenance=fields.execution.provenance,
+        archive_ingestion_enabled=fields.execution.archive_ingestion_enabled,
+        job_kind=fields.job_kind,
+        repair_source_candidate_id=getattr(job, "repair_source_candidate_id", None),
+        repair_mode=getattr(job, "repair_mode", None),
+        campaign_program_hash=fields.campaign_program_hash,
+        campaign_program=campaign_program,
+        sampling_ordinal=getattr(job, "sampling_ordinal", None),
+        sampling_recipe_hash=getattr(job, "sampling_recipe_hash", None),
+        sampling_recipe_reused=bool(getattr(job, "sampling_recipe_reused", False)),
+    )
+
+
+def _worker_failure_classification(exc: Exception) -> tuple[str, str]:
+    if isinstance(exc, PlanningError):
+        return "planning", "planning_agent_failed"
+    if isinstance(exc, CodingError):
+        return "coding", "coding_agent_failed"
+    if isinstance(exc, RepositoryError):
+        return "infrastructure", "repository_failed"
+    if isinstance(exc, (EvaluationError, EvaluationRuntimeError)):
+        return "evaluation", "evaluator_infrastructure_failed"
+    if isinstance(exc, JobLeaseLost):
+        return "infrastructure", "job_lease_lost"
+    return "infrastructure", "worker_exception"
+
+
 def _required(value: Any, name: str) -> Any:
     if value is None:
         raise EvolutionWorkerError(f"Worker run state is missing {name}.")
     return value
+
+
+def _cached_source_attempt_id(cached: Any | None) -> str | None:
+    if cached is None or cached.source_evaluation_attempt_id is None:
+        return None
+    return str(cached.source_evaluation_attempt_id)
 
 
 def _infrastructure_failure_outcome(
@@ -1876,7 +2711,9 @@ def _scope_cleanup_patterns(raw: str | None) -> tuple[str, ...]:
 
 def _valid_repair_source(candidate: Any, source_candidate_id: UUID) -> CandidateCommit:
     if candidate is None:
-        raise EvolutionWorkerError(f"Repair source candidate {source_candidate_id} does not exist.")
+        raise EvolutionWorkerError(
+            f"Repair source candidate {source_candidate_id} does not exist."
+        )
     if candidate.evaluation_status != "candidate_failed":
         raise EvolutionWorkerError("Repair source is not a failed candidate.")
     if candidate.repair_state not in {"scheduled", "repairing", "eligible"}:
@@ -1886,7 +2723,9 @@ def _valid_repair_source(candidate: Any, source_candidate_id: UUID) -> Candidate
     return candidate
 
 
-def _repair_source_nearest_ancestor(candidate: CandidateCommit, expected_parent: str) -> str:
+def _repair_source_nearest_ancestor(
+    candidate: CandidateCommit, expected_parent: str
+) -> str:
     nearest = (candidate.nearest_viable_ancestor_hash or "").strip()
     if not nearest:
         raise EvolutionWorkerError("Repair source has no nearest viable ancestor.")
@@ -1897,7 +2736,9 @@ def _repair_source_nearest_ancestor(candidate: CandidateCommit, expected_parent:
     return nearest
 
 
-def _safe_diagnostic_capsule_payload(session: Any, candidate: CandidateCommit) -> dict[str, Any]:
+def _safe_diagnostic_capsule_payload(
+    session: Any, candidate: CandidateCommit
+) -> dict[str, Any]:
     capsule_payload: dict[str, Any] = {}
     if candidate.failure_evidence_id is not None:
         capsule = session.get(DiagnosticCapsule, candidate.failure_evidence_id)
@@ -1934,8 +2775,8 @@ def _worker_result(
         job_id=job_ctx.job_id,
         base_commit_hash=job_ctx.base_commit_hash,
         candidate_commit_hash=_required(state.candidate_commit, "candidate_commit"),
-        plan=_required(state.plan_response, "plan_response"),
-        coding=_required(state.coding_response, "coding_response"),
+        plan=state.plan_response,
+        coding=state.coding_response,
         evaluation=_required(state.evaluation_result, "evaluation_result"),
         checkout=_required(state.checkout, "checkout"),
         commit_message=_required(state.commit_message, "commit_message"),

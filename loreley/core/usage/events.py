@@ -8,6 +8,7 @@ from typing import Any, Iterator, Mapping
 from uuid import UUID
 
 COST_SOURCE_PROVIDER_REPORTED = "provider_reported"
+COST_SOURCE_CATALOG = "catalog"
 COST_SOURCE_ESTIMATED = "estimated"
 COST_SOURCE_UNPRICED = "unpriced"
 COST_SOURCE_UNAVAILABLE = "unavailable"

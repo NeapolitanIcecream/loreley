@@ -14,6 +14,16 @@ def _git(repo: Path, *args: str) -> None:
     subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
 
 
+def _rev_parse(repo: Path, value: str = "HEAD") -> str:
+    result = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", value],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
 def _init_repo(repo: Path) -> None:
     subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
     _git(repo, "config", "user.email", "test@example.invalid")
@@ -255,3 +265,54 @@ def test_scope_gate_rejects_unsafe_scope_patterns(tmp_path: Path) -> None:
     assert result.passed is False
     assert result.violations[0].code == "invalid_editable_scope_pattern"
     assert result.violations[0].reason == "path_traversal"
+
+
+def test_scope_gate_checks_clean_committed_candidate_diff(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    base = _rev_parse(tmp_path)
+    program = parse_campaign_program(b"## Editable scope\n- src/**\n")
+    (tmp_path / "README.md").write_text("committed outside scope\n", encoding="utf-8")
+    _git(tmp_path, "add", "README.md")
+    _git(tmp_path, "commit", "-m", "change protected candidate input")
+    candidate = _rev_parse(tmp_path)
+
+    result = validate_campaign_scope(
+        worktree=tmp_path,
+        program=program,
+        base_commit_hash=base,
+        candidate_commit_hash=candidate,
+    )
+
+    assert result.passed is False
+    assert result.checked_paths == ("README.md",)
+    assert result.violations[0].code == "outside_editable_scope"
+
+
+def test_scope_gate_checks_both_sides_of_committed_rename(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    base = _rev_parse(tmp_path)
+    program = parse_campaign_program(
+        b"""## Editable scope
+- src/**
+
+## Protected scope
+- src/app.py
+"""
+    )
+    _git(tmp_path, "mv", "src/app.py", "src/renamed.py")
+    _git(tmp_path, "commit", "-m", "rename protected candidate input")
+    candidate = _rev_parse(tmp_path)
+
+    result = validate_campaign_scope(
+        worktree=tmp_path,
+        program=program,
+        base_commit_hash=base,
+        candidate_commit_hash=candidate,
+    )
+
+    assert result.passed is False
+    assert result.checked_paths == ("src/app.py", "src/renamed.py")
+    assert any(
+        violation.code == "protected_scope_modified" and violation.path == "src/app.py"
+        for violation in result.violations
+    )

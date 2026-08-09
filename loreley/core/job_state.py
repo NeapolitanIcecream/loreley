@@ -17,6 +17,7 @@ def pending_ingestion_job_conditions(
     commit_norm = func.trim(func.coalesce(EvolutionJob.result_commit_hash, ""))
     return (
         EvolutionJob.status == JobStatus.SUCCEEDED,
+        EvolutionJob.archive_ingestion_enabled.is_(True),
         status_norm.not_in(("succeeded", "skipped")),
         commit_norm != "",
     )

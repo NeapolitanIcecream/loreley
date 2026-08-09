@@ -575,7 +575,7 @@ def _job_health_from_session(
             )
         ),
     )
-    return {
+    payload = {
         "jobs": {
             "unfinished": unfinished,
             "pending_ingestion": pending_ingestion,
@@ -592,6 +592,13 @@ def _job_health_from_session(
         "by_status": _job_group_counts(session=session, column=EvolutionJob.status),
         "by_job_kind": _job_group_counts(session=session, column=EvolutionJob.job_kind),
     }
+    try:
+        from loreley.core.progress import load_campaign_progress
+
+        payload["progress"] = load_campaign_progress(session, settings).as_dict()
+    except Exception as exc:
+        log.warning("Extended campaign progress is unavailable: {}", exc)
+    return payload
 
 
 def _count(session: object, stmt: object) -> int:

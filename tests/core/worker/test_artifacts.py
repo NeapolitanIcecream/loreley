@@ -317,6 +317,37 @@ def test_write_job_artifacts_records_sanitized_warning_for_unsafe_path(
     assert payload["artifact_validation_warnings"][0] == result.validation_warnings[0].as_dict()
 
 
+def test_write_job_artifacts_omits_agent_files_when_stages_were_skipped(
+    settings,
+    tmp_path: Path,
+) -> None:
+    settings.logs_base_dir = str(tmp_path)
+
+    result = write_job_artifacts(
+        JobArtifactWriteRequest(
+            job_id=uuid.uuid4(),
+            run_token=uuid.uuid4(),
+            plan=None,
+            coding=None,
+            evaluation=EvaluationResult(summary="supplied candidate passed"),
+            base_commit_hash="base",
+            candidate_commit_hash="candidate",
+            commit_message="Evaluate supplied candidate",
+            worktree=tmp_path,
+            settings=settings,
+        )
+    )
+
+    paths = result.fixed.as_dict()
+    assert "planning_prompt_path" not in paths
+    assert "planning_raw_output_path" not in paths
+    assert "planning_plan_json_path" not in paths
+    assert "coding_prompt_path" not in paths
+    assert "coding_raw_output_path" not in paths
+    assert "coding_execution_json_path" not in paths
+    assert Path(paths["evaluation_json_path"]).exists()
+
+
 def _plan_response() -> PlanningAgentResponse:
     return PlanningAgentResponse(
         plan=PlanDocument(summary="plan", markdown="## Summary\n- plan\n"),

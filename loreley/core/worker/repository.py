@@ -17,7 +17,7 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from git import Repo
-from git.exc import GitCommandError, InvalidGitRepositoryError, NoSuchPathError
+from git.exc import BadName, GitCommandError, InvalidGitRepositoryError, NoSuchPathError
 from sqlalchemy import and_, or_, select
 
 from loreley.config import Settings, get_settings
@@ -62,7 +62,12 @@ class _ProtectedBranchState:
         self.branches.add(branch)
 
 
-_UNFINISHED_JOB_STATUSES = (JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING)
+_UNFINISHED_JOB_STATUSES = (
+    JobStatus.STAGED,
+    JobStatus.PENDING,
+    JobStatus.QUEUED,
+    JobStatus.RUNNING,
+)
 
 
 def _remember_archive_commits(session: Any, state: _ProtectedBranchState) -> None:
@@ -80,6 +85,7 @@ def _load_protected_job_rows(session: Any) -> Sequence[Any]:
     return session.execute(
         select(
             EvolutionJob.base_commit_hash,
+            EvolutionJob.input_candidate_commit_hash,
             EvolutionJob.result_commit_hash,
             EvolutionJob.candidate_commit_hash,
             EvolutionJob.candidate_branch_name,
@@ -125,6 +131,7 @@ def _remember_candidate_branch_row(row: Any, state: _ProtectedBranchState) -> No
 def _remember_job_branch_row(row: Any, state: _ProtectedBranchState) -> None:
     (
         base_commit_hash,
+        input_candidate_commit_hash,
         result_commit_hash,
         candidate_commit_hash,
         candidate_branch_name,
@@ -135,6 +142,7 @@ def _remember_job_branch_row(row: Any, state: _ProtectedBranchState) -> None:
     ) = row
     if _job_row_protects_full_lineage(status, ingestion_status):
         state.remember_commit(base_commit_hash)
+        state.remember_commit(input_candidate_commit_hash)
         state.remember_commit(result_commit_hash)
         state.remember_commit(candidate_commit_hash)
         state.remember_branch(candidate_branch_name)
@@ -142,6 +150,7 @@ def _remember_job_branch_row(row: Any, state: _ProtectedBranchState) -> None:
             state.remember_commit(commit_hash)
         return
     if status == JobStatus.FAILED and candidate_branch_name:
+        state.remember_commit(input_candidate_commit_hash)
         state.remember_commit(candidate_commit_hash)
         state.remember_branch(candidate_branch_name)
 
@@ -342,6 +351,36 @@ class WorkerRepository:
         else:
             with self._repo_lock():
                 self._remove_worktree(worktree_path)
+
+    def ensure_remote_commit(self, *, commit_hash: str, remote_ref: str) -> None:
+        """Fetch an immutable supplied-candidate ref and verify its expected commit."""
+
+        commit = str(commit_hash or "").strip().lower()
+        ref = str(remote_ref or "").strip()
+        if (
+            not re.fullmatch(r"refs/(?:heads|tags)/[A-Za-z0-9][A-Za-z0-9._/-]*", ref)
+            or any(token in ref for token in ("..", "@{", "\\", " ", "//", "~", "^", ":", "?", "["))
+            or ref.endswith(("/", ".", ".lock"))
+        ):
+            raise RepositoryError("Supplied candidate remote_ref is not a safe full Git ref.")
+        if not re.fullmatch(r"[0-9a-f]{40}", commit):
+            raise RepositoryError("Supplied candidate commit_hash must be a full SHA-1.")
+        local_ref = f"refs/loreley/supplied/{commit}"
+        with self._repo_lock():
+            self._ensure_worktree_ready()
+            repo = self._get_repo()
+            self._ensure_remote_origin(repo=repo)
+            self._fetch(refspecs=(f"{ref}:{local_ref}",), repo=repo)
+            try:
+                observed = str(repo.commit(local_ref).hexsha).lower()
+            except (BadName, GitCommandError, ValueError) as exc:
+                raise RepositoryError(
+                    "Fetched supplied-candidate ref could not be resolved."
+                ) from exc
+            if observed != commit:
+                raise RepositoryError(
+                    "Supplied-candidate remote ref drifted from the imported commit."
+                )
 
     def prepare(self) -> None:
         """Ensure the worktree exists and matches the upstream state."""

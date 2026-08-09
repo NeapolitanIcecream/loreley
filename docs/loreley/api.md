@@ -196,6 +196,15 @@ fields when the underlying data exists:
   `agent_visible`.
 - `top_evaluation_diagnosis`: first agent-visible diagnostic message or summary.
 
+`GET /jobs/{job_id}` also includes `latest_evaluation_attempt`. For phased
+evaluations this contains the protocol, complete evaluator/campaign identity,
+measurement cache key and fingerprint, whether a real measurement ran, reuse
+kind, accepted measurement id, source attempt id, payload SHA-256, location-free
+evidence hashes, and evaluator-slot wait/acquire/release telemetry. Local
+artifact paths and secrets are not exposed. The payload also includes the
+immutable per-job `attempt_ordinal`; retries keep earlier attempt evidence in
+the database while this field remains a latest projection.
+
 `GET /jobs` and `GET /jobs/page` can filter on:
 
 - `candidate_fate=<label>`
@@ -210,14 +219,16 @@ LLM usage routes expose the `llm_usage_events` ledger added in schema version
 13. They are read-only and support dashboard views, job debugging, and cost
 exports.
 
-- `GET /usage/summary` returns token and cost aggregates. Optional filters:
+- `GET /usage/summary` returns token and cost aggregates plus
+  `by_cost_source`. Optional filters:
   `job_id`, `source`, `phase`, and `model`.
 - `GET /usage/events/page` returns a cursor-paginated event page. Optional
   filters: `job_id`, `source`, `phase`, `model`, and `limit`.
 - `GET /jobs/{job_id}/usage` returns all usage rows attributed to one job.
 
-Usage rows can include provider-reported USD cost, locally estimated USD cost,
-or tokens without cost when no matching pricing rule is available. The API does
+Usage rows distinguish provider-reported USD, Kilo catalog dollars, locally
+estimated USD, unpriced token usage, and unavailable telemetry. Kilo catalog
+values are not presented as provider invoices. The API does
 not return prompts, raw transcripts, credentials, or full CLI event streams.
 
 ## Evaluation Artifacts

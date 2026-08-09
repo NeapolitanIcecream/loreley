@@ -782,6 +782,33 @@ def test_evaluator_artifacts_replace_prior_key_on_retry(settings: Settings) -> N
     assert row.artifact_metadata == {"source": "bench"}
 
 
+def test_attempt_linked_evaluator_artifacts_are_append_only(settings: Settings) -> None:
+    job_id = uuid.uuid4()
+    first_attempt = uuid.uuid4()
+    second_attempt = uuid.uuid4()
+    card = SimpleNamespace(id=uuid.uuid4())
+    session = _UniqueEvaluationArtifactSession()
+    store = EvolutionJobStore(settings=settings)
+
+    for attempt_id, commit_hash in (
+        (first_attempt, "firstcommit"),
+        (second_attempt, "secondcommit"),
+    ):
+        store._add_evaluation_artifact_records(
+            session=session,
+            job_id=job_id,
+            commit_hash=commit_hash,
+            card=card,  # type: ignore[arg-type]
+            artifacts=(_materialized_benchmark_artifact(),),
+            evaluation_attempt_id=attempt_id,
+        )
+
+    assert len(session.records) == 2
+    assert session.records[(first_attempt, "benchmark_report")].commit_hash == "firstcommit"
+    assert session.records[(second_attempt, "benchmark_report")].commit_hash == "secondcommit"
+    assert session.deleted_keys == []
+
+
 class _PersistSuccessDummyJob:
     def __init__(self, *, job_id: uuid.UUID, run_token: uuid.UUID) -> None:
         self.id = job_id
@@ -1016,7 +1043,7 @@ class _NoRowsResult:
 class _UniqueEvaluationArtifactSession:
     def __init__(self, *, existing: tuple[EvaluationArtifactRecord, ...] = ()) -> None:
         self.records: dict[tuple[uuid.UUID, str], EvaluationArtifactRecord] = {
-            (record.job_id, record.key): record for record in existing
+            _evaluation_artifact_identity(record): record for record in existing
         }
         self.added: list[Any] = []
         self.deleted_keys: list[tuple[uuid.UUID, str]] = []
@@ -1030,11 +1057,17 @@ class _UniqueEvaluationArtifactSession:
 
     def add(self, obj: Any) -> None:
         if isinstance(obj, EvaluationArtifactRecord):
-            key = (obj.job_id, obj.key)
+            key = _evaluation_artifact_identity(obj)
             if key in self.records:
-                raise SQLAlchemyError("duplicate evaluation_artifacts job/key")
+                raise SQLAlchemyError("duplicate evaluation artifact identity/key")
             self.records[key] = obj
         self.added.append(obj)
+
+
+def _evaluation_artifact_identity(
+    record: EvaluationArtifactRecord,
+) -> tuple[uuid.UUID, str]:
+    return (record.evaluation_attempt_id or record.job_id, record.key)
 
 
 def _evaluation_artifact_delete_key(stmt: Any) -> tuple[uuid.UUID, str]:

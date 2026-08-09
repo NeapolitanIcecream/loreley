@@ -98,15 +98,29 @@ Any failures while enqueuing individual jobs are logged with Loguru and
 surfaced on the Rich console, but do not prevent other jobs from being
 dispatched.
 
+### Identity endpoint drain
+
+- **`cancel_pending_for_identity_endpoint()`** locks and cancels only
+  `PENDING` rows after shared campaign progress reaches
+  `SCHEDULER_MAX_UNIQUE_EVALUATION_IDENTITIES`.
+- It does not cancel `QUEUED` or `RUNNING` work and does not alter terminal
+  evidence. The main scheduler waits for those jobs and pending ingestion to
+  drain.
+- `SCHEDULER_MAX_TOTAL_JOBS` remains an independent physical safety ceiling.
+
 ## Interaction with EvolutionScheduler
 
 `EvolutionScheduler.tick()` coordinates with `JobScheduler` as follows:
 
 1. `reclaim_stale_running_jobs()` to repair stale or malformed `RUNNING` rows.
-2. `dispatch_pending_jobs()` to move already-`PENDING` jobs into the worker queue.
-3. `count_unfinished_jobs()` to measure current load after reclaim + dispatch.
-4. `create_seed_jobs(...)` when the archive is still warming up and capacity remains.
-5. `schedule_jobs(...)` to request new work from MAP-Elites, honouring both
+2. Check the identity endpoint before dispatch or scheduling; cancel only
+   `PENDING` rows and drain when reached.
+3. `promote_staged_jobs()` to admit imported manual seeds up to the remaining
+   unfinished capacity and physical endpoint.
+4. `dispatch_pending_jobs()` to move already-`PENDING` jobs into the worker queue.
+5. `count_unfinished_jobs()` to measure current load after reclaim + dispatch.
+6. `create_seed_jobs(...)` when the archive is still warming up and capacity remains.
+7. `schedule_jobs(...)` to request new work from MAP-Elites, honouring both
    capacity and the cached global job limit maintained by `EvolutionScheduler`.
 
 `count_total_jobs()` is called during scheduler bootstrap to initialise that

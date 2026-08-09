@@ -160,7 +160,7 @@ def test_codex_usage_parser_uses_last_token_count_aggregate(settings) -> None:
     assert str(event.cost_usd) == "0.00014500"
 
 
-def test_kilo_usage_parser_extracts_tokens_cache_and_provider_cost() -> None:
+def test_kilo_usage_parser_extracts_tokens_cache_and_catalog_cost() -> None:
     messages = [
         {"role": "user", "tokens": {"input": 999}},
         {
@@ -206,7 +206,7 @@ def test_kilo_usage_parser_extracts_tokens_cache_and_provider_cost() -> None:
     assert event.reasoning_output_tokens == 8
     assert event.total_tokens == 1528
     assert str(event.cost_usd) == "0.03"
-    assert event.cost_source == "provider_reported"
+    assert event.cost_source == "catalog"
 
 
 def test_kilo_usage_parser_does_not_estimate_missing_kilo_cost(settings) -> None:

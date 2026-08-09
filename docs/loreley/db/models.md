@@ -5,7 +5,9 @@ ORM models and enums for single-tenant experiment databases.
 ## Shared mixins and enums
 
 - **`TimestampMixin`**: adds `created_at` and `updated_at` columns that default to `now()` and automatically update on modification.
-- **`JobStatus`**: string-based `Enum` capturing the lifecycle of an evolution job (`PENDING`, `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED`).
+- **`JobStatus`**: string-based `Enum` capturing the lifecycle of an evolution
+  job (`STAGED`, `PENDING`, `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`,
+  `CANCELLED`).
 - **`OperatorTaskStatus`**: string-based `Enum` for UI API background tasks (`PENDING`, `RUNNING`, `SUCCEEDED`, `FAILED`).
 - **`OperatorTaskKind`**: string-based `Enum` for UI API task kinds. The first kind is `BASELINE_ENSURE`; direct repair candidate actions use `REPAIR_CANDIDATE_ACTION`.
 
@@ -40,7 +42,24 @@ ORM models and enums for single-tenant experiment databases.
   - Stores a bounded JSON payload, policy version, whether the policy passed, and omitted-reason codes.
   - Links to the candidate, job, and evaluation attempt when available.
 - **`EvaluationAttempt`** (`evaluation_attempts` table): one evaluator outcome observed for a candidate commit.
-  - Stores evaluator identity, campaign program hash, optional raw candidate identity and its scoped hash, outcome kind, failure stage/kind, repairability, safe failure summary, diagnostic capsule link, artifact policy version, and start/finish timestamps.
+  - Stores an immutable per-job attempt ordinal and run token, evaluator
+    identity, campaign program hash, optional raw candidate identity and its
+    scoped hash, protocol, measurement cache/fingerprint/id, explicit
+    measurement execution and reuse kind, source attempt, evaluator-slot
+    telemetry, outcome kind, failure stage/kind, repairability, safe failure
+    summary, diagnostic capsule link, fixed artifact paths, artifact policy
+    version, and start/finish timestamps.
+- **`EvaluationMeasurement`** (`evaluation_measurements` table): one accepted,
+  cacheable phased measurement. Its non-null SHA-256 cache key covers candidate
+  identity, evaluator name/version, campaign program, and measurement
+  fingerprint. It stores a canonical payload hash, evidence manifest, and the
+  source job/attempt.
+- **`EvaluationConcurrencyContract`** (`evaluation_concurrency_contracts`
+  table): persisted experiment/evaluator capacity contract. Workers with a
+  different `E` or limit scope for the same contract are rejected.
+- **`EvaluationResourceLease`** (`evaluation_resource_leases` table):
+  append-only waiter/acquisition/release telemetry for PostgreSQL advisory
+  evaluator slots and per-measurement locks.
 - **`OperatorTask`** (`operator_tasks` table): background task state for the local operator console.
   - Primary key: `id` (UUID).
   - Stores `kind`, `status`, JSONB request/result payloads, an optional error summary, and start/completion timestamps.
@@ -57,13 +76,20 @@ ORM models and enums for single-tenant experiment databases.
   - Stores candidate-publication metadata (`candidate_commit_hash`, `candidate_branch_name`, `candidate_published_at`) so a worker can durably point to a locally created or remotely published candidate even if a later step fails.
   - Stores active lease ownership fields (`heartbeat_at`, `lease_expires_at`, `run_token`, `worker_id`) so workers can renew job ownership and stale attempts can be fenced off.
   - Stores `recovery_count` so the scheduler can limit automatic stale-job recovery and eventually mark repeatedly reclaimed jobs `FAILED`.
+  - Stores stable `failure_stage` and `failure_kind` fields for campaign status;
+    status does not infer categories from free-form `last_error` text.
+  - Stores supplied-candidate execution mode, pinned input commit, summary,
+    idempotency key, sanitized provenance, and archive-ingestion policy for
+    first-class manual seeds.
   - Stores result/ingestion indexing fields (`result_commit_hash`, ingestion status/attempts/delta/cell index) without embedding large JSON payloads.
 - **`JobArtifacts`** (`job_artifacts` table): filesystem references for cold-path artifacts produced by the worker.
   - Stores paths to planning/coding/evaluation prompts, raw outputs, and logs.
 - **`EvaluationArtifactRecord`** (`evaluation_artifacts` table): evaluator-declared diagnostic artifact metadata materialized by a job.
   - Primary key: `id` (UUID).
-  - Unique constraint on `(job_id, key)` so retries can replace stable artifact keys for the same job.
-  - Stores job id, optional commit-card id, commit hash, key, kind, MIME type, label, summary, visibility, agent projection, optional storage path, payload size, SHA-256, structured diagnostics, and metadata.
+  - Attempt-linked evidence is append-only and unique on
+    `(evaluation_attempt_id, key)`. Legacy records without an attempt retain a
+    unique `(job_id, key)` latest projection.
+  - Stores job id, optional commit-card and evaluation-attempt ids, commit hash, key, kind, MIME type, label, summary, visibility, agent projection, optional storage path, payload size, SHA-256, structured diagnostics, and metadata.
   - UI API listing and downloads exclude `hidden` artifacts; Agent REST feedback includes only `agent_visible` records.
 - **`CommitChunkSummary`** (`commit_chunk_summaries` table): cached trajectory summaries for commit chains.
   - Primary key: `(start_commit_hash, end_commit_hash, block_size)`.

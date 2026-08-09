@@ -22,6 +22,9 @@ from loreley.db.base import session_scope
 from loreley.db.models import (
     CandidateCommit,
     EvaluationArtifactRecord,
+    EvaluationAttempt,
+    EvaluationMeasurement,
+    EvaluationResourceLease,
     EvolutionJob,
     JobArtifacts,
     JobStatus,
@@ -45,6 +48,100 @@ class JobRetryConflictError(RuntimeError):
 
 class JobRetryValidationError(RuntimeError):
     """Raised when a bulk retry request is invalid."""
+
+
+def _public_measurement_evidence(
+    measurement: EvaluationMeasurement | None,
+) -> list[dict[str, object]]:
+    evidence: list[dict[str, object]] = []
+    if measurement is None:
+        return evidence
+    for item in measurement.evidence_manifest or ():
+        if isinstance(item, dict):
+            evidence.append(
+                {
+                    "key": str(item.get("key") or ""),
+                    "sha256": str(item.get("sha256") or ""),
+                    "size_bytes": item.get("size_bytes"),
+                }
+            )
+    return evidence
+
+
+def _attempt_lease_value(
+    attempt: EvaluationAttempt,
+    lease: EvaluationResourceLease | None,
+    attempt_attribute: str,
+    lease_attribute: str,
+) -> object:
+    value = getattr(attempt, attempt_attribute)
+    return value if value is not None or lease is None else getattr(lease, lease_attribute)
+
+
+def get_latest_evaluation_attempt_payload(*, job_id: UUID) -> dict[str, object] | None:
+    """Return public, hash-linked provenance for the job's latest evaluator attempt."""
+
+    with session_scope() as session:
+        row = session.execute(
+            select(EvaluationAttempt, EvaluationMeasurement, EvaluationResourceLease)
+            .outerjoin(
+                EvaluationMeasurement,
+                EvaluationMeasurement.id == EvaluationAttempt.measurement_id,
+            )
+            .outerjoin(
+                EvaluationResourceLease,
+                EvaluationResourceLease.id == EvaluationAttempt.evaluator_slot_lease_id,
+            )
+            .where(EvaluationAttempt.job_id == job_id)
+            .order_by(
+                EvaluationAttempt.finished_at.desc().nullslast(),
+                EvaluationAttempt.created_at.desc(),
+                EvaluationAttempt.id.desc(),
+            )
+            .limit(1)
+        ).first()
+        if row is None:
+            return None
+        attempt, measurement, lease = row
+        return {
+            "id": attempt.id,
+            "attempt_ordinal": attempt.attempt_ordinal,
+            "protocol": attempt.protocol,
+            "outcome_kind": attempt.outcome_kind,
+            "evaluator_name": attempt.evaluator_name,
+            "evaluator_version": attempt.evaluator_version,
+            "campaign_program_hash": attempt.campaign_program_hash,
+            "candidate_identity": attempt.candidate_identity,
+            "evaluation_identity_key": attempt.evaluation_identity_key,
+            "measurement_cache_key": attempt.measurement_cache_key,
+            "measurement_contract_fingerprint": attempt.measurement_contract_fingerprint,
+            "measurement_id": attempt.measurement_id,
+            "measurement_reused": attempt.measurement_reused,
+            "measurement_executed": attempt.measurement_executed,
+            "reuse_kind": attempt.reuse_kind,
+            "reused_from_attempt_id": attempt.reused_from_attempt_id,
+            "measurement_payload_sha256": (
+                measurement.payload_sha256 if measurement is not None else None
+            ),
+            "measurement_evidence": _public_measurement_evidence(measurement),
+            "evaluator_slot": attempt.evaluator_slot,
+            "evaluator_slot_scope": attempt.evaluator_slot_scope,
+            "evaluator_slot_wait_seconds": attempt.evaluator_slot_wait_seconds,
+            "evaluator_slot_acquired_at": _attempt_lease_value(
+                attempt, lease, "evaluator_slot_acquired_at", "acquired_at"
+            ),
+            "evaluator_slot_released_at": _attempt_lease_value(
+                attempt, lease, "evaluator_slot_released_at", "released_at"
+            ),
+            "evaluator_slot_release_reason": _attempt_lease_value(
+                attempt, lease, "evaluator_slot_release_reason", "release_reason"
+            ),
+            "failure_stage": attempt.failure_stage,
+            "failure_kind": attempt.failure_kind,
+            "safe_failure_summary": attempt.safe_failure_summary,
+            "started_at": attempt.started_at,
+            "finished_at": attempt.finished_at,
+        }
 
 
 _EVIDENCE_HAS_EVIDENCE = "has_evidence"

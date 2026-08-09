@@ -247,7 +247,7 @@ def _current_archive_fate(state: _CandidateFateState) -> CandidateFate | None:
 
 
 def _not_passed_fate(state: _CandidateFateState) -> CandidateFate:
-    if state.job_status in {"pending", "queued", "running"}:
+    if state.job_status in {"staged", "pending", "queued", "running"}:
         return _fate(UNKNOWN, f"Job status={state.job_status}; no completed candidate fate yet.")
     if state.job_status == "failed":
         return _fate(UNKNOWN, "Job failed before a passing candidate fate was recorded.")

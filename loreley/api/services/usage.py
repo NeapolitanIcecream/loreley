@@ -86,6 +86,7 @@ def usage_summary(
             "by_source": _summary_groups(session, base.subquery(), "source"),
             "by_phase": _summary_groups(session, base.subquery(), "phase"),
             "by_model": _summary_groups(session, base.subquery(), "model"),
+            "by_cost_source": _summary_groups(session, base.subquery(), "cost_source"),
         }
 
 
