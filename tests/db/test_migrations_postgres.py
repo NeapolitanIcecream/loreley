@@ -721,13 +721,18 @@ def test_postgres_evaluator_slot_is_released_when_holder_process_dies(
         assert not process.is_alive()
 
         with postgres_engine.connect() as connection:
-            acquired = bool(
-                connection.execute(
-                    text("SELECT pg_try_advisory_lock(:key)"),
-                    {"key": advisory_key},
-                ).scalar_one()
-            )
-            assert acquired
+            release_deadline = monotonic() + 5
+            acquired = False
+            while not acquired and monotonic() < release_deadline:
+                acquired = bool(
+                    connection.execute(
+                        text("SELECT pg_try_advisory_lock(:key)"),
+                        {"key": advisory_key},
+                    ).scalar_one()
+                )
+                if not acquired:
+                    sleep(0.05)
+            assert acquired, "PostgreSQL did not release the dead session's advisory lock"
             connection.execute(
                 text("SELECT pg_advisory_unlock(:key)"),
                 {"key": advisory_key},
