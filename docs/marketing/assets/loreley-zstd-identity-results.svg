@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
-<title>Loreley Zstandard identity and result summary</title>
+<title>Loreley Zstandard Top-10 holdout and identity summary</title>
 <defs>
 <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
 <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#0F172A" flood-opacity="0.10"/>
@@ -9,8 +9,8 @@
 </marker>
 </defs>
 <rect width="1600" height="900" fill="#F8FAFC"/>
-<text x="80" y="82.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="48" font-weight="700" text-anchor="start">Zstandard V19: source identity, binary identity, measured effect</text>
-<text x="80" y="126.0" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="400" text-anchor="start">A Git commit records ancestry; the evaluator decides whether a performance state is new.</text>
+<text x="80" y="82.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="48" font-weight="700" text-anchor="start">Zstandard V19: Top-10 holdout and binary identity</text>
+<text x="80" y="126.0" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="400" text-anchor="start">5ee53426 led descriptively; all ten fixed candidates remained positive.</text>
 <rect x="80" y="150" width="1440" height="4" rx="2" fill="#6563FF" stroke="none" stroke-width="2"/>
 <rect x="80" y="220" width="300" height="150" rx="24" fill="#EFEEFF" stroke="none" stroke-width="2"/>
 <text x="108" y="284.0" fill="#6563FF" font-family="Arial, Helvetica, sans-serif" font-size="48" font-weight="700" text-anchor="start">220</text>
@@ -30,31 +30,19 @@
 <text x="980" y="407.0" fill="#64748B" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="400" text-anchor="middle">44 successful jobs repeated an existing binary</text>
 <text x="980" y="435.0" fill="#64748B" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="400" text-anchor="middle">25 measured before cache · 19 reused after cache</text>
 <rect x="80" y="480" width="1440" height="330" rx="24" fill="#FFFFFF" stroke="none" stroke-width="2" filter="url(#shadow)"/>
-<text x="120" y="535.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700" text-anchor="start">Compression throughput gain with 95% confidence intervals</text>
-<line x1="720.0" y1="570" x2="720.0" y2="745" stroke="#E2E8F0" stroke-width="2" stroke-linecap="round"/>
-<text x="720.0" y="775.0" fill="#64748B" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" text-anchor="middle">0.0%</text>
-<line x1="973.3333333333334" y1="570" x2="973.3333333333334" y2="745" stroke="#E2E8F0" stroke-width="2" stroke-linecap="round"/>
-<text x="973.3333333333334" y="775.0" fill="#64748B" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" text-anchor="middle">0.5%</text>
-<line x1="1226.6666666666667" y1="570" x2="1226.6666666666667" y2="745" stroke="#E2E8F0" stroke-width="2" stroke-linecap="round"/>
-<text x="1226.6666666666667" y="775.0" fill="#64748B" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" text-anchor="middle">1.0%</text>
-<line x1="1480.0" y1="570" x2="1480.0" y2="745" stroke="#E2E8F0" stroke-width="2" stroke-linecap="round"/>
-<text x="1480.0" y="775.0" fill="#64748B" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" text-anchor="middle">1.5%</text>
-<text x="120" y="605.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" text-anchor="start">Registered winner</text>
-<text x="120" y="640.0" fill="#64748B" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="400" text-anchor="start">manual seed · sealed holdout</text>
-<line x1="720" y1="615" x2="1480" y2="615" stroke="#CBD5E1" stroke-width="4" stroke-linecap="round"/>
-<line x1="1207.4133333333334" y1="615" x2="1265.1733333333334" y2="615" stroke="#6563FF" stroke-width="10" stroke-linecap="round"/>
-<line x1="1207.4133333333334" y1="602" x2="1207.4133333333334" y2="628" stroke="#6563FF" stroke-width="4" stroke-linecap="round"/>
-<line x1="1265.1733333333334" y1="602" x2="1265.1733333333334" y2="628" stroke="#6563FF" stroke-width="4" stroke-linecap="round"/>
-<circle cx="1236.2933333333333" cy="615" r="12" fill="#FFFFFF" stroke="#6563FF" stroke-width="6"/>
-<text x="1236.2933333333333" y="588.0" fill="#6563FF" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" text-anchor="middle">1.019%</text>
-<text x="120" y="695.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" text-anchor="start">Top-10 follow-up</text>
-<text x="120" y="730.0" fill="#64748B" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="400" text-anchor="start">generation 4 · new disjoint corpus</text>
-<line x1="720" y1="705" x2="1480" y2="705" stroke="#CBD5E1" stroke-width="4" stroke-linecap="round"/>
-<line x1="984.48" y1="705" x2="1358.9066666666668" y2="705" stroke="#00A9D6" stroke-width="10" stroke-linecap="round"/>
-<line x1="984.48" y1="692" x2="984.48" y2="718" stroke="#00A9D6" stroke-width="4" stroke-linecap="round"/>
-<line x1="1358.9066666666668" y1="692" x2="1358.9066666666668" y2="718" stroke="#00A9D6" stroke-width="4" stroke-linecap="round"/>
-<circle cx="1171.44" cy="705" r="12" fill="#FFFFFF" stroke="#00A9D6" stroke-width="6"/>
-<text x="1171.44" y="678.0" fill="#00A9D6" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" text-anchor="middle">0.891%</text>
-<rect x="80" y="835" width="500" height="42" rx="21" fill="#FFF7E6" stroke="none" stroke-width="2"/><text x="330.0" y="864.0" fill="#B45309" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" text-anchor="middle">Different fresh corpora · not directly comparable</text>
-<text x="1520" y="864.0" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" text-anchor="end">Registered winner: manual seed · +1.019%</text>
+<text x="120" y="535.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700" text-anchor="start">Descriptive holdout leader</text>
+<line x1="820" y1="525" x2="820" y2="780" stroke="#CBD5E1" stroke-width="2" stroke-linecap="round"/>
+<text x="120" y="585.0" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" text-anchor="start">5ee53426 · generation 3</text>
+<text x="120" y="675.0" fill="#6563FF" font-family="Arial, Helvetica, sans-serif" font-size="68" font-weight="700" text-anchor="start">+1.228%</text>
+<text x="120" y="720.0" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="400" text-anchor="start">compression throughput · original holdout</text>
+<text x="120" y="758.0" fill="#64748B" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" text-anchor="start">95% CI: +1.125% to +1.330%</text>
+<text x="120" y="788.0" fill="#64748B" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="400" text-anchor="start">Ranked by the compression lower 95% bound</text>
+<text x="870" y="535.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="700" text-anchor="start">Fixed Top-10 comparison</text>
+<text x="870" y="625.0" fill="#00A9D6" font-family="Arial, Helvetica, sans-serif" font-size="50" font-weight="700" text-anchor="start">10 / 10</text>
+<text x="870" y="665.0" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" text-anchor="start">positive compression results</text>
+<text x="870" y="715.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" text-anchor="start">Median gain: +1.116%</text>
+<text x="870" y="752.0" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="400" text-anchor="start">Point range: +0.856% to +1.239%</text>
+<text x="870" y="785.0" fill="#64748B" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="400" text-anchor="start">Runner-up fe39bee8: +1.173%</text>
+<rect x="80" y="835" width="600" height="42" rx="21" fill="#FFF7E6" stroke="none" stroke-width="2"/><text x="380.0" y="864.0" fill="#B45309" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" text-anchor="middle">Post-selection sensitivity · not a new blinded winner</text>
+<text x="1520" y="864.0" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" text-anchor="end">Fresh confirmation of fe39bee8: +0.891% (95% CI +0.522% to +1.261%)</text>
 </svg>

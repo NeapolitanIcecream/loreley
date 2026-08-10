@@ -2,7 +2,7 @@
 
 Date: 2026-08-03
 
-Last updated: 2026-08-09
+Last updated: 2026-08-10
 
 Status: Internal working document, excluded from the MkDocs site. Update this file when publication decisions, literature findings, case-study evidence, or experiment designs change.
 
@@ -39,7 +39,7 @@ The release package is complete:
 
 - unified evidence report: [2026-08-07-loreley-case-study-evidence-report.md](2026-08-07-loreley-case-study-evidence-report.md);
 - Zstandard V19 report: [2026-08-07-zstandard-gpt-v19-case-study-report.md](2026-08-07-zstandard-gpt-v19-case-study-report.md);
-- Zstandard Top-10 and fresh-confirmation supplement: [2026-08-07-zstandard-gpt-v19-top10-validation-supplement.md](2026-08-07-zstandard-gpt-v19-top10-validation-supplement.md);
+- Zstandard Top-10 validation, fresh-confirmation, and holdout supplement: [2026-08-07-zstandard-gpt-v19-top10-validation-supplement.md](2026-08-07-zstandard-gpt-v19-top10-validation-supplement.md);
 - launch claim sheet: [2026-08-loreley-launch-claim-sheet.md](../marketing/2026-08-loreley-launch-claim-sheet.md);
 - English article: [2026-08-loreley-launch-article-en.md](../marketing/2026-08-loreley-launch-article-en.md);
 - Chinese article: [2026-08-loreley-launch-article-zh.md](../marketing/2026-08-loreley-launch-article-zh.md);
@@ -52,6 +52,8 @@ README, the documentation home page, and MkDocs navigation point to the three ca
 ## Publication status and next work
 
 The GitHub and documentation-site material was published through [PR #54](https://github.com/NeapolitanIcecream/loreley/pull/54). The Pages build used source commit `018c144` and produced `gh-pages` commit `c66dc01`. The [deployment run](https://github.com/NeapolitanIcecream/loreley/actions/runs/31249188262) succeeded. The home page, both articles, the unified evidence report, the candidate-diff index, and the partnership page passed HTTP and title checks.
+
+The fixed-Top-10 holdout evidence was merged through [PR #60](https://github.com/NeapolitanIcecream/loreley/pull/60). It adds a post-selection comparison on the original holdout without changing the preregistered winner.
 
 Public pages:
 
@@ -125,9 +127,11 @@ Under the comparison used here, each candidate evaluation is close to a Loreley 
 - decompression was neutral, compressed size was unchanged, and peak RSS increased by 0.063 MiB;
 - the preregistered winner was a nine-line manual seed, so the primary result demonstrates retention, ranking, and independent validation, not an evolved candidate beating the best seed;
 - a post hoc Top-10 expansion found a generation-4 candidate that improved compression by 0.891% on a separately sealed fresh corpus, with a 95% confidence interval from +0.522% to +1.261%;
-- the follow-up did not revise the preregistered winner and did not compare both candidates head to head on the same fresh corpus.
+- a later fixed-Top-10 comparison on the original holdout found all ten candidates modest-positive, with a median compression gain of 1.116% and point estimates from +0.856% to +1.239%;
+- generation-3 `5ee53426` and generation-4 `fe39bee8` ranked first and second descriptively by compression lower bound, at +1.228% and +1.173%, respectively;
+- the original holdout had already been revealed for the preregistered winner, so the fixed-Top-10 comparison is post-selection sensitivity evidence and does not revise that winner.
 
-Zstandard supplies evidence for a mature C system, binary-aware candidate identity, separated training, validation, and holdout data, and statistical measurement of a small performance effect.
+Zstandard supplies evidence for a mature C system, binary-aware candidate identity, separated training, validation, and holdout data, statistical measurement of a small performance effect, and the effect of finalist breadth on noisy rankings.
 
 All three cases establish system behavior only on their frozen targets. They do not estimate Loreley's average effect on arbitrary repositories.
 
@@ -273,22 +277,39 @@ The candidate's four-generation lineage combined a zero-literal fast path, compr
 
 The follow-up also shows that fine-grained training ranks were unstable. The top ten compression lower bounds differed by only 0.276 percentage points, less than the uncertainty in the training estimates. A future finalist rule should cover at least ten candidates or use a preregistered effect band or adaptive-racing rule.
 
+### Fixed Top-10 original-holdout comparison
+
+The candidate identities and ordering were fixed before further measurement. The comparison reused the registered winner's 12-round holdout report and measured the other nine candidates for 12 rounds each on the same original holdout. It used one lane, made no model calls, and retained the original winner label.
+
+All nine new measurements passed. Every candidate met the V19 modest-positive rule, and every compression lower bound remained above root. The median compression gain was 1.116%, and point estimates ranged from +0.856% to +1.239%. None met the strong rule because no point estimate reached `1.02x`.
+
+| Candidate | Relation to search | Holdout compression | 95% confidence interval | Descriptive rank by lower bound |
+| --- | --- | ---: | ---: | ---: |
+| `5ee53426` | generation-3 evolved descendant of the registered seed | `1.01228x`, +1.228% | `1.01125–1.01330x`, +1.125% to +1.330% | 1 |
+| `fe39bee8` | generation-4 expanded-validation winner | `1.01173x`, +1.173% | `1.01102–1.01245x`, +1.102% to +1.245% | 2 |
+| `7b9aef38` | preregistered manual-seed winner | `1.01019x`, +1.019% | `1.00962–1.01076x`, +0.962% to +1.076% | 5 |
+
+The first two expanded-validation candidates became the first two descriptive holdout candidates in reverse order. Their intervals overlap, and the median holdout interval width was 0.327 percentage points. The result supports generalization of the fixed Top 10 as a group; it does not establish that `5ee53426` is better than the other leaders.
+
+The original holdout had already been revealed for `7b9aef38`. This comparison is therefore post-selection sensitivity evidence, even though the candidate set was fixed before the nine new measurements. It cannot be reported as a new blinded winner. The nine measurements consumed 4,404 seconds, or 73.4 minutes, of local compute.
+
 ### V19 usage and cost
 
 V19 recorded 52,653,004 tokens, including cached input and embeddings. The Kilo catalog covered all 424 generation sessions: $57.8499 for planning and $2.3973 for coding, totaling $60.2472. This is a model-catalog estimate, not provider-billed spend. The 303 embedding events have token counts but no recorded price.
 
 The V19 amount is not directly comparable with the provider-recorded DeepSeek generation costs for `markdown-it-py` and `python-pathspec`. Do not add all three values into a project cash-spend total. Use the [unified evidence report](2026-08-07-loreley-case-study-evidence-report.md) for the cost definitions.
 
-Formal Top-3 validation took about 16.7 minutes, and the registered holdout took 8.1 minutes. The Top-10 expansion took 39.1 minutes, and fresh confirmation took 8.1 minutes. The last two used local evaluation only and generated no model tokens.
+Formal Top-3 validation took about 16.7 minutes, and the registered holdout took 8.1 minutes. The Top-10 expansion took 39.1 minutes, fresh confirmation took 8.1 minutes, and the nine new fixed-Top-10 holdout measurements took 73.4 minutes. The three follow-ups used local evaluation only and generated no model tokens.
 
 ### Public use and claim boundary
 
-V19 is not the headline for the largest speedup, and it does not show evolution beating manual optimization. It provides four forms of evidence:
+V19 is not the headline for the largest speedup, and it does not provide a new blinded comparison between evolved candidates and manual seeds. It provides five forms of evidence:
 
 - evaluator integration with a mature non-Python C repository;
 - paired measurement, confidence intervals, sealed data, and correctness gates for an approximately 1% effect;
 - separate commit, tree, binary, and measurement identities;
-- a documented limitation in Top-3 finalist breadth.
+- a documented limitation in Top-3 finalist breadth; and
+- post-selection evidence that the fixed Top 10 generalized as a group, with evolved candidates in the first two descriptive ranks.
 
 Permitted primary statement:
 
@@ -300,7 +321,13 @@ Permitted supplementary statement:
 
 The supplementary statement must retain the post hoc shortlist expansion and different-corpus qualifications.
 
-Do not claim a 2% improvement, a portable Zstandard speedup, evolution beating the strongest seed, quality-diversity beating simpler search, likely upstream acceptance, or 220 distinct program behaviors.
+Permitted fixed-Top-10 statement:
+
+> In a later fixed-candidate comparison on the original holdout, all ten Zstandard training finalists remained positive, with a median compression gain of 1.116% and point estimates from +0.856% to +1.239%. The holdout had already been revealed for the preregistered winner, so this is post-selection sensitivity evidence rather than a new blinded winner.
+
+If the descriptive ordering is reported, state that it is ranked by the compression lower bound, that `5ee53426` and `fe39bee8` were evolved candidates, and that the leading intervals overlap.
+
+Do not claim a 2% improvement, a portable Zstandard speedup, a new blinded evolutionary winner, a significant difference between the leading Top-10 candidates, quality-diversity beating simpler search, likely upstream acceptance, or 220 distinct program behaviors.
 
 ## Historical Zstandard V13 record
 
@@ -681,3 +708,13 @@ The provisional research object is quality-diversity program evolution over comp
 - Set English as the default language for project documentation.
 - Kept explicitly Chinese promotional artifacts and their navigation labels in Chinese.
 - Rewrote two engineering proposals, this research plan, and the Zstandard handoff in English.
+
+### 2026-08-10
+
+- Added the fixed-Top-10 comparison on the original Zstandard holdout while preserving the preregistered winner.
+- Recorded that all ten candidates were modest-positive, with a median compression gain of 1.116% and point estimates from +0.856% to +1.239%.
+- Recorded evolved candidates `5ee53426` and `fe39bee8` in the first two descriptive ranks by compression lower bound.
+- Classified the comparison as post-selection sensitivity evidence because the holdout had already been revealed for the registered winner.
+- Updated the articles, launch copy, figures, entry points, partnership material, handoff, release note, and claim boundaries to use the new evidence.
+- Reorganized the Zstandard section in both articles around the same sequence as the first two cases: search budget and result, candidate changes, selection protocol, and artifact identity. Removed the evidence-stage table from the article while retaining it in the formal reports.
+- Revised both Zstandard-facing figures to foreground the descriptive holdout leader, `5ee53426` at +1.228%, while retaining the 10/10 group result and post-selection boundary as secondary information.

@@ -1,6 +1,6 @@
 # Loreley 发布口径表
 
-日期：2026-08-07
+日期：2026-08-10
 
 > 内部工作文件，不作为对外页面。实验数字只从本文件链接的正式报告读取。
 
@@ -39,7 +39,12 @@ Zstandard V19 补充结果：
 - 事后把 finalist 范围从 training Top 3 扩到 Top 10，再按预先封存的补充协议评测；
 - training rank 10 的 generation-4 candidate `fe39bee8` 成为 validation winner；
 - 在新生成、独立封存的 corpus 上，compression throughput 提升 **0.891%**，95% CI 为 **+0.522% 到 +1.261%**；
-- 两个候选使用不同 fresh corpora，没有 head-to-head，补充结果不能改写预登记 winner。
+- 两个候选使用不同 fresh corpora，没有 head-to-head，补充结果不能改写预登记 winner；
+- 随后的 fixed-Top-10 比较在新测量前固定了候选身份和顺序，复用 `7b9aef38` 的原报告，并在同一原 holdout 上对其余 9 个候选各测 12 轮；
+- 9 项新 holdout 测量用时 4,404 秒，即 73.4 分钟本地评测，没有模型调用；
+- 10 个候选全部符合 modest-positive 规则，压缩提升中位数为 **1.116%**，点估计范围为 **+0.856% 到 +1.239%**，所有压缩置信下界都高于 root；
+- 按压缩置信下界进行描述性排名，generation-3 evolved candidate `5ee53426` 排第一，提升 **1.228%**，95% CI 为 **+1.125% 到 +1.330%**；`fe39bee8` 排第二，提升 **1.173%**，95% CI 为 **+1.102% 到 +1.245%**；
+- 原 holdout 此前已经为预登记 winner 揭示，且前列候选的区间重叠；这是 post-selection sensitivity evidence，不是新的 blinded winner。
 
 正式来源：
 
@@ -73,6 +78,8 @@ Zstandard V19 补充结果：
 - evaluator 的 Python 接口是调度入口，不限制目标项目语言；它可以调用任意构建、测试、容器、硬件 benchmark 或远程评测系统。
 - 三个固定案例覆盖 Python 库和 C 系统仓库，并分别提供前瞻性结果、谱系机制证据和可靠测量案例。
 - 对编译型目标，source commit 不等于新的性能状态；V19 用 release-binary identity 去重，并对 19 个重复 binary 复用评测。
+- Zstandard 的 fixed Top 10 在原 holdout 上 10/10 获得正向压缩结果，中位数为 +1.116%；该比较必须同时标注 holdout 已经揭示和 post-selection 边界。
+- 按置信下界的描述性排名，Zstandard holdout 前两位均为 evolved candidates；这不构成新的盲测 winner 或候选间显著差异。
 - 当前结果足以展示端到端能力和寻找 design partners，不足以证明 quality-diversity 优于简单搜索。
 
 ## 不能公开表达
@@ -81,7 +88,8 @@ Zstandard V19 补充结果：
 - 在任意仓库上有效、平均收益为正或成功率已知；
 - quality-diversity 已经优于 best-of-N、root-independent 或 champion-sequential；
 - `python-pathspec` 是预登记确认性结果；
-- Zstandard evolution 超过人工 seed、取得 2% 提升、跨架构成立或可以直接 upstream；
+- 把 Zstandard 的描述性排名写成 evolution 在新盲测中超过人工 seed，或把 `5ee53426` 写成新 winner；
+- Zstandard 取得 2% 提升、跨架构成立或可以直接 upstream；
 - 三案例百分比的平均值；
 - 把三项美元记录相加为 all-in spend；
 - Python 是唯一可接入语言；
@@ -93,6 +101,14 @@ Zstandard V19 补充结果：
 
 > 在三个固定仓库案例中，Loreley 找到了通过独立 evaluator 的候选：`markdown-it-py` 的前瞻性验证提升 6.75%，`python-pathspec` 的 post-hoc capability result 提升 25.14%，Zstandard V19 的预登记 holdout compression 提升 1.019%。这些案例不能用于估计新仓库的平均收益。
 
+Zstandard 补测句：
+
+> 在事后固定候选的比较中，Zstandard 训练阶段 Top 10 在原 holdout 上 10/10 获得正向压缩结果，中位数为 +1.116%。该 holdout 此前已为预登记 winner 揭示，因此这不是新的盲测 winner。
+
 英文结果句：
 
 > Across three fixed-repository case studies, Loreley produced candidates that passed independent evaluation: a prospective 6.75% gain for `markdown-it-py`, a post-hoc 25.14% capability result for `python-pathspec`, and a preregistered 1.019% holdout compression gain for Zstandard V19. These cases do not estimate the average effect on a new repository.
+
+Zstandard supplementary sentence:
+
+> In a later post-selection fixed-candidate comparison, all ten Zstandard training finalists remained positive on the original holdout, with a median compression gain of 1.116%. That holdout had already been revealed for the preregistered winner, so this is not a new blinded winner claim.

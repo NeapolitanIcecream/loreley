@@ -47,18 +47,18 @@
 <rect x="1070" y="205" width="450" height="600" rx="24" fill="#FFFFFF" stroke="none" stroke-width="2" filter="url(#shadow)"/>
 <rect x="1070" y="205" width="450" height="10" rx="5" fill="#6563FF" stroke="none" stroke-width="2"/>
 <text x="1100" y="270.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700" text-anchor="start">Zstandard V19</text>
-<text x="1100" y="348.0" fill="#6563FF" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="700" text-anchor="start">+1.019%</text>
-<text x="1102" y="388.0" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" text-anchor="start">compression · sealed holdout</text>
-<rect x="1100" y="420" width="300" height="42" rx="21" fill="#EFEEFF" stroke="none" stroke-width="2"/><text x="1250.0" y="449.0" fill="#6563FF" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" text-anchor="middle">Preregistered result</text>
+<text x="1100" y="348.0" fill="#6563FF" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="700" text-anchor="start">+1.228%</text>
+<text x="1102" y="388.0" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" text-anchor="start">compression · original holdout</text>
+<rect x="1100" y="420" width="300" height="42" rx="21" fill="#FFF7E6" stroke="none" stroke-width="2"/><text x="1250.0" y="449.0" fill="#B45309" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" text-anchor="middle">Descriptive leader</text>
 <text x="1100" y="505.0" fill="#64748B" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" text-anchor="start">Run summary</text>
 <circle cx="1113" cy="548" r="7" fill="#00A9D6" stroke="#00A9D6" stroke-width="1"/>
-<text x="1134" y="556.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" text-anchor="start">220 jobs · 167 binaries</text>
+<text x="1134" y="556.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" text-anchor="start">5ee53426 · generation 3</text>
 <circle cx="1113" cy="593" r="7" fill="#00A9D6" stroke="#00A9D6" stroke-width="1"/>
-<text x="1134" y="601.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" text-anchor="start">95% CI +0.962% to +1.076%</text>
+<text x="1134" y="601.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" text-anchor="start">95% CI: +1.125% to +1.330%</text>
 <circle cx="1113" cy="638" r="7" fill="#00A9D6" stroke="#00A9D6" stroke-width="1"/>
-<text x="1134" y="646.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" text-anchor="start">Top-10 follow-up: +0.891%</text>
+<text x="1134" y="646.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" text-anchor="start">10 / 10 finalists positive</text>
 <line x1="1100" y1="688" x2="1490" y2="688" stroke="#CBD5E1" stroke-width="2" stroke-linecap="round"/>
 <text x="1100" y="728.0" fill="#64748B" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" text-anchor="start">Scope note</text>
-<text x="1100" y="762.0" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="400" text-anchor="start">Registered winner is a manual seed;</text><text x="1100" y="785.4" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="400" text-anchor="start">follow-up used a different corpus.</text>
+<text x="1100" y="762.0" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="400" text-anchor="start">Post-selection; holdout</text><text x="1100" y="785.4" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="400" text-anchor="start">had already been revealed.</text>
 <text x="800" y="850.0" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" text-anchor="middle">348 terminal jobs · 310 successful · 38 failed · fixed-repository results</text>
 </svg>

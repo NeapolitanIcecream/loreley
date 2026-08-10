@@ -22,7 +22,7 @@
 1. [搜索循环 PNG](assets/loreley-search-loop.png) / [SVG](assets/loreley-search-loop.svg)
 2. [三案例证据 PNG](assets/loreley-three-case-evidence.png) / [SVG](assets/loreley-three-case-evidence.svg)
 3. [案例谱系 PNG](assets/loreley-case-lineages.png) / [SVG](assets/loreley-case-lineages.svg)
-4. [Zstandard identity 与结果 PNG](assets/loreley-zstd-identity-results.png) / [SVG](assets/loreley-zstd-identity-results.svg)
+4. [Zstandard identity 与 Top 10 holdout 结果 PNG](assets/loreley-zstd-identity-results.png) / [SVG](assets/loreley-zstd-identity-results.svg)
 
 图片由 [`render_launch_assets.py`](https://github.com/NeapolitanIcecream/loreley/blob/main/tools/marketing/render_launch_assets.py) 生成。修改数据或文案后运行：
 

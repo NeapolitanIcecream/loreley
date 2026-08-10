@@ -74,16 +74,6 @@ class NodeOptions(TypedDict):
     accent: str
 
 
-class IntervalOptions(TypedDict):
-    y: float
-    label: str
-    estimate: float
-    low: float
-    high: float
-    color: str
-    note: str
-
-
 def esc(value: object) -> str:
     return html.escape(str(value), quote=True)
 
@@ -440,19 +430,19 @@ def three_case_evidence() -> str:
         case_card(
             x=1070,
             name="Zstandard V19",
-            value="+1.019%",
-            metric="compression · sealed holdout",
-            status="Preregistered result",
-            status_fill=VIOLET_PALE,
-            status_text=VIOLET,
+            value="+1.228%",
+            metric="compression · original holdout",
+            status="Descriptive leader",
+            status_fill=AMBER_PALE,
+            status_text=AMBER,
             facts=[
-                "220 jobs · 167 binaries",
-                "95% CI +0.962% to +1.076%",
-                "Top-10 follow-up: +0.891%",
+                "5ee53426 · generation 3",
+                "95% CI: +1.125% to +1.330%",
+                "10 / 10 finalists positive",
             ],
             scope_note=[
-                "Registered winner is a manual seed;",
-                "follow-up used a different corpus.",
+                "Post-selection; holdout",
+                "had already been revealed.",
             ],
         )
     )
@@ -599,50 +589,10 @@ def lineages() -> str:
     return svg_document(body, title="Loreley case-study lineages")
 
 
-def interval_plot(
-    body: list[str],
-    **options: Unpack[IntervalOptions],
-) -> None:
-    y = options["y"]
-    label = options["label"]
-    estimate = options["estimate"]
-    low = options["low"]
-    high = options["high"]
-    color = options["color"]
-    note = options["note"]
-    chart_x = 720
-    chart_w = 760
-    max_value = 1.5
-
-    def scale(value: float) -> float:
-        return chart_x + chart_w * value / max_value
-
-    body.extend(
-        [
-            text(120, y - 10, label, size=24, fill=NAVY, weight=700),
-            text(120, y + 25, note, size=18, fill=MUTED),
-            line(chart_x, y, chart_x + chart_w, y, stroke=LINE, width=4),
-            line(scale(low), y, scale(high), y, stroke=color, width=10),
-            line(scale(low), y - 13, scale(low), y + 13, stroke=color, width=4),
-            line(scale(high), y - 13, scale(high), y + 13, stroke=color, width=4),
-            circle(scale(estimate), y, 12, fill=WHITE, stroke=color, stroke_width=6),
-            text(
-                scale(estimate),
-                y - 27,
-                f"{estimate:.3f}%",
-                size=18,
-                fill=color,
-                weight=700,
-                anchor="middle",
-            ),
-        ]
-    )
-
-
 def zstd_identity_results() -> str:
     body = header(
-        "Zstandard V19: source identity, binary identity, measured effect",
-        "A Git commit records ancestry; the evaluator decides whether a performance state is new.",
+        "Zstandard V19: Top-10 holdout and binary identity",
+        "5ee53426 led descriptively; all ten fixed candidates remained positive.",
     )
     identity_y = 220
     identity_cards = [
@@ -683,65 +633,117 @@ def zstd_identity_results() -> str:
             text(
                 120,
                 535,
-                "Compression throughput gain with 95% confidence intervals",
+                "Descriptive holdout leader",
                 size=28,
                 weight=700,
             ),
+            line(820, 525, 820, 780, stroke=LINE, width=2),
+            text(
+                120,
+                585,
+                "5ee53426 · generation 3",
+                size=22,
+                fill=SLATE,
+                weight=700,
+            ),
+            text(
+                120,
+                675,
+                "+1.228%",
+                size=68,
+                fill=VIOLET,
+                weight=700,
+            ),
+            text(
+                120,
+                720,
+                "compression throughput · original holdout",
+                size=21,
+                fill=SLATE,
+            ),
+            text(
+                120,
+                758,
+                "95% CI: +1.125% to +1.330%",
+                size=20,
+                fill=MUTED,
+            ),
+            text(
+                120,
+                788,
+                "Ranked by the compression lower 95% bound",
+                size=18,
+                fill=MUTED,
+            ),
+            text(
+                870,
+                535,
+                "Fixed Top-10 comparison",
+                size=26,
+                fill=NAVY,
+                weight=700,
+            ),
+            text(
+                870,
+                625,
+                "10 / 10",
+                size=50,
+                fill=CYAN,
+                weight=700,
+            ),
+            text(
+                870,
+                665,
+                "positive compression results",
+                size=20,
+                fill=SLATE,
+            ),
+            text(
+                870,
+                715,
+                "Median gain: +1.116%",
+                size=22,
+                fill=NAVY,
+                weight=700,
+            ),
+            text(
+                870,
+                752,
+                "Point range: +0.856% to +1.239%",
+                size=19,
+                fill=SLATE,
+            ),
+            text(
+                870,
+                785,
+                "Runner-up fe39bee8: +1.173%",
+                size=18,
+                fill=MUTED,
+            ),
         ]
-    )
-
-    chart_x = 720
-    chart_w = 760
-    for value in (0.0, 0.5, 1.0, 1.5):
-        x = chart_x + chart_w * value / 1.5
-        body.extend(
-            [
-                line(x, 570, x, 745, stroke="#E2E8F0", width=2),
-                text(x, 775, f"{value:.1f}%", size=17, fill=MUTED, anchor="middle"),
-            ]
-        )
-    interval_plot(
-        body,
-        y=615,
-        label="Registered winner",
-        estimate=1.019,
-        low=0.962,
-        high=1.076,
-        color=VIOLET,
-        note="manual seed · sealed holdout",
-    )
-    interval_plot(
-        body,
-        y=705,
-        label="Top-10 follow-up",
-        estimate=0.891,
-        low=0.522,
-        high=1.261,
-        color=CYAN,
-        note="generation 4 · new disjoint corpus",
     )
     body.extend(
         [
             pill(
                 80,
                 835,
-                "Different fresh corpora · not directly comparable",
+                "Post-selection sensitivity · not a new blinded winner",
                 fill=AMBER_PALE,
                 text_fill=AMBER,
-                width=500,
+                width=600,
             ),
             text(
                 1520,
                 864,
-                "Registered winner: manual seed · +1.019%",
-                size=20,
+                "Fresh confirmation of fe39bee8: +0.891% (95% CI +0.522% to +1.261%)",
+                size=18,
                 fill=SLATE,
                 weight=700,
                 anchor="end",
             ),
         ]
     )
-    return svg_document(body, title="Loreley Zstandard identity and result summary")
+    return svg_document(body, title="Loreley Zstandard Top-10 holdout and identity summary")
 
 
 ASSETS = {

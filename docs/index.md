@@ -27,8 +27,10 @@ repository studies are:
   allocation gate.
 - [Zstandard V19](research/2026-08-07-zstandard-gpt-v19-case-study-report.md): the
   registered winner improved sealed-holdout compression by 1.019% with neutral
-  decompression. A Top-10 follow-up found a generation-4 candidate with a 0.891%
-  fresh-corpus compression gain.
+  decompression. In a later fixed-Top-10 comparison, all ten candidates remained
+  positive on the original holdout, with a median gain of 1.116%; the comparison
+  is post-selection because that holdout had already been revealed. A
+  generation-4 candidate also gained 0.891% on a newly sealed corpus.
 
 Read the project essay in [Chinese](marketing/2026-08-loreley-launch-article-zh.md)
 or [English](marketing/2026-08-loreley-launch-article-en.md). Teams with an

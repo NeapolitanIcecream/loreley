@@ -2,6 +2,8 @@
 
 Date: 2026-08-07
 
+Last updated: 2026-08-10
+
 Status: research register. The items below do not enter the current framework
 convergence proposal because the evidence does not yet select a general
 solution. Each item requires a design decision or another experiment before
@@ -14,7 +16,10 @@ implementation.
 In Zstandard V19, the training Top-10 compression lower bounds spanned 0.276
 percentage points, while their median point-to-lower-bound distance was 0.541
 points. Fixed eight-round validation reduced that distance to 0.129 points, but
-the validation winner had ranked tenth on training.
+the validation winner had ranked tenth on training. In the later fixed-Top-10
+original-holdout comparison, the first two validation candidates remained the
+first two descriptively but reversed order. Their intervals overlapped, and the
+median holdout interval width was 0.327 percentage points.
 
 ### Open question
 
@@ -44,7 +49,11 @@ behavior.
 The registered Zstandard Top 3 missed the later validation winner. Expanding to
 Top 10 added about 39 minutes and changed the selected candidate. The Top-10
 sample is training-selected and cannot estimate full-campaign
-training-validation correlation.
+training-validation correlation. A later 73.4-minute comparison on the original
+holdout found all ten candidates modest-positive, with a median compression
+gain of 1.116%. Its first two descriptive ranks matched the validation top two
+in reverse order. Because the holdout had already been revealed for the
+registered winner, that comparison is post-selection evidence.
 
 ### Open question
 

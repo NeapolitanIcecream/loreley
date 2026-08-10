@@ -8,11 +8,11 @@ A Git commit records the source state and its ancestry. For compiled or generate
 
 We evaluated Loreley on fixed revisions of three repositories. The studies completed 348 jobs: 310 succeeded and 38 failed.
 
-| Repository | Search budget | Active run time | Independent result | Selection status |
+| Repository | Search budget | Active run time | Measured result | Selection status |
 | --- | ---: | ---: | --- | --- |
 | `markdown-it-py` | 64 jobs | 4.35 hours | throughput +6.75% | candidate frozen before validation |
 | `python-pathspec` | 64 jobs | 3.91 hours | throughput +25.14% | post-hoc selection after allocation failure |
-| Zstandard V19 | 220 jobs | 5.31 runner-hours | compression +1.019% | preregistered winner; manual seed |
+| Zstandard V19 | 220 jobs | 5.31 runner-hours | fixed Top-10 holdout: 10/10 positive; median +1.116% | post-selection fixed-candidate comparison |
 
 The studies used different workloads and selection protocols. Their percentage results should not be averaged or treated as estimates of performance on other repositories.
 
@@ -82,31 +82,21 @@ The experiment records the archive retaining the 0.9978× lineage and sampling i
 
 ## Case study 3: Zstandard V19
 
-Zstandard V19 used 220 jobs: 8 human-written seeds and 212 evolution jobs. Of the 211 successful jobs, 167 produced distinct release binaries. The remaining 44 produced a binary that had already appeared.
+Zstandard V19 used 220 jobs: 8 human-written seeds and 212 evolution jobs. After the search, a [fixed-Top-10 comparison](../research/2026-08-07-zstandard-gpt-v19-top10-validation-supplement.md) tested the ten training finalists on the original holdout. All ten improved compression throughput. The median gain was 1.116%, point estimates ranged from +0.856% to +1.239%, and every lower 95% bound remained above the root.
 
-The evaluator returned a release-binary SHA-256 as the candidate identity. After measurement caching was enabled, 19 repeated binaries reused an accepted result. Their median evaluator time was 21.6 seconds, compared with 186.7 seconds for jobs that ran the benchmark.
+The candidate identities and order were fixed before the nine new measurements. The holdout had already been opened for the preregistered winner, so this comparison is post-selection and does not support a new blinded winner.
 
-![Zstandard source identity, binary identity, and measured effects](assets/loreley-zstd-identity-results.png)
+Ranked by the compression lower bound, generation-3 candidate `5ee53426` was first at +1.228% (95% CI +1.125% to +1.330%), and generation-4 candidate `fe39bee8` was second at +1.173% (95% CI +1.102% to +1.245%). The intervals overlap, so the ranking is descriptive. The nine new measurements used 12 rounds each and passed the build, correctness, cross-decode, compressed-size, and RSS checks.
 
-The preregistered Top-3 validation selected manual seed 5, a nine-line change in `hist.c` that unrolled a scalar histogram loop four bytes at a time:
+`5ee53426` descends from the preregistered seed through two evolution steps: a compression hot-path change and a specialized level-1 fast-parser predicate. The four-generation `fe39bee8` lineage combined a zero-literal fast path, a compression hot-path change, and an eight-byte histogram update unroll. Its [source patch](candidates/zstandard-v19-evolved-followup.patch) changes three files, with 33 insertions and 16 deletions.
 
-```c
-while ((size_t)(end - ip) >= 4) {
-    count[ip[0]]++;
-    count[ip[1]]++;
-    count[ip[2]]++;
-    count[ip[3]]++;
-    ip += 4;
-}
-```
+The original protocol validated only the training Top 3 and selected manual seed `7b9aef38`. On the sealed holdout, it improved compression throughput by 1.019% (95% CI +0.962% to +1.076%). `7b9aef38` remains the preregistered winner.
 
-On the sealed holdout, the patch improved compression throughput by 1.019%, with a 95% confidence interval from +0.962% to +1.076%. Decompression changed by +0.010%, with an interval from -0.110% to +0.130%. Compressed size was unchanged, and peak RSS increased by 0.063 MiB.
+Validation was later expanded to the fixed training Top 10. Training rank 10, `fe39bee8`, became the validation winner at +1.234%, with a lower 95% bound of +1.156%. After the candidate was fixed, a new corpus was generated and sealed. On that corpus, `fe39bee8` improved compression throughput by 0.891% (95% CI +0.522% to +1.261%). This fresh-corpus result is prospective.
 
-Under the registered selection rule, the 212 evolution jobs did not outperform the manual seed.
+Of the 211 successful jobs, 167 produced distinct release binaries and 44 reproduced a binary that had already appeared. The evaluator used the release-binary SHA-256 for measurement identity, while Git commits retained source ancestry. After caching was enabled, 19 repeated binaries reused an accepted report; their median evaluator time was 21.6 seconds, compared with 186.7 seconds for jobs that ran the benchmark.
 
-The registered protocol validated the training Top 3. After that analysis was complete, a second protocol was registered for the remaining members of the training Top 10. A generation-4 candidate ranked tenth in training produced a 0.891% compression-throughput gain on a newly generated corpus, with a 95% interval from +0.522% to +1.261%. The registered winner and the follow-up winner were evaluated on different fresh corpora, so the two percentages are not a head-to-head comparison.
-
-V19 separates three identities: the Git commit for source ancestry, the release binary for measurement reuse, and the evaluation report for a particular benchmark execution. The compression lower bounds of the training Top 10 spanned 0.276 percentage points, and the validation winner was ranked tenth in training. The Top-3 rule excluded that candidate from the registered validation.
+![Zstandard fixed-Top-10 holdout result and binary identity](assets/loreley-zstd-identity-results.png)
 
 ## Resource accounting
 
@@ -115,6 +105,8 @@ The reported active times sum to 13.57 hours. The reports use slightly different
 The `markdown-it-py` and `python-pathspec` studies recorded DeepSeek generation costs of $2.0833 and $2.4856, respectively, for a combined $4.5689. Embeddings, hosts, and human work were not priced.
 
 Zstandard V19 recorded a $60.2472 Kilo model-catalog estimate rather than a provider invoice. Its accounting basis differs from the two DeepSeek costs, so the three dollar figures should not be summed as an all-in project cost.
+
+The expanded Top-10 validation, fresh confirmation, and nine new original-holdout measurements used 120.6 minutes of local evaluation after the search. They made no model calls and added no model tokens.
 
 The [aggregate evidence report](../research/2026-08-07-loreley-case-study-evidence-report.md) contains the complete metrics, failure categories, token records, and selection status. The [candidate index](candidates/README.md) contains the four published source diffs.
 

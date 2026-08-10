@@ -187,7 +187,11 @@ The public evidence can state:
 > with a 6.75% `markdown-it-py` throughput gain, a post-hoc 25.14%
 > `python-pathspec` throughput gain, and a preregistered 1.019% Zstandard
 > holdout compression gain. The Zstandard follow-up also found a generation-4
-> candidate with a fresh-corpus compression gain of 0.891%.
+> candidate with a fresh-corpus compression gain of 0.891%. In a later
+> post-selection comparison, all ten fixed Zstandard finalists remained
+> positive on the original holdout, with a median compression gain of 1.116%.
+> That holdout had already been revealed for the preregistered winner, so the
+> comparison does not create a new blinded winner.
 
 Every percentage must retain its selection status and workload scope. The
 evidence does not support an average cross-repository speedup, a seed-free
