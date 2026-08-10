@@ -589,12 +589,8 @@ def lineages() -> str:
     return svg_document(body, title="Loreley case-study lineages")
 
 
-def zstd_identity_results() -> str:
-    body = header(
-        "Zstandard V19: Top-10 holdout and binary identity",
-        "5ee53426 led descriptively; all ten fixed candidates remained positive.",
-    )
-    identity_y = 220
+def zstd_identity_flow(identity_y: int) -> list[str]:
+    body: list[str] = []
     identity_cards = [
         (80, 300, "220", "terminal jobs", VIOLET_PALE, VIOLET),
         (450, 300, "211", "successful source states", CYAN_PALE, CYAN),
@@ -629,121 +625,146 @@ def zstd_identity_results() -> str:
                 fill=MUTED,
                 anchor="middle",
             ),
-            rect(80, 480, 1440, 330, fill=WHITE, shadow=True),
-            text(
-                120,
-                535,
-                "Descriptive holdout leader",
-                size=28,
-                weight=700,
-            ),
-            line(820, 525, 820, 780, stroke=LINE, width=2),
-            text(
-                120,
-                585,
-                "5ee53426 · generation 3",
-                size=22,
-                fill=SLATE,
-                weight=700,
-            ),
-            text(
-                120,
-                675,
-                "+1.228%",
-                size=68,
-                fill=VIOLET,
-                weight=700,
-            ),
-            text(
-                120,
-                720,
-                "compression throughput · original holdout",
-                size=21,
-                fill=SLATE,
-            ),
-            text(
-                120,
-                758,
-                "95% CI: +1.125% to +1.330%",
-                size=20,
-                fill=MUTED,
-            ),
-            text(
-                120,
-                788,
-                "Ranked by the compression lower 95% bound",
-                size=18,
-                fill=MUTED,
-            ),
-            text(
-                870,
-                535,
-                "Fixed Top-10 comparison",
-                size=26,
-                fill=NAVY,
-                weight=700,
-            ),
-            text(
-                870,
-                625,
-                "10 / 10",
-                size=50,
-                fill=CYAN,
-                weight=700,
-            ),
-            text(
-                870,
-                665,
-                "positive compression results",
-                size=20,
-                fill=SLATE,
-            ),
-            text(
-                870,
-                715,
-                "Median gain: +1.116%",
-                size=22,
-                fill=NAVY,
-                weight=700,
-            ),
-            text(
-                870,
-                752,
-                "Point range: +0.856% to +1.239%",
-                size=19,
-                fill=SLATE,
-            ),
-            text(
-                870,
-                785,
-                "Runner-up fe39bee8: +1.173%",
-                size=18,
-                fill=MUTED,
-            ),
         ]
     )
-    body.extend(
-        [
-            pill(
-                80,
-                835,
-                "Post-selection sensitivity · not a new blinded winner",
-                fill=AMBER_PALE,
-                text_fill=AMBER,
-                width=600,
-            ),
-            text(
-                1520,
-                864,
-                "Fresh confirmation of fe39bee8: +0.891% (95% CI +0.522% to +1.261%)",
-                size=18,
-                fill=SLATE,
-                weight=700,
-                anchor="end",
-            ),
-        ]
+    return body
+
+
+def zstd_holdout_leader() -> list[str]:
+    return [
+        rect(80, 480, 1440, 330, fill=WHITE, shadow=True),
+        text(
+            120,
+            535,
+            "Descriptive holdout leader",
+            size=28,
+            weight=700,
+        ),
+        line(820, 525, 820, 780, stroke=LINE, width=2),
+        text(
+            120,
+            585,
+            "5ee53426 · generation 3",
+            size=22,
+            fill=SLATE,
+            weight=700,
+        ),
+        text(
+            120,
+            675,
+            "+1.228%",
+            size=68,
+            fill=VIOLET,
+            weight=700,
+        ),
+        text(
+            120,
+            720,
+            "compression throughput · original holdout",
+            size=21,
+            fill=SLATE,
+        ),
+        text(
+            120,
+            758,
+            "95% CI: +1.125% to +1.330%",
+            size=20,
+            fill=MUTED,
+        ),
+        text(
+            120,
+            788,
+            "Ranked by the compression lower 95% bound",
+            size=18,
+            fill=MUTED,
+        ),
+    ]
+
+
+def zstd_top10_comparison() -> list[str]:
+    return [
+        text(
+            870,
+            535,
+            "Fixed Top-10 comparison",
+            size=26,
+            fill=NAVY,
+            weight=700,
+        ),
+        text(
+            870,
+            625,
+            "10 / 10",
+            size=50,
+            fill=CYAN,
+            weight=700,
+        ),
+        text(
+            870,
+            665,
+            "positive compression results",
+            size=20,
+            fill=SLATE,
+        ),
+        text(
+            870,
+            715,
+            "Median gain: +1.116%",
+            size=22,
+            fill=NAVY,
+            weight=700,
+        ),
+        text(
+            870,
+            752,
+            "Point range: +0.856% to +1.239%",
+            size=19,
+            fill=SLATE,
+        ),
+        text(
+            870,
+            785,
+            "Runner-up fe39bee8: +1.173%",
+            size=18,
+            fill=MUTED,
+        ),
+    ]
+
+
+def zstd_result_footer() -> list[str]:
+    return [
+        pill(
+            80,
+            835,
+            "Post-selection sensitivity · not a new blinded winner",
+            fill=AMBER_PALE,
+            text_fill=AMBER,
+            width=600,
+        ),
+        text(
+            1520,
+            864,
+            "Fresh confirmation of fe39bee8: +0.891% (95% CI +0.522% to +1.261%)",
+            size=18,
+            fill=SLATE,
+            weight=700,
+            anchor="end",
+        ),
+    ]
+
+
+def zstd_identity_results() -> str:
+    body = header(
+        "Zstandard V19: Top-10 holdout and binary identity",
+        "5ee53426 led descriptively; all ten fixed candidates remained positive.",
     )
-    return svg_document(body, title="Loreley Zstandard Top-10 holdout and identity summary")
+    body.extend(zstd_identity_flow(identity_y=220))
+    body.extend(zstd_holdout_leader())
+    body.extend(zstd_top10_comparison())
+    body.extend(zstd_result_footer())
+    return svg_document(
+        body, title="Loreley Zstandard Top-10 holdout and identity summary"
+    )
 
 
 ASSETS = {
