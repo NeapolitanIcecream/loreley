@@ -1,117 +1,172 @@
-## Loreley
+# Loreley
 
-> Whole-repository Quality-Diversity optimization for real git codebases.
+[![CI](https://github.com/NeapolitanIcecream/loreley/actions/workflows/ci.yml/badge.svg)](https://github.com/NeapolitanIcecream/loreley/actions/workflows/ci.yml)
+[![Documentation](https://img.shields.io/badge/docs-online-6563FF.svg)](https://neapolitanicecream.github.io/loreley/)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB.svg)](https://www.python.org/)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](https://github.com/NeapolitanIcecream/loreley/blob/main/LICENSE)
 
-Loreley is a distributed system that **searches over complete git repositories**. A git commit records each candidate's source state and ancestry; the evaluator may define a narrower measurement identity such as a release binary. Loreley samples base commits, asks external planning and coding agents to implement repo-wide changes, evaluates the result with your evaluator, and stores metrics plus bounded per-cell Pareto fronts in Postgres for later sampling and reuse.
+> Quality-Diversity program search over complete Git repositories.
 
-![](./docs/assets/loreley.svg)
+Loreley uses planning and coding agents to propose repository-level commits. A
+project-specific evaluator builds, verifies, and scores each candidate.
+Candidates that pass may enter a persistent Quality-Diversity archive and
+remain available as parents or inspirations for later jobs.
 
-### Why use it
+A Git commit records the source state and its ancestry. For compiled or
+generated targets, the evaluator can define a separate measurement identity,
+such as a release-binary hash, so equivalent artifacts do not consume another
+benchmark run.
 
-- **Whole-repo evolution**: cross-module refactors and “production-style” changes are first-class.
-- **QD-native (MAP-Elites)**: keeps multiple high-performing but *different* solutions instead of a single champion line.
-- **Multi-objective and multi-island**: retains non-dominated trade-offs in each behaviour niche and fairly schedules independent islands with periodic migration inspirations.
-- **Learned behaviour space**: behaviour descriptors come from repo-state code embeddings (cached by git blob SHA), not hand-crafted heuristics.
-- **Production loop**: scheduler + Redis/Dramatiq workers + Postgres, with preflight checks, logs, and reproducible git history.
+[Results](#results-from-three-repository-searches) ·
+[How it works](#how-loreley-works) ·
+[Documentation](https://neapolitanicecream.github.io/loreley/) ·
+[Design-partner intake](https://github.com/NeapolitanIcecream/loreley/issues/new?template=design-partner.yml)
 
-### Evidence
+![Loreley searches repository states proposed by coding agents and accepted by an external evaluator](https://raw.githubusercontent.com/NeapolitanIcecream/loreley/main/docs/marketing/assets/loreley-search-loop.png)
 
-[The three-case-study evidence report](docs/research/2026-08-07-loreley-case-study-evidence-report.md)
-summarizes the selection status, measurements, costs, and limits. The fixed
-repository studies are:
+## Results from three repository searches
 
-- [`markdown-it-py`](docs/research/2026-08-02-markdown-it-py-deepseek-case-study.md):
-  a preregistered winner was 6.75% faster on a separate 28-document corpus.
-- [`python-pathspec`](docs/research/2026-08-03-pathspec-deepseek-case-study.md):
-  a four-generation archive lineage produced a qualifying 25.14% speedup. The
-  candidate was selected post-hoc after the registered winner missed its
-  allocation gate.
-- [Zstandard V19](docs/research/2026-08-07-zstandard-gpt-v19-case-study-report.md):
-  the registered winner improved sealed-holdout compression by 1.019% with
-  neutral decompression. In a later fixed-Top-10 comparison, all ten candidates
-  remained positive on the original holdout, with a median gain of 1.116%; the
-  comparison is post-selection because that holdout had already been revealed.
-  A generation-4 candidate also gained 0.891% on a newly sealed corpus.
+Loreley has been evaluated on fixed revisions of three existing repositories.
+The studies completed 348 jobs: 310 succeeded and 38 failed. Each study used a
+different workload and selection protocol, so the percentage results should not
+be averaged or treated as expected performance on another repository.
 
-### Essays and collaboration
+![Results and selection status from three Loreley repository searches](https://raw.githubusercontent.com/NeapolitanIcecream/loreley/main/docs/marketing/assets/loreley-three-case-evidence.png)
 
-- [中文：用编码智能体搜索真实代码仓库](docs/marketing/2026-08-loreley-launch-article-zh.md)
-- [English: Searching Real Code Repositories with Coding Agents](docs/marketing/2026-08-loreley-launch-article-en.md)
-- [Design-partner brief](docs/marketing/loreley-design-partner-brief.md)
+| Repository | Measured result | Selection status |
+| --- | --- | --- |
+| [`markdown-it-py`](https://neapolitanicecream.github.io/loreley/research/2026-08-02-markdown-it-py-deepseek-case-study/) | Throughput +6.75% on a separate 28-document corpus; 28/28 documents improved | Winner frozen before validation |
+| [`python-pathspec`](https://neapolitanicecream.github.io/loreley/research/2026-08-03-pathspec-deepseek-case-study/) | Throughput +25.14% across five reference workloads; 5/5 improved | Post-hoc selection after the registered candidate failed its allocation gate |
+| [Zstandard V19](https://neapolitanicecream.github.io/loreley/research/2026-08-07-zstandard-gpt-v19-top10-validation-supplement/) | Descriptive leader +1.228% compression throughput on the original holdout, with a 95% CI of +1.125% to +1.330%; 10/10 fixed finalists were positive | Post-selection comparison; the holdout had already been revealed |
 
-### Quick start (local)
+For Zstandard, the preregistered winner remains the manual seed `7b9aef38`, at
++1.019% compression throughput on the sealed holdout. Generation-4 candidate
+`fe39bee8` later gained +0.891% on a newly generated and sealed corpus. The
+[aggregate evidence report](https://neapolitanicecream.github.io/loreley/research/2026-08-07-loreley-case-study-evidence-report/)
+contains the protocols, costs, failure counts, candidate selection records, and
+claim limits for all three studies.
 
-**Requirements**: Python 3.11+, [`uv`](https://github.com/astral-sh/uv), Git (worktrees), PostgreSQL, Redis, and an OpenAI-compatible API for embeddings and some summaries. Configure either a static `OPENAI_API_KEY` or a dynamic provider via `OPENAI_DYNAMIC_API_KEY_PROVIDER` plus `OPENAI_DYNAMIC_API_KEY_TTL_SECONDS`. You also need:
+## How Loreley works
 
-- **Planning/coding backend**: default is the Kilocode CLI (`kilo`) on `PATH` (override via `WORKER_PLANNING_BACKEND` / `WORKER_CODING_BACKEND`).
-- **Evaluator plugin**: `WORKER_EVALUATOR_PLUGIN=module:callable` that runs unattended and returns structured metrics.
+1. **Define a campaign.** Fix the root commit, optimization goal, protected
+   scope, evaluator, objectives, and job budget.
+2. **Propose repository changes.** The scheduler selects retained commits as
+   bases or inspirations. Planning and coding agents edit isolated Git
+   worktrees and produce new commits.
+3. **Evaluate each candidate.** The project evaluator builds the candidate,
+   applies correctness and scope gates, measures the configured objectives, and
+   may report an artifact identity.
+4. **Retain useful states.** Loreley stores the commit, ancestry, metrics,
+   artifacts, and terminal outcome. Passing candidates may enter the
+   Quality-Diversity archive and be sampled by later jobs.
+
+The evaluator controls what constitutes a valid improvement. It may call local
+scripts, a C or C++ build, a Java benchmark, a container, a hardware testbed, or
+a remote evaluation service. The evaluator plugin has a Python interface; the
+target repository can use any implementation language.
+
+## Quality-Diversity over repository states
+
+Loreley derives behaviour descriptors from repository-state code embeddings.
+File embeddings are cached by Git blob SHA, aggregated into commit vectors, and
+can be reduced with PCA before placement in a MAP-Elites grid. Each occupied
+cell retains a bounded Pareto front over the configured objectives.
+
+Configured islands maintain separate archives and can exchange retained
+candidates as inspirations. This keeps multiple valid branches available when
+they occupy different behavioural niches or represent different objective
+trade-offs.
+
+The current case studies show multi-generation lineages, archive retention, and
+later reuse of retained branches. They do not establish that Quality-Diversity
+outperforms root-independent sampling or sequential editing of a single
+champion under an equal budget.
+
+| Concern | Representation in Loreley |
+| --- | --- |
+| Reproducible source state | Complete Git commit |
+| Candidate ancestry | Parent and inspiration edges between commits |
+| Measurement identity | Evaluator-defined artifact, such as a binary, container image, or trace |
+| Behavioural diversity | Repository-state embeddings and MAP-Elites cells |
+| Multiple objectives | Bounded per-cell Pareto fronts |
+| Persistent execution | PostgreSQL state, Redis/Dramatiq queues, schedulers, and worker processes |
+
+## When a repository is a fit
+
+A campaign needs:
+
+- unattended build and correctness checks;
+- at least one numerical objective with a known direction;
+- an evaluator whose runtime and noise are compatible with the effect size of
+  interest;
+- enough safe evaluation parallelism for the proposed job budget;
+- an isolated repository mirror, build environment, and authorized model
+  access;
+- enough engineering or business value to justify repeated model calls and
+  evaluations.
+
+The [design-partner brief](https://neapolitanicecream.github.io/loreley/marketing/loreley-design-partner-brief/)
+describes evaluator calibration, candidate identity, data separation, budget
+planning, and the non-confidential intake process.
+
+## Run Loreley
+
+Loreley is alpha software. A campaign requires Python 3.11+, Git worktrees,
+PostgreSQL, Redis, the Kilocode CLI or another configured agent backend, an
+OpenAI-compatible embedding endpoint, and an unattended evaluator plugin.
 
 ```bash
-git clone <YOUR_FORK_OR_ORIGIN_URL> loreley
+git clone https://github.com/NeapolitanIcecream/loreley.git
 cd loreley
 uv sync
 docker compose up -d postgres redis
+cp env.example .env
 ```
 
-The local Compose file uses the PostgreSQL 18 data layout:
-`PGDATA=/var/lib/postgresql/18/docker` with the named volume mounted at
-`/var/lib/postgresql`. For a disposable local database created with an older
-layout, run `docker compose down -v` before starting again. That removes the
-local database volume.
+Configure the experiment ID, root commit, job cap, target repository remote,
+evaluator plugin, embedding settings, objectives, and islands in `.env`. See the
+[configuration guide](https://neapolitanicecream.github.io/loreley/loreley/config/)
+for the complete contract.
+
+Run the preflight checks, then start the scheduler and workers in separate
+shells:
 
 ```bash
-cp env.example .env
-# Minimal required vars (in addition to defaults in env.example):
-# - EXPERIMENT_ID=<uuid or slug>
-# - SCHEDULER_MAX_TOTAL_JOBS=<positive integer>
-# - OPENAI_API_KEY
-#   or:
-# - OPENAI_DYNAMIC_API_KEY_PROVIDER=module:callable
-# - OPENAI_DYNAMIC_API_KEY_TTL_SECONDS=<positive integer>
-# - MAPELITES_CODE_EMBEDDING_DIMENSIONS=<positive integer>
-# - MAPELITES_EXPERIMENT_ROOT_COMMIT=<git commit hash>
-# - WORKER_REPO_REMOTE_URL=<git remote URL with push access>
-# - WORKER_EVALUATOR_PLUGIN=module:callable
-#
-# Recommended to customize:
-# - WORKER_EVOLUTION_GLOBAL_GOAL="..."
-# - MAPELITES_OBJECTIVES=[{"name":"quality","direction":"max"},{"name":"latency_ms","direction":"min"}]
-# - MAPELITES_ISLANDS=["exploit","explore"]
-#
-# Optional:
-# - SCHEDULER_REPO_ROOT=/abs/path/to/your/target-git-checkout
-# - WORKER_KILOCODE_BIN=kilo
-# - WORKER_KILOCODE_AGENT=<agent name>
-# - WORKER_EVALUATOR_PYTHON_PATHS=["/abs/path/to/plugin_dir"]
-# - SCHEDULER_STARTUP_APPROVE=true  # skip interactive startup approval
-
 uv run loreley doctor --role all
 uv run loreley scheduler
 uv run loreley worker --processes 4
 uv run loreley status
 ```
 
-Use `--processes 1` for the original single-worker mode. Multi-process mode
-uses one thread and an isolated PID-plus-random base clone per worker process.
+Before dispatching a new campaign, the scheduler scans the configured root
+commit and requests operator approval. Non-interactive deployments can use
+`--yes` or `SCHEDULER_STARTUP_APPROVE=true` after reviewing the scan settings.
 
-### Optional UI and operator console
+The optional operator console is available with:
 
 ```bash
 uv sync --extra ui
 uv run loreley ui
 ```
 
-Most UI pages are read-only. Operator actions such as job retry, baseline
-ensure, and repair-pool updates require `LORELEY_API_WRITE_TOKEN` in the UI API
-process and the Streamlit process.
+## Documentation and evidence
 
-![](./docs/assets/ui.jpeg)
+| Resource | Contents |
+| --- | --- |
+| [Documentation home](https://neapolitanicecream.github.io/loreley/) | Architecture, configuration, CLI, and operations |
+| [Scheduler and worker guides](https://neapolitanicecream.github.io/loreley/script/run_scheduler/) | Campaign startup and worker operation |
+| [Three-case evidence report](https://neapolitanicecream.github.io/loreley/research/2026-08-07-loreley-case-study-evidence-report/) | Results, costs, failures, and evidence boundaries |
+| [Candidate diff index](https://neapolitanicecream.github.io/loreley/marketing/candidates/) | Published source patches and artifact identities |
+| [English essay](https://neapolitanicecream.github.io/loreley/marketing/2026-08-loreley-launch-article-en/) | Repository search model and the three studies |
+| [中文文章](https://neapolitanicecream.github.io/loreley/marketing/2026-08-loreley-launch-article-zh/) | 《用编码智能体搜索真实代码仓库》 |
+| [Architecture decisions](https://neapolitanicecream.github.io/loreley/adr/) | Accepted design records |
+| [Release notes](https://github.com/NeapolitanIcecream/loreley/releases/tag/v0.10.0-alpha) | Current alpha release |
 
-### Documentation
+## Status and scope
 
-- Local overview: [`docs/index.md`](docs/index.md)
-- Online docs: [NeapolitanIcecream.github.io/loreley](https://NeapolitanIcecream.github.io/loreley/)
-- Quickstart guides: [`docs/loreley/config.md`](docs/loreley/config.md), [`docs/script/run_scheduler.md`](docs/script/run_scheduler.md), [`docs/script/run_worker.md`](docs/script/run_worker.md)
-- Operations: [`docs/script/status.md`](docs/script/status.md), [`docs/script/db.md`](docs/script/db.md), [`docs/script/jobs.md`](docs/script/jobs.md), [`docs/script/job_leases.md`](docs/script/job_leases.md), [`docs/script/config_dump.md`](docs/script/config_dump.md), [`docs/script/archive_stats.md`](docs/script/archive_stats.md)
-- Upgrade notes: [`docs/releases/unreleased.md`](docs/releases/unreleased.md), [`docs/releases/v0.10.0-alpha.md`](docs/releases/v0.10.0-alpha.md), [`docs/releases/v0.9.0-alpha.md`](docs/releases/v0.9.0-alpha.md), [`docs/releases/v0.8.4-alpha.md`](docs/releases/v0.8.4-alpha.md), [`docs/releases/v0.8.3-alpha.md`](docs/releases/v0.8.3-alpha.md), [`docs/releases/v0.8.2-alpha.md`](docs/releases/v0.8.2-alpha.md), [`docs/releases/v0.8.1-alpha.md`](docs/releases/v0.8.1-alpha.md), [`docs/releases/v0.8.0-alpha.md`](docs/releases/v0.8.0-alpha.md)
-- Architecture decisions: [`docs/adr/index.md`](docs/adr/index.md)
+The current release is `v0.10.0-alpha`. The three case studies demonstrate the
+end-to-end system on their frozen repositories and evaluators. They do not
+estimate Loreley's success rate or average effect on a new repository.
+
+Loreley is licensed under the
+[Apache License 2.0](https://github.com/NeapolitanIcecream/loreley/blob/main/LICENSE).
