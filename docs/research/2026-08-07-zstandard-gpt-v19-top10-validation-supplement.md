@@ -1,6 +1,8 @@
-# Zstandard V19 Top-10 Validation Supplement
+# Zstandard V19 Top-10 Validation and Holdout Supplement
 
 Date: 2026-08-07
+
+Holdout addendum: 2026-08-10
 
 This supplement asks whether the V19 training shortlist was too narrow. The
 registered experiment validated the training Top 3, selected `7b9aef38`, and
@@ -23,6 +25,13 @@ under the V19 thresholds.
 case-study conclusion: V19 not only preserved a useful manual seed; its
 evolution also produced a positive candidate that generalized to a fresh
 corpus.
+
+A later fixed-candidate comparison measured the entire frozen Top 10 on the
+original holdout. All ten met the V19 modest-positive rule. Training rank 7,
+`5ee53426`, had the highest compression lower bound at 1.01125×. This is a
+post-selection sensitivity result: the holdout had already been revealed for
+the registered winner, so it does not replace that winner or create a new
+blinded claim.
 
 ## Method
 
@@ -84,6 +93,58 @@ and RSS checks. The confirmation audit passed. The compression gain remained
 positive, but did not meet the strong threshold because its point estimate was
 below 1.02×. Decompression was within the registered modest-positive gate.
 
+## Fixed Top-10 holdout comparison
+
+The ten candidate identities and their order were already fixed by the Top-10
+validation supplement. Before further measurement, a second protocol froze
+that list, the parent evidence hashes, the original holdout archive, and the
+following rules:
+
+- reuse the registered winner's existing 12-round holdout report;
+- measure the other nine candidates for 12 rounds on the same holdout with the
+  same correctness, release-build, cross-decode, size, RSS, and paired-benchmark
+  checks;
+- use one measurement lane and the registered validation ordering only as a
+  descriptive ranking; and
+- make no model calls and never relabel the registered winner.
+
+All nine new measurements passed. They took 4,404 seconds, or 73.4 minutes, in
+total. The audit verified all ten binary identities and result hashes, the
+sealed archive, the unchanged original holdout result, and the model-call
+closure.
+
+| Training rank | Candidate | Validation lower 95% | Holdout compression | Holdout 95% interval | Holdout decompression | Descriptive holdout rank |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | `44a22df0` | 1.00905× | 1.01146× | 1.01029–1.01263× | 0.99908× | 4 |
+| 2 | `f80c8619` | 1.00923× | 1.01239× | 1.01060–1.01418× | 1.00160× | 3 |
+| 3 | `7b9aef38` | 1.00994× | 1.01019× | 1.00962–1.01076× | 1.00010× | 5 |
+| 4 | `be548e5c` | 1.00899× | 1.01031× | 1.00883–1.01179× | 1.00094× | 7 |
+| 5 | `afc8175a` | 1.01020× | 1.01089× | 1.00907–1.01271× | 1.00107× | 6 |
+| 6 | `b52cbe2b` | 1.00693× | 1.00856× | 1.00511–1.01203× | 0.99815× | 8 |
+| 7 | `5ee53426` | 1.01042× | **1.01228×** | **1.01125–1.01330×** | 1.00084× | **1** |
+| 8 | `8ec126ea` | 1.00762× | 1.01144× | 1.00483–1.01809× | 1.00370× | 9 |
+| 9 | `8075c7ff` | 1.01011× | 1.00883× | 1.00081–1.01692× | 0.99838× | 10 |
+| 10 | `fe39bee8` | 1.01156× | 1.01173× | 1.01102–1.01245× | 1.00017× | 2 |
+
+The median candidate improved holdout compression by 1.116%. Point estimates
+ranged from 0.856% to 1.239%, and every compression lower bound remained above
+root. None met the strong rule because no point estimate reached 1.02×. The
+registered winner ranked fifth descriptively, while the expanded validation
+winner ranked second.
+
+The Top-10 validation identified the right region: its first two candidates
+became the holdout first two, in reverse order. Fine ordering remained noisy.
+The median holdout confidence-interval width was 0.327 percentage points, and
+the leading intervals overlapped. The defensible result is therefore that the
+fixed Top-10 generalized as a group, not that `5ee53426` is demonstrably better
+than the other leaders.
+
+`5ee53426` is a generation-3 evolved descendant of the registered seed. Its
+lineage adds two steps to the four-byte histogram unroll: a compression hot-path
+change and a specialized level-1 fast-parser predicate. This supplies a direct
+example of evolution improving the descriptive holdout ordering, while the
+post-selection scope prevents a prospective winner claim.
+
 ## Winner lineage
 
 `fe39bee8` first appeared at logical completion 57. Its four-generation lineage
@@ -103,12 +164,13 @@ patch](../marketing/candidates/zstandard-v19-evolved-followup.patch).
 
 ## Interpretation and next rule
 
-The original preregistered winner remains the only candidate measured on the
-original holdout, so this supplement does not relabel the registered result.
-The fresh confirmation establishes a separate claim: the generation-4 Top-10
-winner retained a positive compression gain on a previously unseen corpus. It
-does not establish that `fe39bee8` beats `7b9aef38` head-to-head because they
-were confirmed on different fresh corpora.
+The original preregistered winner remains the only candidate selected before
+the original holdout was revealed, so this supplement does not relabel the
+registered result. The fresh confirmation establishes a separate prospective
+claim: the generation-4 Top-10 validation winner retained a positive
+compression gain on a newly sealed corpus. The later Top-10 holdout addendum
+does provide a uniform descriptive comparison on the original holdout, but it
+is post-selection evidence rather than a new blinded final selection.
 
 Future campaigns should validate at least the training Top 10. A useful
 adaptive rule is to include every candidate within 0.003 of the leading
@@ -124,3 +186,6 @@ that rule would have retained `fe39bee8` while adding about 39 minutes to a
 - Fresh-confirmation plan SHA-256: `b5469d6110efaf72f0804d78dd20d9c9f23bfa66c647fbe5019af004edbe4e8d`
 - Fresh-confirmation result SHA-256: `a79d017b20fea14f3c0c404421a13347eae68e223f662cee4c0e88e313b3fb05`
 - Fresh-confirmation audit SHA-256: `769ccdb15b1171fff7a329f7908a54f8187e3e77fa13fa9e4dc912445539fbab`
+- Fixed Top-10 holdout plan SHA-256: `70f8ad05a6f3eeb3cb1d4fa83bdc9d4c9197dbd7d8336934ea32a3b60293f369`
+- Fixed Top-10 holdout result SHA-256: `426976c98179bd547484d2fb5d3d7bde8074dddc5dffec08cc6d0c0699dedce5`
+- Fixed Top-10 holdout audit SHA-256: `391ea68c29acc6e22c6f3f86b74dfbc8120c851078a038939de93251139901c5`

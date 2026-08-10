@@ -72,7 +72,8 @@ as tie-breakers. All three passed eight-round validation:
 | `7b9aef38` | 6 | 1.00903× | 1.01066× | **1.00994×** | 1.00025× |
 
 Validation selected `7b9aef38` because it had the highest compression lower
-bound. Only this candidate was evaluated on the 12-round holdout.
+bound. Under the registered protocol, only this candidate was evaluated on the
+12-round holdout; the later fixed-Top-10 comparison is reported separately.
 
 The earlier training throughput leader, `8ec126ea`, measured 1.01275× combined
 throughput but ranked eighth under the registered uncertainty-aware rule. It was
@@ -127,9 +128,17 @@ and an eight-byte histogram update unroll. Its [source diff is also available as
 a static patch](../marketing/candidates/zstandard-v19-evolved-followup.patch).
 This follow-up establishes a separate
 evolved-candidate result. It does not relabel the registered holdout winner or
-establish a head-to-head result because the two candidates were confirmed on
-different fresh corpora. The complete method and evidence are in the
-[Top-10 validation supplement](2026-08-07-zstandard-gpt-v19-top10-validation-supplement.md).
+turn the post-hoc Top-10 validation into a preregistered selection.
+
+After the Top-10 identities were fixed, a later addendum measured all ten on
+the original holdout. All ten met the modest-positive rule. Training rank 7,
+generation-3 candidate `5ee53426`, led descriptively at 1.01228x compression,
+with a 1.01125-1.01330x interval; `fe39bee8` ranked second and the registered
+winner ranked fifth. The median candidate improved compression by 1.116%.
+Because the holdout had already been revealed for the registered winner, this
+is post-selection sensitivity evidence, not a new blinded winner. The complete
+method and evidence are in the [Top-10 validation and holdout
+supplement](2026-08-07-zstandard-gpt-v19-top10-validation-supplement.md).
 
 ## Evaluation reliability and search efficiency
 
@@ -188,8 +197,10 @@ unchanged compressed size, and negligible RSS change.
 It does not establish a universal Zstandard gain, cross-platform performance,
 a 2% improvement, or superiority over expert seed design. The winner came from
 the initial manual seed set. A separately sealed follow-up found a generation-4
-candidate with a positive fresh-corpus compression gain, but did not compare it
-head to head with the registered winner. Together, the results provide promotion
-evidence for the system's end-to-end search, identity-aware evaluation,
-uncertainty-aware selection, and sealed validation workflow while leaving seed
-dependence and fine-grained frontier ranking as open questions.
+candidate with a positive fresh-corpus compression gain. A later post-selection
+comparison found all ten fixed finalists positive on the original holdout and a
+generation-3 evolved candidate first descriptively, but the leading intervals
+overlapped. Together, the results provide promotion evidence for the system's
+end-to-end search, identity-aware evaluation, uncertainty-aware selection, and
+sealed validation workflow while leaving seed dependence and fine-grained
+frontier ranking as open questions.

@@ -18,7 +18,7 @@ commits with recorded ancestry.
 | --- | --- | --- | --- |
 | `markdown-it-py` | 64 jobs; 8 seeds and 56 evolution jobs | Generation-4 winner was **6.75% faster** on a separate 28-document corpus; 28/28 documents improved | Preregistered prospective success |
 | `python-pathspec` | 64 jobs; 6 seeds and 58 evolution jobs | Generation-4 final candidate was **25.14% faster** on five reference scenarios; 5/5 improved | Capability evidence; candidate selected after the registered pick failed the revealed allocation gate |
-| Zstandard V19 | 220 jobs; 8 seeds and 212 evolution jobs; 167 distinct successful release binaries | Registered winner improved sealed-holdout compression by **1.019%**, 95% CI **+0.962% to +1.076%**; a supplemental generation-4 candidate improved fresh-corpus compression by **0.891%**, 95% CI **+0.522% to +1.261%** | Preregistered modest-positive result plus a separately registered post-hoc sensitivity follow-up |
+| Zstandard V19 | 220 jobs; 8 seeds and 212 evolution jobs; 167 distinct successful release binaries | Registered winner improved sealed-holdout compression by **1.019%**, 95% CI **+0.962% to +1.076%**; all ten later-fixed finalists were modest-positive on that holdout; a generation-4 candidate improved fresh-corpus compression by **0.891%**, 95% CI **+0.522% to +1.261%** | Preregistered modest-positive result, prospective fresh confirmation, and post-selection fixed-Top-10 sensitivity evidence |
 
 Across the three reports, 348 terminal jobs produced 310 successful outcomes
 and 38 failures. The reported campaign or active-runner times sum to 13.57
@@ -90,9 +90,16 @@ measurements. Training rank 10, `fe39bee8`, became the validation winner. A
 separate confirmation protocol was then sealed before measuring it on a newly
 generated disjoint corpus: compression was 1.00891x, with a
 1.00522-1.01261x interval. It is a generation-4 candidate whose lineage combines
-zero-literal and histogram hot paths. This follow-up establishes a separate
-evolved-candidate result; it does not relabel the original holdout winner or
-compare both candidates on the same fresh corpus.
+zero-literal and histogram hot paths.
+
+Because the Top-10 identities were already fixed, a later addendum measured the
+entire set on the original holdout. All ten met the modest-positive rule. Their
+median compression gain was 1.116%, and their point estimates ranged from
+0.856% to 1.239%. Generation-3 candidate `5ee53426` ranked first descriptively,
+with a 1.01228x point estimate and a 1.01125-1.01330x interval; `fe39bee8`
+ranked second and the registered winner ranked fifth. The leading intervals
+overlapped. Since the holdout had already been revealed, this supports group
+generalization and an evolved-candidate example, but not a new blinded winner.
 
 ## Search efficiency and identity
 
@@ -193,7 +200,7 @@ Zstandard performance, or upstream acceptance.
 - [Static candidate source diffs](../marketing/candidates/README.md)
 - [`python-pathspec` case study](2026-08-03-pathspec-deepseek-case-study.md)
 - [Zstandard V19 registered report](2026-08-07-zstandard-gpt-v19-case-study-report.md)
-- [Zstandard V19 Top-10 and fresh-confirmation supplement](2026-08-07-zstandard-gpt-v19-top10-validation-supplement.md)
+- [Zstandard V19 Top-10 validation, fresh-confirmation, and holdout supplement](2026-08-07-zstandard-gpt-v19-top10-validation-supplement.md)
 
 The corresponding machine-readable repository artifacts are
 `reports/zstandard-gpt-v19-evidence.json` and
