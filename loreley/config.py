@@ -1184,69 +1184,8 @@ def _safe_export_worker_payload(settings: Settings, *, mask_secrets: bool) -> di
     }
 
 
-def _build_safe_export_payload(settings: Settings, *, mask_secrets: bool) -> dict[str, Any]:
-    from loreley.core.model_routes import resolve_effective_routes
-
-    task_names = _safe_export_task_names(settings.experiment_id)
+def _safe_export_embedding_payload(settings: Settings) -> dict[str, Any]:
     return {
-        "app_name": settings.app_name,
-        "environment": settings.environment,
-        "log_level": settings.log_level,
-        "profile": settings.profile,
-        "logs_base_dir": settings.logs_base_dir,
-        "loreley_agent_api_token": _safe_export_secret(
-            settings.loreley_agent_api_token,
-            mask_secrets=mask_secrets,
-        ),
-        "loreley_api_write_token": _safe_export_secret(
-            settings.loreley_api_write_token,
-            mask_secrets=mask_secrets,
-        ),
-        "openai_api_spec": settings.openai_api_spec,
-        "openai_base_url": _safe_export_secret(
-            settings.openai_base_url,
-            mask_secrets=mask_secrets,
-        ),
-        "openai_api_key": _safe_export_secret(settings.openai_api_key, mask_secrets=mask_secrets),
-        "openai_dynamic_api_key_provider": settings.openai_dynamic_api_key_provider,
-        "openai_dynamic_api_key_ttl_seconds": settings.openai_dynamic_api_key_ttl_seconds,
-        "openai_dynamic_api_key_refresh_skew_seconds": (
-            settings.openai_dynamic_api_key_refresh_skew_seconds
-        ),
-        "llm_usage_tracking_enabled": settings.llm_usage_tracking_enabled,
-        "llm_usage_pricing_path": settings.llm_usage_pricing_path,
-        "llm_usage_pricing_json_configured": bool(settings.llm_usage_pricing_json),
-        "mapelites_experiment_root_commit": settings.mapelites_experiment_root_commit,
-        "database_dsn": _safe_export_database_dsn(settings, mask_secrets=mask_secrets),
-        "db_scheme": settings.db_scheme,
-        "db_host": settings.db_host,
-        "db_port": settings.db_port,
-        "db_name": settings.db_name,
-        "db_password": _safe_export_secret(settings.db_password, mask_secrets=mask_secrets),
-        "db_pool_size": settings.db_pool_size,
-        "db_max_overflow": settings.db_max_overflow,
-        "db_pool_timeout": settings.db_pool_timeout,
-        "db_echo": settings.db_echo,
-        "db_auto_migrate": settings.db_auto_migrate,
-        "db_migration_lock_timeout_seconds": settings.db_migration_lock_timeout_seconds,
-        "tasks_redis_url": _safe_export_url(settings.tasks_redis_url, mask_secrets=mask_secrets),
-        "tasks_redis_host": settings.tasks_redis_host,
-        "tasks_redis_port": settings.tasks_redis_port,
-        "tasks_redis_db": settings.tasks_redis_db,
-        "tasks_redis_password": _safe_export_secret(
-            settings.tasks_redis_password,
-            mask_secrets=mask_secrets,
-        ),
-        **task_names,
-        "tasks_queue_prefetch": settings.tasks_queue_prefetch,
-        "tasks_delay_queue_prefetch": settings.tasks_delay_queue_prefetch,
-        "tasks_worker_max_retries": settings.tasks_worker_max_retries,
-        "tasks_worker_time_limit_seconds": settings.tasks_worker_time_limit_seconds,
-        "experiment_id": str(settings.experiment_id) if settings.experiment_id else None,
-        "effective_routes": resolve_effective_routes(settings),
-        "scheduler_repo_root": settings.scheduler_repo_root,
-        "scheduler_poll_interval_seconds": settings.scheduler_poll_interval_seconds,
-        **_safe_export_worker_payload(settings, mask_secrets=mask_secrets),
         "mapelites_code_embedding_model": settings.mapelites_code_embedding_model,
         "mapelites_code_embedding_dimensions": settings.mapelites_code_embedding_dimensions,
         "mapelites_code_embedding_provider_only": list(
@@ -1270,7 +1209,14 @@ def _build_safe_export_payload(settings: Settings, *, mask_secrets: bool) -> dic
         "mapelites_repo_state_embedding_max_chunk_chars": (
             settings.mapelites_repo_state_embedding_max_chunk_chars
         ),
-        "mapelites_dimensionality_target_dims": settings.mapelites_dimensionality_target_dims,
+        "mapelites_dimensionality_target_dims": (
+            settings.mapelites_dimensionality_target_dims
+        ),
+    }
+
+
+def _safe_export_search_payload(settings: Settings) -> dict[str, Any]:
+    return {
         "mapelites_archive_cells_per_dim": settings.mapelites_archive_cells_per_dim,
         "mapelites_islands": list(settings.mapelites_islands),
         "mapelites_objectives": resolve_objective_contract(settings).as_payload(),
@@ -1294,6 +1240,11 @@ def _build_safe_export_payload(settings: Settings, *, mask_secrets: bool) -> dic
         ),
         "mapelites_sampler_default_priority": settings.mapelites_sampler_default_priority,
         "mapelites_seed_population_size": settings.mapelites_seed_population_size,
+    }
+
+
+def _safe_export_scheduler_payload(settings: Settings) -> dict[str, Any]:
+    return {
         "scheduler_max_unfinished_jobs": settings.scheduler_max_unfinished_jobs,
         "scheduler_dispatch_batch_size": settings.scheduler_dispatch_batch_size,
         "scheduler_schedule_batch_size": settings.scheduler_schedule_batch_size,
@@ -1311,6 +1262,11 @@ def _build_safe_export_payload(settings: Settings, *, mask_secrets: bool) -> dic
         ),
         "campaign_program_change_policy": settings.campaign_program_change_policy,
         "baseline_bootstrap_policy": settings.baseline_bootstrap_policy,
+    }
+
+
+def _safe_export_repair_payload(settings: Settings) -> dict[str, Any]:
+    return {
         "failed_candidate_repair_enabled": settings.failed_candidate_repair_enabled,
         "failed_candidate_repair_mode": settings.failed_candidate_repair_mode,
         "failed_candidate_repair_max_depth": settings.failed_candidate_repair_max_depth,
@@ -1331,7 +1287,9 @@ def _build_safe_export_payload(settings: Settings, *, mask_secrets: bool) -> dic
         "failed_candidate_repair_agent_feedback_mode": (
             settings.failed_candidate_repair_agent_feedback_mode
         ),
-        "failed_candidate_repair_max_diff_bytes": settings.failed_candidate_repair_max_diff_bytes,
+        "failed_candidate_repair_max_diff_bytes": (
+            settings.failed_candidate_repair_max_diff_bytes
+        ),
         "failed_candidate_repair_max_diagnostic_bytes": (
             settings.failed_candidate_repair_max_diagnostic_bytes
         ),
@@ -1341,6 +1299,86 @@ def _build_safe_export_payload(settings: Settings, *, mask_secrets: bool) -> dic
             settings.worker_evaluator_rework_failure_kinds
         ),
         "worker_evaluator_rework_max_seconds": settings.worker_evaluator_rework_max_seconds,
+    }
+
+
+def _build_safe_export_payload(
+    settings: Settings, *, mask_secrets: bool
+) -> dict[str, Any]:
+    from loreley.core.model_routes import resolve_effective_routes
+
+    task_names = _safe_export_task_names(settings.experiment_id)
+    return {
+        "app_name": settings.app_name,
+        "environment": settings.environment,
+        "log_level": settings.log_level,
+        "profile": settings.profile,
+        "logs_base_dir": settings.logs_base_dir,
+        "loreley_agent_api_token": _safe_export_secret(
+            settings.loreley_agent_api_token,
+            mask_secrets=mask_secrets,
+        ),
+        "loreley_api_write_token": _safe_export_secret(
+            settings.loreley_api_write_token,
+            mask_secrets=mask_secrets,
+        ),
+        "openai_api_spec": settings.openai_api_spec,
+        "openai_base_url": _safe_export_secret(
+            settings.openai_base_url,
+            mask_secrets=mask_secrets,
+        ),
+        "openai_api_key": _safe_export_secret(
+            settings.openai_api_key, mask_secrets=mask_secrets
+        ),
+        "openai_dynamic_api_key_provider": settings.openai_dynamic_api_key_provider,
+        "openai_dynamic_api_key_ttl_seconds": settings.openai_dynamic_api_key_ttl_seconds,
+        "openai_dynamic_api_key_refresh_skew_seconds": (
+            settings.openai_dynamic_api_key_refresh_skew_seconds
+        ),
+        "llm_usage_tracking_enabled": settings.llm_usage_tracking_enabled,
+        "llm_usage_pricing_path": settings.llm_usage_pricing_path,
+        "llm_usage_pricing_json_configured": bool(settings.llm_usage_pricing_json),
+        "mapelites_experiment_root_commit": settings.mapelites_experiment_root_commit,
+        "database_dsn": _safe_export_database_dsn(settings, mask_secrets=mask_secrets),
+        "db_scheme": settings.db_scheme,
+        "db_host": settings.db_host,
+        "db_port": settings.db_port,
+        "db_name": settings.db_name,
+        "db_password": _safe_export_secret(
+            settings.db_password, mask_secrets=mask_secrets
+        ),
+        "db_pool_size": settings.db_pool_size,
+        "db_max_overflow": settings.db_max_overflow,
+        "db_pool_timeout": settings.db_pool_timeout,
+        "db_echo": settings.db_echo,
+        "db_auto_migrate": settings.db_auto_migrate,
+        "db_migration_lock_timeout_seconds": settings.db_migration_lock_timeout_seconds,
+        "tasks_redis_url": _safe_export_url(
+            settings.tasks_redis_url, mask_secrets=mask_secrets
+        ),
+        "tasks_redis_host": settings.tasks_redis_host,
+        "tasks_redis_port": settings.tasks_redis_port,
+        "tasks_redis_db": settings.tasks_redis_db,
+        "tasks_redis_password": _safe_export_secret(
+            settings.tasks_redis_password,
+            mask_secrets=mask_secrets,
+        ),
+        **task_names,
+        "tasks_queue_prefetch": settings.tasks_queue_prefetch,
+        "tasks_delay_queue_prefetch": settings.tasks_delay_queue_prefetch,
+        "tasks_worker_max_retries": settings.tasks_worker_max_retries,
+        "tasks_worker_time_limit_seconds": settings.tasks_worker_time_limit_seconds,
+        "experiment_id": str(settings.experiment_id)
+        if settings.experiment_id
+        else None,
+        "effective_routes": resolve_effective_routes(settings),
+        "scheduler_repo_root": settings.scheduler_repo_root,
+        "scheduler_poll_interval_seconds": settings.scheduler_poll_interval_seconds,
+        **_safe_export_worker_payload(settings, mask_secrets=mask_secrets),
+        **_safe_export_embedding_payload(settings),
+        **_safe_export_search_payload(settings),
+        **_safe_export_scheduler_payload(settings),
+        **_safe_export_repair_payload(settings),
     }
 
 

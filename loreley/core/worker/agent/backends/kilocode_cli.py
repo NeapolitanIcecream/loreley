@@ -341,56 +341,88 @@ def _file_contains_provider_value(path: Path, values: tuple[str, ...]) -> bool:
 def _sanitize_kilo_sqlite(path: Path, values: tuple[str, ...]) -> None:
     """Remove exact provider values from a closed, per-job Kilo database."""
 
-    surfaces = (path, Path(f"{path}-wal"), Path(f"{path}-shm"))
-    if not values or not any(
-        _file_contains_provider_value(surface, values) for surface in surfaces
-    ):
+    surfaces = _kilo_sqlite_surfaces(path)
+    if not values or not _surfaces_contain_provider_value(surfaces, values):
         return
     try:
         with sqlite3.connect(path, timeout=30) as connection:
-            if connection.execute("PRAGMA quick_check").fetchone()[0] != "ok":
-                raise KiloPersistenceSanitizationError(
-                    "Kilo usage database failed quick_check before redaction."
-                )
-            tables = [
-                str(row[0])
-                for row in connection.execute(
-                    "SELECT name FROM sqlite_master WHERE type = 'table'"
-                )
-            ]
-            for table in tables:
-                quoted_table = '"' + table.replace('"', '""') + '"'
-                for column in connection.execute(
-                    f"PRAGMA table_info({quoted_table})"
-                ):
-                    name = str(column[1])
-                    declared_type = str(column[2] or "").upper()
-                    if declared_type not in {"", "JSON", "TEXT"}:
-                        continue
-                    quoted_column = '"' + name.replace('"', '""') + '"'
-                    for value in values:
-                        connection.execute(
-                            f"UPDATE {quoted_table} "
-                            f"SET {quoted_column} = replace({quoted_column}, ?, ?) "
-                            f"WHERE typeof({quoted_column}) = 'text' "
-                            f"AND instr({quoted_column}, ?) > 0",
-                            (value, "[redacted-provider-value]", value),
-                        )
+            _assert_kilo_sqlite_integrity(connection, phase="before")
+            _redact_kilo_sqlite_values(connection, values)
             connection.commit()
             connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             connection.execute("VACUUM")
-            if connection.execute("PRAGMA quick_check").fetchone()[0] != "ok":
-                raise KiloPersistenceSanitizationError(
-                    "Kilo usage database failed quick_check after redaction."
-                )
+            _assert_kilo_sqlite_integrity(connection, phase="after")
     except (OSError, sqlite3.Error) as exc:
         raise KiloPersistenceSanitizationError(
             "Failed to redact exact provider values from the Kilo usage database."
         ) from exc
-    if any(_file_contains_provider_value(surface, values) for surface in surfaces):
+    if _surfaces_contain_provider_value(surfaces, values):
         raise KiloPersistenceSanitizationError(
             "Exact provider values remain in the Kilo usage database after redaction."
         )
+
+
+def _kilo_sqlite_surfaces(path: Path) -> tuple[Path, ...]:
+    return path, Path(f"{path}-wal"), Path(f"{path}-shm")
+
+
+def _surfaces_contain_provider_value(
+    surfaces: tuple[Path, ...],
+    values: tuple[str, ...],
+) -> bool:
+    return any(_file_contains_provider_value(surface, values) for surface in surfaces)
+
+
+def _assert_kilo_sqlite_integrity(
+    connection: sqlite3.Connection,
+    *,
+    phase: str,
+) -> None:
+    if connection.execute("PRAGMA quick_check").fetchone()[0] == "ok":
+        return
+    raise KiloPersistenceSanitizationError(
+        f"Kilo usage database failed quick_check {phase} redaction."
+    )
+
+
+def _quote_sqlite_identifier(value: str) -> str:
+    return '"' + value.replace('"', '""') + '"'
+
+
+def _kilo_sqlite_text_columns(
+    connection: sqlite3.Connection,
+    table: str,
+) -> tuple[str, ...]:
+    quoted_table = _quote_sqlite_identifier(table)
+    columns = connection.execute(f"PRAGMA table_info({quoted_table})")
+    return tuple(
+        str(column[1])
+        for column in columns
+        if str(column[2] or "").upper() in {"", "JSON", "TEXT"}
+    )
+
+
+def _redact_kilo_sqlite_values(
+    connection: sqlite3.Connection,
+    values: tuple[str, ...],
+) -> None:
+    tables = connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    for row in tables:
+        table = str(row[0])
+        quoted_table = _quote_sqlite_identifier(table)
+        for column in _kilo_sqlite_text_columns(connection, table):
+            quoted_column = _quote_sqlite_identifier(column)
+            statement = (
+                f"UPDATE {quoted_table} "
+                f"SET {quoted_column} = replace({quoted_column}, ?, ?) "
+                f"WHERE typeof({quoted_column}) = 'text' "
+                f"AND instr({quoted_column}, ?) > 0"
+            )
+            for value in values:
+                connection.execute(
+                    statement,
+                    (value, "[redacted-provider-value]", value),
+                )
 
 
 @dataclass(slots=True)

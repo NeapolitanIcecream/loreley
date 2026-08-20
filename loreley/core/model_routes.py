@@ -139,36 +139,19 @@ def _resolve_kilo_route(
     )
     base_url = _non_empty(provider_input["base_url"])
     api_spec = provider_input["api_spec"]
-    native_named_provider_override = bool(
-        configured_mode == "native"
-        and _model_provider(model) == "deepseek"
-        and _non_empty(settings.worker_kilocode_openai_base_url)
+    effective_gateway = _kilo_gateway_enabled(
+        settings=settings,
+        model=model,
+        configured_mode=configured_mode,
+        has_provider_config=bool(provider_input["has_provider_config"]),
     )
-    effective_gateway = (
-        configured_mode != "none"
-        and bool(provider_input["has_provider_config"])
-        and (
-            _gateway_compatible_model(model)
-            or native_named_provider_override
-        )
+    effective_mode = _effective_kilo_mode(configured_mode, effective_gateway)
+    provider = _effective_kilo_provider(
+        model=model,
+        api_spec=api_spec,
+        mode=effective_mode,
+        gateway=effective_gateway,
     )
-    effective_mode = configured_mode
-    if configured_mode == "auto":
-        effective_mode = "config" if effective_gateway else "native"
-    provider = _model_provider(model)
-    if effective_gateway and effective_mode in {"config", "legacy_env"}:
-        provider = (
-            "loreley-openai-responses"
-            if api_spec == "responses"
-            else "loreley-openai-compatible"
-        )
-    elif effective_gateway and effective_mode == "native":
-        model_provider = _model_provider(model)
-        provider = (
-            model_provider
-            if model_provider in {"deepseek", "openai"}
-            else "openai"
-        )
     return _KiloRouteResolution(
         mode=effective_mode,
         provider=provider,
@@ -176,6 +159,49 @@ def _resolve_kilo_route(
         base_url=base_url,
         gateway=effective_gateway,
     )
+
+
+def _kilo_gateway_enabled(
+    *,
+    settings: Settings,
+    model: str | None,
+    configured_mode: str,
+    has_provider_config: bool,
+) -> bool:
+    if configured_mode == "none" or not has_provider_config:
+        return False
+    if _gateway_compatible_model(model):
+        return True
+    return bool(
+        configured_mode == "native"
+        and _model_provider(model) == "deepseek"
+        and _non_empty(settings.worker_kilocode_openai_base_url)
+    )
+
+
+def _effective_kilo_mode(configured_mode: str, gateway: bool) -> str:
+    if configured_mode != "auto":
+        return configured_mode
+    return "config" if gateway else "native"
+
+
+def _effective_kilo_provider(
+    *,
+    model: str | None,
+    api_spec: object,
+    mode: str,
+    gateway: bool,
+) -> str:
+    model_provider = _model_provider(model)
+    if not gateway:
+        return model_provider
+    if mode in {"config", "legacy_env"}:
+        if api_spec == "responses":
+            return "loreley-openai-responses"
+        return "loreley-openai-compatible"
+    if mode == "native":
+        return model_provider if model_provider in {"deepseek", "openai"} else "openai"
+    return model_provider
 
 
 def _trajectory_route(settings: Settings) -> dict[str, Any]:
