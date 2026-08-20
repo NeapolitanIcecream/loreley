@@ -1,0 +1,175 @@
+{
+  "schema_version": 1,
+  "record_scope": "Frozen implementation and prompt treatment for the Loreley QD arm in the matched Zstandard experiment. Outcome records and statistical analyses are stored separately.",
+  "source": {
+    "loreley_git_head": "c153c55108a7e0cbbe1113387d0aaf7feb2c7d13",
+    "loreley_source_fingerprint_sha256": "bd3d10964d050ce93a08a9f362832c9ad9c451ef8979cca23aeb771caeff47a5",
+    "formal_manifest_sha256": "4373301d52b784ceacabdad8059b07216404181b27d807f3dbbde03b8e66e507",
+    "implementation_files": [
+      "loreley/config.py",
+      "loreley/core/map_elites/dimension_reduction.py",
+      "loreley/core/map_elites/manager.py",
+      "loreley/core/map_elites/pareto_archive.py",
+      "loreley/core/map_elites/rebuild.py",
+      "loreley/core/map_elites/sampler.py",
+      "loreley/core/worker/planning.py",
+      "loreley/scheduler/ingestion.py",
+      "loreley/scheduler/job_scheduler.py",
+      "tools/method_efficacy_experiment/campaign_task.py",
+      "tools/method_efficacy_experiment/zstd_target.py"
+    ]
+  },
+  "target": {
+    "name": "Zstandard",
+    "upstream_commit": "82d322c4973d9e2968d94047a40892bc6d9a9bdf",
+    "experiment_root_commit": "c604f825b7f7206a4a1a049b4fcfe697d8eba191",
+    "program_text_sha256": "bbc307ada3bdd3778c585a1d9999c23da9b7fdc850723e10198339f6f45d0d4a",
+    "ignore_text_sha256": "352b76c7ae6f78243d06a72915757cd04b29dee0bf6f1ab497c64ad1cf65a14f",
+    "goal": "Improve single-thread Zstandard compression and decompression throughput at levels 1, 3, and 5 while preserving format compatibility, public behavior, compressed size, memory use, upstream tests, portability, and the frozen campaign contract.",
+    "editable_scope": ["lib/*.c", "lib/*.h", "lib/**/*.c", "lib/**/*.h"],
+    "protected_scope": [
+      "programs/**", "tests/**", "build/**", "contrib/**", "examples/**",
+      "doc/**", "educational_decoder/**", "zlibWrapper/**", ".github/**",
+      "Makefile", "lib/Makefile", "lib/libzstd.mk", "loreley.program.md",
+      ".loreleyignore"
+    ],
+    "principal_gates": {
+      "upstream_tests": "make check",
+      "round_trip_and_cross_decode": true,
+      "maximum_compressed_size_ratio_per_cell": 1.001,
+      "maximum_peak_rss_delta_mib": 16,
+      "forbid_split_or_environment_special_cases": true,
+      "evaluation_network_access": false
+    },
+    "task_contract_source": "tools/method_efficacy_experiment/zstd_target.py::PROGRAM_TEXT",
+    "repository_state_ignore_source": "tools/method_efficacy_experiment/zstd_target.py::IGNORE_TEXT"
+  },
+  "agent": {
+    "runtime": "Kilo 7.4.16",
+    "provider_api": "OpenAI Responses",
+    "reasoning_variant": "max",
+    "planning_model": "openai/gpt-5.6-sol",
+    "coding_model": "openai/gpt-5.6-luna",
+    "planning_timeout_seconds": 3600,
+    "coding_timeout_seconds": 5400,
+    "planning_max_attempts": 2,
+    "coding_max_attempts": 2,
+    "job_timeout_seconds": 18000,
+    "response_chunk_inactivity_timeout_seconds": 900,
+    "prompt_context": {
+      "shared": [
+        "frozen goal",
+        "constraints",
+        "acceptance criteria",
+        "worker contract",
+        "iteration and sampler facts"
+      ],
+      "base_commit": [
+        "commit hash",
+        "subject and bounded change summary",
+        "bounded evaluation summary",
+        "up to four selected metrics",
+        "bounded evaluator evidence",
+        "up to eight key files"
+      ],
+      "each_inspiration": [
+        "commit hash",
+        "why-it-matters summary",
+        "bounded distinctive trajectory relative to the base",
+        "bounded evaluation summary",
+        "up to four selected metrics",
+        "bounded evaluator evidence",
+        "up to eight key files"
+      ],
+      "checkout_semantics": "Only the sampled base commit is checked out. Inspirations are supplied as text context; the coding agent edits the complete base repository."
+    },
+    "prompt_bounds": {
+      "default_field_truncation_characters": 2000,
+      "maximum_constraints": 20,
+      "maximum_acceptance_criteria": 20,
+      "constraint_or_criterion_characters": 200,
+      "change_summary_characters": 512,
+      "evaluation_summary_characters": 512,
+      "selected_metrics": 4,
+      "key_files": 8,
+      "trajectory_block_size": 8,
+      "trajectory_max_chunks": 3,
+      "trajectory_max_raw_steps": 6,
+      "trajectory_summary_max_characters": 800,
+      "evaluator_feedback_max_artifacts": 4,
+      "evaluator_feedback_max_diagnostics_per_artifact": 3,
+      "evaluator_feedback_max_characters": 2000
+    },
+    "direct_sampling_parameters": "No temperature, top-p, explicit model context-window, or direct model output-token override is recorded by the frozen planning/coding treatment; provider/runtime behavior is identified by the routes, Responses API, max variant, and Kilo version above."
+  },
+  "online_qd": {
+    "islands": 1,
+    "migration_interval_jobs": 0,
+    "jobs_per_block": 48,
+    "maximum_unfinished_jobs": 4,
+    "scheduling_batch_size": 4,
+    "warmup": {
+      "jobs": 4,
+      "base": "experiment root",
+      "inspirations": 0,
+      "budgeted": true,
+      "history_rule": "Each valid artifact-unique warm-up offspring enters descriptor history; the evaluated root is not a descriptor-history entry.",
+      "initial_archive_rule": "When the fourth eligible state makes the projection fit possible, all eligible warm-up states are projected and considered for ordinary archive admission."
+    },
+    "objectives": [
+      {"name": "compression_lower_95", "direction": "max"},
+      {"name": "decompression_lower_95", "direction": "max"},
+      {"name": "worst_cell_speedup", "direction": "max"}
+    ],
+    "descriptor": {
+      "embedding_model": "text-embedding-3-small",
+      "embedding_dimensions": 1536,
+      "repository_aggregation": "uniform mean of eligible file embeddings",
+      "pca_dimensions": 3,
+      "pca_whiten": true,
+      "pca_random_state": 0,
+      "minimum_fit_samples": 4,
+      "normalization_warmup_samples": 4,
+      "feature_clip": true,
+      "clip_radius_standard_deviations": 3.0,
+      "coordinate_range": [0.0, 1.0],
+      "history_size": 4096,
+      "refit_interval_artifact_unique_states": 4,
+      "refit_alignment": true,
+      "archive_rebuild_source": "records retained immediately before the refit; previously discarded records are not reconsidered"
+    },
+    "archive": {
+      "cells_per_dimension": 4,
+      "grid_cells": 64,
+      "pareto_capacity_per_cell": 8,
+      "objective_epsilon": 0.003,
+      "epsilon_equivalence_rule": "After sorting candidates by commit hash, skip a later candidate when every absolute per-objective difference from a retained representative is at most epsilon.",
+      "epsilon_dominance_rule": "The first vector epsilon-dominates the second when it is at least second minus epsilon on every objective and exceeds second plus epsilon on at least one objective.",
+      "equivalent_representative_rule": "Commit-hash lexicographic order deterministically selects the first retained representative.",
+      "member_overflow_rule": "crowding distance",
+      "base_sampling": "uniform occupied cell, then uniform retained member"
+    },
+    "inspiration_sampler": {
+      "inspirations_per_job": 2,
+      "distance": "Chebyshev distance in archive coordinates",
+      "initial_neighbor_radius": 1,
+      "maximum_neighbor_radius": 3,
+      "fallback_sample_size": 8,
+      "maximum_resample_attempts": 32,
+      "recipe_cooldown_jobs": 64,
+      "without_replacement": true
+    },
+    "batch_semantics": {
+      "snapshot": "All four jobs in a scheduling batch sample from one frozen archive snapshot.",
+      "exclusions": "Within the batch, already selected base commits and complete base-inspiration recipes are excluded when alternatives exist.",
+      "visibility": "A candidate completed during a batch can affect only a later scheduling batch."
+    },
+    "base_sampler_seed": 20260821,
+    "seed_derivation": {
+      "block_base_seed": "arm_seed + 100000 * (block - 1)",
+      "qd_campaign_seed": "block_base_seed",
+      "one_job_control_seed": "block_base_seed + (job_ordinal - 1)"
+    },
+    "block_repetition": "All non-random configured treatment settings were held fixed across paired blocks; the explicit seed derivation above supplied distinct block-specific stochastic states."
+  }
+}

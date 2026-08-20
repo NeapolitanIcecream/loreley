@@ -1,0 +1,694 @@
+{
+  "schema_version": 3,
+  "target": "Zstandard",
+  "source_artifact_sha256": {
+    "formal_manifest": "4373301d52b784ceacabdad8059b07216404181b27d807f3dbbde03b8e66e507",
+    "training_finalists": "bd45538dc77e5366ac1468759fdfaf5f7712cdf10ff80132b81229b768f1840f",
+    "validation_winners": "17ebb091eb6b1bde6cdb2cde61e49bb2379bf790a9da5254d308f9d10d6a7968",
+    "holdout_results": "fafe019287b9ddfd27eedb52c068977f09e6e984fe195ae1f148b9f0bd89baa8",
+    "policy_comparison": "f4eb35be7625dfdc9f06857c9733e11fd50549805906a29f73e3d420dc643a98",
+    "resource_accounting": "d8170d1c19cc93ea0b838ecdf0b7e283aba77312724e17ee90dd5b8a0e3f1680",
+    "stepping_stone_lineages": "8e3b87ffba50f908af64dbf363e55ccbc8b2b62b6205f305da3d43de8657b12c",
+    "top5_posthoc_sensitivity": "6580e2f58a3b2ab6b86ca589b9c6eb176dc22020a8eda1ac2bbe30e349ab31a3",
+    "sanitized_formal_records": "8f32bb89c97ba9a14162150291af4b291c0491bd4b4bb3b4cbec444b6395e7be",
+    "formal_treatment": "0a38ed4ad96a9b0f2ea3c05dd1e8342031254d9220b64eedd59294b23cb70889"
+  },
+  "protocol": {
+    "root_commit": "c604f825b7f7206a4a1a049b4fcfe697d8eba191",
+    "blocks": 7,
+    "arms": [
+      "Independent Root",
+      "Loreley QD",
+      "Sequential Champion"
+    ],
+    "jobs_per_arm_per_block": 48,
+    "total_candidate_jobs": 1008,
+    "successful_jobs": 948,
+    "checkpoints": [
+      8,
+      16,
+      24,
+      32,
+      40,
+      48
+    ],
+    "initialization": "root-only; four QD warm-up jobs count toward each 48-job budget",
+    "host": "Linux ARM64, 128 logical CPUs, 245 GiB RAM",
+    "workloads": "Single-thread compression and decompression at levels 1, 3, and 5 on disjoint generated training, validation, and holdout corpora",
+    "measurement": "12 alternating paired rounds with one-second warm-up and at least three seconds per level; extend to 16 if the frozen precision gate fails; symmetric trim of three log effects per tail",
+    "selection": "At each block, arm, and checkpoint, validate up to ten evaluator-unique training finalists. Root is always eligible with score 1.0. A non-root is eligible only when evaluation passed, compression lower-95 is strictly above 1.0, decompression geomean is at least 0.995, and worst-cell speedup is at least 0.98. Choose the highest score; exact ties prefer root, then fewer diff lines, then commit and evaluator identity. Holdout never changes the winner.",
+    "finalist_width": {
+      "primary": 10,
+      "sensitivity": 5,
+      "timing": "Primary width fixed after search and before validation or holdout outcomes were observed."
+    },
+    "arm_order_by_block": [
+      [
+        "qd",
+        "sequential-champion",
+        "independent-root"
+      ],
+      [
+        "sequential-champion",
+        "independent-root",
+        "qd"
+      ],
+      [
+        "independent-root",
+        "qd",
+        "sequential-champion"
+      ],
+      [
+        "independent-root",
+        "sequential-champion",
+        "qd"
+      ],
+      [
+        "sequential-champion",
+        "qd",
+        "independent-root"
+      ],
+      [
+        "qd",
+        "independent-root",
+        "sequential-champion"
+      ],
+      [
+        "qd",
+        "sequential-champion",
+        "independent-root"
+      ]
+    ],
+    "within_block_launch_delays_seconds": [
+      0,
+      120,
+      240
+    ],
+    "sampler_seeds": {
+      "qd": 20260821,
+      "sequential-champion": 20260822,
+      "independent-root": 20260823
+    },
+    "sampler_seed_derivation": {
+      "block_base_seed": "arm_seed + 100000 * (block - 1)",
+      "qd_campaign_seed": "block_base_seed",
+      "one_job_control_seed": "block_base_seed + (job_ordinal - 1)"
+    },
+    "native_generation_concurrency": {
+      "qd": 4,
+      "sequential-champion": 1,
+      "independent-root": 4
+    },
+    "qd_online_configuration": {
+      "objectives": [
+        "compression_lower_95",
+        "decompression_lower_95",
+        "worst_cell_speedup"
+      ],
+      "embedding_dimensions": 1536,
+      "pca_dimensions": 3,
+      "grid_cells": 64,
+      "pareto_capacity_per_cell": 8,
+      "objective_epsilon": 0.003,
+      "pca_refit_interval": 4,
+      "inspirations_per_job": 2,
+      "islands": 1,
+      "migration_interval_jobs": 0,
+      "embedding_model": "text-embedding-3-small",
+      "repository_embedding_aggregation": "uniform mean of eligible file embeddings",
+      "pca_whiten": true,
+      "pca_random_state": 0,
+      "feature_clip": true,
+      "feature_clip_standard_deviations": 3.0,
+      "coordinate_range": [
+        0.0,
+        1.0
+      ],
+      "pca_min_fit_samples": 4,
+      "pca_history_size": 4096,
+      "pca_refit_alignment": true,
+      "archive_rebuild_source": "records retained immediately before refit",
+      "sampler_neighbor_radius": 1,
+      "sampler_neighbor_max_radius": 3,
+      "sampler_fallback_sample_size": 8,
+      "sampler_max_resample_attempts": 32,
+      "sampler_recipe_cooldown_jobs": 64,
+      "scheduling_batch_size": 4,
+      "same_batch_snapshot": true
+    },
+    "primary_estimand": "Paired log holdout compression-throughput ratio at 48 jobs",
+    "comparison_axis": "equal physical candidate jobs"
+  },
+  "primary_contrasts": [
+    {
+      "control": "Sequential Champion",
+      "qd_over_control_ratio": 0.998654,
+      "percent_effect": -0.1346,
+      "mean_log_bca_95": [
+        -0.00558,
+        0.001612
+      ],
+      "exact_p": 0.546875,
+      "holm_p": 0.546875,
+      "qd_block_wins": 3
+    },
+    {
+      "control": "Independent Root",
+      "qd_over_control_ratio": 1.003204,
+      "percent_effect": 0.3204,
+      "mean_log_bca_95": [
+        -0.000819,
+        0.006841
+      ],
+      "exact_p": 0.1875,
+      "holm_p": 0.375,
+      "qd_block_wins": 5
+    }
+  ],
+  "secondary_analyses": {
+    "status": "Post-hoc sensitivities; none replaces or enlarges the frozen two-contrast primary family.",
+    "original_top5_width": {
+      "endpoint_outputs_changed": 8,
+      "different_candidate_selected": 6,
+      "root_fallbacks_after_no_passing_finalist": 2,
+      "new_fixed_candidate_holdout_measurements": 5,
+      "contrasts": [
+        {
+          "control": "Sequential Champion",
+          "percent_effect": -0.135378,
+          "mean_log_bca_95": [
+            -0.0055431,
+            0.00159662
+          ],
+          "percent_bca_95": [
+            -0.552776,
+            0.159789
+          ],
+          "exact_p": 0.5625,
+          "holm_p": 1.0,
+          "qd_block_wins": 3
+        },
+        {
+          "control": "Independent Root",
+          "percent_effect": 0.222902,
+          "mean_log_bca_95": [
+            -0.00505319,
+            0.00654576
+          ],
+          "percent_bca_95": [
+            -0.504045,
+            0.656723
+          ],
+          "exact_p": 0.515625,
+          "holm_p": 1.0,
+          "qd_block_wins": 5
+        }
+      ]
+    },
+    "leave_one_block_out_percent_effect_range": {
+      "QD vs Sequential Champion": [
+        -0.226168,
+        0.020167
+      ],
+      "QD vs Independent Root": [
+        0.182428,
+        0.471845
+      ]
+    },
+    "exploratory_sequential_vs_independent_compression": {
+      "percent_effect": 0.455637,
+      "mean_log_bca_95": [
+        -8.857e-05,
+        0.00849539
+      ],
+      "percent_bca_95": [
+        -0.008857,
+        0.853158
+      ],
+      "exact_p_unadjusted": 0.125,
+      "sequential_block_wins": 6
+    },
+    "combined_throughput": [
+      {
+        "control": "Sequential Champion",
+        "percent_effect": -0.531172,
+        "percent_bca_95": [
+          -2.406595,
+          0.162809
+        ],
+        "exact_p_unadjusted": 0.71875,
+        "qd_block_wins": 3
+      },
+      {
+        "control": "Independent Root",
+        "percent_effect": 0.366507,
+        "percent_bca_95": [
+          0.128388,
+          0.55164
+        ],
+        "exact_p_unadjusted": 0.046875,
+        "qd_block_wins": 6
+      }
+    ],
+    "decompression_throughput": [
+      {
+        "control": "Sequential Champion",
+        "percent_effect": -0.926172,
+        "percent_bca_95": [
+          -4.187135,
+          0.323613
+        ],
+        "exact_p_unadjusted": 0.703125,
+        "qd_block_wins": 4
+      },
+      {
+        "control": "Independent Root",
+        "percent_effect": 0.412608,
+        "percent_bca_95": [
+          0.08394,
+          0.700449
+        ],
+        "exact_p_unadjusted": 0.078125,
+        "qd_block_wins": 5
+      }
+    ]
+  },
+  "checkpoint_summaries": [
+    {
+      "jobs": 8,
+      "independent": {
+        "median_ratio": 1.001509,
+        "useful_blocks": 2
+      },
+      "qd": {
+        "median_ratio": 1.006809,
+        "useful_blocks": 4
+      },
+      "sequential": {
+        "median_ratio": 1.002724,
+        "useful_blocks": 1
+      }
+    },
+    {
+      "jobs": 16,
+      "independent": {
+        "median_ratio": 1.004115,
+        "useful_blocks": 3
+      },
+      "qd": {
+        "median_ratio": 1.006809,
+        "useful_blocks": 4
+      },
+      "sequential": {
+        "median_ratio": 1.002216,
+        "useful_blocks": 2
+      }
+    },
+    {
+      "jobs": 24,
+      "independent": {
+        "median_ratio": 1.005476,
+        "useful_blocks": 4
+      },
+      "qd": {
+        "median_ratio": 1.004619,
+        "useful_blocks": 3
+      },
+      "sequential": {
+        "median_ratio": 1.006899,
+        "useful_blocks": 4
+      }
+    },
+    {
+      "jobs": 32,
+      "independent": {
+        "median_ratio": 1.005476,
+        "useful_blocks": 4
+      },
+      "qd": {
+        "median_ratio": 1.00712,
+        "useful_blocks": 5
+      },
+      "sequential": {
+        "median_ratio": 1.006899,
+        "useful_blocks": 4
+      }
+    },
+    {
+      "jobs": 40,
+      "independent": {
+        "median_ratio": 1.004462,
+        "useful_blocks": 3
+      },
+      "qd": {
+        "median_ratio": 1.006809,
+        "useful_blocks": 4
+      },
+      "sequential": {
+        "median_ratio": 1.008191,
+        "useful_blocks": 6
+      }
+    },
+    {
+      "jobs": 48,
+      "independent": {
+        "median_ratio": 1.004115,
+        "useful_blocks": 2
+      },
+      "qd": {
+        "median_ratio": 1.007394,
+        "useful_blocks": 6
+      },
+      "sequential": {
+        "median_ratio": 1.008191,
+        "useful_blocks": 7
+      }
+    }
+  ],
+  "final_checkpoint": {
+    "useful_threshold": 1.005,
+    "arm_summaries": {
+      "Independent Root": {
+        "mean_ratio": 1.005021,
+        "median_ratio": 1.004115,
+        "min_ratio": 1.00195,
+        "max_ratio": 1.013305,
+        "useful_blocks": 2
+      },
+      "Loreley QD": {
+        "mean_ratio": 1.008243,
+        "median_ratio": 1.007394,
+        "min_ratio": 1.00062,
+        "max_ratio": 1.013904,
+        "useful_blocks": 6
+      },
+      "Sequential Champion": {
+        "mean_ratio": 1.009602,
+        "median_ratio": 1.008191,
+        "min_ratio": 1.005144,
+        "max_ratio": 1.017891,
+        "useful_blocks": 7
+      }
+    },
+    "blocks": [
+      {
+        "block": 1,
+        "independent": 1.002353,
+        "qd": 1.013904,
+        "sequential": 1.010187
+      },
+      {
+        "block": 2,
+        "independent": 1.013305,
+        "qd": 1.007394,
+        "sequential": 1.007053
+      },
+      {
+        "block": 3,
+        "independent": 1.00195,
+        "qd": 1.00062,
+        "sequential": 1.005144
+      },
+      {
+        "block": 4,
+        "independent": 1.004462,
+        "qd": 1.009463,
+        "sequential": 1.011845
+      },
+      {
+        "block": 5,
+        "independent": 1.005476,
+        "qd": 1.012391,
+        "sequential": 1.008191
+      },
+      {
+        "block": 6,
+        "independent": 1.003486,
+        "qd": 1.00712,
+        "sequential": 1.017891
+      },
+      {
+        "block": 7,
+        "independent": 1.004115,
+        "qd": 1.006809,
+        "sequential": 1.006899
+      }
+    ]
+  },
+  "secondary_endpoint_blocks": [
+    {
+      "block": 1,
+      "decompression": {
+        "independent": 1.0000499,
+        "qd": 0.998288274,
+        "sequential": 1.005820316
+      },
+      "combined": {
+        "independent": 1.00120062,
+        "qd": 1.006065806,
+        "sequential": 1.008001376
+      }
+    },
+    {
+      "block": 2,
+      "decompression": {
+        "independent": 0.999648869,
+        "qd": 1.00736796,
+        "sequential": 0.997071515
+      },
+      "combined": {
+        "independent": 1.006453673,
+        "qd": 1.007381039,
+        "sequential": 1.002049869
+      }
+    },
+    {
+      "block": 3,
+      "decompression": {
+        "independent": 0.99917135,
+        "qd": 0.997745311,
+        "sequential": 0.994559625
+      },
+      "combined": {
+        "independent": 1.000559902,
+        "qd": 0.999181714,
+        "sequential": 0.999838033
+      }
+    },
+    {
+      "block": 4,
+      "decompression": {
+        "independent": 0.999636331,
+        "qd": 1.002529018,
+        "sequential": 0.99533744
+      },
+      "combined": {
+        "independent": 1.002046026,
+        "qd": 1.005989801,
+        "sequential": 1.003557309
+      }
+    },
+    {
+      "block": 5,
+      "decompression": {
+        "independent": 0.992164002,
+        "qd": 0.999827518,
+        "sequential": 0.99944743
+      },
+      "combined": {
+        "independent": 0.998798056,
+        "qd": 1.006089532,
+        "sequential": 1.003809547
+      }
+    },
+    {
+      "block": 6,
+      "decompression": {
+        "independent": 0.993218198,
+        "qd": 1.002585524,
+        "sequential": 1.079024795
+      },
+      "combined": {
+        "independent": 0.998338671,
+        "qd": 1.004850402,
+        "sequential": 1.048012416
+      }
+    },
+    {
+      "block": 7,
+      "decompression": {
+        "independent": 0.99783875,
+        "qd": 1.002190125,
+        "sequential": 1.007408303
+      },
+      "combined": {
+        "independent": 1.000972096,
+        "qd": 1.004496936,
+        "sequential": 1.007153869
+      }
+    }
+  ],
+  "qd_mechanism": {
+    "final_winners_non_root": 7,
+    "final_winners_with_retained_nonchampion_primary_parent_ancestor": 4,
+    "final_winner_parent_or_inspiration_graphs_with_retained_nonchampion": 6,
+    "final_winner_primary_depth_per_block": [
+      4,
+      7,
+      1,
+      6,
+      2,
+      3,
+      2
+    ],
+    "winner_lineage_nodes": 67,
+    "nonchampion_nodes_later_used": 49,
+    "nonchampion_node_use_by_edge_kind": {
+      "parent_only": 13,
+      "inspiration_only": 18,
+      "both": 18,
+      "later_used_as_parent_total": 31,
+      "later_supplied_as_inspiration_total": 36
+    },
+    "offline_dump_audit": {
+      "successful_candidates": 313,
+      "distinct_primary_parents_per_block": [
+        20,
+        23,
+        15,
+        23,
+        20,
+        18,
+        23
+      ],
+      "effective_primary_parents_per_block": [
+        15.612,
+        19.276,
+        12.579,
+        20.171,
+        17.061,
+        14.84,
+        17.806
+      ],
+      "median_parent_revisit_lag_jobs_per_block": [
+        5.5,
+        5.5,
+        4.0,
+        6.0,
+        9.5,
+        6.0,
+        5.0
+      ],
+      "maximum_generation_per_block": [
+        8,
+        9,
+        5,
+        7,
+        6,
+        7,
+        7
+      ],
+      "final_archive_entries_per_block": [
+        12,
+        13,
+        11,
+        14,
+        17,
+        14,
+        16
+      ],
+      "final_occupied_cells_per_block": [
+        11,
+        11,
+        9,
+        10,
+        10,
+        12,
+        10
+      ],
+      "grid_cells": 64,
+      "interpretation": "Observational mechanism diagnostics reconstructed from frozen QD records; primary-parent ancestry is distinct from parent-or-inspiration dependency. Inspiration means context supplied, not demonstrated causal use. This is not a randomized descriptor or archive ablation."
+    },
+    "classification_rule": "A candidate is non-incumbent at admission when its training compression lower bound is strictly below the maximum of the root score 1.0 and all earlier scores in the observed QD candidate stream; ties are not classified as non-incumbent.",
+    "counterfactual_boundary": "The one-incumbent label is applied retrospectively to the observed QD stream. It does not identify the candidates an actually run Sequential Champion arm would have generated.",
+    "delayed_primary_branch_analysis": {
+      "status": "post-hoc within-policy observational diagnostic; no new model calls",
+      "primary_lineages_with_nonincumbent_ancestor": 4,
+      "nonincumbent_primary_ancestors": 15,
+      "logical_job_ordinal_gap_range": [
+        3,
+        42
+      ],
+      "ancestors_whose_final_descendant_exceeded_admission_incumbent": 7,
+      "lineages_with_at_least_one_such_ancestor": 3,
+      "lineages_examined": 4,
+      "interpretation": "Shows delayed branch retention and a later higher-scoring descendant in some observed lineages; it does not estimate causal benefit or the best possible descendant of a branch."
+    },
+    "interpretation": "Archive retention and later sampling were observed, satisfying a mechanism-engagement condition. Inspiration records show context supplied, not causal use. Only the matched endpoint comparison tests comparative policy efficacy."
+  },
+  "best_validation_selected_holdout_candidates": [
+    {
+      "arm": "Sequential Champion",
+      "ratio": 1.017891,
+      "lower_95": 1.014599,
+      "decompression_ratio": 1.079025,
+      "overall_ratio": 1.048012,
+      "block": 6,
+      "job": 36,
+      "generation": 5,
+      "commit": "5a140a1"
+    },
+    {
+      "arm": "Loreley QD",
+      "ratio": 1.013904,
+      "lower_95": 1.011282,
+      "decompression_ratio": 0.998288,
+      "overall_ratio": 1.006066,
+      "block": 1,
+      "job": 38,
+      "generation": 4,
+      "commit": "1875c93"
+    },
+    {
+      "arm": "Independent Root",
+      "ratio": 1.013305,
+      "lower_95": 1.011413,
+      "decompression_ratio": 0.999649,
+      "overall_ratio": 1.006454,
+      "block": 2,
+      "job": 19,
+      "generation": 1,
+      "commit": "a0eb389"
+    }
+  ],
+  "resources": {
+    "Independent Root": {
+      "jobs": 336,
+      "unsuccessful": 20,
+      "model_usage_events": 661,
+      "evaluator_executions": 319,
+      "generation_usd": 185.296029,
+      "embedding_usd": 0.0,
+      "worker_wave_hours": 92.246
+    },
+    "Loreley QD": {
+      "jobs": 336,
+      "unsuccessful": 23,
+      "model_usage_events": 1743,
+      "evaluator_executions": 319,
+      "generation_usd": 139.825052,
+      "embedding_usd": 0.222962,
+      "worker_wave_hours": 32.004
+    },
+    "Sequential Champion": {
+      "jobs": 336,
+      "unsuccessful": 17,
+      "model_usage_events": 665,
+      "evaluator_executions": 321,
+      "generation_usd": 192.543682,
+      "embedding_usd": 0.0,
+      "worker_wave_hours": 85.675
+    },
+    "total_attributable_usd": 517.887725
+  }
+}

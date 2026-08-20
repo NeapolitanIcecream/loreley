@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "definition": "The upstream revision is the unmodified project commit. The experiment root is its direct child after adding frozen Loreley campaign-control files; candidate ancestry begins at the experiment root.",
+  "campaigns": {
+    "markdown-it-py": {
+      "upstream_revision": "bff75edcd7e6ce68f417803361d6e9f1223ad373",
+      "experiment_root": "97aff4f564e02e24f8526d9e2cd7899c47f714a6",
+      "relation": "experiment_root_direct_parent_is_upstream_revision",
+      "experiment_root_subject": "chore: add frozen Loreley experiment contract",
+      "control_files_added": [
+        ".loreleyignore",
+        "loreley.program.md"
+      ],
+      "metadata": {
+        "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/run-marker.json",
+        "sha256": "6564ca98c6f7bca6340a141a6ae93c70bd92b20e970b941377904806eb6e5af0",
+        "experiment_root_json_pointer": "/root_commit"
+      },
+      "git_object_store": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/target.git"
+    },
+    "python-pathspec": {
+      "upstream_revision": "6568072c2703c72796cd02467feb924540157c92",
+      "experiment_root": "4fb992fd44087d7e9f44e71485475ff9d41a79f1",
+      "relation": "experiment_root_direct_parent_is_upstream_revision",
+      "experiment_root_subject": "Add frozen Loreley campaign contract",
+      "control_files_added": [
+        ".loreleyignore",
+        "loreley.program.md"
+      ],
+      "metadata": {
+        "path": "output/pathspec-deepseek-20260803-v1/campaign/run-marker.json",
+        "sha256": "7c81eced77ffaaec5fdddd44793d68d6180496993b137bebe791b519055b9a74",
+        "experiment_root_json_pointer": "/root_commit"
+      },
+      "git_object_store": "output/pathspec-deepseek-20260803-v1/campaign/target.git"
+    },
+    "zstandard-v19": {
+      "upstream_revision": "82d322c4973d9e2968d94047a40892bc6d9a9bdf",
+      "experiment_root": "5b3fe474e4df572a7588be7abf3d8b6bd4b6010e",
+      "relation": "experiment_root_direct_parent_is_upstream_revision",
+      "experiment_root_subject": "Add Loreley zstandard campaign contract",
+      "control_files_added": [
+        ".loreleyignore",
+        "loreley.program.md"
+      ],
+      "metadata": {
+        "path": "output/zstandard-reliable-qd-gpt-20260806-v19/preregistration.json",
+        "sha256": "9af2150a6bfaa8c4f51f2cb30b585ec9d44be24df7075c7bf2c64b41acc7fa21",
+        "upstream_revision_json_pointer": "/root/upstream_commit",
+        "experiment_root_json_pointer": "/root/experiment_commit"
+      },
+      "git_object_store": "output/zstandard-reliable-qd-gpt-20260806-v19/campaign/target.git"
+    }
+  }
+}

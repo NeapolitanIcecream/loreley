@@ -1,0 +1,1251 @@
+{
+  "schema_version": 1,
+  "cost_semantics": {
+    "paper_value": "Sum of proxy calculated_cost_usd fields under the recorded pricing version; an estimate, not a provider invoice.",
+    "provider_billed_cost_available": false,
+    "pathspec_legacy_field": "The legacy final-report observed_cost_usd includes resource-ledger fallback reservations and is not an observed bill or the paper value."
+  },
+  "campaigns": {
+    "markdown-it-py": {
+      "experiment": "mdit-v18-deepseek-seeded-qd",
+      "canonical_source": "campaign/jobs/*/proxy-events.jsonl",
+      "aggregate": {
+        "event_files": 56,
+        "records": 3792,
+        "status_counts": {
+          "completed": 3792
+        },
+        "observed_tokens": 215349501,
+        "calculated_cost_usd": "2.0833022056",
+        "pricing_version_counts": {
+          "deepseek-public-2026-08-02": 3792
+        },
+        "provider_cost_claim_status_counts": {
+          "absent": 3792
+        },
+        "provider_cost_rows": 0
+      },
+      "legacy_report": {
+        "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/report/final-report.json",
+        "sha256": "cfed9992f18da0289383ff56e72bd9922c86e219093ccc4e236a02539644097a",
+        "observed_cost_usd": 2.08330223,
+        "canonical_for_paper_cost": false
+      },
+      "files": [
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/009/proxy-events.jsonl",
+          "sha256": "e641557e5eb83e83c7f7cac4917c6d44d10ddbae3f73fb652276baa84e1f3143",
+          "records": 31,
+          "status_counts": {
+            "completed": 31
+          },
+          "observed_tokens": 699753,
+          "calculated_cost_usd": "0.0117446840"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/010/proxy-events.jsonl",
+          "sha256": "0423bfd6c55b179e5813ab0fcc2d52cdc8142ae84167b2a1bedefed7b3ae89da",
+          "records": 59,
+          "status_counts": {
+            "completed": 59
+          },
+          "observed_tokens": 2036866,
+          "calculated_cost_usd": "0.0263559632"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/011/proxy-events.jsonl",
+          "sha256": "36d68d33c7a1c6c0125a6db2ca716e25051088cfd31cd5b0263b2b36f929b1bb",
+          "records": 37,
+          "status_counts": {
+            "completed": 37
+          },
+          "observed_tokens": 1107639,
+          "calculated_cost_usd": "0.0186441024"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/012/proxy-events.jsonl",
+          "sha256": "87c03ebf359a1608fa35cf8ed9dde679f237f75217f172162ca21f0dc7a3cc81",
+          "records": 90,
+          "status_counts": {
+            "completed": 90
+          },
+          "observed_tokens": 4473730,
+          "calculated_cost_usd": "0.0412095992"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/013/proxy-events.jsonl",
+          "sha256": "2f291618896b423009f3f00e4dcdd07c6b4dcf65c38f91bd724da009c672f1d6",
+          "records": 44,
+          "status_counts": {
+            "completed": 44
+          },
+          "observed_tokens": 1892412,
+          "calculated_cost_usd": "0.0297056928"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/014/proxy-events.jsonl",
+          "sha256": "f88fa0c9a26d2febbf28633476ca11d2bb025c8cd8bc08dc02a357769a616b65",
+          "records": 104,
+          "status_counts": {
+            "completed": 104
+          },
+          "observed_tokens": 6505081,
+          "calculated_cost_usd": "0.0581710472"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/015/proxy-events.jsonl",
+          "sha256": "6eb4929db431f8e79358f65bf0bee7360e1ba8c593ec4397a46393fda7a8cf44",
+          "records": 70,
+          "status_counts": {
+            "completed": 70
+          },
+          "observed_tokens": 2943104,
+          "calculated_cost_usd": "0.0331630992"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/016/proxy-events.jsonl",
+          "sha256": "238dfa8a673cf3f4189aef9da6a14a385535222478c38d06eb59ff813d771619",
+          "records": 74,
+          "status_counts": {
+            "completed": 74
+          },
+          "observed_tokens": 3557955,
+          "calculated_cost_usd": "0.0334601792"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/017/proxy-events.jsonl",
+          "sha256": "1c766371b11cd410579efebd5dbb81170421d94af6cb92397274269a26fd943f",
+          "records": 49,
+          "status_counts": {
+            "completed": 49
+          },
+          "observed_tokens": 2535733,
+          "calculated_cost_usd": "0.0309756440"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/018/proxy-events.jsonl",
+          "sha256": "51efb6f5157885097215891c4c2ea11590dd2892cc7e682858257b4eda879a7c",
+          "records": 42,
+          "status_counts": {
+            "completed": 42
+          },
+          "observed_tokens": 1328189,
+          "calculated_cost_usd": "0.0203201208"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/019/proxy-events.jsonl",
+          "sha256": "581abac3781a5aeab8067482b5d0ff9c5568c968e032d5806bbe9e9979c63652",
+          "records": 17,
+          "status_counts": {
+            "completed": 17
+          },
+          "observed_tokens": 380165,
+          "calculated_cost_usd": "0.0119402696"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/020/proxy-events.jsonl",
+          "sha256": "56741e4e1e546a606a844ac536a2dbb1cfe0b3f06d3adbf0d94e3a93be46a0ac",
+          "records": 120,
+          "status_counts": {
+            "completed": 120
+          },
+          "observed_tokens": 8894491,
+          "calculated_cost_usd": "0.0612321360"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/021/proxy-events.jsonl",
+          "sha256": "3c48810bd33e3e73656a0a886c3277a37f47a4ddca54017b0a6e5c198b45101e",
+          "records": 28,
+          "status_counts": {
+            "completed": 28
+          },
+          "observed_tokens": 868242,
+          "calculated_cost_usd": "0.0159665184"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/022/proxy-events.jsonl",
+          "sha256": "c738fd28e63ccc967bc02779e308347f12b907c59d6d6238cfdb1a2c3156433a",
+          "records": 28,
+          "status_counts": {
+            "completed": 28
+          },
+          "observed_tokens": 928077,
+          "calculated_cost_usd": "0.0172070472"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/023/proxy-events.jsonl",
+          "sha256": "cbe916c4e1f76fabb49ae25842f259c8f6adf6ce0ad74488d20f350a1c2064f4",
+          "records": 29,
+          "status_counts": {
+            "completed": 29
+          },
+          "observed_tokens": 1003522,
+          "calculated_cost_usd": "0.0253761760"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/024/proxy-events.jsonl",
+          "sha256": "9747ed8f13f41d7245c63fad0780fdae53da1a43d416dda40ddf76ce80446014",
+          "records": 57,
+          "status_counts": {
+            "completed": 57
+          },
+          "observed_tokens": 2571260,
+          "calculated_cost_usd": "0.0264452608"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/025/proxy-events.jsonl",
+          "sha256": "891cd402c7020fd871c5c163a87facee6c14cfa0184ea178f364fcd8f2f80c67",
+          "records": 85,
+          "status_counts": {
+            "completed": 85
+          },
+          "observed_tokens": 4306573,
+          "calculated_cost_usd": "0.0456141728"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/026/proxy-events.jsonl",
+          "sha256": "87200afdee1b4cf4c204ed211813ff03d119193078f353739e80f0dcfc17b450",
+          "records": 46,
+          "status_counts": {
+            "completed": 46
+          },
+          "observed_tokens": 1367410,
+          "calculated_cost_usd": "0.0207136776"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/027/proxy-events.jsonl",
+          "sha256": "fddcfedc80ce9b40ed29f32239c327b63452b6911e18f67b8e8ec948741b8cd1",
+          "records": 54,
+          "status_counts": {
+            "completed": 54
+          },
+          "observed_tokens": 2461531,
+          "calculated_cost_usd": "0.0292842592"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/028/proxy-events.jsonl",
+          "sha256": "a65cac21c206ff2a6511883a1594be439cbd6e3ec2013a7cf1c4221395208a96",
+          "records": 118,
+          "status_counts": {
+            "completed": 118
+          },
+          "observed_tokens": 12151022,
+          "calculated_cost_usd": "0.0986076392"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/029/proxy-events.jsonl",
+          "sha256": "fb580224f92e0f780bca4c8b8307c7bd15b8c9d91c8c0b65f442c8bffa81d584",
+          "records": 84,
+          "status_counts": {
+            "completed": 84
+          },
+          "observed_tokens": 4282278,
+          "calculated_cost_usd": "0.0388052224"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/030/proxy-events.jsonl",
+          "sha256": "460fba12a16f9fcbbe4dc5e873a169ba8fa381b112da5cacb1d2086c21e74501",
+          "records": 57,
+          "status_counts": {
+            "completed": 57
+          },
+          "observed_tokens": 1770088,
+          "calculated_cost_usd": "0.0221285120"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/031/proxy-events.jsonl",
+          "sha256": "46b89e8da860d1c40eba10a98a003d20bb4a5e731dbdd722c668fe652c618673",
+          "records": 41,
+          "status_counts": {
+            "completed": 41
+          },
+          "observed_tokens": 1319352,
+          "calculated_cost_usd": "0.0194389384"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/032/proxy-events.jsonl",
+          "sha256": "143a3620931ea397505ed054c55129c3b74a258be2e7c2c4d92c167f09b01a61",
+          "records": 67,
+          "status_counts": {
+            "completed": 67
+          },
+          "observed_tokens": 3993410,
+          "calculated_cost_usd": "0.0397506928"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/033/proxy-events.jsonl",
+          "sha256": "ffa706b17a27c9445f74d347f6cbf67db190b143a64c7938d3a453fd07855a45",
+          "records": 29,
+          "status_counts": {
+            "completed": 29
+          },
+          "observed_tokens": 756168,
+          "calculated_cost_usd": "0.0136348912"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/034/proxy-events.jsonl",
+          "sha256": "6ad0a6b1dd20ac371960f83da546d03406514357ae63414197aeeb662fb11410",
+          "records": 37,
+          "status_counts": {
+            "completed": 37
+          },
+          "observed_tokens": 1925316,
+          "calculated_cost_usd": "0.0382114936"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/035/proxy-events.jsonl",
+          "sha256": "2cc9e9ffd0b3cbfa109c1454e76c97dafc3fe08b5a83700250d64afa72801099",
+          "records": 128,
+          "status_counts": {
+            "completed": 128
+          },
+          "observed_tokens": 9105205,
+          "calculated_cost_usd": "0.0702178736"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/036/proxy-events.jsonl",
+          "sha256": "98fae91c4b8d827afb0e97a191e539f73bc05b4dd4b6ec4de0193742d3893657",
+          "records": 39,
+          "status_counts": {
+            "completed": 39
+          },
+          "observed_tokens": 1255382,
+          "calculated_cost_usd": "0.0193456704"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/037/proxy-events.jsonl",
+          "sha256": "e6de4e054b7a01683fc60572bba126b7f0e986a472c10bc908b9710b92c711e6",
+          "records": 106,
+          "status_counts": {
+            "completed": 106
+          },
+          "observed_tokens": 7216417,
+          "calculated_cost_usd": "0.0580851208"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/038/proxy-events.jsonl",
+          "sha256": "1d0f3d2832a195f9675b71bfb1efcd108ff984eca09ee0ab8339a086f768ac33",
+          "records": 128,
+          "status_counts": {
+            "completed": 128
+          },
+          "observed_tokens": 11104113,
+          "calculated_cost_usd": "0.0714011760"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/039/proxy-events.jsonl",
+          "sha256": "461207daf5560136c057d446bbaaba7a2b8fb8528e4b18488125d5b6ff0afc97",
+          "records": 62,
+          "status_counts": {
+            "completed": 62
+          },
+          "observed_tokens": 2453356,
+          "calculated_cost_usd": "0.0274998920"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/040/proxy-events.jsonl",
+          "sha256": "5a50c617bb2d43ce952d22e5dda1d5277b9a13f899592a88d8205155cf2f6c42",
+          "records": 128,
+          "status_counts": {
+            "completed": 128
+          },
+          "observed_tokens": 12463890,
+          "calculated_cost_usd": "0.0755518288"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/041/proxy-events.jsonl",
+          "sha256": "401b12b7657d06451da725f894637c5b0a611064c00da364dbde2a915a950663",
+          "records": 41,
+          "status_counts": {
+            "completed": 41
+          },
+          "observed_tokens": 1617389,
+          "calculated_cost_usd": "0.0265111168"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/042/proxy-events.jsonl",
+          "sha256": "07579109e63542d279bd49fc86c6861baea3c35da1dbe92a2ba4d7741b336d83",
+          "records": 103,
+          "status_counts": {
+            "completed": 103
+          },
+          "observed_tokens": 5576254,
+          "calculated_cost_usd": "0.0463858584"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/043/proxy-events.jsonl",
+          "sha256": "1379aaf36ace07b0f1677803012124fea9ee034ef09774f7e89233fbfa751072",
+          "records": 54,
+          "status_counts": {
+            "completed": 54
+          },
+          "observed_tokens": 1690401,
+          "calculated_cost_usd": "0.0217478464"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/044/proxy-events.jsonl",
+          "sha256": "46178a5787e64ad34de6df9d7b8fccc7d3318a368967571bad99a73cd167cff9",
+          "records": 86,
+          "status_counts": {
+            "completed": 86
+          },
+          "observed_tokens": 5946762,
+          "calculated_cost_usd": "0.0504118664"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/045/proxy-events.jsonl",
+          "sha256": "057116021f4199025232dd2d0ef7111b5726dfe4db72bf606e4d76d5f82342b7",
+          "records": 39,
+          "status_counts": {
+            "completed": 39
+          },
+          "observed_tokens": 1284023,
+          "calculated_cost_usd": "0.0202433672"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/046/proxy-events.jsonl",
+          "sha256": "1482ab80a373fa010b87bc9a1a9116556c1e3d5c4b0822b9eac214640e6a1721",
+          "records": 38,
+          "status_counts": {
+            "completed": 38
+          },
+          "observed_tokens": 960660,
+          "calculated_cost_usd": "0.0149803696"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/047/proxy-events.jsonl",
+          "sha256": "33de6cbb895a622bf5c17affbb28022eb6aae92d4bd52be7348a672ac868d9cd",
+          "records": 63,
+          "status_counts": {
+            "completed": 63
+          },
+          "observed_tokens": 2846667,
+          "calculated_cost_usd": "0.0292841976"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/048/proxy-events.jsonl",
+          "sha256": "5d4328fb0ecc41e49b7176ab55aed59e6b2ad978d3e66aa4ea969205e53f9a5d",
+          "records": 97,
+          "status_counts": {
+            "completed": 97
+          },
+          "observed_tokens": 6025281,
+          "calculated_cost_usd": "0.0462085792"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/049/proxy-events.jsonl",
+          "sha256": "856c8103fe361e7189787e80570e915fa428bb99bc3a1657d9577c74081d37dc",
+          "records": 25,
+          "status_counts": {
+            "completed": 25
+          },
+          "observed_tokens": 860876,
+          "calculated_cost_usd": "0.0206739400"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/050/proxy-events.jsonl",
+          "sha256": "55f1542fda921c0507582f21391ab11d892c03ad32202d2115ce94ec625485ec",
+          "records": 102,
+          "status_counts": {
+            "completed": 102
+          },
+          "observed_tokens": 6809372,
+          "calculated_cost_usd": "0.0591000648"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/051/proxy-events.jsonl",
+          "sha256": "afd030a33371b36e1f097e7e8c24d71d8dff5018c45fe1c01a587ca2b82b802a",
+          "records": 44,
+          "status_counts": {
+            "completed": 44
+          },
+          "observed_tokens": 1659694,
+          "calculated_cost_usd": "0.0271935888"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/052/proxy-events.jsonl",
+          "sha256": "687286418c92693321467ff5759290e3fa503774d511209cd36ab10f1e4ce2e8",
+          "records": 93,
+          "status_counts": {
+            "completed": 93
+          },
+          "observed_tokens": 7159401,
+          "calculated_cost_usd": "0.0575904392"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/053/proxy-events.jsonl",
+          "sha256": "04fe264b77cafe7f0918749259d011af6f4fa957085a715a235edf309f6fbddf",
+          "records": 45,
+          "status_counts": {
+            "completed": 45
+          },
+          "observed_tokens": 1817498,
+          "calculated_cost_usd": "0.0286300952"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/054/proxy-events.jsonl",
+          "sha256": "765d51847481686a170d5e8d01b92d4c44115548c74cf3250fa25f817fa89c6f",
+          "records": 128,
+          "status_counts": {
+            "completed": 128
+          },
+          "observed_tokens": 12349835,
+          "calculated_cost_usd": "0.0830042864"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/055/proxy-events.jsonl",
+          "sha256": "9a6e0963e0b093bcab390ccff1ae56f5c9553561e18e7f6406f9a4fb897a6b11",
+          "records": 77,
+          "status_counts": {
+            "completed": 77
+          },
+          "observed_tokens": 3498134,
+          "calculated_cost_usd": "0.0373623264"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/056/proxy-events.jsonl",
+          "sha256": "ef0d460854cdec0f81231cfe684eb881c1e42d9608c99382931f7a0b3abfbe71",
+          "records": 99,
+          "status_counts": {
+            "completed": 99
+          },
+          "observed_tokens": 5212106,
+          "calculated_cost_usd": "0.0433783952"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/057/proxy-events.jsonl",
+          "sha256": "2902cda30db93e483c1fc002b67ef7f6c6079e54464c1994d6e99651112c10c7",
+          "records": 87,
+          "status_counts": {
+            "completed": 87
+          },
+          "observed_tokens": 4906462,
+          "calculated_cost_usd": "0.0514418016"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/058/proxy-events.jsonl",
+          "sha256": "96aec8d1632371a899f3250d006fa427c005c55c3b978488b9e8c0d6d01add17",
+          "records": 60,
+          "status_counts": {
+            "completed": 60
+          },
+          "observed_tokens": 3478954,
+          "calculated_cost_usd": "0.0377907488"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/059/proxy-events.jsonl",
+          "sha256": "e6e0b2be93edffe4c105502f98abfd92428291a0eca1cf9a15e2dc37745f9315",
+          "records": 118,
+          "status_counts": {
+            "completed": 118
+          },
+          "observed_tokens": 6326286,
+          "calculated_cost_usd": "0.0510086528"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/060/proxy-events.jsonl",
+          "sha256": "b2ff0ead3db9bff18a793d4819a56472ff463d685c277610e920e258155a2d09",
+          "records": 52,
+          "status_counts": {
+            "completed": 52
+          },
+          "observed_tokens": 2287088,
+          "calculated_cost_usd": "0.0337352176"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/061/proxy-events.jsonl",
+          "sha256": "703feb3e4c367e98e85d1ea005fb597eef299bba3c2926a95d18624b9c92275d",
+          "records": 67,
+          "status_counts": {
+            "completed": 67
+          },
+          "observed_tokens": 3675371,
+          "calculated_cost_usd": "0.0416529680"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/062/proxy-events.jsonl",
+          "sha256": "3c08cd2accd9821dbe366443167e50b916eb554e680acb67abeccb1b10766172",
+          "records": 124,
+          "status_counts": {
+            "completed": 124
+          },
+          "observed_tokens": 7555638,
+          "calculated_cost_usd": "0.0594070960"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/063/proxy-events.jsonl",
+          "sha256": "23f60de99f3188ab907f6b506f560275bbe15eb7a36b342b8a3297b4785e4d90",
+          "records": 38,
+          "status_counts": {
+            "completed": 38
+          },
+          "observed_tokens": 1317817,
+          "calculated_cost_usd": "0.0249573688"
+        },
+        {
+          "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/campaign/jobs/064/proxy-events.jsonl",
+          "sha256": "b6d92434e8ee2d824f7103ed90b93baef522a339df5c153e98c7ecb7e2466822",
+          "records": 24,
+          "status_counts": {
+            "completed": 24
+          },
+          "observed_tokens": 829802,
+          "calculated_cost_usd": "0.0203934136"
+        }
+      ]
+    },
+    "python-pathspec": {
+      "experiment": "pathspec-deepseek-20260803-v1",
+      "canonical_source": "campaign/jobs/*/proxy-events.jsonl",
+      "aggregate": {
+        "event_files": 58,
+        "records": 3977,
+        "status_counts": {
+          "completed": 3855,
+          "upstream_transport_error": 122
+        },
+        "observed_tokens": 241634477,
+        "calculated_cost_usd": "2.4855921440",
+        "pricing_version_counts": {
+          "deepseek-public-2026-08-02": 3855,
+          "null": 122
+        },
+        "provider_cost_claim_status_counts": {
+          "absent": 3855,
+          "null": 122
+        },
+        "provider_cost_rows": 0
+      },
+      "legacy_report": {
+        "path": "output/pathspec-deepseek-20260803-v1/report/final-report.json",
+        "sha256": "596647c1a35c7148c696ea4d4d2c520b1fe7e8e765decc902aa305b21d0b7de5",
+        "observed_cost_usd": 105.56643393,
+        "canonical_for_paper_cost": false
+      },
+      "files": [
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/007/proxy-events.jsonl",
+          "sha256": "cc9dc1bde14434c0abc4cc0a86315cdaaadba8934bd9ae03d00daea4eb70a900",
+          "records": 83,
+          "status_counts": {
+            "completed": 83
+          },
+          "observed_tokens": 5315533,
+          "calculated_cost_usd": "0.0529954768"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/008/proxy-events.jsonl",
+          "sha256": "b9641210701db547a39e1eeb22d878c4efb9f2afba08f02a670449ded7d7f35d",
+          "records": 78,
+          "status_counts": {
+            "completed": 77,
+            "upstream_transport_error": 1
+          },
+          "observed_tokens": 4329240,
+          "calculated_cost_usd": "0.0417846576"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/009/proxy-events.jsonl",
+          "sha256": "4dea12228788bcc168c42e0473c54f1420acf03856c8e861d9dafcce05b12cfe",
+          "records": 81,
+          "status_counts": {
+            "completed": 80,
+            "upstream_transport_error": 1
+          },
+          "observed_tokens": 5932211,
+          "calculated_cost_usd": "0.0574331576"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/010/proxy-events.jsonl",
+          "sha256": "c01dc776bd9d0a4f1f5a74cf2c0de75dc0c3787f3dd7ee3c7dcfd6796d58f196",
+          "records": 71,
+          "status_counts": {
+            "completed": 68,
+            "upstream_transport_error": 3
+          },
+          "observed_tokens": 2655995,
+          "calculated_cost_usd": "0.0261521624"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/011/proxy-events.jsonl",
+          "sha256": "c5137c0c6acd8bd729b86c064918ed2269822a0e3e83154da73692dedfce7592",
+          "records": 87,
+          "status_counts": {
+            "completed": 85,
+            "upstream_transport_error": 2
+          },
+          "observed_tokens": 5508167,
+          "calculated_cost_usd": "0.0479947888"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/012/proxy-events.jsonl",
+          "sha256": "0853e673af43ed7d295dc7d602658fa6099bd09bd0177497cb86c191ba5791a5",
+          "records": 79,
+          "status_counts": {
+            "completed": 77,
+            "upstream_transport_error": 2
+          },
+          "observed_tokens": 4777396,
+          "calculated_cost_usd": "0.0474351360"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/013/proxy-events.jsonl",
+          "sha256": "104c41404145d1df9afb7de8c94019699b0556e0d6bd1cfe3dbda9081d867924",
+          "records": 46,
+          "status_counts": {
+            "completed": 44,
+            "upstream_transport_error": 2
+          },
+          "observed_tokens": 1725711,
+          "calculated_cost_usd": "0.0235096232"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/014/proxy-events.jsonl",
+          "sha256": "8f2fdd20dc64a0fbf30e0d2643495daef0310799e540590eb1504d088d8f9c1b",
+          "records": 67,
+          "status_counts": {
+            "completed": 65,
+            "upstream_transport_error": 2
+          },
+          "observed_tokens": 3864602,
+          "calculated_cost_usd": "0.0415575888"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/015/proxy-events.jsonl",
+          "sha256": "d94b3a7cc80c0ac83d32ec389af12b319ad225b9236b42a1ad4ddb3989f33d2b",
+          "records": 65,
+          "status_counts": {
+            "completed": 63,
+            "upstream_transport_error": 2
+          },
+          "observed_tokens": 4635775,
+          "calculated_cost_usd": "0.0357282912"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/016/proxy-events.jsonl",
+          "sha256": "789985e073e08c0097d224e38f5bc036a37a3bf82fb57ddacab4f138b0a2fca1",
+          "records": 64,
+          "status_counts": {
+            "completed": 63,
+            "upstream_transport_error": 1
+          },
+          "observed_tokens": 3954315,
+          "calculated_cost_usd": "0.0452591608"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/017/proxy-events.jsonl",
+          "sha256": "dd7777d0a604523084355cf0ec6c6b4b9c844720ac6df9b0264d0e8a37b8be3a",
+          "records": 51,
+          "status_counts": {
+            "completed": 51
+          },
+          "observed_tokens": 4452555,
+          "calculated_cost_usd": "0.0431938136"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/018/proxy-events.jsonl",
+          "sha256": "852b49c10493ad521d3c3c4b22e910199eeb40b40c6e255065ae0f40fcfac2ca",
+          "records": 89,
+          "status_counts": {
+            "completed": 84,
+            "upstream_transport_error": 5
+          },
+          "observed_tokens": 6697939,
+          "calculated_cost_usd": "0.0574701456"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/019/proxy-events.jsonl",
+          "sha256": "d6e56fa4c341bd290b2b29edbdd1888c0bb29072c9fe17f30c3ce9157c885840",
+          "records": 58,
+          "status_counts": {
+            "completed": 55,
+            "upstream_transport_error": 3
+          },
+          "observed_tokens": 2345359,
+          "calculated_cost_usd": "0.0281861888"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/020/proxy-events.jsonl",
+          "sha256": "58b85f579b95940323a2c8fb6e5ff740fbc1cd3f1b54c2d3925262fda1f31433",
+          "records": 44,
+          "status_counts": {
+            "completed": 44
+          },
+          "observed_tokens": 3110288,
+          "calculated_cost_usd": "0.0315558824"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/021/proxy-events.jsonl",
+          "sha256": "d14b35ed5fe944e5e2f0024784cb2c7878b168b5eed6f012dd4c0674b58e5935",
+          "records": 57,
+          "status_counts": {
+            "completed": 57
+          },
+          "observed_tokens": 3122094,
+          "calculated_cost_usd": "0.0361463480"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/022/proxy-events.jsonl",
+          "sha256": "7e4bcdd4a017ffe64ae4f4fa97e1f4dd1cc5b6941d0c988405a4a702a2d0f4c4",
+          "records": 64,
+          "status_counts": {
+            "completed": 64
+          },
+          "observed_tokens": 2910107,
+          "calculated_cost_usd": "0.0355877032"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/023/proxy-events.jsonl",
+          "sha256": "56408f9ccf7815a2e15255d87dd470e96e72b33066e98624c9e3b43fd276fded",
+          "records": 157,
+          "status_counts": {
+            "completed": 150,
+            "upstream_transport_error": 7
+          },
+          "observed_tokens": 14636346,
+          "calculated_cost_usd": "0.1013263328"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/024/proxy-events.jsonl",
+          "sha256": "e5f0bd4d3c84e6063032b50b04b6122ab26bb7d7b0ae2eedd7461788aeb94538",
+          "records": 109,
+          "status_counts": {
+            "completed": 106,
+            "upstream_transport_error": 3
+          },
+          "observed_tokens": 9273471,
+          "calculated_cost_usd": "0.0743483664"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/025/proxy-events.jsonl",
+          "sha256": "4ca3f4cda4262c1179996edaef8a04777a90baf0da735bfc10547242cb99d942",
+          "records": 86,
+          "status_counts": {
+            "completed": 85,
+            "upstream_transport_error": 1
+          },
+          "observed_tokens": 5021172,
+          "calculated_cost_usd": "0.0461452824"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/026/proxy-events.jsonl",
+          "sha256": "c0eff4c7a706558e8ef489c7143a758a9aa423dbb8340dc620239bc118872ede",
+          "records": 80,
+          "status_counts": {
+            "completed": 77,
+            "upstream_transport_error": 3
+          },
+          "observed_tokens": 4730666,
+          "calculated_cost_usd": "0.0512461712"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/027/proxy-events.jsonl",
+          "sha256": "c09004a2cd65932fe9c3e57c2892ee4ec66cd944d16c48a50f778321b48d87e3",
+          "records": 65,
+          "status_counts": {
+            "completed": 63,
+            "upstream_transport_error": 2
+          },
+          "observed_tokens": 4176732,
+          "calculated_cost_usd": "0.0431505816"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/028/proxy-events.jsonl",
+          "sha256": "ce99a3a432586162169c65480f036163d3a088e211f15af9ca74af99c922b296",
+          "records": 116,
+          "status_counts": {
+            "completed": 112,
+            "upstream_transport_error": 4
+          },
+          "observed_tokens": 9506097,
+          "calculated_cost_usd": "0.0676537456"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/029/proxy-events.jsonl",
+          "sha256": "ddd54fca7b1fdabdcd4e4eb5cd5eeff68c74eb6fd3cd11248a2fceadf1890a9b",
+          "records": 49,
+          "status_counts": {
+            "completed": 43,
+            "upstream_transport_error": 6
+          },
+          "observed_tokens": 2329167,
+          "calculated_cost_usd": "0.0386714328"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/030/proxy-events.jsonl",
+          "sha256": "56e8262c6d72b5a047df27b0b2f3e4192abcc6f1cb9d99a8d4da90eee37bf791",
+          "records": 66,
+          "status_counts": {
+            "completed": 62,
+            "upstream_transport_error": 4
+          },
+          "observed_tokens": 3675306,
+          "calculated_cost_usd": "0.0422096528"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/031/proxy-events.jsonl",
+          "sha256": "ec6dd549f9de9e505958ca2e0c578af0b6ff970e5578fe8a1a20f969f234fe17",
+          "records": 22,
+          "status_counts": {
+            "completed": 22
+          },
+          "observed_tokens": 865980,
+          "calculated_cost_usd": "0.0239698648"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/032/proxy-events.jsonl",
+          "sha256": "d5bcbe944d597aee7dbcd4aae2ab89663d8d5a50d5b85c19b03f280d60dfe990",
+          "records": 99,
+          "status_counts": {
+            "completed": 92,
+            "upstream_transport_error": 7
+          },
+          "observed_tokens": 3844667,
+          "calculated_cost_usd": "0.0377717536"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/033/proxy-events.jsonl",
+          "sha256": "65026651ed85c41bc6724f59f142f94efb79a4573ff9beac825f02bbd2ba9cc1",
+          "records": 48,
+          "status_counts": {
+            "completed": 48
+          },
+          "observed_tokens": 2912403,
+          "calculated_cost_usd": "0.0330752352"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/034/proxy-events.jsonl",
+          "sha256": "c69cecf913c3d0e0f092ac5866566a01bd78ce3462479fb5bd35880e03d21ac3",
+          "records": 72,
+          "status_counts": {
+            "completed": 70,
+            "upstream_transport_error": 2
+          },
+          "observed_tokens": 4087243,
+          "calculated_cost_usd": "0.0438036144"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/035/proxy-events.jsonl",
+          "sha256": "1677642e8b962b9b844ac13e88dab0e0a09c41548417b93f68fc05f5fb55781a",
+          "records": 118,
+          "status_counts": {
+            "completed": 113,
+            "upstream_transport_error": 5
+          },
+          "observed_tokens": 9571136,
+          "calculated_cost_usd": "0.0808033352"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/036/proxy-events.jsonl",
+          "sha256": "d9847809c7f470e2705c4746fe879d98e9553fd48ee89f6647d2e76aa98c346c",
+          "records": 93,
+          "status_counts": {
+            "completed": 90,
+            "upstream_transport_error": 3
+          },
+          "observed_tokens": 5189787,
+          "calculated_cost_usd": "0.0478050440"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/037/proxy-events.jsonl",
+          "sha256": "692ab52f17cc741f174c88e21ec712365e7e13bf4672196ec8495face5fb697b",
+          "records": 34,
+          "status_counts": {
+            "completed": 34
+          },
+          "observed_tokens": 1447539,
+          "calculated_cost_usd": "0.0287987672"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/038/proxy-events.jsonl",
+          "sha256": "876485dfa299635c11996bcbbf9057f3d04038908ca5ed1dafa67f5cf5b42162",
+          "records": 69,
+          "status_counts": {
+            "completed": 69
+          },
+          "observed_tokens": 3174629,
+          "calculated_cost_usd": "0.0375527096"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/039/proxy-events.jsonl",
+          "sha256": "cc4d3ca5c63fb3f5b8cd2674159e2f07371c18299a1c485104ec434ca1515b5a",
+          "records": 70,
+          "status_counts": {
+            "completed": 69,
+            "upstream_transport_error": 1
+          },
+          "observed_tokens": 3861511,
+          "calculated_cost_usd": "0.0415015216"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/040/proxy-events.jsonl",
+          "sha256": "a1cd2a6e2df4e7c0f8e1b91e9eb6d5e08ecde4cebf71ee8f2d6e07d3737377a4",
+          "records": 54,
+          "status_counts": {
+            "completed": 54
+          },
+          "observed_tokens": 1799222,
+          "calculated_cost_usd": "0.0271553968"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/041/proxy-events.jsonl",
+          "sha256": "413e2f82e6d63684763b31dcb4f092ab38ec2457fcca6de20aadb57c7f44f5b0",
+          "records": 40,
+          "status_counts": {
+            "completed": 38,
+            "upstream_transport_error": 2
+          },
+          "observed_tokens": 1764769,
+          "calculated_cost_usd": "0.0339340344"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/042/proxy-events.jsonl",
+          "sha256": "d6bb4c37e398cc8fb6ed9548093cd91c1d7ec6062ff4de914860fd07811fc955",
+          "records": 39,
+          "status_counts": {
+            "completed": 39
+          },
+          "observed_tokens": 2550857,
+          "calculated_cost_usd": "0.0338541168"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/043/proxy-events.jsonl",
+          "sha256": "30fa2e41986cc3b5885d3316e9e8cfe3e0c5c3b4a530340d7972ae5b4de21c18",
+          "records": 59,
+          "status_counts": {
+            "completed": 59
+          },
+          "observed_tokens": 3077457,
+          "calculated_cost_usd": "0.0359872688"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/044/proxy-events.jsonl",
+          "sha256": "503be03ff0763083b26c17572cf33dc68b8b4b6736510ed8a760cdb8cfa5d246",
+          "records": 52,
+          "status_counts": {
+            "completed": 49,
+            "upstream_transport_error": 3
+          },
+          "observed_tokens": 2387935,
+          "calculated_cost_usd": "0.0350690088"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/045/proxy-events.jsonl",
+          "sha256": "75a1e2896098230200999495f23c720bfd9c1077954e6b7f47b62af87fd10b38",
+          "records": 44,
+          "status_counts": {
+            "completed": 44
+          },
+          "observed_tokens": 2373162,
+          "calculated_cost_usd": "0.0381669008"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/046/proxy-events.jsonl",
+          "sha256": "a3bf49daf8965228c3203c25425e8380c11ce5466d0c6b6cde37f1f1c3e5e03f",
+          "records": 64,
+          "status_counts": {
+            "completed": 63,
+            "upstream_transport_error": 1
+          },
+          "observed_tokens": 1756310,
+          "calculated_cost_usd": "0.0206370416"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/047/proxy-events.jsonl",
+          "sha256": "30850721e9bdc7b24e8c91d1a3f5028d5220d2cae34eff2715939f122bc4995d",
+          "records": 68,
+          "status_counts": {
+            "completed": 64,
+            "upstream_transport_error": 4
+          },
+          "observed_tokens": 3350475,
+          "calculated_cost_usd": "0.0360464160"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/048/proxy-events.jsonl",
+          "sha256": "929e11542daa6c394db24d168793332a73fd1996e8dd37e66ffbb5d6a1a2dd71",
+          "records": 50,
+          "status_counts": {
+            "completed": 49,
+            "upstream_transport_error": 1
+          },
+          "observed_tokens": 1641976,
+          "calculated_cost_usd": "0.0261571912"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/049/proxy-events.jsonl",
+          "sha256": "07d6529d3343e61eef78af30de25df8467c85a02f6aa7882f1cec1c9863e66db",
+          "records": 49,
+          "status_counts": {
+            "completed": 47,
+            "upstream_transport_error": 2
+          },
+          "observed_tokens": 3504593,
+          "calculated_cost_usd": "0.0460608400"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/050/proxy-events.jsonl",
+          "sha256": "1aee1e9277d999f1096653f90c7fb724aa206db1961b6a67f5d4490203dfeb87",
+          "records": 29,
+          "status_counts": {
+            "completed": 29
+          },
+          "observed_tokens": 968917,
+          "calculated_cost_usd": "0.0225529696"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/051/proxy-events.jsonl",
+          "sha256": "f89dd47b0ce6469e6932f1c03afb007c5f5a9617c68fbc32117b29da95311176",
+          "records": 32,
+          "status_counts": {
+            "completed": 30,
+            "upstream_transport_error": 2
+          },
+          "observed_tokens": 1412078,
+          "calculated_cost_usd": "0.0275056936"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/052/proxy-events.jsonl",
+          "sha256": "bc1f78bd87407a312950c838e0b5c1d83218e66d5b2bfbace6456dcadb9440fc",
+          "records": 92,
+          "status_counts": {
+            "completed": 88,
+            "upstream_transport_error": 4
+          },
+          "observed_tokens": 5666546,
+          "calculated_cost_usd": "0.0582768144"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/053/proxy-events.jsonl",
+          "sha256": "10fd3b9b9f78b52881d8344626d39b06b3f6dc7bfd64ce567ba2737640b7becd",
+          "records": 43,
+          "status_counts": {
+            "completed": 43
+          },
+          "observed_tokens": 3340748,
+          "calculated_cost_usd": "0.0361726568"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/054/proxy-events.jsonl",
+          "sha256": "a1c1dd3ba8e264de97eda1dd90af2ffe17cf4f1eb8619eb997b4f72bbf537638",
+          "records": 39,
+          "status_counts": {
+            "completed": 37,
+            "upstream_transport_error": 2
+          },
+          "observed_tokens": 1550359,
+          "calculated_cost_usd": "0.0318483088"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/055/proxy-events.jsonl",
+          "sha256": "5ce80309c720c0b8842b1e9f0a50aead43849c46135c5ca1207900f8bbd5425f",
+          "records": 124,
+          "status_counts": {
+            "completed": 119,
+            "upstream_transport_error": 5
+          },
+          "observed_tokens": 11720147,
+          "calculated_cost_usd": "0.0856001272"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/056/proxy-events.jsonl",
+          "sha256": "9332f4986073fff2594471db29f5d76648f5e644a19aadcfe63c87ca831c5161",
+          "records": 100,
+          "status_counts": {
+            "completed": 95,
+            "upstream_transport_error": 5
+          },
+          "observed_tokens": 10194591,
+          "calculated_cost_usd": "0.0777846608"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/057/proxy-events.jsonl",
+          "sha256": "d426e2acdfbb88c9acfc6af3f6c978ec8c0908becbec5da2a214b47bc867aee6",
+          "records": 23,
+          "status_counts": {
+            "completed": 22,
+            "upstream_transport_error": 1
+          },
+          "observed_tokens": 767984,
+          "calculated_cost_usd": "0.0229631024"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/058/proxy-events.jsonl",
+          "sha256": "3b08f24d011ad4eeb7629f35fab9c641ab66684dc3419e706a5f4259d98316ec",
+          "records": 90,
+          "status_counts": {
+            "completed": 87,
+            "upstream_transport_error": 3
+          },
+          "observed_tokens": 4968679,
+          "calculated_cost_usd": "0.0500050600"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/059/proxy-events.jsonl",
+          "sha256": "13e408d7cd209110c070021980126756ddce77246ec9652f6fb2c78dd5f72c48",
+          "records": 97,
+          "status_counts": {
+            "completed": 93,
+            "upstream_transport_error": 4
+          },
+          "observed_tokens": 5352011,
+          "calculated_cost_usd": "0.0479170776"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/060/proxy-events.jsonl",
+          "sha256": "261a83903112fa4195863d3bcf8a1b833b1473392091db9c6d288395b1838518",
+          "records": 60,
+          "status_counts": {
+            "completed": 60
+          },
+          "observed_tokens": 3560394,
+          "calculated_cost_usd": "0.0496688080"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/061/proxy-events.jsonl",
+          "sha256": "94a16d6266c9d67b440da1b75e0cbcd5df39363aa90f5299a19ed2cfb414767a",
+          "records": 33,
+          "status_counts": {
+            "completed": 32,
+            "upstream_transport_error": 1
+          },
+          "observed_tokens": 1357453,
+          "calculated_cost_usd": "0.0289913344"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/062/proxy-events.jsonl",
+          "sha256": "a3150db4193275858985dc5becb249331420d1ad035600b061182097ea733792",
+          "records": 67,
+          "status_counts": {
+            "completed": 63,
+            "upstream_transport_error": 4
+          },
+          "observed_tokens": 2566037,
+          "calculated_cost_usd": "0.0270763192"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/063/proxy-events.jsonl",
+          "sha256": "02296e3ffca68518fffcdfb120046ef93e81e779ba61bd5a7f62083276639ac3",
+          "records": 96,
+          "status_counts": {
+            "completed": 92,
+            "upstream_transport_error": 4
+          },
+          "observed_tokens": 6088006,
+          "calculated_cost_usd": "0.0532092568"
+        },
+        {
+          "path": "output/pathspec-deepseek-20260803-v1/campaign/jobs/064/proxy-events.jsonl",
+          "sha256": "68968efb2b535e76c570301d5ac2249ca314b21996283bb91d8a9370804dc57b",
+          "records": 96,
+          "status_counts": {
+            "completed": 94,
+            "upstream_transport_error": 2
+          },
+          "observed_tokens": 4272632,
+          "calculated_cost_usd": "0.0411282032"
+        }
+      ]
+    }
+  }
+}

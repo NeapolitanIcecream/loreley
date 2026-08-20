@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "created_on": "2026-08-11",
+  "analysis_type": "retained_final_archive_snapshot_audit",
+  "denominator_definition": "Each Python campaign used two independent 8-by-8 island archives, so coverage is occupied island-cell coordinates divided by 128.",
+  "campaigns": {
+    "markdown_it_py": {
+      "experiment": "mdit-v18-deepseek-seeded-qd",
+      "source": {
+        "path": "output/markdown-it-manual-seed-deepseek-20260802-v18/report/final-report.json",
+        "sha256": "cfed9992f18da0289383ff56e72bd9922c86e219093ccc4e236a02539644097a"
+      },
+      "islands": 2,
+      "cells_per_island": 64,
+      "island_cells": 128,
+      "archive_entries": 36,
+      "occupied_island_cell_coordinates": 18,
+      "coverage_fraction": 0.140625
+    },
+    "python_pathspec": {
+      "experiment": "pathspec-deepseek-20260803-v1",
+      "source": {
+        "path": "output/pathspec-deepseek-20260803-v1/report/final-report.json",
+        "sha256": "596647c1a35c7148c696ea4d4d2c520b1fe7e8e765decc902aa305b21d0b7de5"
+      },
+      "islands": 2,
+      "cells_per_island": 64,
+      "island_cells": 128,
+      "archive_entries": 28,
+      "occupied_island_cell_coordinates": 19,
+      "coverage_fraction": 0.1484375
+    }
+  },
+  "interpretation_limit": "The counts are final snapshots under different fitted projections and do not measure causal search-policy efficacy."
+}

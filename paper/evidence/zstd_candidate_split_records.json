@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "created_on": "2026-08-11",
+  "experiment": "zstandard-reliable-qd-gpt-20260806-v19",
+  "candidate_commit": "fe39bee8f4659b8e8da153b9a997614f4d2d4713",
+  "candidate_selection": {
+    "training_rank": 10,
+    "selected_on": "expanded_validation_top10",
+    "selection_set_size": 10,
+    "selection_set_interval_adjusted": false,
+    "fresh_corpus_measured_after_candidate_fixation": true,
+    "fresh_corpus_recipe_selected_after_candidate_fixation": true,
+    "original_holdout_candidate_score_known_at_selection": false,
+    "original_holdout_corpus_previously_opened_for_registered_top3_protocol": true
+  },
+  "protocol_timeline": {
+    "expanded_validation_selection": {
+      "completed_at": "2026-08-07T06:30:36.314797Z",
+      "record": {
+        "path": "output/zstandard-reliable-qd-gpt-20260806-v19/selection/top10-validation-supplement.json",
+        "sha256": "0ea400c8065db2766d7521fd3da564c5646baf538dfb10c6faeb7b27790f0f1c"
+      }
+    },
+    "fresh_corpus": {
+      "plan_prepared_after_candidate_selection": true,
+      "sealed_at": "2026-08-07T06:34:53.683331Z",
+      "record": {
+        "path": "output/zstandard-reliable-qd-gpt-20260806-v19/operations/top10-winner-fresh-confirmation-preparation.json",
+        "sha256": "fadab0f505a97093bd7002e88d4046fd0054e78e7b4087611b335e962e57842f"
+      },
+      "interpretation": "Fixed-candidate evaluation on a newly generated corpus sealed before measurement. The generator recipe and seed were chosen after the candidate was known, so this is not a fully prospectively specified test protocol."
+    },
+    "original_holdout": {
+      "top10_measurement_plan_prepared_at": "2026-08-10T02:23:17.078293Z",
+      "completed_at": "2026-08-10T03:36:55.040564Z",
+      "plan_record": {
+        "path": "output/zstandard-reliable-qd-gpt-20260806-v19/operations/top10-holdout-supplement-plan.json",
+        "sha256": "70f8ad05a6f3eeb3cb1d4fa83bdc9d4c9197dbd7d8336934ea32a3b60293f369"
+      },
+      "result_record": {
+        "path": "output/zstandard-reliable-qd-gpt-20260806-v19/selection/top10-holdout-supplement.json",
+        "sha256": "426976c98179bd547484d2fb5d3d7bde8074dddc5dffec08cc6d0c0699dedce5"
+      },
+      "interpretation": "The candidate was fixed by expanded validation before its own original-holdout score was measured. The corpus had already been opened for the registered Top-3 winner, so this is candidate-level out-of-sample evidence but not an untouched study-level holdout."
+    }
+  },
+  "source_records": {
+    "training": {
+      "path": "output/zstandard-reliable-qd-gpt-20260806-v19/campaign/evaluator-artifacts/reports/5915903549c19b8f.json",
+      "sha256": "d0347ef0413aa60a2f3a472208eb3c1eea5ba3956f197a685068643a98b2961a"
+    },
+    "expanded_validation": {
+      "path": "output/zstandard-reliable-qd-gpt-20260806-v19/top10-supplement-validation/fe39bee8f4659b8e8da153b9a997614f4d2d4713/result.json",
+      "sha256": "8204129c97839f4d116bf1b6dad518cb07c42eda61739d68ef0872702d40fd38"
+    },
+    "fresh_corpus": {
+      "path": "output/zstandard-reliable-qd-gpt-20260806-v19/top10-confirmation-validation/fe39bee8f4659b8e8da153b9a997614f4d2d4713/result.json",
+      "sha256": "6b7f860d4395a9929bc9afd5db415f99bb21b9e2ad0da69885acf2084ec63dbf"
+    },
+    "original_holdout": {
+      "path": "output/zstandard-reliable-qd-gpt-20260806-v19/top10-holdout-supplement-validation/fe39bee8f4659b8e8da153b9a997614f4d2d4713/result.json",
+      "sha256": "450710b739e6b49eb228bd23ebc7b3f07c76abbe9cf9b58ff1da27afcd0910f2"
+    }
+  },
+  "splits": {
+    "training": {
+      "status": "training_rank_10",
+      "rounds": 4,
+      "compression": {
+        "point": 1.0114468310738103,
+        "lower_95": 1.0070761632068201,
+        "upper_95": 1.015836467454108
+      },
+      "decompression": {
+        "point": 1.0000230193239337,
+        "lower_95": 0.9969945938098878,
+        "upper_95": 1.0030606438458292
+      },
+      "combined": {
+        "point": 1.0057187051537106,
+        "lower_95": 1.0023104031836148,
+        "upper_95": 1.0091385968691415
+      },
+      "worst_cell_speedup": 0.9964313001220723,
+      "max_compressed_size_ratio": 1.0,
+      "peak_rss_delta_mib": 0.03125
+    },
+    "expanded_validation": {
+      "status": "selection_set_not_adjusted_for_top10_selection",
+      "rounds": 8,
+      "compression": {
+        "point": 1.012340027565216,
+        "lower_95": 1.0115586320160774,
+        "upper_95": 1.0131220267165428
+      },
+      "decompression": {
+        "point": 1.0015128783457012,
+        "lower_95": 0.9999174496264024,
+        "upper_95": 1.0031108526679386
+      },
+      "combined": {
+        "point": 1.0069119002531481,
+        "lower_95": 1.0059209683503956,
+        "upper_95": 1.0079038083220875
+      },
+      "worst_cell_speedup": 1.0013069441068279,
+      "max_compressed_size_ratio": 1.0,
+      "peak_rss_delta_mib": 0.03125
+    },
+    "fresh_corpus": {
+      "status": "newly_generated_sealed_fixed_candidate_recipe_selected_after_candidate",
+      "rounds": 12,
+      "compression": {
+        "point": 1.0089105501426032,
+        "lower_95": 1.0052227180038549,
+        "upper_95": 1.0126119117267574
+      },
+      "decompression": {
+        "point": 0.9983047469721757,
+        "lower_95": 0.9947139725804914,
+        "upper_95": 1.0019084835430265
+      },
+      "combined": {
+        "point": 1.0035936386195712,
+        "lower_95": 1.0000373285289736,
+        "upper_95": 1.00716259557954
+      },
+      "worst_cell_speedup": 0.9981796890282348,
+      "max_compressed_size_ratio": 1.0,
+      "peak_rss_delta_mib": 0.03125
+    },
+    "original_holdout": {
+      "status": "candidate_fixed_before_own_score_corpus_previously_opened",
+      "rounds": 12,
+      "compression": {
+        "point": 1.011734024899345,
+        "lower_95": 1.0110225773194739,
+        "upper_95": 1.0124459731185393
+      },
+      "decompression": {
+        "point": 1.0001726073158246,
+        "lower_95": 0.9985022059937777,
+        "upper_95": 1.0018458030639226
+      },
+      "combined": {
+        "point": 1.0059367065544984,
+        "lower_95": 1.004860628534288,
+        "upper_95": 1.0070139369175042
+      },
+      "worst_cell_speedup": 0.9985436212006118,
+      "max_compressed_size_ratio": 1.0,
+      "peak_rss_delta_mib": 0.03125
+    }
+  }
+}

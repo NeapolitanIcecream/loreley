@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "created_on": "2026-08-10",
+  "markdown_it_py": {
+    "analysis_type": "post_review_bootstrap_of_retained_validation_samples",
+    "candidate_commit": "b10adb6",
+    "source": "output/markdown-it-manual-seed-deepseek-20260802-v18/final-validation/reference.json",
+    "source_sha256": "b11088ac57ee3449ec1ad858630afc8bb147ee110e9e19b467d32ca438f39083",
+    "documents": 28,
+    "samples_per_role_per_document": 7,
+    "point_estimate": 1.0675380871941529,
+    "bootstrap": {
+      "method": "within each fixed document and role, resample timing observations with replacement; take role medians, form the root/candidate ratio for each document, and take the geometric mean across documents",
+      "replicates": 20000,
+      "random_seed": 20260810,
+      "median": 1.0672972372268976,
+      "percentile_95_interval": [
+        1.0631386427170868,
+        1.071741947558843
+      ]
+    },
+    "scope": "Conditional on the fixed 28-document corpus and retained timing observations; excludes corpus-sampling, host-drift, and candidate-selection uncertainty."
+  },
+  "python_pathspec": {
+    "analysis_type": "post_review_fixed_candidate_replication",
+    "original_reference_result": {
+      "source": "output/pathspec-deepseek-20260803-v1/post-hoc-low-allocation/reference-diagnostic.json",
+      "source_sha256": "e86166756a69a8d70e87cbd8d039605e94e759a594722bd8087c38860e20977d",
+      "throughput_geomean": 1.2514348263334512,
+      "candidate_peak_alloc_mib": 0.043537139892578125
+    },
+    "repository_states": {
+      "root_commit": "4fb992fd44087d7e9f44e71485475ff9d41a79f1",
+      "root_tree": "2df1afd2ca631ab92cb1fb7d25d0dfa32cd388ee",
+      "candidate_commit": "9d977f0a73d58aec73fa36516c07cbb0ec879347",
+      "candidate_tree": "045d4162c433751b5bf3a0c6f50a2c2f3c4f1304"
+    },
+    "benchmark_implementation": {
+      "runner_sha256": "a3b795c1225f9fcaeca3b5cc4c5823b0b389cf7058c71d6d55ba1fdd6d2da7b7",
+      "evaluator_sha256": "d25c0406e92b06efec0e39e188190f40e6fea5d5e38c7717be92977da821480d"
+    },
+    "environment": {
+      "os": "macOS 26.5.2",
+      "architecture": "arm64",
+      "python": "3.13.9"
+    },
+    "protocol": {
+      "document_set": "reference",
+      "balanced_pair_replicates": 5,
+      "order_per_replicate": [
+        "root",
+        "candidate",
+        "root",
+        "candidate",
+        "candidate",
+        "root",
+        "candidate",
+        "root"
+      ],
+      "samples_per_role_per_scenario_per_replicate": 20,
+      "scenario_count": 5
+    },
+    "replicate_throughput_geomeans": [
+      1.2371609485599677,
+      1.2585170142614117,
+      1.2460941738184388,
+      1.2576207232820524,
+      1.2351119216786277
+    ],
+    "throughput_geomean_across_replicates": 1.2468621215157987,
+    "throughput_95_interval": {
+      "method": "two-sided Student-t interval on the five log replicate effects",
+      "lower": 1.2332762003121387,
+      "upper": 1.2605977068862573
+    },
+    "allocation_audit": {
+      "root_reference_peak_mib": 0.033191680908203125,
+      "registered_candidate_reference_peak_mib": 0.06472,
+      "reported_candidate_reference_peak_mib": 0.043537139892578125,
+      "fixed_gate_mib": 0.05,
+      "gate_over_root_ratio": 1.5064015630387313,
+      "registered_candidate_over_root_ratio": 1.9498861831973335,
+      "reported_candidate_over_root_ratio": 1.3116883116883118,
+      "interpretation": "The registered candidate had a real relative allocation increase, but the fixed absolute gate was not scale invariant across workload shapes."
+    },
+    "scope": "The replication was run after candidate selection and after review. It estimates fixed-candidate measurement variability; it does not repair the original post-hoc selection status."
+  }
+}

@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "created_on": "2026-08-10",
+  "experiment": "zstandard-reliable-qd-gpt-20260806-v19",
+  "analysis_type": "post_campaign_archive_and_descriptor_audit",
+  "configuration": {
+    "islands": [
+      "main"
+    ],
+    "pca_dimensions": 3,
+    "bins_per_dimension": 4,
+    "grid_cells": 64,
+    "pca_whitening": true,
+    "projection_clip_standard_deviations": 3,
+    "pca_warmup_samples": 7,
+    "pca_refit_every_new_samples": 8,
+    "pareto_front_capacity": 8,
+    "pareto_epsilon": 0.003,
+    "objectives": [
+      "compression_lower_95",
+      "decompression_lower_95",
+      "worst_cell_speedup"
+    ]
+  },
+  "campaign_counts": {
+    "physical_jobs": 220,
+    "successful_jobs": 211,
+    "unique_release_binaries": 167,
+    "pca_history_states": 167,
+    "candidates_admitted_at_ingestion": 51
+  },
+  "final_archive": {
+    "entries": 13,
+    "occupied_cells": 11,
+    "coverage_fraction": 0.171875,
+    "front_size_histogram": {
+      "1": 9,
+      "2": 2
+    },
+    "maximum_observed_front_size": 2
+  },
+  "final_projection": {
+    "epoch": 20,
+    "fit_count_including_epoch_zero": 21,
+    "sample_count": 167,
+    "feature_count": 1536,
+    "explained_variance_ratio": [
+      0.29781436686836044,
+      0.22547337538534445,
+      0.18659577875853128
+    ],
+    "top_three_explained_variance_fraction": 0.7098835210122362,
+    "occupied_cells_for_all_states": 13,
+    "all_state_coverage_fraction": 0.203125,
+    "normalized_coordinate_ranges": [
+      [
+        0.224,
+        0.853
+      ],
+      [
+        0.210,
+        0.746
+      ],
+      [
+        0.289,
+        0.836
+      ]
+    ]
+  },
+  "raw_repository_embedding_geometry": {
+    "pairwise_cosine_distance_median": 0.000003217,
+    "pairwise_cosine_distance_maximum": 0.000008322,
+    "root_to_candidate_cosine_distance_median": 0.000004509,
+    "centered_participation_ratio": 5.31,
+    "centered_entropy_effective_rank": 7.80,
+    "top_ten_centered_pc_variance_fraction": 0.9487
+  },
+  "coordinate_churn": {
+    "definition": "Compare each successfully admitted candidate's recorded ingestion cell with its cell under the final PCA projection.",
+    "eligible_candidates": 51,
+    "different_final_cell": 22,
+    "fraction": 0.43137254901960786,
+    "limitation": "This is cumulative admission-to-final churn, not movement measured at every refit."
+  },
+  "interpretation_limits": [
+    "The final projection separates states into cells after whitening, but the audit does not establish that cell distance corresponds to edit mechanism, semantic behavior, or performance mechanism.",
+    "Uniform averaging across eligible file embeddings makes raw repository vectors very close when patches touch few files.",
+    "The centered coordinates describe the source proposals produced under this campaign's changed-file and lineage distribution; they are not evidence of a universal low-dimensional viable-program manifold.",
+    "Archive coverage and front sizes are descriptive because no matched descriptor or search-policy control was run."
+  ]
+}
