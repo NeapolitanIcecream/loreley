@@ -103,6 +103,6 @@ Loreley 项目方提供：
 - [三案例统一证据报告](../research/2026-08-07-loreley-case-study-evidence-report.md)
 - [`markdown-it-py`：前瞻性 6.75% throughput gain](../research/2026-08-02-markdown-it-py-deepseek-case-study.md)
 - [`python-pathspec`：reference workloads +25.14%，候选为 post-hoc selection](../research/2026-08-03-pathspec-deepseek-case-study.md)
-- [Zstandard V19：预登记结果与 Top 10 holdout 补测](../research/2026-08-07-zstandard-gpt-v19-case-study-report.md)
+- [Zstandard：预登记结果与 Top 10 holdout 补测](../research/2026-08-07-zstandard-gpt-v19-case-study-report.md)
 
 新仓库能够取得的收益取决于 evaluator 质量、可搜索空间和运行预算。

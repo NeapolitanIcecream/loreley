@@ -46,7 +46,7 @@
 <text x="605" y="762.0" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="400" text-anchor="start">Candidate selected after the</text><text x="605" y="785.4" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="400" text-anchor="start">allocation gate was revealed.</text>
 <rect x="1070" y="205" width="450" height="600" rx="24" fill="#FFFFFF" stroke="none" stroke-width="2" filter="url(#shadow)"/>
 <rect x="1070" y="205" width="450" height="10" rx="5" fill="#6563FF" stroke="none" stroke-width="2"/>
-<text x="1100" y="270.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700" text-anchor="start">Zstandard V19</text>
+<text x="1100" y="270.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700" text-anchor="start">Zstandard</text>
 <text x="1100" y="348.0" fill="#6563FF" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="700" text-anchor="start">+1.228%</text>
 <text x="1102" y="388.0" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" text-anchor="start">compression · original holdout</text>
 <rect x="1100" y="420" width="300" height="42" rx="21" fill="#FFF7E6" stroke="none" stroke-width="2"/><text x="1250.0" y="449.0" fill="#B45309" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" text-anchor="middle">Descriptive leader</text>

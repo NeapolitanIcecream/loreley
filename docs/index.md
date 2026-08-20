@@ -25,7 +25,7 @@ repository studies are:
   four-generation archive lineage produced a qualifying 25.14% speedup. The
   candidate was selected post-hoc after the registered winner missed its
   allocation gate.
-- [Zstandard V19](research/2026-08-07-zstandard-gpt-v19-case-study-report.md): the
+- [Zstandard](research/2026-08-07-zstandard-gpt-v19-case-study-report.md): the
   registered winner improved sealed-holdout compression by 1.019% with neutral
   decompression. In a later fixed-Top-10 comparison, all ten candidates remained
   positive on the original holdout, with a median gain of 1.116%; the comparison

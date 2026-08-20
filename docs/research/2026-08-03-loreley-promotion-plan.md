@@ -39,7 +39,7 @@ The release package is complete:
 
 - unified evidence report: [2026-08-07-loreley-case-study-evidence-report.md](2026-08-07-loreley-case-study-evidence-report.md);
 - Zstandard V19 report: [2026-08-07-zstandard-gpt-v19-case-study-report.md](2026-08-07-zstandard-gpt-v19-case-study-report.md);
-- Zstandard Top-10 validation, fresh-confirmation, and holdout supplement: [2026-08-07-zstandard-gpt-v19-top10-validation-supplement.md](2026-08-07-zstandard-gpt-v19-top10-validation-supplement.md);
+- Zstandard Top-10 validation, fresh-corpus, and holdout supplement: [2026-08-07-zstandard-gpt-v19-top10-validation-supplement.md](2026-08-07-zstandard-gpt-v19-top10-validation-supplement.md);
 - launch claim sheet: [2026-08-loreley-launch-claim-sheet.md](../marketing/2026-08-loreley-launch-claim-sheet.md);
 - English article: [2026-08-loreley-launch-article-en.md](../marketing/2026-08-loreley-launch-article-en.md);
 - Chinese article: [2026-08-loreley-launch-article-zh.md](../marketing/2026-08-loreley-launch-article-zh.md);
@@ -209,7 +209,7 @@ Embedding, host, development, and manual-seed costs were not monetized. The $4.5
 
 The previously identified inconsistencies are resolved in the public-facing reports:
 
-1. The old `python-pathspec` evidence report retains a $105.57 proxy ledger, including $105.00 from reservation fallbacks. The final case study and unified report use the provider-recorded $2.4856 generation cost and state that it is not all-in.
+1. The old `python-pathspec` evidence report retains a $105.57 proxy ledger, including $105.00 from reservation fallbacks. The final case study and unified report use the $2.4856 request-level proxy estimate and state that it is not a provider bill or all-in cost.
 2. The `markdown-it-py` per-document median is `1.068380x`. The `1.067538x` value is the geometric mean.
 3. The `python-pathspec` primary outcome is reported as invalid under the original preregistration. The later candidate is described as the final valid candidate and as capability evidence, not as a clean prospective result.
 
@@ -263,9 +263,9 @@ V19 recorded commit, Git tree, and evaluator identity separately. Archive and fi
 
 The preregistered protocol validated only the top three training candidates and selected the manual seed. After preserving that result, the experiment expanded the frozen training ranking to the top ten. It reused the first three validation reports and ran eight validation rounds for ranks 4 through 10. The seven new validations consumed 2,348 seconds, about 39 minutes, and no model calls.
 
-Training rank 10, generation-4 candidate `fe39bee8`, became the expanded validation winner at `1.01234x` compression with a lower 95% bound of `1.01156x`. Before measuring it, the experiment generated and sealed a new disjoint 16 MiB corpus and froze a 12-round confirmation protocol.
+Training rank 10, generation-4 candidate `fe39bee8`, became the expanded validation winner at `1.01234x` compression with a lower 95% bound of `1.01156x`. After selecting it, the experiment chose a generator recipe and seed procedure, generated a new disjoint 16 MiB corpus, and sealed that corpus before a 12-round fixed-candidate measurement.
 
-| Fresh-confirmation metric | Ratio or delta | 95% confidence interval |
+| Fresh-corpus metric | Ratio or delta | 95% confidence interval |
 | --- | ---: | ---: |
 | Compression throughput | `1.00891x`, +0.891% | `1.00522–1.01261x`, +0.522% to +1.261% |
 | Decompression throughput | `0.99830x`, -0.170% | `0.99471–1.00191x`, -0.529% to +0.191% |
@@ -273,7 +273,7 @@ Training rank 10, generation-4 candidate `fe39bee8`, became the expanded validat
 | Maximum compressed-size ratio | `1.00000x` | Not applicable |
 | Peak RSS delta | +0.031 MiB | Not applicable |
 
-The candidate's four-generation lineage combined a zero-literal fast path, compression hot-path edits, and an eight-byte histogram unroll. Relative to root it changed three files, +33/-16. This shows that V19 evolution produced a candidate that remained positive on fresh data. It does not establish that the evolved candidate beats the manual seed, because they were not compared on the same new corpus under a frozen head-to-head protocol.
+The candidate's four-generation lineage combined a zero-literal fast path, compression hot-path edits, and an eight-byte histogram unroll. Relative to root it changed three files, +33/-16. The candidate remained positive on the new corpus, but its construction was candidate-aware. The result does not establish that the evolved candidate beats the manual seed, because they were not compared on the same new corpus under a frozen head-to-head protocol.
 
 The follow-up also shows that fine-grained training ranks were unstable. The top ten compression lower bounds differed by only 0.276 percentage points, less than the uncertainty in the training estimates. A future finalist rule should cover at least ten candidates or use a preregistered effect band or adaptive-racing rule.
 
@@ -297,9 +297,9 @@ The original holdout had already been revealed for `7b9aef38`. This comparison i
 
 V19 recorded 52,653,004 tokens, including cached input and embeddings. The Kilo catalog covered all 424 generation sessions: $57.8499 for planning and $2.3973 for coding, totaling $60.2472. This is a model-catalog estimate, not provider-billed spend. The 303 embedding events have token counts but no recorded price.
 
-The V19 amount is not directly comparable with the provider-recorded DeepSeek generation costs for `markdown-it-py` and `python-pathspec`. Do not add all three values into a project cash-spend total. Use the [unified evidence report](2026-08-07-loreley-case-study-evidence-report.md) for the cost definitions.
+The V19 amount is not directly comparable with the proxy-calculated DeepSeek generation-cost estimates for `markdown-it-py` and `python-pathspec`. Do not add all three values into a project cash-spend total. Use the [unified evidence report](2026-08-07-loreley-case-study-evidence-report.md) for the cost definitions.
 
-Formal Top-3 validation took about 16.7 minutes, and the registered holdout took 8.1 minutes. The Top-10 expansion took 39.1 minutes, fresh confirmation took 8.1 minutes, and the nine new fixed-Top-10 holdout measurements took 73.4 minutes. The three follow-ups used local evaluation only and generated no model tokens.
+Formal Top-3 validation took about 16.7 minutes, and the registered holdout took 8.1 minutes. The Top-10 expansion took 39.1 minutes, the fresh-corpus measurement took 8.1 minutes, and the nine new fixed-Top-10 holdout measurements took 73.4 minutes. The three follow-ups used local evaluation only and generated no model tokens.
 
 ### Public use and claim boundary
 
@@ -317,7 +317,7 @@ Permitted primary statement:
 
 Permitted supplementary statement:
 
-> A post hoc expansion from the top three to the top ten training candidates identified a generation-4 candidate. On a separately sealed fresh corpus it improved compression throughput by 0.891%, with a 95% confidence interval from +0.522% to +1.261%.
+> A post hoc expansion from the top three to the top ten training candidates identified a generation-4 candidate. On a separately sealed fresh corpus it improved compression throughput by 0.891%, with a 95% confidence interval from +0.522% to +1.261%. The corpus recipe was chosen after the candidate was selected.
 
 The supplementary statement must retain the post hoc shortlist expansion and different-corpus qualifications.
 
@@ -402,20 +402,21 @@ The review must establish:
 1. how the candidate unit and evaluator changed from FunSearch and AlphaEvolve to recent systems;
 2. recent evidence on sample efficiency, search strategy, repository scale, runtime feedback, baselines, and trace analysis;
 3. which systems already use MAP-Elites, islands, full repositories, or enterprise optimization;
-4. which distinctions Loreley can defend and which older statements must be withdrawn;
-5. the minimum controls implied by negative or skeptical recent results.
+4. the closest comparison for each part of Loreley's design; and
+5. which comparative claims require controlled experiments.
 
 ### From local functions to engineered repositories
 
 | Work | Candidate and evaluator | Implication for Loreley |
 | --- | --- | --- |
 | [FunSearch](https://www.nature.com/articles/s41586-023-06924-6), Nature 2023 | Evolves one Python function inside a human-written scaffold and accumulates executable candidates | Establishes the LLM-plus-evaluator-plus-evolution pattern for a controlled local object |
-| [AlphaEvolve](https://arxiv.org/abs/2506.13131), 2025-06 | Extends the object to whole files, hundreds of lines, arbitrary languages, multiple metrics, and expensive external evaluation | Loreley cannot claim unique support for non-function programs or arbitrary languages |
-| [EvoGit](https://arxiv.org/abs/2506.02049), 2025-06 | Uses Git branches, commits, and merges to organize coding agents and lineages | Git substrates and multi-agent version lineages have direct precedent |
-| [SATLUTION](https://arxiv.org/abs/2509.07367), 2025-09 | Evolves a complete C/C++ SAT solver repository for about 70 cycles with about 400 candidates per cycle | Demonstrates repository-scale industrial optimization at roughly 28,000 candidate evaluations |
-| [ABCEvo](https://arxiv.org/abs/2604.15082), DAC 2026 | Three agent roles modify an approximately 1.2-million-line, 4,000-file ABC repository with compilation, eight flows, suites, and formal equivalence | Loreley cannot claim the first or largest full-repository evolution system |
-| [CodeEvolve](https://arxiv.org/abs/2605.04677), 2026-05 | Optimizes enterprise Java and Apex using profiling, component graphs, MCTS, builds, tests, and performance evaluation | Enterprise code, multiple languages, and runtime feedback are already covered |
-| [HORIZON](https://arxiv.org/abs/2606.28279), 2026-06 | Expands a Markdown harness into a hardware repository in isolated Git worktrees and retains accepted commit traces | Worktrees, repository contracts, evaluators, and commit traces are not unique contributions |
+| [AlphaEvolve](https://arxiv.org/abs/2506.13131), 2025-06 | Extends the object to whole files, hundreds of lines, arbitrary languages, multiple metrics, and expensive external evaluation | Establishes the general LLM-plus-evolution-plus-evaluator design from which Loreley starts |
+| [EvoGit](https://arxiv.org/abs/2506.02049), 2025-06 | Uses Git branches, commits, and merges to organize coding agents and lineages | Closest general-purpose precedent for Git-based agent lineages; its objective is collaborative software construction rather than evaluator-guided QD optimization |
+| [SATLUTION](https://arxiv.org/abs/2509.07367), 2025-09 | Evolves a complete C/C++ SAT solver repository for 70 cycles and evaluates each solver revision on 400 instances | Full-repository optimization with roughly 28,000 solver-instance executions, specialized to SAT solving |
+| [ABCEvo](https://arxiv.org/abs/2604.15082), DAC 2026 | Three agent roles modify an approximately 1.2-million-line, 4,000-file ABC repository with compilation, eight flows, suites, and formal equivalence | Full-repository optimization specialized to an EDA tool and its QoR pipeline |
+| [CodeEvolve](https://arxiv.org/abs/2605.04677), 2026-05 | Optimizes enterprise Java and Apex using profiling, component graphs, MCTS, builds, tests, and performance evaluation | General software setting, but the evolutionary unit is a selected method or writable code block with surrounding read-only context |
+| [Vesper](https://arxiv.org/abs/2605.15221), ICML AI for Science Workshop 2026 | Treats a repository branch as a candidate, runs coding agents in Git worktrees, and retains branches with an island model | Closest coding-agent harness design; evaluated on Circle Packing and explicitly omits MAP-Elites |
+| [HORIZON](https://arxiv.org/abs/2606.28279), 2026-06 | Expands a Markdown harness into a hardware repository in isolated Git worktrees and retains accepted commit traces | Full-repository evolution specialized to hardware-design artifacts and hardware evaluators |
 
 ### Archives and open-ended lineages
 
@@ -424,6 +425,7 @@ The review must establish:
 | [Darwin Gödel Machine](https://arxiv.org/abs/2505.22954), ICLR 2026 | Coding agents modify their own system and maintain an archive of improvement paths | Supports studying stepping stones, but the search object is the agent itself |
 | [ShinkaEvolve](https://openreview.net/forum?id=lKEdGCoDNC), ICLR 2026 | Adaptively chooses parents, models, and prompts and rejects low-novelty proposals | Loreley must compare its fixed or learned diversity mechanisms with simpler adaptive sampling |
 | [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve) | Provides open-source islands, MAP-Elites, and multi-objective program evolution | Islands and MAP-Elites alone are not research contributions |
+| [GEAR](https://arxiv.org/abs/2605.13874), 2026-05 | Maintains a population of machine-learning research states and compares it with single-path AutoResearch under the same compute budget | Direct evidence for multi-state agent search in one experimental domain and a useful model for Loreley's future controlled comparison |
 | [Evolutionary Ensemble of Agents](https://arxiv.org/abs/2605.09018), 2026-05 | Co-evolves code solutions and agent guidance or skills | Distinguishes searching the target repository from searching the agent strategy; Loreley currently focuses on the former |
 
 ### Evaluators as validation pipelines
@@ -432,9 +434,14 @@ FunSearch primarily scores a local function. AlphaEvolve supports several metric
 
 Loreley's Python interface is a scheduler boundary, not a language restriction. The paper should define an evaluator as a protocol that may invoke arbitrary builds, containers, hardware, or remote services. The Zstandard case demonstrates staged gates, hidden configurations, and sealed data.
 
-### Negative evidence and experimental requirements
+### Experimental evidence on search design
 
-- [Simple Baselines are Competitive with Code Evolution](https://arxiv.org/abs/2602.16805), 2026-02, reports that independent sampling and sequential rewriting can match or exceed more elaborate evolutionary systems on some tasks. Loreley needs equal-budget root-independent and champion-sequential controls.
+- [Self-Evolving Coding Agents](https://arxiv.org/abs/2608.03392), 2026-08,
+  organizes the field by the object that evolves, when evolution occurs, and
+  which software evidence drives it. Use this taxonomy to distinguish
+  repository-state search from agent, memory, tool, model, and collaboration
+  evolution.
+- [Simple Baselines are Competitive with Code Evolution](https://arxiv.org/abs/2602.16805), 2026-02, reports that independent sampling and sequential rewriting can match or exceed more elaborate evolutionary systems on some tasks. Any Loreley claim about relative search efficiency therefore needs equal-budget root-independent and champion-sequential controls.
 - [What Do Evolutionary Coding Agents Evolve?](https://arxiv.org/abs/2605.20086), 2026-05, finds that gains can come from parameter tuning, recombination, overfitting, or reintroduction of existing code. Publish ancestry, edit taxonomy, replay, and holdout results rather than only a winner score.
 - [HORIZON](https://arxiv.org/abs/2606.28279) reports reward hacking and over-solving risks. Keep visible training feedback, hidden validation, and a sealed holdout separate.
 - [Barbarians at the Gate: How AI is Upending Systems Research](https://arxiv.org/abs/2510.06189), 2025-10, identifies automated performance verification as a condition for agent-driven search in systems research. This supports defining the user by evaluator readiness.
@@ -447,20 +454,22 @@ Google announced [AlphaEvolve on Google Cloud](https://blog.google/innovation-an
 
 An LSM case cannot claim novelty from optimizing LSM alone. A future RocksDB study would need public, auditable repository search, equal-budget controls, and lineages across throughput, write amplification, and tail latency.
 
-### Defensible research position
+### Paper position
 
-“Scaling AlphaEvolve to real software repositories” is useful project shorthand, but it is not an exclusive priority claim. Repository evolution, Git substrates, enterprise code, and hardware repositories all have direct precedents.
+The paper studies a general-purpose quality-diversity search system for existing Git repositories. The closest full-repository systems in the reviewed AlphaEvolve line are specialized to SAT, EDA software, or hardware design. The closest general-purpose systems either organize agent lineages without evaluator-guided QD search or restrict evolution to selected functions and code blocks. Vesper is the closest harness-level comparison: it uses coding agents, repository branches, worktrees, and islands, but evaluates one Circle Packing setting and omits MAP-Elites.
 
-The research object is more narrowly a general quality-diversity search system for existing Git repositories. Candidate contributions, all subject to experiment, are:
+Loreley's paper contributions are:
 
-- accepting an existing repository and arbitrary external evaluator instead of a domain-specific evolver;
-- representing source candidates as commits while retaining ancestry and cross-lineage inspiration;
-- separating source identity from evaluator identity and aggregating repeated binaries, artifacts, traces, or behavior classes;
-- deriving behavior descriptors from repository states and maintaining bounded Pareto fronts, islands, and several valid lineages;
-- running asynchronous distributed workers with auditable request, token, evaluation, device-hour, and wall-time budgets;
-- demonstrating an equal-budget advantage over independent and champion-sequential search while using holdouts and trace analysis to test overfitting and duplicate discovery.
+- a target-independent contract that connects an existing repository, a coding-agent backend, and an arbitrary external evaluator;
+- complete Git commits as candidate states, with recorded ancestry and cross-lineage inspiration;
+- separate source, tree, artifact, and evaluator identities for deduplication and measurement reuse;
+- repository-state behaviour descriptors, MAP-Elites cells, bounded Pareto fronts, and multiple islands;
+- asynchronous execution with recorded model, token, evaluation, device-hour, and wall-time usage; and
+- three fixed-repository studies covering Python libraries and a compiled C/C++ system.
 
-These are hypotheses for the paper, not established contribution claims.
+The paper should explain these contributions directly and give most of its space to the method, implementation, experiments, and observed search behavior. Related work should locate the closest comparisons once. Evidence qualifications belong with the affected result and in the limitations section instead of being repeated throughout the introduction and conclusion.
+
+An equal-budget advantage over independent or champion-sequential search remains a separate empirical claim.
 
 ## Third-case selection and pilot record
 
@@ -554,9 +563,11 @@ The proposed design protected `programs/`, `tests/`, evaluators, and corpora; us
 
 Zstandard was selected because its high-precision evaluator was roughly 4 to 15 times faster than the provisional RocksDB design, required no dedicated NVMe device, and exposed a direct multi-objective problem.
 
-## Minimum paper experiments
+## Controlled comparison track
 
-The three existing cases have no equal-budget model-driven controls. The paper must compare:
+The first paper draft is a systems and empirical preprint based on the three completed case studies. It can describe Loreley's method, implementation, results, and cross-case findings without making a relative search-efficiency claim.
+
+A later comparative section can test whether Loreley quality-diversity search uses a fixed budget more effectively than:
 
 1. Loreley quality-diversity search;
 2. sequential editing of the current champion;
@@ -566,7 +577,7 @@ For every arm, freeze the target, model, visible training feedback, evaluator ga
 
 V19 completed three-stage data separation, binary-aware archive admission, a distinct-binary endpoint, and binary-aware finalist freezing. It ran only the quality-diversity arm. Existing ancestry cannot substitute for the two controls or for cross-architecture replication.
 
-The paper also needs to address four questions raised by V19:
+Further experiments can address four questions raised by V19:
 
 1. Across at least three independent searches, what are the discovery rate and time-to-first-useful-candidate distribution?
 2. How much does evolution contribute under no-seed, weak-seed, and current manual-seed conditions?
@@ -632,7 +643,26 @@ The [unified report](2026-08-07-loreley-case-study-evidence-report.md) supplies 
 
 ### Paper
 
-The provisional research object is quality-diversity program evolution over complete Git repositories. The title and contribution statement remain open pending the paper controls. Do not reuse old claims such as `first`, `production-grade`, or `repository-scale` as novelty statements.
+Paper title:
+
+> Loreley: Repository-Scale Program Evolution with Quality-Diversity Search
+
+The first public preprint is an English systems and empirical paper. Its main
+sections cover Loreley's repository-level QD method and implementation, a
+matched Zstandard policy experiment, three earlier capability cases, related
+work, limitations, and reproducibility. The controlled experiment separates
+archive engagement from endpoint efficacy: retained alternatives were reused,
+but Loreley QD did not beat Sequential Champion at the tested 48-job horizon.
+
+The related-work section should compare candidate scope, agent interface, archive design, evaluator generality, and experimental domain in about one page. It should not turn the introduction, result sections, or conclusion into a sequence of priority disclaimers. A future controlled comparison can strengthen the paper without blocking the first complete draft.
+
+The submitted source is available in [`paper/main.tex`](../../paper/main.tex),
+with a checked-in bibliography, data-derived figures, public formal records,
+and build instructions in [`paper/README.md`](../../paper/README.md). The
+matched-study validator replays winner selection, endpoint mapping, primary
+and secondary contrasts, sensitivity analyses, and public lineage counts.
+Internal reviews and submission bundles are retained as local archives under
+`output/` rather than published as project documentation.
 
 ## Decision log
 
@@ -661,7 +691,7 @@ The provisional research object is quality-diversity program evolution over comp
 - Confirmed `markdown-it-py` as the primary clean validation result.
 - Restricted the `python-pathspec` 25.14% result to capability and lineage evidence because candidate selection occurred after reference disclosure.
 - Recorded and resolved the old `python-pathspec` proxy cost, the `markdown-it-py` median/geometric-mean mismatch, and `python-pathspec` outcome naming.
-- Added the provider-recorded generation costs: $2.0833 and $2.4856, totaling $4.5689 without embeddings, host, or labor.
+- Added the proxy-calculated generation-cost estimates: $2.0833 and $2.4856, totaling $4.5689 without embeddings, host, or labor.
 
 ### 2026-08-06
 
@@ -718,3 +748,21 @@ The provisional research object is quality-diversity program evolution over comp
 - Updated the articles, launch copy, figures, entry points, partnership material, handoff, release note, and claim boundaries to use the new evidence.
 - Reorganized the Zstandard section in both articles around the same sequence as the first two cases: search budget and result, candidate changes, selection protocol, and artifact identity. Removed the evidence-stage table from the article while retaining it in the formal reports.
 - Revised both Zstandard-facing figures to foreground the descriptive holdout leader, `5ee53426` at +1.228%, while retaining the 10/10 group result and post-selection boundary as secondary information.
+- Set paper v0.1 as an English systems and empirical preprint centered on method, implementation, and the three completed studies. Equal-budget search controls remain a later comparative track.
+- Classified the closest full-repository AlphaEvolve descendants as domain-specific SAT, EDA, or hardware systems. Recorded Vesper as the closest coding-agent harness comparison and CodeEvolve as function- or block-level enterprise optimization.
+- Added Vesper and GEAR to the literature map and directed the paper to keep evidence qualifications with the affected result and in one limitations section.
+- Completed the first English paper draft under the provisional title
+  *Loreley: Quality-Diversity Search over Complete Git Repositories*.
+- Organized the paper around the repository-level QD method, system identity
+  model, experimental protocol, three results, and cross-case findings; kept
+  prior-art positioning to one related-work section.
+- Generated the Zstandard Top-10 figure directly from the checked-in evidence
+  JSON and completed factual, citation, LaTeX-log, text-extraction, and
+  eight-page visual checks.
+- Added the August 2026 *Self-Evolving Coding Agents* survey to the literature
+  map and paper after the final recency check.
+- Prepared the v0.1 internal review package with the compiled paper, source,
+  bibliography, figure inputs, claim-to-evidence matrix, and reviewer response
+  form.
+- Added `paper/review_notes.md` as the maintained record of paper status,
+  contribution claims, changes, uncertainties, and requested review focus.

@@ -37,7 +37,7 @@ be averaged or treated as expected performance on another repository.
 | --- | --- | --- |
 | [`markdown-it-py`](https://neapolitanicecream.github.io/loreley/research/2026-08-02-markdown-it-py-deepseek-case-study/) | Throughput +6.75% on a separate 28-document corpus; 28/28 documents improved | Winner frozen before validation |
 | [`python-pathspec`](https://neapolitanicecream.github.io/loreley/research/2026-08-03-pathspec-deepseek-case-study/) | Throughput +25.14% across five reference workloads; 5/5 improved | Post-hoc selection after the registered candidate failed its allocation gate |
-| [Zstandard V19](https://neapolitanicecream.github.io/loreley/research/2026-08-07-zstandard-gpt-v19-top10-validation-supplement/) | Descriptive leader +1.228% compression throughput on the original holdout, with a 95% CI of +1.125% to +1.330%; 10/10 fixed finalists were positive | Post-selection comparison; the holdout had already been revealed |
+| [Zstandard](https://neapolitanicecream.github.io/loreley/research/2026-08-07-zstandard-gpt-v19-top10-validation-supplement/) | Descriptive leader +1.228% compression throughput on the original holdout, with a 95% CI of +1.125% to +1.330%; 10/10 fixed finalists were positive | Post-selection comparison; the holdout had already been revealed |
 
 For Zstandard, the preregistered winner remains the manual seed `7b9aef38`, at
 +1.019% compression throughput on the sealed holdout. Generation-4 candidate

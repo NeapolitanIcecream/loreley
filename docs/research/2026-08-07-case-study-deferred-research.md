@@ -267,9 +267,11 @@ one bounded repair attempt versus terminal failure.
 
 ### Observation
 
-The DeepSeek reports contain provider-recorded generation cost. The GPT V19
-route exposes Kilo catalog estimates and token/cache counters but no authoritative
-provider invoice. Embedding routes are unpriced.
+The Markdown and Pathspec proxy logs contain request-level public-price
+calculations, not provider bills. Some other DeepSeek campaign reports retain
+provider-reported or provider-derived fields with different semantics. The GPT
+V19 route exposes Kilo catalog estimates and token/cache counters but no
+authoritative provider invoice. Embedding routes are unpriced.
 
 ### Open question
 

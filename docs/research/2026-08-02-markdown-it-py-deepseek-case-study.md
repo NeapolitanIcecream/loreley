@@ -1,8 +1,10 @@
 # Case study: Loreley found a 6.75% `markdown-it-py` speedup
 
 Date: 2026-08-02
-Scope: one preregistered campaign on `markdown-it-py` commit
-`97aff4f564e02e24f8526d9e2cd7899c47f714a6`
+Scope: one 64-job campaign on upstream `markdown-it-py` commit
+`bff75edcd7e6ce68f417803361d6e9f1223ad373`. Search began from experiment
+root `97aff4f564e02e24f8526d9e2cd7899c47f714a6`, which adds only the frozen
+Loreley control files.
 
 ## Result in one minute
 
@@ -24,7 +26,7 @@ and edit-scope checks. Every one of the 28 validation documents improved.
 | Peak allocation | 3.4890 MiB winner vs. 3.4924 MiB root |
 | Campaign wall time | 4.35 hours |
 | Generation usage | 215.35M tokens, 3,792 requests |
-| Recorded DeepSeek cost | $2.08 |
+| Proxy-calculated DeepSeek cost estimate | $2.08 |
 
 The winner was job 26, commit
 `b10adb6fad0da2a9825c3d1525048fd7b177d773`; its
@@ -52,10 +54,11 @@ sampler, worker, Kilo backend, and evaluator interface. Its fixed controls were:
 - a frozen training evaluator and a separate 28-document validation corpus that
   was used only after the winner was selected.
 
-We did not spend another large arm on a baseline agent. The campaign reused a
+We did not spend another large arm on a baseline agent. Training reused a
 previously frozen and measured root as its control. The 64-job endpoint was
-chosen because the observed throughput projected a 128-job run beyond the
-same-day completion deadline.
+fixed before campaign model calls began because the pre-campaign throughput
+projection placed a 128-job run beyond the same-day completion deadline. Final
+validation later measured the frozen root and candidate together.
 
 ## How the winner evolved
 
@@ -108,8 +111,10 @@ between 42% and 49% before dispatch, so memory was not the limiting resource;
 the single evaluator lane was retained to protect timing measurements.
 
 DeepSeek returned HTTP 200 for all 3,792 recorded generation requests. Loreley
-recorded 215,349,501 generation tokens and $2.0833 in provider cost. The archive
-also used 199,343 embedding tokens across 66 external embedding events.
+recorded 215,349,501 generation tokens. Summing the proxy's request-level cost
+fields under pricing version `deepseek-public-2026-08-02` gives a $2.0833
+estimate; the records contain no provider-billed cost. The archive also used
+199,343 embedding tokens across 66 external embedding events.
 
 Ten jobs failed and remained part of the result: four reached the request
 guard, four produced no effective change, one exhausted coding without a final
@@ -140,13 +145,15 @@ harness and raw machine artifacts are intentionally not part of this change.
 
 The defensible promotional statement is:
 
-> In a preregistered 64-job `markdown-it-py` case study, Loreley combined eight
-> small human-written seed ideas with Kilo/DeepSeek search to find a candidate
-> that was 6.75% faster on a separate 28-document corpus, with no correctness,
-> release, scope, or allocation regression.
+> In a 64-job `markdown-it-py` case study whose endpoint was fixed before model
+> calls began, Loreley combined eight small human-written seed ideas with
+> Kilo/DeepSeek search to find a candidate that was 6.75% faster on a separate
+> 28-document corpus, with no correctness, release, scope, or allocation
+> regression.
 
 This result has four important limits: it covers one repository and host, the
-search began with human guidance, it reused an earlier root measurement instead
-of running a new baseline arm, and the validation corpus was measured once
-after selection. Replication on other repositories is required before making a
-general effectiveness claim.
+search began with human guidance, training reused an earlier root measurement
+instead of running a new baseline arm, and the validation corpus was measured
+once after selection. Final validation did remeasure root and candidate in the
+same interleaved run. Replication on other repositories is required before
+making a general effectiveness claim.

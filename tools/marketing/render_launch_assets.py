@@ -429,7 +429,7 @@ def three_case_evidence() -> str:
     body.extend(
         case_card(
             x=1070,
-            name="Zstandard V19",
+            name="Zstandard",
             value="+1.228%",
             metric="compression · original holdout",
             status="Descriptive leader",
@@ -744,7 +744,7 @@ def zstd_result_footer() -> list[str]:
         text(
             1520,
             864,
-            "Fresh confirmation of fe39bee8: +0.891% (95% CI +0.522% to +1.261%)",
+            "Fresh-corpus result for fe39bee8: +0.891% (95% CI +0.522% to +1.261%)",
             size=18,
             fill=SLATE,
             weight=700,
@@ -755,7 +755,7 @@ def zstd_result_footer() -> list[str]:
 
 def zstd_identity_results() -> str:
     body = header(
-        "Zstandard V19: Top-10 holdout and binary identity",
+        "Zstandard: Top-10 holdout and binary identity",
         "5ee53426 led descriptively; all ten fixed candidates remained positive.",
     )
     body.extend(zstd_identity_flow(identity_y=220))

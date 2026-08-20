@@ -9,7 +9,7 @@
 </marker>
 </defs>
 <rect width="1600" height="900" fill="#F8FAFC"/>
-<text x="80" y="82.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="48" font-weight="700" text-anchor="start">Zstandard V19: Top-10 holdout and binary identity</text>
+<text x="80" y="82.0" fill="#0F172A" font-family="Arial, Helvetica, sans-serif" font-size="48" font-weight="700" text-anchor="start">Zstandard: Top-10 holdout and binary identity</text>
 <text x="80" y="126.0" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="400" text-anchor="start">5ee53426 led descriptively; all ten fixed candidates remained positive.</text>
 <rect x="80" y="150" width="1440" height="4" rx="2" fill="#6563FF" stroke="none" stroke-width="2"/>
 <rect x="80" y="220" width="300" height="150" rx="24" fill="#EFEEFF" stroke="none" stroke-width="2"/>
@@ -44,5 +44,5 @@
 <text x="870" y="752.0" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="400" text-anchor="start">Point range: +0.856% to +1.239%</text>
 <text x="870" y="785.0" fill="#64748B" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="400" text-anchor="start">Runner-up fe39bee8: +1.173%</text>
 <rect x="80" y="835" width="600" height="42" rx="21" fill="#FFF7E6" stroke="none" stroke-width="2"/><text x="380.0" y="864.0" fill="#B45309" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" text-anchor="middle">Post-selection sensitivity · not a new blinded winner</text>
-<text x="1520" y="864.0" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" text-anchor="end">Fresh confirmation of fe39bee8: +0.891% (95% CI +0.522% to +1.261%)</text>
+<text x="1520" y="864.0" fill="#475569" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" text-anchor="end">Fresh-corpus result for fe39bee8: +0.891% (95% CI +0.522% to +1.261%)</text>
 </svg>

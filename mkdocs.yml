@@ -1,5 +1,5 @@
 site_name: Loreley
-site_description: Automated MAP-Elites system that evolves entire git repositories.
+site_description: Repository-scale Quality-Diversity search with coding agents.
 
 exclude_docs: |
   marketing/README.md
@@ -17,8 +17,8 @@ nav:
       - Three-case-study report: research/2026-08-07-loreley-case-study-evidence-report.md
       - markdown-it-py DeepSeek case study: research/2026-08-02-markdown-it-py-deepseek-case-study.md
       - python-pathspec DeepSeek case study: research/2026-08-03-pathspec-deepseek-case-study.md
-      - Zstandard V19 case study: research/2026-08-07-zstandard-gpt-v19-case-study-report.md
-      - Zstandard V19 Top-10 validation and holdout supplement: research/2026-08-07-zstandard-gpt-v19-top10-validation-supplement.md
+      - Zstandard case study: research/2026-08-07-zstandard-gpt-v19-case-study-report.md
+      - Zstandard Top-10 validation and holdout supplement: research/2026-08-07-zstandard-gpt-v19-top10-validation-supplement.md
       - Candidate source diffs: marketing/candidates/README.md
       - Framework convergence proposal: research/2026-08-07-case-study-framework-convergence-proposal.md
       - Deferred research register: research/2026-08-07-case-study-deferred-research.md

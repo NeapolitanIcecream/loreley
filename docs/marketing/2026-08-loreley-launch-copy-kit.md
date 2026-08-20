@@ -35,7 +35,7 @@
 
 Loreley 在完整 Git 代码仓库上运行评估器驱动的搜索。规划智能体和编码智能体修改隔离的 worktree；项目评估器负责构建、正确性检查和性能测量；通过检查的候选提交可以进入质量-多样性档案库。对于编译型项目，评估器可以使用二进制文件哈希定义接受测量的产物身份。
 
-我们在三个固定代码仓库版本上完成了 348 个任务。`markdown-it-py` 的候选方案在验证前冻结，并在独立的 28 文档语料库上将吞吐量提高 6.75%。`python-pathspec` 的四代谱系在 5 个参考工作负载上提高 25.14%，但候选方案是在内存分配检查结果揭示后事后选择的。Zstandard V19 的预登记获胜方案在封存留出集上将压缩吞吐量提高 1.019%，95% 置信区间为 +0.962% 到 +1.076%；该方案是人工种子。后续固定 Top 10 在原留出集上 10/10 获得正向压缩结果，中位数为 +1.116%；由于该留出集此前已经揭示，这是事后比较。第 4 代候选方案 `fe39bee8` 另在新封存语料上提高 0.891%。
+我们在三个固定代码仓库版本上完成了 348 个任务。`markdown-it-py` 的候选方案在验证前冻结，并在独立的 28 文档语料库上将吞吐量提高 6.75%。`python-pathspec` 的四代谱系在 5 个参考工作负载上提高 25.14%，但候选方案是在内存分配检查结果揭示后事后选择的。Zstandard 的第 4 代候选方案 `fe39bee8` 由扩展验证选出，在原留出集上提高压缩吞吐量 1.173%，在新封存语料上提高 0.891%。选择时还不知道它的留出集分数，但该留出集已用于另一候选；新语料的生成方案则在候选确定后选择。原预登记 Top-3 协议的获胜方案仍是人工种子。
 
 完整报告包含候选选择过程、评估协议、谱系、失败记录和成本口径。项目正在寻找拥有自动评估器、真实代码仓库和相应计算预算的设计合作伙伴。
 
@@ -43,7 +43,7 @@ Loreley 在完整 Git 代码仓库上运行评估器驱动的搜索。规划智�
 
 ## 短帖
 
-> Loreley 使用编码智能体和项目评估器搜索完整 Git 代码仓库。三个固定版本实验共运行 348 个任务：`markdown-it-py` 在独立语料库上 +6.75%；`python-pathspec` 在 5 个参考工作负载上 +25.14%，候选为事后选择；Zstandard V19 的预登记留出集结果为 +1.019%。后续固定 Top 10 在原留出集上 10/10 为正，中位数 +1.116%；该留出集此前已揭示，因此这是事后比较。报告包含选择过程、成本和限制：<https://neapolitanicecream.github.io/loreley/marketing/2026-08-loreley-launch-article-zh/>
+> Loreley 使用编码智能体和项目评估器搜索完整 Git 代码仓库。三个固定版本实验共运行 348 个任务：`markdown-it-py` 在独立语料库上 +6.75%；`python-pathspec` 在 5 个参考工作负载上 +25.14%，候选为事后选择；Zstandard 的第 4 代候选方案在原留出集和新封存语料上分别 +1.173% 和 +0.891%，两项测量各有明确的协议限制。报告包含选择过程、成本和限制：<https://neapolitanicecream.github.io/loreley/marketing/2026-08-loreley-launch-article-zh/>
 
 ## 极短帖
 
@@ -67,7 +67,7 @@ Loreley 在完整 Git 代码仓库上运行评估器驱动的搜索。规划智�
 >
 > - `markdown-it-py`：64 个任务；候选方案在验证前冻结，在独立的 28 文档语料库上将吞吐量提高 6.75%，28 份文档全部改善；
 > - `python-pathspec`：64 个任务；四代谱系在 5 个参考工作负载上提高 25.14%，候选方案为事后选择；
-> - Zstandard V19：220 个任务，产生 167 个不同的发布版二进制文件；预登记的人工 seed 在封存留出集上提高压缩吞吐量 1.019%，95% 置信区间为 +0.962% 到 +1.076%。后续固定 Top 10 在同一留出集上 10/10 为正，中位数 +1.116%，描述性排名前两位都是 evolved candidates；由于留出集此前已经揭示，这不是新的盲测 winner。第 4 代候选方案 `fe39bee8` 另在新封存语料上提高 0.891%。
+> - Zstandard：220 个任务，产生 167 个不同的发布版二进制文件；第 4 代候选方案 `fe39bee8` 由扩展验证选出，在原留出集上 +1.173% (95% CI +1.102% 到 +1.245%)，在新封存语料上 +0.891% (95% CI +0.522% 到 +1.261%)。选择时不知道它的原留出集分数，但该留出集此前已打开；新语料生成方案在候选确定后选择。原预登记 Top-3 winner 仍是人工 seed。
 >
 > 三项结果使用不同的工作负载和选择协议，不能横向平均。统一报告包含失败、token、成本口径和证据范围。后续实验将按相同预算比较质量-多样性、从根版本独立采样和沿当前最优候选连续修改三种策略。
 >
@@ -116,7 +116,7 @@ Alternate:
 
 Loreley performs evaluator-guided search over complete Git repositories. Planning and coding agents edit isolated worktrees; project evaluators build, test, and benchmark each candidate; passing commits may enter a quality-diversity archive. Compiled targets can use a binary hash as the artifact identity that consumes measurement budget.
 
-We completed 348 jobs on fixed revisions of three repositories. A `markdown-it-py` candidate frozen before validation improved throughput by 6.75% on a separate 28-document corpus. A four-generation `python-pathspec` candidate improved five reference workloads by 25.14%, but candidate selection was post-hoc after an allocation failure. The preregistered Zstandard V19 winner was a nine-line manual seed that improved sealed-holdout compression throughput by 1.019%, with a 95% confidence interval from +0.962% to +1.076%. In a later fixed-Top-10 comparison, all ten candidates remained positive on that holdout, with a median gain of 1.116%. The holdout had already been revealed, so this was a post-selection comparison. Generation-4 candidate `fe39bee8` also gained 0.891% on a newly sealed corpus.
+We completed 348 jobs on fixed revisions of three repositories. A `markdown-it-py` candidate frozen before validation improved throughput by 6.75% on a separate 28-document corpus. A four-generation `python-pathspec` candidate improved five reference workloads by 25.14%, but candidate selection was post-hoc after an allocation failure. Zstandard generation-4 candidate `fe39bee8` was selected on expanded validation and then measured +1.173% compression on the original holdout and +0.891% on a newly sealed corpus. Its own holdout score was unknown at selection, but that corpus had already been opened for another candidate; the new-corpus recipe was chosen after selection. The preregistered Top-3 result remains a manual seed.
 
 The reports include candidate selection, evaluation protocols, lineage, failures, and cost semantics. We are looking for design partners with automated evaluators, valuable optimization targets, and appropriate compute budgets.
 
@@ -124,7 +124,7 @@ Article and evidence: <https://neapolitanicecream.github.io/loreley/marketing/20
 
 ## English short post
 
-> Loreley performs evaluator-guided search over complete Git repositories. Three fixed-revision studies completed 348 jobs: `markdown-it-py` +6.75% with prospective selection; `python-pathspec` +25.14% with post-hoc selection; and Zstandard V19 +1.019% sealed-holdout compression with a preregistered manual seed. A later fixed-Top-10 Zstandard comparison was positive for 10/10 candidates, with a median gain of 1.116%; the already revealed holdout makes this post-selection evidence. Reports, source diffs, costs, and limitations: <https://neapolitanicecream.github.io/loreley/marketing/2026-08-loreley-launch-article-en/>
+> Loreley performs evaluator-guided search over complete Git repositories. Three fixed-revision studies completed 348 jobs: `markdown-it-py` +6.75% after candidate freeze; `python-pathspec` +25.14% with post-hoc selection; and a validation-selected generation-4 Zstandard candidate at +1.173% on the original holdout and +0.891% on a newly sealed corpus. The Zstandard measurements have different protocol limits, documented with the reports, source diffs, and costs: <https://neapolitanicecream.github.io/loreley/marketing/2026-08-loreley-launch-article-en/>
 
 ## Hacker News or technical forum post
 
@@ -140,7 +140,7 @@ Body:
 >
 > - `markdown-it-py`: 64 jobs; a candidate frozen before validation was 6.75% faster on a separate 28-document corpus, with 28/28 documents improving.
 > - `python-pathspec`: 64 jobs; a four-generation lineage was 25.14% faster on five reference workloads. Candidate selection was post-hoc after the registered winner failed an allocation gate.
-> - Zstandard V19: 220 jobs and 167 distinct release binaries; the preregistered manual-seed winner improved sealed-holdout compression throughput by 1.019% (95% CI +0.962% to +1.076%). A later fixed-Top-10 comparison was positive for all ten candidates on the same holdout, with a median gain of 1.116%; the top two descriptive ranks were evolved candidates. Because the holdout had already been revealed, this was not a new blinded selection. Generation-4 candidate `fe39bee8` separately gained 0.891% on a newly sealed corpus.
+> - Zstandard: 220 jobs and 167 distinct release binaries; generation-4 candidate `fe39bee8` was selected on expanded validation, then measured +1.173% compression on the original holdout (95% CI +1.102% to +1.245%) and +0.891% on a newly sealed corpus (95% CI +0.522% to +1.261%). Its holdout score was unknown at selection, but that corpus had been opened for another candidate; the new-corpus recipe was chosen after selection. The preregistered Top-3 winner remains a manual seed.
 >
 > The aggregate report includes failures, token records, cost semantics, and the scope of each result. The next controlled experiment will compare quality-diversity with same-budget root-independent and champion-sequential search.
 >

@@ -2,8 +2,10 @@
 
 Date: 2026-08-03
 
-Scope: one 64-job campaign on `cpburnz/python-pathspec` commit
-`6568072c2703c72796cd02467feb924540157c92`
+Scope: one 64-job campaign on upstream `cpburnz/python-pathspec` commit
+`6568072c2703c72796cd02467feb924540157c92`. Search began from experiment
+root `4fb992fd44087d7e9f44e71485475ff9d41a79f1`, which adds only the frozen
+Loreley control files.
 
 ## Result in one minute
 
@@ -27,7 +29,7 @@ below the 0.05 MiB peak-allocation limit.
 | Campaign wall time | 3.91 hours |
 | Generation usage | 241.63M tokens, 3,977 requests |
 | Embedding usage | 258,055 tokens |
-| Generation cost | **$2.4856** |
+| Proxy-calculated generation cost estimate | **$2.4856** |
 
 The defensible statement is:
 
@@ -126,7 +128,11 @@ experiment-design error.
 
 The campaign completed at 16.4 terminal jobs per hour, including the six fast
 seed jobs. Median end-to-end job duration was 10.0 minutes. Generation used
-241,634,477 tokens. Recorded generation cost was $2.4856.
+241,634,477 tokens. The campaign proxy recorded 3,855 completed requests and
+122 transport errors. Summing its request-level cost fields under pricing
+version `deepseek-public-2026-08-02` gives a $2.4856 estimate; no provider bill
+is present. The legacy final-report field `$105.5664` included $105 in resource
+reservation fallbacks and is not a spend or request-cost record.
 
 The 19 failures remained part of the result: five failed during planning,
 thirteen produced no effective repository change, and one exceeded the

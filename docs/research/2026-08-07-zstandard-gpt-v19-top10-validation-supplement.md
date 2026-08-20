@@ -1,13 +1,13 @@
-# Zstandard V19 Top-10 Validation and Holdout Supplement
+# Zstandard Top-10 Validation and Holdout Supplement
 
 Date: 2026-08-07
 
 Holdout addendum: 2026-08-10
 
-This supplement asks whether the V19 training shortlist was too narrow. The
-registered experiment validated the training Top 3, selected `7b9aef38`, and
-measured only that candidate on its sealed holdout. Those artifacts and that
-conclusion remain unchanged.
+This supplement asks whether the Zstandard training shortlist was too narrow.
+The registered experiment validated the training Top 3, selected `7b9aef38`,
+and measured only that candidate on its sealed holdout. Those artifacts and
+that conclusion remain unchanged.
 
 ## Result
 
@@ -16,19 +16,27 @@ deterministic training Top 10 changed the validation winner from training rank
 3 to training rank 10.
 
 The expanded winner, `fe39bee8`, measured 1.01234× compression throughput on
-the existing validation split, with a 1.01156× lower 95% bound. It then produced
-a 1.00891× compression result on a newly generated confirmation corpus, with a
-95% interval of 1.00522–1.01261×. The confirmation result is modest-positive
-under the V19 thresholds.
+the existing validation split, with a 1.01156× lower 95% bound. Its original
+holdout score was not known when it was selected on validation; it later
+measured 1.01173× on that holdout, with a 95% interval of
+1.01102–1.01245×. The holdout corpus had already been opened for the registered
+Top-3 winner, so this is candidate-level out-of-selection evidence rather than
+a new blinded study-level result.
+
+On a newly generated corpus, `fe39bee8` measured 1.00891× compression, with a
+95% interval of 1.00522–1.01261×. The corpus was sealed before measurement, but
+its generator recipe and seed-selection procedure were chosen after the
+candidate. This is a fresh fixed-candidate measurement, not a preregistered or
+selection-adjusted confirmation.
 
 `fe39bee8` is a generation-4 evolved candidate. This supplements the original
-case-study conclusion: V19 not only preserved a useful manual seed; its
-evolution also produced a positive candidate that generalized to a fresh
-corpus.
+case-study conclusion: the campaign produced an evolved candidate with positive
+compression estimates on the selection split and both subsequently measured
+corpora.
 
 A later fixed-candidate comparison measured the entire frozen Top 10 on the
-original holdout. All ten met the V19 modest-positive rule. Training rank 7,
-`5ee53426`, had the highest compression lower bound at 1.01125×. This is a
+original holdout. All ten met the registered modest-positive rule. Training
+rank 7, `5ee53426`, had the highest compression lower bound at 1.01125×. This is a
 post-selection sensitivity result: the holdout had already been revealed for
 the registered winner, so it does not replace that winner or create a new
 blinded claim.
@@ -71,15 +79,16 @@ training leader. Independent validation reversed that ordering. Conversely,
 the training combined-throughput leader `8ec126ea` fell to a 1.00762×
 compression lower bound on validation.
 
-## Fresh confirmation
+## Fresh fixed-candidate measurement
 
-After the Top-10 winner was fixed, a new 16 MiB corpus was generated from the
-same `zstandard-mixed-v2` family. It contained eight 2 MiB files covering code,
+After the Top-10 winner was fixed, the experiment selected the generator
+recipe and seed procedure and generated a new 16 MiB corpus from the
+`zstandard-mixed-v2` family. It contained eight 2 MiB files covering code,
 records, natural text, and structured binary data. Its file hashes were
-disjoint from the V19 training, validation, and holdout corpora. The corpus was
-sealed before reveal, and only `fe39bee8` was measured, for 12 rounds.
+disjoint from the training, validation, and holdout corpora. The corpus was
+sealed before measurement, and only `fe39bee8` was measured, for 12 rounds.
 
-| Confirmation metric | Root ratio | 95% interval |
+| Fresh-corpus metric | Root ratio | 95% interval |
 | --- | ---: | ---: |
 | Compression throughput | 1.00891× | 1.00522–1.01261× |
 | Decompression throughput | 0.99830× | 0.99471–1.00191× |
@@ -89,9 +98,11 @@ sealed before reveal, and only `fe39bee8` was measured, for 12 rounds.
 | Peak RSS delta | +0.031 MiB | — |
 
 The candidate passed upstream tests, release compilation, cross-decoding, size,
-and RSS checks. The confirmation audit passed. The compression gain remained
-positive, but did not meet the strong threshold because its point estimate was
-below 1.02×. Decompression was within the registered modest-positive gate.
+and RSS checks. The audit passed. The compression gain remained positive, but
+did not meet the strong threshold because its point estimate was below 1.02×.
+Decompression was within the registered modest-positive gate. Because the
+corpus construction was candidate-aware, the measurement does not close every
+route by which test design could favor the selected candidate.
 
 ## Fixed Top-10 holdout comparison
 
@@ -132,8 +143,8 @@ root. None met the strong rule because no point estimate reached 1.02×. The
 registered winner ranked fifth descriptively, while the expanded validation
 winner ranked second.
 
-The Top-10 validation identified the right region: its first two candidates
-became the holdout first two, in reverse order. Fine ordering remained noisy.
+The two candidates with the highest validation lower bounds also had the two
+highest holdout lower bounds, in reverse order. Fine ordering remained noisy.
 The median holdout confidence-interval width was 0.327 percentage points, and
 the leading intervals overlapped. The defensible result is therefore that the
 fixed Top-10 generalized as a group, not that `5ee53426` is demonstrably better
@@ -165,16 +176,19 @@ patch](../marketing/candidates/zstandard-v19-evolved-followup.patch).
 ## Interpretation and next rule
 
 The original preregistered winner remains the only candidate selected before
-the original holdout was revealed, so this supplement does not relabel the
-registered result. The fresh confirmation establishes a separate prospective
-claim: the generation-4 Top-10 validation winner retained a positive
-compression gain on a newly sealed corpus. The later Top-10 holdout addendum
-does provide a uniform descriptive comparison on the original holdout, but it
-is post-selection evidence rather than a new blinded final selection.
+the original holdout was first revealed, so this supplement does not relabel
+the registered result. `fe39bee8` was selected on expanded validation without
+knowing its own original-holdout score. Its later holdout measurement is
+therefore out of selection for this candidate, but not a fresh study-level
+holdout because the corpus had already been opened for another candidate. The
+new corpus was sealed before measurement, but its construction was chosen
+after `fe39bee8` was fixed. Together the two measurements show a positive
+fixed-candidate estimate beyond the selection split; neither is a new blinded,
+preregistered confirmation.
 
 Future campaigns should validate at least the training Top 10. A useful
 adaptive rule is to include every candidate within 0.003 of the leading
-compression lower bound, with a minimum of 10 and a fixed upper cap. In V19,
+compression lower bound, with a minimum of 10 and a fixed upper cap. In this run,
 that rule would have retained `fe39bee8` while adding about 39 minutes to a
 5.31-hour search.
 

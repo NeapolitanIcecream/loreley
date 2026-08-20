@@ -1,4 +1,4 @@
-# Loreley Zstandard V19 Case Study: A 1.02% Holdout Compression Gain
+# Loreley Zstandard Case Study: A 1.02% Holdout Compression Gain
 
 Date: 2026-08-07
 

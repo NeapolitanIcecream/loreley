@@ -12,7 +12,7 @@ We evaluated Loreley on fixed revisions of three repositories. The studies compl
 | --- | ---: | ---: | --- | --- |
 | `markdown-it-py` | 64 jobs | 4.35 hours | throughput +6.75% | candidate frozen before validation |
 | `python-pathspec` | 64 jobs | 3.91 hours | throughput +25.14% | post-hoc selection after allocation failure |
-| Zstandard V19 | 220 jobs | 5.31 runner-hours | fixed Top-10 holdout: 10/10 positive; median +1.116% | post-selection fixed-candidate comparison |
+| Zstandard | 220 jobs | 5.31 runner-hours | fixed Top-10 holdout: 10/10 positive; median +1.116% | post-selection fixed-candidate comparison |
 
 The studies used different workloads and selection protocols. Their percentage results should not be averaged or treated as estimates of performance on other repositories.
 
@@ -80,9 +80,9 @@ Candidate selection was post-hoc. The registered training winner failed the larg
 
 The experiment records the archive retaining the 0.9978× lineage and sampling it again in a later job. It does not compare quality-diversity with a single-champion or root-independent search under an equal budget.
 
-## Case study 3: Zstandard V19
+## Case study 3: Zstandard
 
-Zstandard V19 used 220 jobs: 8 human-written seeds and 212 evolution jobs. After the search, a [fixed-Top-10 comparison](../research/2026-08-07-zstandard-gpt-v19-top10-validation-supplement.md) tested the ten training finalists on the original holdout. All ten improved compression throughput. The median gain was 1.116%, point estimates ranged from +0.856% to +1.239%, and every lower 95% bound remained above the root.
+The Zstandard study used 220 jobs: 8 human-written seeds and 212 evolution jobs. After the search, a [fixed-Top-10 comparison](../research/2026-08-07-zstandard-gpt-v19-top10-validation-supplement.md) tested the ten training finalists on the original holdout. All ten improved compression throughput. The median gain was 1.116%, point estimates ranged from +0.856% to +1.239%, and every lower 95% bound remained above the root.
 
 The candidate identities and order were fixed before the nine new measurements. The holdout had already been opened for the preregistered winner, so this comparison is post-selection and does not support a new blinded winner.
 
@@ -92,7 +92,7 @@ Ranked by the compression lower bound, generation-3 candidate `5ee53426` was fir
 
 The original protocol validated only the training Top 3 and selected manual seed `7b9aef38`. On the sealed holdout, it improved compression throughput by 1.019% (95% CI +0.962% to +1.076%). `7b9aef38` remains the preregistered winner.
 
-Validation was later expanded to the fixed training Top 10. Training rank 10, `fe39bee8`, became the validation winner at +1.234%, with a lower 95% bound of +1.156%. After the candidate was fixed, a new corpus was generated and sealed. On that corpus, `fe39bee8` improved compression throughput by 0.891% (95% CI +0.522% to +1.261%). This fresh-corpus result is prospective.
+Validation was later expanded to the fixed training Top 10. Training rank 10, `fe39bee8`, became the validation winner at +1.234%, with a lower 95% bound of +1.156%. Its original-holdout score was still unknown at selection; when measured later it was +1.173% (95% CI +1.102% to +1.245%). That corpus had already been opened for the preregistered Top-3 winner. After `fe39bee8` was fixed, a new corpus recipe and seed were chosen, and the corpus was generated and sealed before measurement. On it, compression throughput improved by 0.891% (95% CI +0.522% to +1.261%). The two measurements have complementary limits: an older but opened corpus, and new sealed data whose construction was chosen after the candidate was known.
 
 Of the 211 successful jobs, 167 produced distinct release binaries and 44 reproduced a binary that had already appeared. The evaluator used the release-binary SHA-256 for measurement identity, while Git commits retained source ancestry. After caching was enabled, 19 repeated binaries reused an accepted report; their median evaluator time was 21.6 seconds, compared with 186.7 seconds for jobs that ran the benchmark.
 
@@ -102,11 +102,11 @@ Of the 211 successful jobs, 167 produced distinct release binaries and 44 reprod
 
 The reported active times sum to 13.57 hours. The reports use slightly different campaign-time and active-runner definitions. These figures exclude experiment preparation, human analysis, and external waiting time.
 
-The `markdown-it-py` and `python-pathspec` studies recorded DeepSeek generation costs of $2.0833 and $2.4856, respectively, for a combined $4.5689. Embeddings, hosts, and human work were not priced.
+The `markdown-it-py` and `python-pathspec` proxy logs yield generation-cost estimates of $2.0833 and $2.4856 under the recorded public pricing version, for a combined estimate of $4.5689. The records contain no provider bill. Embeddings, hosts, and human work were not priced.
 
-Zstandard V19 recorded a $60.2472 Kilo model-catalog estimate rather than a provider invoice. Its accounting basis differs from the two DeepSeek costs, so the three dollar figures should not be summed as an all-in project cost.
+The Zstandard study recorded a $60.2472 Kilo model-catalog estimate rather than a provider invoice. Its accounting basis differs from the two DeepSeek costs, so the three dollar figures should not be summed as an all-in project cost.
 
-The expanded Top-10 validation, fresh confirmation, and nine new original-holdout measurements used 120.6 minutes of local evaluation after the search. They made no model calls and added no model tokens.
+The expanded Top-10 validation, fresh-corpus measurement, and nine new original-holdout measurements used 120.6 minutes of local evaluation after the search. They made no model calls and added no model tokens.
 
 The [aggregate evidence report](../research/2026-08-07-loreley-case-study-evidence-report.md) contains the complete metrics, failure categories, token records, and selection status. The [candidate index](candidates/README.md) contains the four published source diffs.
 
@@ -116,12 +116,12 @@ The [aggregate evidence report](../research/2026-08-07-loreley-case-study-eviden
 
 Repository-scale systems published in 2025 and 2026 include:
 
-- [SATLUTION](https://arxiv.org/abs/2509.07367), which modified a large C/C++ SAT solver over roughly 70 cycles with about 400 candidates per cycle, or approximately 28,000 candidate evaluations at a granularity comparable to a Loreley job;
+- [SATLUTION](https://arxiv.org/abs/2509.07367), which modified a large C/C++ SAT solver over 70 cycles and ran each solver revision on 400 benchmark instances, or about 28,000 solver-instance executions;
 - [ABCEvo](https://arxiv.org/abs/2604.15082), which connected agents to a million-line electronic-design-automation codebase with compilation, benchmark flows, and formal-equivalence checks;
 - [CodeEvolve](https://arxiv.org/abs/2605.04677), which used runtime profiles to select optimization targets in Java and Apex;
 - [HORIZON](https://arxiv.org/abs/2606.28279), which used Git worktrees and executable acceptance protocols to retain accepted engineering traces.
 
-Loreley uses complete Git commits for source and ancestry, evaluator-defined artifact identities for measurement, and a distributed quality-diversity archive for parent and inspiration selection. The three studies reported here use 348 jobs, compared with approximately 28,000 candidate evaluations reported for SATLUTION.
+Loreley uses complete Git commits for source and ancestry, evaluator-defined artifact identities for measurement, and a distributed quality-diversity archive for parent and inspiration selection. Loreley's three studies used 348 physical jobs. SATLUTION reports about 28,000 solver-instance executions; the units provide scale context but are not normalized candidate or compute budgets.
 
 ## Evidence scope and next experiments
 
