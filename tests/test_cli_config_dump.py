@@ -22,6 +22,7 @@ def _make_settings() -> TestSettings:
         TASKS_REDIS_PASSWORD="redis-secret",
         TASKS_REDIS_URL="redis://:redis-secret@redis.internal:6380/2",
         WORKER_KILOCODE_OPENAI_API_KEY="kilo-secret",
+        WORKER_KILOCODE_OPENAI_BASE_URL="https://worker-gateway.example.com/v1",
         WORKER_PLANNING_TRAJECTORY_SUMMARY_PROVIDER_MODE="custom",
         WORKER_PLANNING_TRAJECTORY_SUMMARY_API_KEY="trajectory-secret",
         WORKER_PLANNING_TRAJECTORY_SUMMARY_BASE_URL="https://trajectory.example.com/v1",
@@ -42,6 +43,7 @@ def test_config_dump_json_masks_secrets_by_default(monkeypatch: pytest.MonkeyPat
     assert code == 0
     payload = json.loads(captured.out)
     assert payload["openai_api_key"] == "***"
+    assert payload["openai_base_url"] == "***"
     assert payload["openai_dynamic_api_key_provider"] == "tests.support_dynamic_provider:token_provider"
     assert payload["openai_dynamic_api_key_ttl_seconds"] == 600
     assert payload["openai_dynamic_api_key_refresh_skew_seconds"] == 30
@@ -49,6 +51,8 @@ def test_config_dump_json_masks_secrets_by_default(monkeypatch: pytest.MonkeyPat
     assert payload["loreley_agent_api_token"] == "***"
     assert payload["loreley_api_write_token"] == "***"
     assert payload["database_dsn"] == "postgresql+psycopg://db.internal:5433/loreley_dev"
+    assert payload["worker_kilocode_openai_base_url"] == "***"
+    assert payload["worker_planning_trajectory_summary_base_url"] == "***"
     assert payload["worker_repo_remote_url"] == "https://example.com/repo.git"
 
 
@@ -88,6 +92,15 @@ def test_config_dump_json_can_disable_secret_masking(monkeypatch: pytest.MonkeyP
     assert payload["openai_api_key"] == "sk-test-secret"
     assert payload["tasks_redis_password"] == "redis-secret"
     assert payload["worker_planning_trajectory_summary_api_key"] == "trajectory-secret"
+    assert payload["openai_base_url"] == "https://gateway.example.com/v1"
+    assert (
+        payload["worker_kilocode_openai_base_url"]
+        == "https://worker-gateway.example.com/v1"
+    )
+    assert (
+        payload["worker_planning_trajectory_summary_base_url"]
+        == "https://trajectory.example.com/v1"
+    )
     assert "db-secret-password" in payload["database_dsn"]
 
 
@@ -151,6 +164,9 @@ def test_export_safe_masks_sensitive_fields_snapshot() -> None:
         "tasks_redis_url": payload["tasks_redis_url"],
         "tasks_redis_password": payload["tasks_redis_password"],
         "worker_kilocode_openai_api_key": payload["worker_kilocode_openai_api_key"],
+        "worker_kilocode_openai_base_url": payload[
+            "worker_kilocode_openai_base_url"
+        ],
         "worker_planning_trajectory_summary_api_key": payload[
             "worker_planning_trajectory_summary_api_key"
         ],
@@ -167,14 +183,15 @@ def test_export_safe_masks_sensitive_fields_snapshot() -> None:
 
     assert snapshot == {
         "openai_api_key": "***",
-        "openai_base_url": "https://gateway.example.com/v1",
+        "openai_base_url": "***",
         "database_dsn": "postgresql+psycopg://db.internal:5433/loreley_dev",
         "db_password": "***",
         "tasks_redis_url": "redis://redis.internal:6380/2",
         "tasks_redis_password": "***",
         "worker_kilocode_openai_api_key": "***",
+        "worker_kilocode_openai_base_url": "***",
         "worker_planning_trajectory_summary_api_key": "***",
-        "worker_planning_trajectory_summary_base_url": "https://trajectory.example.com/v1",
+        "worker_planning_trajectory_summary_base_url": "***",
         "worker_planning_trajectory_summary_reasoning_effort": "provider_default",
         "worker_repo_remote_url": "https://example.com/repo.git",
         "loreley_agent_api_token": "***",
@@ -193,7 +210,7 @@ def test_config_dump_yaml_output(monkeypatch: pytest.MonkeyPatch, capsys: pytest
 
     assert code == 0
     payload = yaml.safe_load(captured.out)
-    assert payload["openai_base_url"] == "https://gateway.example.com/v1"
+    assert payload["openai_base_url"] == "***"
     assert payload["tasks_redis_url"] == "redis://redis.internal:6380/2"
     assert "scheduler_poll_interval_seconds" in payload
 

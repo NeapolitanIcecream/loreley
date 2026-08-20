@@ -719,6 +719,68 @@ def test_kilocode_cli_backend_omits_optional_flags_when_disabled(
     assert "plan something" in command_list
 
 
+def test_kilocode_cli_backend_redacts_provider_values_from_output_and_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+    usage_db = tmp_path / "kilo.db"
+    api_key = "provider-secret-value"
+    base_url = "https://private-provider.example/v1"
+    with sqlite3.connect(usage_db) as connection:
+        connection.execute("CREATE TABLE event (id TEXT PRIMARY KEY, data TEXT)")
+        connection.execute("CREATE TABLE part (id TEXT PRIMARY KEY, data TEXT)")
+
+    def fake_run(*_args, **_kwargs):  # noqa: ANN001, ANN002
+        with sqlite3.connect(usage_db) as connection:
+            connection.execute(
+                "INSERT INTO event (id, data) VALUES (?, ?)",
+                ("event", f"tool output key={api_key} base={base_url}"),
+            )
+            connection.execute(
+                "INSERT INTO part (id, data) VALUES (?, ?)",
+                ("part", json.dumps({"key": api_key, "base": base_url})),
+            )
+        return types.SimpleNamespace(
+            stdout=f"stdout {api_key} {base_url}",
+            stderr=f"stderr {base_url} {api_key}",
+            returncode=0,
+        )
+
+    monkeypatch.setattr(kilocode_cli, "_run_kilo_process", fake_run)
+    backend = KilocodeCliBackend(
+        bin="kilo",
+        timeout_seconds=30,
+        extra_env={
+            "LORELEY_KILO_OPENAI_API_KEY": api_key,
+            "LORELEY_KILO_OPENAI_BASE_URL": base_url,
+        },
+        error_cls=RuntimeError,
+        usage_tracking_enabled=False,
+        usage_db_path=str(usage_db),
+    )
+
+    invocation = backend.run(
+        AgentTask(name="coding", prompt="do it"),
+        working_dir=repo_dir,
+    )
+
+    assert api_key not in invocation.stdout
+    assert base_url not in invocation.stdout
+    assert api_key not in invocation.stderr
+    assert base_url not in invocation.stderr
+    assert invocation.stdout.count("[redacted-provider-value]") == 2
+    assert invocation.stderr.count("[redacted-provider-value]") == 2
+    assert api_key.encode() not in usage_db.read_bytes()
+    assert base_url.encode() not in usage_db.read_bytes()
+    with sqlite3.connect(usage_db) as connection:
+        assert connection.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+        assert "[redacted-provider-value]" in connection.execute(
+            "SELECT data FROM event"
+        ).fetchone()[0]
+
+
 def test_kilocode_capability_parser_recognizes_current_run_flags() -> None:
     help_output = """
     kilo run [message..]
@@ -795,8 +857,15 @@ def test_kilocode_default_provider_adapter_uses_isolated_config_env_refs() -> No
     assert config["default_agent"] == "loreley-headless"
     assert config["permission"]["suggest"] == "deny"
     assert config["tools"]["suggest"] is False
+    assert config["permission"]["task"] == "deny"
+    assert config["tools"]["task"] is False
     assert config["agent"]["loreley-headless"]["permission"]["suggest"] == "deny"
     assert config["agent"]["loreley-headless"]["tools"]["suggest"] is False
+    assert config["agent"]["loreley-headless"]["permission"]["task"] == "deny"
+    assert config["agent"]["loreley-headless"]["tools"]["task"] is False
+    assert "Never inspect, enumerate, echo, or persist environment variables" in (
+        config["agent"]["loreley-headless"]["prompt"]
+    )
     assert config["model"] == "loreley-openai-responses/gpt-5.4"
     provider = config["provider"]["loreley-openai-responses"]
     assert provider["npm"] == "@ai-sdk/openai"
@@ -831,6 +900,8 @@ def test_kilocode_provider_adapter_supports_legacy_env_mode() -> None:
     assert config["default_agent"] == "loreley-headless"
     assert config["permission"]["suggest"] == "deny"
     assert config["tools"]["suggest"] is False
+    assert config["permission"]["task"] == "deny"
+    assert config["tools"]["task"] is False
 
 
 def test_kilocode_provider_adapter_none_mode_keeps_headless_profile() -> None:
@@ -848,6 +919,7 @@ def test_kilocode_provider_adapter_none_mode_keeps_headless_profile() -> None:
     assert set(env) == {"KILO_CONFIG_CONTENT"}
     assert config["default_agent"] == "loreley-headless"
     assert config["tools"]["suggest"] is False
+    assert config["tools"]["task"] is False
     assert "provider" not in config
     assert "model" not in config
     assert config["permission"] == {
@@ -856,6 +928,7 @@ def test_kilocode_provider_adapter_none_mode_keeps_headless_profile() -> None:
         "plan_exit": "deny",
         "question": "deny",
         "suggest": "deny",
+        "task": "deny",
     }
 
 
@@ -1674,11 +1747,43 @@ def test_kilocode_phase_backend_factories_support_distinct_native_openai_models(
         assert config["provider"]["openai"]["options"] == {
             "apiKey": "{env:LORELEY_KILO_OPENAI_API_KEY}",
             "baseURL": "{env:LORELEY_KILO_OPENAI_BASE_URL}",
+            "chunkTimeout": 900_000,
+            "timeout": 900_000,
         }
         assert (
             backend.extra_env["LORELEY_KILO_OPENAI_BASE_URL"]
             == "https://example.invalid/v1"
         )
+
+    get_settings.cache_clear()
+
+
+def test_kilocode_native_deepseek_override_preserves_catalog_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from loreley.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("WORKER_KILOCODE_PROVIDER_CONFIG_MODE", "native")
+    monkeypatch.setenv("WORKER_KILOCODE_OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv(
+        "WORKER_KILOCODE_OPENAI_BASE_URL", "https://example.invalid/v1"
+    )
+    monkeypatch.setenv(
+        "WORKER_KILOCODE_PLANNING_MODEL", "deepseek/deepseek-v4-flash"
+    )
+    get_settings.cache_clear()
+
+    backend = kilocode_planning_backend()
+    config = json.loads(backend.extra_env["KILO_CONFIG_CONTENT"])
+
+    assert backend.model == "deepseek/deepseek-v4-flash"
+    assert config["model"] == "deepseek/deepseek-v4-flash"
+    assert config["provider"]["deepseek"]["options"] == {
+        "apiKey": "{env:LORELEY_KILO_OPENAI_API_KEY}",
+        "baseURL": "{env:LORELEY_KILO_OPENAI_BASE_URL}",
+    }
+    assert "openai" not in config["provider"]
 
     get_settings.cache_clear()
 

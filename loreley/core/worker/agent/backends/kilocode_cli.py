@@ -44,6 +44,19 @@ _KILO_FAILURE_REASON_CODES = frozenset(
 _KILO_USAGE_REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
     "session": frozenset({"id", "title", "directory", "time_created", "time_updated"}),
 }
+_KILO_PROVIDER_VALUE_ENV_NAMES = frozenset(
+    {
+        "DEEPSEEK_API_KEY",
+        "LLM_API_KEY",
+        "LLM_BASE_URL",
+        "KILO_OPENAI_API_KEY",
+        "KILO_OPENAI_BASE_URL",
+        "WORKER_KILOCODE_OPENAI_API_KEY",
+        "WORKER_KILOCODE_OPENAI_BASE_URL",
+        LORELEY_KILO_OPENAI_API_KEY_ENV,
+        LORELEY_KILO_OPENAI_BASE_URL_ENV,
+    }
+)
 
 
 class KiloUsageUnavailableError(RuntimeError):
@@ -52,6 +65,10 @@ class KiloUsageUnavailableError(RuntimeError):
 
 class KiloWorkspaceIsolationError(RuntimeError):
     """Kilo bound a session to a directory outside the requested job worktree."""
+
+
+class KiloPersistenceSanitizationError(RuntimeError):
+    """Kilo persisted an exact provider value that could not be redacted."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -283,6 +300,99 @@ def _run_kilo_process(
     )
 
 
+def _provider_values(environment: dict[str, str]) -> tuple[str, ...]:
+    """Return exact provider values that must not survive in Kilo evidence."""
+
+    return tuple(
+        sorted(
+            {
+                str(environment[name])
+                for name in _KILO_PROVIDER_VALUE_ENV_NAMES
+                if str(environment.get(name, "") or "")
+            },
+            key=len,
+            reverse=True,
+        )
+    )
+
+
+def _redact_provider_values(text: str | None, values: tuple[str, ...]) -> str:
+    redacted = str(text or "")
+    for value in values:
+        redacted = redacted.replace(value, "[redacted-provider-value]")
+    return redacted
+
+
+def _file_contains_provider_value(path: Path, values: tuple[str, ...]) -> bool:
+    if not path.is_file():
+        return False
+    needles = tuple(value.encode() for value in values)
+    overlap = max((len(value) for value in needles), default=1) - 1
+    tail = b""
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            combined = tail + chunk
+            if any(value in combined for value in needles):
+                return True
+            tail = combined[-overlap:] if overlap else b""
+    return False
+
+
+def _sanitize_kilo_sqlite(path: Path, values: tuple[str, ...]) -> None:
+    """Remove exact provider values from a closed, per-job Kilo database."""
+
+    surfaces = (path, Path(f"{path}-wal"), Path(f"{path}-shm"))
+    if not values or not any(
+        _file_contains_provider_value(surface, values) for surface in surfaces
+    ):
+        return
+    try:
+        with sqlite3.connect(path, timeout=30) as connection:
+            if connection.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                raise KiloPersistenceSanitizationError(
+                    "Kilo usage database failed quick_check before redaction."
+                )
+            tables = [
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            ]
+            for table in tables:
+                quoted_table = '"' + table.replace('"', '""') + '"'
+                for column in connection.execute(
+                    f"PRAGMA table_info({quoted_table})"
+                ):
+                    name = str(column[1])
+                    declared_type = str(column[2] or "").upper()
+                    if declared_type not in {"", "JSON", "TEXT"}:
+                        continue
+                    quoted_column = '"' + name.replace('"', '""') + '"'
+                    for value in values:
+                        connection.execute(
+                            f"UPDATE {quoted_table} "
+                            f"SET {quoted_column} = replace({quoted_column}, ?, ?) "
+                            f"WHERE typeof({quoted_column}) = 'text' "
+                            f"AND instr({quoted_column}, ?) > 0",
+                            (value, "[redacted-provider-value]", value),
+                        )
+            connection.commit()
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            connection.execute("VACUUM")
+            if connection.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                raise KiloPersistenceSanitizationError(
+                    "Kilo usage database failed quick_check after redaction."
+                )
+    except (OSError, sqlite3.Error) as exc:
+        raise KiloPersistenceSanitizationError(
+            "Failed to redact exact provider values from the Kilo usage database."
+        ) from exc
+    if any(_file_contains_provider_value(surface, values) for surface in surfaces):
+        raise KiloPersistenceSanitizationError(
+            "Exact provider values remain in the Kilo usage database after redaction."
+        )
+
+
 @dataclass(slots=True)
 class KilocodeCliBackend:
     """AgentBackend implementation that delegates to the Kilocode CLI.
@@ -437,6 +547,7 @@ class KilocodeCliBackend:
         worktree: Path,
     ):
         start = monotonic()
+        provider_values = _provider_values(env)
         log.debug(
             "Running Kilocode CLI command: {} (cwd={}) for task={}",
             command_for_log,
@@ -451,10 +562,46 @@ class KilocodeCliBackend:
                 timeout=self.timeout_seconds,
             )
         except subprocess.TimeoutExpired as exc:
+            self._sanitize_kilo_persistence(
+                task=task,
+                provider_values=provider_values,
+            )
             raise self.error_cls(
                 f"kilo run timed out after {self.timeout_seconds}s.",
             ) from exc
-        return result, monotonic() - start
+        self._sanitize_kilo_persistence(
+            task=task,
+            provider_values=provider_values,
+        )
+        sanitized = subprocess.CompletedProcess(
+            args=getattr(result, "args", command),
+            returncode=int(result.returncode),
+            stdout=_redact_provider_values(result.stdout, provider_values),
+            stderr=_redact_provider_values(result.stderr, provider_values),
+        )
+        return sanitized, monotonic() - start
+
+    def _sanitize_kilo_persistence(
+        self,
+        *,
+        task: AgentTask,
+        provider_values: tuple[str, ...],
+    ) -> None:
+        if not provider_values:
+            return
+        path: Path | None = None
+        if self.state_root and task.job_id is not None and task.run_token is not None:
+            path = (
+                Path(self.state_root).expanduser().resolve()
+                / f"{task.job_id}-{task.run_token}"
+                / "data"
+                / "kilo"
+                / "kilo.db"
+            )
+        elif str(self.usage_db_path or "").strip():
+            path = Path(str(self.usage_db_path)).expanduser().resolve()
+        if path is not None and path.is_file():
+            _sanitize_kilo_sqlite(path, provider_values)
 
     def _raise_for_failure(
         self,
@@ -758,7 +905,11 @@ def _build_kilocode_openai_env(
             **_build_kilocode_legacy_openai_env(provider_input, api_key=api_key),
         }
     if mode == "native":
-        return _build_kilocode_native_openai_env(provider_input, api_key=api_key)
+        return _build_kilocode_native_provider_env(
+            provider_input,
+            api_key=api_key,
+            selected_model=selected_model,
+        )
     return _build_kilocode_config_openai_env(provider_input, api_key=api_key)
 
 
@@ -840,30 +991,43 @@ def _build_kilocode_config_openai_env(
     return env
 
 
-def _build_kilocode_native_openai_env(
+def _build_kilocode_native_provider_env(
     provider_input: dict[str, object],
     *,
     api_key: str | None = None,
+    selected_model: str | None = None,
 ) -> dict[str, str]:
-    """Override the native OpenAI route while retaining Kilo's model catalog."""
+    """Override a native provider route while retaining Kilo's model catalog."""
 
     base_url = str(provider_input.get("base_url") or "")
-    model = str(provider_input.get("model") or "")
+    selected = str(selected_model or "").strip()
+    selected_provider, separator, selected_model_id = selected.partition("/")
+    if separator and selected_provider in {"deepseek", "openai"}:
+        provider_id = selected_provider
+        model = selected_model_id
+    else:
+        provider_id = "openai"
+        model = str(provider_input.get("model") or "")
     include_api_key = bool(provider_input.get("has_api_key_source"))
-    options: dict[str, str] = {}
+    options: dict[str, object] = {}
     if include_api_key:
         options["apiKey"] = f"{{env:{LORELEY_KILO_OPENAI_API_KEY_ENV}}}"
     if base_url:
         options["baseURL"] = f"{{env:{LORELEY_KILO_OPENAI_BASE_URL_ENV}}}"
+    if provider_id == "openai":
+        # Bound a silent native Responses stream without shortening the
+        # planning or coding stage. Any SSE activity resets this timer.
+        options["timeout"] = 900_000
+        options["chunkTimeout"] = 900_000
     payload = _kilo_headless_config_payload()
     payload.update(
         {
             "$schema": KILO_CONFIG_SCHEMA_URL,
-            "provider": {"openai": {"options": options}},
+            "provider": {provider_id: {"options": options}},
         }
     )
     if model:
-        payload["model"] = f"openai/{model}"
+        payload["model"] = f"{provider_id}/{model}"
     env = {
         KILO_CONFIG_CONTENT_ENV: json.dumps(
             payload, separators=(",", ":"), sort_keys=True
@@ -936,8 +1100,9 @@ def _kilo_headless_config_payload() -> dict[str, object]:
         "plan_exit": "deny",
         "question": "deny",
         "suggest": "deny",
+        "task": "deny",
     }
-    disabled_tools = {"suggest": False}
+    disabled_tools = {"suggest": False, "task": False}
     return {
         "$schema": KILO_CONFIG_SCHEMA_URL,
         "agent": {
@@ -948,9 +1113,11 @@ def _kilo_headless_config_payload() -> dict[str, object]:
                 "tools": dict(disabled_tools),
                 "prompt": (
                     "You are running headlessly inside Loreley. Never call "
-                    "interactive_terminal, question, suggest, plan_enter, or "
-                    "plan_exit. Complete the task with non-interactive tools, "
-                    "then return the requested result immediately."
+                    "interactive_terminal, question, suggest, task, plan_enter, "
+                    "or plan_exit. Never inspect, enumerate, echo, or persist "
+                    "environment variables or credential-bearing process state. "
+                    "Complete the task with non-interactive tools, then return "
+                    "the requested result immediately."
                 ),
             }
         },

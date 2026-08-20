@@ -191,6 +191,52 @@ def test_embed_batch_records_usage_after_validation(
     assert len(recorded) == 1
 
 
+def test_openrouter_embedding_request_freezes_provider_routing(
+    settings: Settings,
+) -> None:
+    settings.openai_base_url = "https://openrouter.ai/api/v1"
+    settings.mapelites_code_embedding_provider_only = ("azure",)
+    settings.mapelites_code_embedding_allow_fallbacks = False
+    settings.mapelites_code_embedding_require_parameters = True
+    settings.mapelites_code_embedding_data_collection = "deny"
+    captured: dict[str, object] = {}
+    response = object()
+
+    class _FakeEmbeddings:
+        def create(self, **kwargs: object) -> object:
+            captured.update(kwargs)
+            return response
+
+    class _FakeClient:
+        embeddings = _FakeEmbeddings()
+
+    embedder = CodeEmbedder(settings=settings, client=_FakeClient())  # type: ignore[arg-type]
+
+    assert embedder._create_embedding_response(["frozen input"]) is response
+    assert captured["extra_body"] == {
+        "provider": {
+            "only": ["azure"],
+            "allow_fallbacks": False,
+            "require_parameters": True,
+            "data_collection": "deny",
+        }
+    }
+
+
+def test_embedding_provider_routing_rejects_non_openrouter_base_url(
+    settings: Settings,
+) -> None:
+    settings.openai_base_url = "https://api.openai.com/v1"
+    settings.mapelites_code_embedding_provider_only = ("azure",)
+    embedder = CodeEmbedder(settings=settings, client=object())  # type: ignore[arg-type]
+
+    with pytest.raises(
+        ValueError,
+        match="require an OpenRouter base URL",
+    ):
+        embedder._embedding_extra_body()
+
+
 def test_embed_batch_does_not_record_usage_for_invalid_response(
     settings: Settings,
     monkeypatch: pytest.MonkeyPatch,

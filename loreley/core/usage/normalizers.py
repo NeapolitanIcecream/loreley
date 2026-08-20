@@ -161,6 +161,8 @@ def normalize_openai_usage_event(
     context = current_usage_context()
     phase_value = metadata.phase or context.phase or ""
     api_surface = metadata.api_surface
+    provider_cost = _decimal(_attr(usage, "cost"))
+    provider_reported = provider_cost is not None and provider_cost > 0
     event = LLMUsageEventPayload(
         source=metadata.source,
         phase=phase_value,
@@ -175,7 +177,12 @@ def normalize_openai_usage_event(
         output_tokens=_output_tokens(usage, api_surface=api_surface),
         reasoning_output_tokens=_reasoning_output_tokens(usage),
         total_tokens=_int_attr(usage, "total_tokens"),
-        cost_source=COST_SOURCE_UNPRICED,
+        cost_usd=provider_cost if provider_reported else None,
+        cost_source=(
+            COST_SOURCE_PROVIDER_REPORTED
+            if provider_reported
+            else COST_SOURCE_UNPRICED
+        ),
         raw_usage={"usage": sanitized_usage_payload(usage)},
         external_usage_id=metadata.external_usage_id or str(_attr(response, "id") or ""),
     )

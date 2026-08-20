@@ -192,6 +192,7 @@ class PlanningAgentRequest:
 
 WORKER_CONTRACT_LINES: tuple[str, ...] = (
     "Operate non-interactively. Do not ask for clarification, approval, or confirmation.",
+    "Use only preinstalled tools. Do not install or download runtimes, packages, dependencies, or toolchains.",
     "Modify repository files only. Do not create commits, tags, or branches. Do not push.",
     "Do not run Loreley's evaluator or any framework-managed end-to-end benchmark flow.",
     "Leave the repository in a modified worktree state.",

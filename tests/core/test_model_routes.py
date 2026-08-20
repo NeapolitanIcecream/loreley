@@ -42,6 +42,23 @@ def test_native_kilo_provider_is_not_misattributed_to_embedding_gateway() -> Non
     assert routes["embedding"]["provider"] == "openrouter"
 
 
+def test_native_deepseek_gateway_override_keeps_deepseek_identity() -> None:
+    settings = TestSettings(
+        WORKER_KILOCODE_PLANNING_MODEL="deepseek/deepseek-v4-flash",
+        WORKER_KILOCODE_OPENAI_BASE_URL="https://api.deepseek.example/v1",
+        WORKER_KILOCODE_OPENAI_API_KEY="do-not-export",
+        WORKER_KILOCODE_OPENAI_API_SPEC="chat_completions",
+        WORKER_KILOCODE_PROVIDER_CONFIG_MODE="native",
+    )
+
+    route = resolve_effective_routes(settings)["planning"]
+
+    assert route["provider_mode"] == "native"
+    assert route["provider"] == "deepseek"
+    assert route["api_surface"] == "chat_completions"
+    assert route["base_url_host"] == "api.deepseek.example"
+
+
 def test_auto_mode_reports_config_route_selected_by_openai_phase_model() -> None:
     settings = TestSettings(
         WORKER_KILOCODE_PLANNING_MODEL="openai/gpt-plan",

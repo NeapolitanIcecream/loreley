@@ -349,9 +349,12 @@ class CodeEmbedder:
         return OpenAI(**client_kwargs) if client_kwargs else OpenAI()
 
     def _record_usage(self, response: object) -> None:
+        base_url = str(getattr(self.settings, "openai_base_url", "") or "").lower()
+        provider = "openrouter" if "openrouter.ai" in base_url else "openai"
         event = normalize_openai_usage_event(
             response,
             phase="embedding",
+            provider=provider,
             model=self._model,
             api_surface="embeddings",
             settings=self.settings,
@@ -360,18 +363,59 @@ class CodeEmbedder:
 
     def _create_embedding_response(self, payload: Sequence[str]) -> object:
         client = self._get_client()
+        request: dict[str, object] = {
+            "model": self._model,
+            "input": list(payload),
+            "dimensions": self._dimensions,
+        }
+        extra_body = self._embedding_extra_body()
+        if extra_body is not None:
+            request["extra_body"] = extra_body
         try:
-            return client.embeddings.create(
-                model=self._model,
-                input=list(payload),
-                dimensions=self._dimensions,
-            )
+            return client.embeddings.create(**request)
         except ValueError as exc:
             if self._is_no_embedding_data_error(exc):
                 raise RetryableEmbeddingResponseError(
                     "Embedding API returned no embedding data."
                 ) from exc
             raise
+
+    def _embedding_extra_body(self) -> dict[str, object] | None:
+        """Return explicit OpenRouter routing controls when configured."""
+
+        base_url = str(getattr(self.settings, "openai_base_url", "") or "").lower()
+        provider_only = tuple(
+            str(value).strip()
+            for value in self.settings.mapelites_code_embedding_provider_only
+            if str(value).strip()
+        )
+        configured = bool(provider_only) or any(
+            (
+                not self.settings.mapelites_code_embedding_allow_fallbacks,
+                self.settings.mapelites_code_embedding_require_parameters,
+                self.settings.mapelites_code_embedding_data_collection != "allow",
+            )
+        )
+        if not configured:
+            return None
+        if "openrouter.ai" not in base_url:
+            raise ValueError(
+                "Embedding provider routing controls require an OpenRouter base URL."
+            )
+        provider: dict[str, object] = {
+            "allow_fallbacks": bool(
+                self.settings.mapelites_code_embedding_allow_fallbacks
+            ),
+            "require_parameters": bool(
+                self.settings.mapelites_code_embedding_require_parameters
+            ),
+            "data_collection": (
+                self.settings.mapelites_code_embedding_data_collection
+            ),
+        }
+        if provider_only:
+            provider["only"] = list(provider_only)
+        return {"provider": provider}
 
     def _ordered_vectors_from_response(self, response: object, *, payload_size: int) -> list[Vector]:
         vectors: list[Vector | None] = [None] * payload_size

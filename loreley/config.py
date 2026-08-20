@@ -823,6 +823,22 @@ class Settings(BaseSettings):
         default=12,
         alias="MAPELITES_CODE_EMBEDDING_BATCH_SIZE",
     )
+    mapelites_code_embedding_provider_only: tuple[str, ...] = Field(
+        default=(),
+        alias="MAPELITES_CODE_EMBEDDING_PROVIDER_ONLY",
+    )
+    mapelites_code_embedding_allow_fallbacks: bool = Field(
+        default=True,
+        alias="MAPELITES_CODE_EMBEDDING_ALLOW_FALLBACKS",
+    )
+    mapelites_code_embedding_require_parameters: bool = Field(
+        default=False,
+        alias="MAPELITES_CODE_EMBEDDING_REQUIRE_PARAMETERS",
+    )
+    mapelites_code_embedding_data_collection: Literal["allow", "deny"] = Field(
+        default="allow",
+        alias="MAPELITES_CODE_EMBEDDING_DATA_COLLECTION",
+    )
     mapelites_code_embedding_max_retries: int = Field(
         default=3,
         alias="MAPELITES_CODE_EMBEDDING_MAX_RETRIES",
@@ -1121,7 +1137,7 @@ def _safe_export_worker_payload(settings: Settings, *, mask_secrets: bool) -> di
         "worker_kilocode_state_root": settings.worker_kilocode_state_root,
         "worker_kilocode_provider_config_mode": settings.worker_kilocode_provider_config_mode,
         "worker_kilocode_openai_api_spec": settings.worker_kilocode_openai_api_spec,
-        "worker_kilocode_openai_base_url": _safe_export_url(
+        "worker_kilocode_openai_base_url": _safe_export_secret(
             settings.worker_kilocode_openai_base_url,
             mask_secrets=mask_secrets,
         ),
@@ -1149,7 +1165,7 @@ def _safe_export_worker_payload(settings: Settings, *, mask_secrets: bool) -> di
             settings.worker_planning_trajectory_summary_api_key,
             mask_secrets=mask_secrets,
         ),
-        "worker_planning_trajectory_summary_base_url": _safe_export_url(
+        "worker_planning_trajectory_summary_base_url": _safe_export_secret(
             settings.worker_planning_trajectory_summary_base_url,
             mask_secrets=mask_secrets,
         ),
@@ -1187,7 +1203,10 @@ def _build_safe_export_payload(settings: Settings, *, mask_secrets: bool) -> dic
             mask_secrets=mask_secrets,
         ),
         "openai_api_spec": settings.openai_api_spec,
-        "openai_base_url": _safe_export_url(settings.openai_base_url, mask_secrets=mask_secrets),
+        "openai_base_url": _safe_export_secret(
+            settings.openai_base_url,
+            mask_secrets=mask_secrets,
+        ),
         "openai_api_key": _safe_export_secret(settings.openai_api_key, mask_secrets=mask_secrets),
         "openai_dynamic_api_key_provider": settings.openai_dynamic_api_key_provider,
         "openai_dynamic_api_key_ttl_seconds": settings.openai_dynamic_api_key_ttl_seconds,
@@ -1230,6 +1249,18 @@ def _build_safe_export_payload(settings: Settings, *, mask_secrets: bool) -> dic
         **_safe_export_worker_payload(settings, mask_secrets=mask_secrets),
         "mapelites_code_embedding_model": settings.mapelites_code_embedding_model,
         "mapelites_code_embedding_dimensions": settings.mapelites_code_embedding_dimensions,
+        "mapelites_code_embedding_provider_only": list(
+            settings.mapelites_code_embedding_provider_only
+        ),
+        "mapelites_code_embedding_allow_fallbacks": (
+            settings.mapelites_code_embedding_allow_fallbacks
+        ),
+        "mapelites_code_embedding_require_parameters": (
+            settings.mapelites_code_embedding_require_parameters
+        ),
+        "mapelites_code_embedding_data_collection": (
+            settings.mapelites_code_embedding_data_collection
+        ),
         "mapelites_local_hash_embedding_acknowledged": (
             settings.mapelites_local_hash_embedding_acknowledged
         ),

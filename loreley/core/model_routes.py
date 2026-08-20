@@ -139,10 +139,18 @@ def _resolve_kilo_route(
     )
     base_url = _non_empty(provider_input["base_url"])
     api_spec = provider_input["api_spec"]
+    native_named_provider_override = bool(
+        configured_mode == "native"
+        and _model_provider(model) == "deepseek"
+        and _non_empty(settings.worker_kilocode_openai_base_url)
+    )
     effective_gateway = (
         configured_mode != "none"
         and bool(provider_input["has_provider_config"])
-        and _gateway_compatible_model(model)
+        and (
+            _gateway_compatible_model(model)
+            or native_named_provider_override
+        )
     )
     effective_mode = configured_mode
     if configured_mode == "auto":
@@ -155,7 +163,12 @@ def _resolve_kilo_route(
             else "loreley-openai-compatible"
         )
     elif effective_gateway and effective_mode == "native":
-        provider = "openai"
+        model_provider = _model_provider(model)
+        provider = (
+            model_provider
+            if model_provider in {"deepseek", "openai"}
+            else "openai"
+        )
     return _KiloRouteResolution(
         mode=effective_mode,
         provider=provider,

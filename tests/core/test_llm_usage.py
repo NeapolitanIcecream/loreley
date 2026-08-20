@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from types import SimpleNamespace
 
 from loreley.core.usage import (
@@ -95,6 +96,29 @@ def test_openai_chat_and_embeddings_usage_normalizer_handles_missing_prices(sett
     assert embedding_event.input_tokens == 20
     assert embedding_event.output_tokens == 0
     assert embedding_event.total_tokens == 20
+
+
+def test_openrouter_embedding_usage_keeps_provider_reported_cost(settings) -> None:
+    settings.llm_usage_pricing_json = json.dumps({"version": "empty", "prices": []})
+    response = SimpleNamespace(
+        id="openrouter-embedding-1",
+        model="openai/text-embedding-3-small",
+        usage={"prompt_tokens": 60, "total_tokens": 60, "cost": "0.0000012"},
+    )
+
+    event = normalize_openai_usage_event(
+        response,
+        phase="embedding",
+        provider="openrouter",
+        model="openai/text-embedding-3-small",
+        api_surface="embeddings",
+        settings=settings,
+    )
+
+    assert event is not None
+    assert event.input_tokens == 60
+    assert event.cost_usd == Decimal("0.0000012")
+    assert event.cost_source == "provider_reported"
 
 
 def test_codex_usage_parser_uses_last_token_count_aggregate(settings) -> None:
