@@ -209,10 +209,17 @@ __marimo__/
 
 # Loreley
 logs/
-output/refactor-audit/
-output/markdown-it-*/
-output/pathspec-*/
-output/zstandard-*/
+/output/
+/tmp/
+.DS_Store
+/paper/figures/*.png
+/paper/figures/zstd_top10.pdf
+/paper/*.aux
+/paper/*.bbl
+/paper/*.blg
+/paper/*.log
+/paper/*.out
+/paper/*.synctex.gz
 .cursor
 .playwright-mcp/
 .wrangler/
