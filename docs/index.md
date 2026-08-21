@@ -1,362 +1,207 @@
 # Loreley
 
-> Whole-repository Quality-Diversity optimization for real git codebases.
+> Quality-Diversity program search over complete Git repositories.
 
-Loreley is an automated Quality-Diversity optimization system that **evolves entire git repositories**, not just single files or scripts. It continuously samples promising commits, asks external agents to plan and implement changes, evaluates them, and archives the best-performing and most diverse variants for later reuse.
+Loreley uses planning and coding agents to propose repository-level commits. A
+project-specific evaluator builds, verifies, and scores each candidate.
+Candidates that pass may enter a persistent Quality-Diversity archive and
+remain available as parents or inspirations for later jobs.
 
-A git commit is the auditable source and ancestry representation. For compiled
-or generated targets, the evaluator can define a separate measurement identity,
-such as a release-binary hash, so source-distinct but equivalent artifacts do
-not require another benchmark.
+A Git commit records the source state and its ancestry. For compiled or
+generated targets, the evaluator can define a separate measurement identity,
+such as a release-binary hash, so equivalent artifacts do not consume another
+benchmark run.
 
-Use this page as a high-level overview and a navigation hub into the focused module guides under `loreley/` and `script/` (see the sidebar navigation).
-
-The paper, [*Loreley: Repository-Scale Program Evolution with
-Quality-Diversity Search*](https://arxiv.org/abs/2608.19703)
-([PDF](https://arxiv.org/pdf/2608.19703)), describes the method, a matched
-1,008-job Zstandard experiment, the three capability studies, and their
-limitations.
+[Evidence](#evidence) · [How it works](#how-loreley-works) ·
+[Paper](https://arxiv.org/abs/2608.19703) ·
+[Run Loreley](#run-loreley) ·
+[Design partners](marketing/loreley-design-partner-brief.md)
 
 ![Loreley paper overview: repository-scale Quality-Diversity search, matched Zstandard comparison, and capability campaigns](marketing/assets/loreley-paper-overview.png)
 
----
+The paper, [*Loreley: Repository-Scale Program Evolution with
+Quality-Diversity Search*](https://arxiv.org/abs/2608.19703), reports the system,
+three capability campaigns, and a matched Zstandard experiment comparing
+Loreley QD with Sequential Champion and Independent Root search. The controlled
+experiment used seven paired blocks and 48 physical candidate jobs per policy
+and block, for 1,008 jobs in total. At 48 jobs, neither comparison established
+a QD advantage. Read the [PDF](https://arxiv.org/pdf/2608.19703) or inspect the
+[public experiment record](https://github.com/NeapolitanIcecream/loreley/blob/main/paper/evidence/zstd_method_efficacy.json).
 
 ## Evidence
 
+### Matched policy comparison
+
 The matched experiment compared Loreley QD, Sequential Champion, and
-Independent Root search across seven paired blocks, with 48 physical candidate
-jobs per policy and block. At 48 jobs, QD was 0.135% below Sequential Champion
-(95% BCa interval −0.556% to +0.161%) and 0.320% above Independent Root
-(−0.082% to +0.686%). Neither contrast established a QD advantage. The paper
-and the checked-in [experiment record](https://github.com/NeapolitanIcecream/loreley/blob/main/paper/evidence/zstd_method_efficacy.json)
-provide the full protocol and results.
+Independent Root on the same Zstandard revision. At the 48-job endpoint, QD
+was 0.135% below Sequential Champion (95% BCa interval −0.556% to +0.161%) and
+0.320% above Independent Root (−0.082% to +0.686%). Neither contrast
+established a QD advantage. The archive did retain and later resample
+non-incumbent states, separating observed mechanism activity from the endpoint
+result.
 
-[The three-case-study evidence report](research/2026-08-07-loreley-case-study-evidence-report.md)
-summarizes the selection status, measurements, costs, and limits. The fixed
-repository studies are:
+### Three repository searches
 
-- [`markdown-it-py`](research/2026-08-02-markdown-it-py-deepseek-case-study.md):
-  a preregistered winner was 6.75% faster on a separate 28-document corpus.
-- [`python-pathspec`](research/2026-08-03-pathspec-deepseek-case-study.md): a
-  four-generation archive lineage produced a qualifying 25.14% speedup. The
-  candidate was selected post-hoc after the registered winner missed its
-  allocation gate.
-- [Zstandard](research/2026-08-07-zstandard-gpt-v19-case-study-report.md):
-  expanded validation selected generation-4 candidate `fe39bee8`. Its
-  compression throughput later measured +1.173% on the original holdout and
-  +0.891% on a newly sealed corpus. The original holdout had previously been
-  opened at study level, while the fresh-corpus recipe was chosen after the
-  candidate was fixed.
+Three earlier campaigns completed 348 jobs: 310 succeeded and 38 failed. Each
+study used a different workload and selection protocol, so the percentage
+results should not be averaged or treated as expected performance on another
+repository.
 
-Read the project essay in [Chinese](marketing/2026-08-loreley-launch-article-zh.md)
-or [English](marketing/2026-08-loreley-launch-article-en.md). Teams with an
-automated evaluator can use the [design-partner brief](marketing/loreley-design-partner-brief.md)
-to assess fit and submit a non-confidential intake.
+![Results and selection status from three Loreley repository searches](marketing/assets/loreley-three-case-evidence.png)
 
----
+| Repository | Measured result | Selection status |
+| --- | --- | --- |
+| [`markdown-it-py`](research/2026-08-02-markdown-it-py-deepseek-case-study.md) | Throughput +6.75% on a separate 28-document corpus; 28/28 documents improved | Winner frozen before validation |
+| [`python-pathspec`](research/2026-08-03-pathspec-deepseek-case-study.md) | Throughput +25.14% across five reference workloads; 5/5 improved | Post-hoc selection after the registered candidate failed its allocation gate |
+| [Zstandard](research/2026-08-07-zstandard-gpt-v19-top10-validation-supplement.md) | Validation-selected generation-4 candidate: compression throughput +1.173% on the original holdout and +0.891% on a newly sealed corpus | Original holdout previously opened at study level; fresh-corpus recipe chosen after candidate fixation |
 
-## Challenges and core ideas
+The [aggregate evidence report](research/2026-08-07-loreley-case-study-evidence-report.md)
+contains the protocols, costs, failure counts, candidate selection records, and
+claim limits for all three studies.
 
-Loreley is built around three core ideas, each designed to address a concrete challenge in real-world code evolution:
+## How Loreley works
 
-| Challenge in real repositories | Loreley core idea |
+![Loreley searches repository states proposed by coding agents and accepted by an external evaluator](marketing/assets/loreley-search-loop.png)
+
+1. **Define a campaign.** Fix the root commit, optimization goal, protected
+   scope, evaluator, objectives, and job budget.
+2. **Propose repository changes.** The scheduler selects retained commits as
+   bases or inspirations. Planning and coding agents edit isolated Git
+   worktrees and produce new commits.
+3. **Evaluate each candidate.** The project evaluator builds the candidate,
+   applies correctness and scope gates, measures the configured objectives, and
+   may report an artifact identity.
+4. **Retain useful states.** Loreley stores the commit, ancestry, metrics,
+   artifacts, and terminal outcome. Passing candidates may enter the
+   Quality-Diversity archive and be sampled by later jobs.
+
+The evaluator controls what constitutes a valid improvement. It may call local
+scripts, a C or C++ build, a Java benchmark, a container, a hardware testbed,
+or a remote evaluation service. The evaluator plugin has a Python interface;
+the target repository can use any implementation language.
+
+## Quality-Diversity over repository states
+
+Loreley derives behaviour descriptors from repository-state code embeddings.
+File embeddings are cached by Git blob SHA, aggregated into commit vectors,
+and can be reduced with PCA before placement in a MAP-Elites grid. Each occupied
+cell retains a bounded Pareto front over the configured objectives.
+
+Configured islands maintain separate archives and can exchange retained
+candidates as inspirations. This keeps multiple valid branches available when
+they occupy different behavioural niches or represent different objective
+trade-offs.
+
+The three capability studies show multi-generation lineages, archive
+retention, and later reuse of retained branches. The paper's separate matched
+experiment did not establish that Quality-Diversity outperforms
+root-independent sampling or sequential editing of a single champion at its
+48-job horizon.
+
+| Concern | Representation in Loreley |
 | --- | --- |
-| Single-file evolution cannot express cross-module refactors and production changes | **Whole-repo evolution** |
-| Hand-crafted behaviour descriptors do not generalise across projects | **Learned behaviour space** |
-| Long-running searches require persistent state, concurrency controls, and audit records | **Persistent distributed loop** |
+| Reproducible source state | Complete Git commit |
+| Candidate ancestry | Parent and inspiration edges between commits |
+| Measurement identity | Evaluator-defined artifact, such as a binary, container image, or trace |
+| Behavioural diversity | Repository-state embeddings and MAP-Elites cells |
+| Multiple objectives | Bounded per-cell Pareto fronts |
+| Persistent execution | PostgreSQL state, Redis/Dramatiq queues, schedulers, and worker processes |
 
-Related systems include [AlphaEvolve](https://deepmind.google/blog/alphaevolve-a-gemini-powered-coding-agent-for-designing-advanced-algorithms/), [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve), and [ShinkaEvolve](https://github.com/SakanaAI/ShinkaEvolve).
+## When a repository is a fit
 
----
+A campaign needs:
 
-## Methodology
+- unattended build and correctness checks;
+- at least one numerical objective with a known direction;
+- an evaluator whose runtime and noise are compatible with the effect size of
+  interest;
+- enough safe evaluation parallelism for the proposed job budget;
+- an isolated repository mirror, build environment, and authorized model
+  access; and
+- enough engineering or business value to justify repeated model calls and
+  evaluations.
 
-Loreley treats software evolution as **quality-diversity search over the commit graph of a real repository**, guided by a learned behaviour space and driven by a production-grade distributed loop. Instead of using LLMs as one-shot patch generators, it organises planning, editing, evaluation, and archiving into a repeatable system that can safely explore improvements while remaining auditable (git), testable (evaluator), and operable (scheduler + workers).
+The [design-partner brief](marketing/loreley-design-partner-brief.md) describes
+evaluator calibration, candidate identity, data separation, budget planning,
+and the non-confidential intake process.
 
----
+## Run Loreley
 
-## System overview
-
-At a high level, Loreley sits between your git repository, a pool of LLM-based agents, and a MAP-Elites archive:
-
-```mermaid
-flowchart LR
-  repo["Git repository<br/>(target project)"]
-  sched["Scheduler<br/>(EvolutionScheduler)"]
-  queue["Redis / Dramatiq<br/>(job queue)"]
-  w1["Evolution worker 1"]
-  wN["Evolution worker N"]
-  db[("PostgreSQL<br/>(experiments + metrics)")]
-  archive["MAP-Elites archive<br/>(learned behaviour space)"]
-
-  repo --> sched
-  sched -->|enqueue evolution jobs| queue
-  queue --> w1
-  queue --> wN
-
-  w1 -->|checkout + push commits| repo
-  wN -->|checkout + push commits| repo
-
-  w1 --> db
-  wN --> db
-
-  db --> archive
-  archive -->|sample base commits| sched
-```
-
-- **Scheduler** keeps the experiment in sync with the repository, ingests completed jobs, samples new base commits from the MAP-Elites archive, and enqueues evolution jobs.
-- **Workers** check out base commits, call external planning/coding/evaluation agents, create new commits, and persist metrics.
-- **Archive** stores a diverse set of high-performing commits in a learned behaviour space that the scheduler uses to inspire the next round of jobs.
-
----
-
-## Quick start
-
-### Requirements
-
-- Python 3.11+
-- [`uv`](https://github.com/astral-sh/uv) for dependency management
-- PostgreSQL and Redis
-- Git (including worktrees; LFS optional)
-
-### Install dependencies
+Loreley is alpha software. A campaign requires Python 3.11+, Git worktrees,
+PostgreSQL, Redis, the Kilocode CLI or another configured agent backend, an
+OpenAI-compatible embedding endpoint, and an unattended evaluator plugin.
 
 ```bash
-git clone <YOUR_FORK_OR_ORIGIN_URL> loreley
+git clone https://github.com/NeapolitanIcecream/loreley.git
 cd loreley
 uv sync
-```
-
-### Start PostgreSQL + Redis (recommended for local dev)
-
-If you have Docker installed, you can start the required services with:
-
-```bash
 docker compose up -d postgres redis
-```
-
-PostgreSQL 18 stores data under `/var/lib/postgresql/18/docker`. The Compose
-file mounts the named volume at `/var/lib/postgresql` and sets `PGDATA` to that
-versioned directory. If you only have disposable local data from an older
-layout, run `docker compose down -v` before restarting; this deletes the local
-database volume.
-
-### Configure
-
-All runtime configuration is provided via environment variables and loaded by `loreley.config.Settings`.
-
-Copy the example env file:
-
-```bash
 cp env.example .env
 ```
 
-- `APP_NAME`, `APP_ENV`, `LOG_LEVEL`
-- `DATABASE_URL`
-- `TASKS_REDIS_URL`, `EXPERIMENT_ID` (UUID or slug)
-- `OPENAI_API_KEY` or (`OPENAI_DYNAMIC_API_KEY_PROVIDER` + `OPENAI_DYNAMIC_API_KEY_TTL_SECONDS`)
-- `MAPELITES_CODE_EMBEDDING_DIMENSIONS`
-- `MAPELITES_EXPERIMENT_ROOT_COMMIT`
-- `MAPELITES_OBJECTIVES` (ordered objective names and `max`/`min` directions)
-- `MAPELITES_ISLANDS` (ordered island IDs; the first is the CLI/API default)
-- `SCHEDULER_MAX_TOTAL_JOBS`, `SCHEDULER_REPO_ROOT`, `WORKER_REPO_REMOTE_URL`
-- `WORKER_EVALUATOR_PLUGIN`
-- (recommended) `WORKER_EVOLUTION_GLOBAL_GOAL`
-- (optional) `WORKER_PLANNING_BACKEND`, `WORKER_CODING_BACKEND`
-- (optional) `WORKER_KILOCODE_BIN`, `WORKER_KILOCODE_AGENT` when using the default Kilocode CLI backend (`kilo`)
+Configure the experiment ID, root commit, job cap, target repository remote,
+evaluator plugin, embedding settings, objectives, and islands in `.env`. See
+the [configuration guide](loreley/config.md) for the complete contract.
 
-See: [Configuration](loreley/config.md)
-
-### Run
-
-Preflight checks:
+Run the preflight checks, then start the scheduler and workers in separate
+shells:
 
 ```bash
 uv run loreley doctor --role all
-```
-
-Note: on first start the scheduler performs a repo-state root scan at `MAPELITES_EXPERIMENT_ROOT_COMMIT` and requires operator approval. In non-interactive environments, pass `--yes` or set `SCHEDULER_STARTUP_APPROVE=true`.
-
-```bash
 uv run loreley scheduler
 uv run loreley worker --processes 4
 uv run loreley status
 ```
 
-See: [Running the scheduler](script/run_scheduler.md), [Running the worker](script/run_worker.md)
+Before dispatching a new campaign, the scheduler scans the configured root
+commit and requests operator approval. Non-interactive deployments can use
+`--yes` or `SCHEDULER_STARTUP_APPROVE=true` after reviewing the scan settings.
 
----
+The optional operator console is available with:
 
-## Core ideas in practice
-
-### Whole-repo evolution
-
-Whole-repo evolution uses the **git commit** as the reproducible source and ancestry unit. Real improvements can require changing multiple modules, updating configs and build scripts, and keeping tests and tooling intact. The evaluator can additionally group commits by binary, artifact, trace, or another identity relevant to measurement.
-
-Repository-scale evolution has been demonstrated in the literature. For example, [SATLUTION](https://arxiv.org/abs/2509.07367) uses a champion/challenger process and an explicit rulebase to evolve SAT solver repositories. Loreley explores a different design point: a bounded archive retains multiple candidates across behavioral niches and objective trade-offs.
-
-![champion-based](./assets/satlution-single-champion.jpg)
-
-Loreley is designed to be **QD-native at repository scale**:
-
-- it keeps a bounded Pareto front of **multiple elites** in every occupied behavioural niche,
-- it schedules independent configured islands fairly and periodically injects a donor elite as a cross-island inspiration,
-- it samples from those niches as inspirations for new jobs,
-- and it places project-specific correctness, performance, and scope constraints in the evaluator contract.
-
-### Learned behaviour space
-
-Quality-diversity methods require a behaviour space. Hand-crafted behaviour descriptors (file counts, line deltas, test counts, etc.) are brittle and often project-specific.
-
-![hand-craft-feature](./assets/hand-craft-feature.png)
-
-Loreley derives behaviour descriptors from **repo-state code embeddings** (file-level embeddings cached by git blob SHA and aggregated into a commit vector), optionally reduced with PCA.
-
-Across similar primary-objective values or different Pareto trade-offs, the
-archive can preserve structurally different improvements (refactors vs
-micro-optimisations vs feature shifts) as distinct behavioural niches, enabling
-exploration without collapsing to a single style of change.
-
-### Persistent distributed loop
-
-Long-running evolution requires more than an agent loop: it needs distributed execution, resource controls, and persistent traceability.
-
-Loreley runs a long-lived loop with:
-
-- a scheduler that ingests completed jobs, samples base commits, and enqueues new jobs,
-- a Redis/Dramatiq worker fleet that runs planning/coding/evaluation per job,
-- a PostgreSQL-backed store for experiments, commits, metrics, and archive state,
-- explicit lifecycle controls (max unfinished jobs, required total job cap, seed population, primary-objective branch export).
-
-You can run a long optimisation campaign on a repository, scaling workers horizontally, while keeping the evolution process reproducible and observable.
-
----
-
-## Adoption checklist (is your project a fit?)
-
-A project is a strong fit for Loreley when these questions have clear, automated answers:
-
-- Do you have an **evaluator** that can run unattended and produce structured metrics (plus pass/fail correctness gates)?
-- Is the evaluation signal **comparable** across commits and not dominated by noise?
-- Is the per-job evaluation cost acceptable (P50/P95 runtime), and can it be parallelised or staged (smoke test → full benchmark)?
-- Do meaningful improvements often require **cross-file** and **cross-module** changes?
-- Can failures be detected cheaply (compile/test/correctness gates) to avoid wasting full benchmark runs?
-- Can the project tolerate continuous creation of job branches / commits (ideally on a dedicated remote or mirror)?
-- Is there value in keeping **multiple diverse strong solutions** (trade-offs, strategies, module-level variants), not just a single best commit?
-
----
-
-## What you need to integrate a project
-
-To hook a repository into Loreley, you typically need:
-
-- **Repository info**: remote URL/branch, LFS/submodules, reproducible environment (toolchains, containers, hardware).
-- **Build & test entrypoints**: minimal commands for build/test, plus optional staged checks (smoke vs full).
-- **Evaluator spec**: plugin entrypoint, metrics schema, correctness validation, and any benchmark/data access details.
-- **Goal & constraints**: the optimisation objective, non-negotiable constraints, acceptance criteria, and forbidden areas.
-- **Resources & ops**: worker concurrency, CPU/GPU/memory budgets, and runtime/timeouts.
-
----
-
-## Estimating cost and ROI
-
-A practical way to estimate cost/benefit is to run a small pilot (e.g. 20–50 jobs) and measure:
-
-- `t_job` (time per job):
-
-```
-t_job = t_plan + t_code + t_build + t_eval + t_ingest
-jobs_per_day ≈ workers * 24 / E[t_job]
+```bash
+uv sync --extra ui
+uv run loreley ui
 ```
 
-- `p_valid` (valid-job rate): fraction of jobs that pass correctness gates and produce usable metrics.
-- primary-objective improvement distribution `Δ`: value(new) − value(base)
-  across valid jobs, interpreted using the configured direction.
+## Documentation and evidence
 
-From these, you can forecast:
+| Resource | Contents |
+| --- | --- |
+| [Paper: arXiv:2608.19703](https://arxiv.org/abs/2608.19703) ([PDF](https://arxiv.org/pdf/2608.19703)) | Method, matched 1,008-job experiment, capability studies, and limitations |
+| [Configuration](loreley/config.md) | Campaign, evaluator, model, archive, and runtime settings |
+| [Scheduler](script/run_scheduler.md) and [worker](script/run_worker.md) guides | Starting and operating a campaign |
+| [Three-case evidence report](research/2026-08-07-loreley-case-study-evidence-report.md) | Results, costs, failures, and evidence boundaries |
+| [Candidate diff index](marketing/candidates/README.md) | Published source patches and artifact identities |
+| [English essay](marketing/2026-08-loreley-launch-article-en.md) | Repository search model and the three capability studies |
+| [中文文章](marketing/2026-08-loreley-launch-article-zh.md) | 《用编码智能体搜索真实代码仓库》 |
+| [Architecture decisions](adr/index.md) | Accepted design records |
+| [Release notes](releases/v0.10.0-alpha.md) | Current alpha release |
 
-- **time-to-first-win**: how many valid jobs you typically need to see a meaningful improvement,
-- **expected best-of-N**: how the best improvement grows as you run more valid jobs,
-- **$ / improvement**: combine LLM + compute costs per job with the observed success rate.
+## Status and scope
 
----
+The current release is `v0.10.0-alpha`. The three capability studies
+demonstrate the end-to-end system on their frozen repositories and evaluators.
+They do not estimate Loreley's success rate or average effect on a new
+repository. The matched experiment covers one Zstandard revision, one host,
+and a 48-job horizon per policy and block.
 
-## Documentation map
+Loreley is licensed under the
+[Apache License 2.0](https://github.com/NeapolitanIcecream/loreley/blob/main/LICENSE).
 
-Use this index as a quick map of the rest of the documentation:
+## Citation
 
-- **Releases**
-  - [Unreleased](releases/unreleased.md)
-  - [v0.10.0-alpha](releases/v0.10.0-alpha.md)
-  - [v0.9.0-alpha](releases/v0.9.0-alpha.md)
-  - [v0.8.4-alpha](releases/v0.8.4-alpha.md)
-  - [v0.8.3-alpha](releases/v0.8.3-alpha.md)
-  - [v0.8.2-alpha](releases/v0.8.2-alpha.md)
-  - [v0.8.1-alpha](releases/v0.8.1-alpha.md)
-  - [v0.8.0-alpha](releases/v0.8.0-alpha.md)
-- **Configuration**
-  - [Global settings](loreley/config.md)
-- **Campaigns**
-  - [Campaign program](loreley/campaign-program.md)
-- **Experiments**
-  - [Repository and experiment helpers](loreley/core/experiments.md)
-- **Database**
-  - [Engine and sessions](loreley/db/base.md)
-  - [ORM models](loreley/db/models.md)
-- **Core contracts**
-  - [Hot-path contracts](loreley/core/contracts.md)
-- **Scheduler**
-  - [Scheduler overview](loreley/scheduler/main.md)
-  - [Job scheduling](loreley/scheduler/job_scheduler.md)
-  - [Ingestion](loreley/scheduler/ingestion.md)
-- **MAP-Elites core**
-  - [Overview & archive](loreley/core/map-elites/map-elites.md)
-  - [Repository embeddings](loreley/core/map-elites/repository_embedding.md)
-  - [Preprocessing](loreley/core/map-elites/preprocess.md)
-  - [Chunking](loreley/core/map-elites/chunk.md)
-  - [Code embeddings](loreley/core/map-elites/code_embedding.md)
-  - [Dimensionality reduction](loreley/core/map-elites/dimension_reduction.md)
-  - [Sampler](loreley/core/map-elites/sampler.md)
-  - [Snapshots](loreley/core/map-elites/snapshot.md)
-- **Worker pipeline**
-  - [Worker repository](loreley/core/worker/repository.md)
-  - [Planning agent](loreley/core/worker/planning.md)
-  - [Agent backends and runner](loreley/core/worker/agent.md)
-  - [Coding agent](loreley/core/worker/coding.md)
-  - [Evaluator](loreley/core/worker/evaluator.md)
-  - [Evolution loop](loreley/core/worker/evolution.md)
-  - [Commit cards](loreley/core/worker/commit_card.md)
-  - [Commit summaries](loreley/core/worker/commit_summary.md)
-  - [Artifacts](loreley/core/worker/artifacts.md)
-  - [Job store](loreley/core/worker/job_store.md)
-- **Tasks**
-  - [Tasks broker](loreley/tasks/broker.md)
-  - [Tasks workers](loreley/tasks/workers.md)
-- **UI (optional)**
-  - [UI API (`loreley.api`)](loreley/api.md)
-  - [Agent REST API](loreley/agent-api.md)
-  - [Streamlit UI (`loreley.ui`)](loreley/ui.md)
-- **Operations**
-  - [Doctor checks](script/doctor.md)
-  - [Status](script/status.md)
-  - [Database schema commands](script/db.md)
-  - [Managing jobs](script/jobs.md)
-  - [Job lease recovery](script/job_leases.md)
-  - [Archive stats](script/archive_stats.md)
-  - [Config dump](script/config_dump.md)
-  - [Running the scheduler](script/run_scheduler.md)
-  - [Running the worker](script/run_worker.md)
-  - [Running the UI API](script/run_api.md)
-  - [Running the UI](script/run_ui.md)
-  - [Resetting the database](script/reset_db.md)
-  - [Benchmarking](script/benchmarks.md)
-- **Architecture decisions**
-  - [ADR index](adr/index.md)
+```bibtex
+@misc{chen2026loreley,
+  title         = {Loreley: Repository-Scale Program Evolution with Quality-Diversity Search},
+  author        = {Mohan Chen},
+  year          = {2026},
+  eprint        = {2608.19703},
+  archiveprefix = {arXiv},
+  primaryclass  = {cs.SE},
+  url           = {https://arxiv.org/abs/2608.19703}
+}
+```
 
----
-
-## Next steps
-
-- Start by configuring a small test repository and running the scheduler/worker pair locally.
-- Once the basic loop works, plug in a custom evaluator and tune `MAPELITES_*` settings.
-- When you are ready for production, point the scheduler at a long-lived repository clone and supervise both processes with your preferred process manager.
+Machine-readable metadata are available in
+[`CITATION.cff`](https://github.com/NeapolitanIcecream/loreley/blob/main/CITATION.cff).
