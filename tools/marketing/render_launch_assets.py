@@ -430,19 +430,19 @@ def three_case_evidence() -> str:
         case_card(
             x=1070,
             name="Zstandard",
-            value="+1.228%",
+            value="+1.173%",
             metric="compression · original holdout",
-            status="Descriptive leader",
+            status="Validation-selected",
             status_fill=AMBER_PALE,
             status_text=AMBER,
             facts=[
-                "5ee53426 · generation 3",
-                "95% CI: +1.125% to +1.330%",
-                "10 / 10 finalists positive",
+                "fe39bee8 · generation 4",
+                "Fresh sealed corpus: +0.891%",
+                "10 / 10 fixed finalists positive",
             ],
             scope_note=[
-                "Post-selection; holdout",
-                "had already been revealed.",
+                "Holdout opened at study level;",
+                "fresh recipe chosen post-fix.",
             ],
         )
     )
@@ -767,11 +767,301 @@ def zstd_identity_results() -> str:
     )
 
 
+def paper_overview_header() -> list[str]:
+    return [
+        pill(
+            80,
+            42,
+            "LORELEY",
+            fill=VIOLET_PALE,
+            text_fill=VIOLET,
+            width=150,
+        ),
+        text(
+            250,
+            71,
+            "Repository-scale program evolution with Quality-Diversity search",
+            size=34,
+            weight=700,
+        ),
+        text(
+            80,
+            122,
+            "Coding agents edit complete Git states; external evaluators build, verify, and score every candidate.",
+            size=22,
+            fill=SLATE,
+        ),
+        pill(
+            1270,
+            94,
+            "arXiv:2608.19703",
+            fill=CYAN_PALE,
+            text_fill=CYAN,
+            width=250,
+        ),
+        rect(80, 150, 1440, 4, fill=VIOLET, radius=2),
+        text(80, 190, "WHAT LORELEY SEARCHES", size=17, fill=MUTED, weight=700),
+    ]
+
+
+def paper_overview_method_step(
+    x: int,
+    number: str,
+    title_value: str,
+    detail: str,
+    fill: str,
+    accent: str,
+) -> list[str]:
+    return [
+        rect(x, 210, 315, 84, fill=WHITE, shadow=True, radius=18),
+        circle(x + 36, 252, 20, fill=fill, stroke=accent, stroke_width=3),
+        text(
+            x + 36,
+            259,
+            number,
+            size=18,
+            fill=accent,
+            weight=700,
+            anchor="middle",
+        ),
+        text(x + 68, 246, title_value, size=21, weight=700),
+        text(x + 68, 275, detail, size=16, fill=MUTED),
+    ]
+
+
+def paper_overview_method() -> list[str]:
+    body: list[str] = []
+    method_steps = [
+        (80, "1", "Complete Git state", "source + ancestry", CYAN_PALE, CYAN),
+        (455, "2", "Coding agent", "repository-level edit", VIOLET_PALE, VIOLET),
+        (830, "3", "External evaluator", "build + verify + score", GREEN_PALE, GREEN),
+        (1205, "4", "QD archive", "retain + resample", AMBER_PALE, AMBER),
+    ]
+    for step in method_steps:
+        body.extend(paper_overview_method_step(*step))
+    for x1, x2 in [(400, 440), (775, 815), (1150, 1190)]:
+        body.append(arrow(x1, 252, x2, 252, stroke=VIOLET, width=4))
+    return body
+
+
+def paper_overview_matched_header() -> list[str]:
+    return [
+        rect(80, 326, 1440, 340, fill=WHITE, shadow=True, radius=22),
+        text(
+            112,
+            365,
+            "MATCHED ZSTANDARD COMPARISON",
+            size=17,
+            fill=MUTED,
+            weight=700,
+        ),
+        text(
+            112,
+            407,
+            "1,008 candidate jobs",
+            size=32,
+            fill=NAVY,
+            weight=700,
+        ),
+        text(
+            455,
+            405,
+            "7 paired blocks · 48 jobs per policy and block · held-out compression throughput",
+            size=19,
+            fill=SLATE,
+        ),
+    ]
+
+
+def paper_overview_policy_card(
+    x: int,
+    policy: str,
+    mean_value: str,
+    detail: str,
+    fill: str,
+    accent: str,
+) -> list[str]:
+    return [
+        rect(x, 433, 420, 128, fill=fill, radius=18),
+        text(x + 24, 465, policy, size=20, fill=NAVY, weight=700),
+        text(x + 24, 514, mean_value, size=38, fill=accent, weight=700),
+        text(x + 198, 509, "mean", size=16, fill=MUTED, weight=700),
+        text(x + 24, 544, detail, size=16, fill=SLATE),
+    ]
+
+
+def paper_overview_policy_cards() -> list[str]:
+    body: list[str] = []
+    policy_cards = [
+        (
+            112,
+            "Independent Root",
+            "+0.502%",
+            "+0.412% median · 2/7 ≥ +0.5%",
+            CYAN_PALE,
+            CYAN,
+        ),
+        (
+            580,
+            "Loreley QD",
+            "+0.824%",
+            "+0.739% median · 6/7 ≥ +0.5%",
+            VIOLET_PALE,
+            VIOLET,
+        ),
+        (
+            1048,
+            "Sequential Champion",
+            "+0.960%",
+            "+0.819% median · 7/7 ≥ +0.5%",
+            GREEN_PALE,
+            GREEN,
+        ),
+    ]
+    for card in policy_cards:
+        body.extend(paper_overview_policy_card(*card))
+    body.append(
+        text(
+            1444,
+            463,
+            "HIGHEST OBSERVED",
+            size=13,
+            fill=GREEN,
+            weight=700,
+            anchor="end",
+        )
+    )
+    return body
+
+
+def paper_overview_outcome_card(
+    x: int,
+    width: int,
+    title_value: str,
+    detail: str,
+    fill: str,
+    accent: str,
+) -> list[str]:
+    return [
+        rect(x, 583, width, 60, fill=fill, radius=16),
+        text(x + 24, 608, title_value, size=15, fill=accent, weight=700),
+        text(x + 24, 631, detail, size=18, fill=NAVY, weight=700),
+    ]
+
+
+def paper_overview_outcomes() -> list[str]:
+    body = paper_overview_outcome_card(
+        112,
+        660,
+        "ARCHIVE ACTIVITY · 7/7 BLOCKS",
+        "Retained alternatives were sampled again.",
+        VIOLET_PALE,
+        VIOLET,
+    )
+    body.extend(
+        paper_overview_outcome_card(
+            796,
+            692,
+            "48-JOB ENDPOINT",
+            "QD did not establish superiority over either control.",
+            AMBER_PALE,
+            AMBER,
+        )
+    )
+    return body
+
+
+def paper_overview_capability_card(
+    x: int, name: str, value: str, detail: str, accent: str
+) -> list[str]:
+    return [
+        rect(x, 724, 450, 112, fill=WHITE, shadow=True, radius=18),
+        rect(x, 724, 7, 112, fill=accent, radius=3),
+        text(x + 26, 756, name, size=19, fill=NAVY, weight=700),
+        text(x + 26, 798, value, size=31, fill=accent, weight=700),
+        text(x + 26, 823, detail, size=15, fill=SLATE),
+    ]
+
+
+def paper_overview_capabilities() -> list[str]:
+    body = [
+        text(
+            80,
+            704,
+            "EARLIER CAPABILITY CAMPAIGNS · FIXED REPOSITORIES, DIFFERENT PROTOCOLS",
+            size=17,
+            fill=MUTED,
+            weight=700,
+        )
+    ]
+    capability_cards = [
+        (
+            80,
+            "markdown-it-py",
+            "+6.75%",
+            "separate 28-document validation",
+            CYAN,
+        ),
+        (
+            575,
+            "python-pathspec",
+            "+25.14%",
+            "post-hoc selection · five workloads",
+            VIOLET,
+        ),
+        (
+            1070,
+            "Zstandard · evolved candidate",
+            "+1.173% H  ·  +0.891% F",
+            "validation-selected · protocol limits apply",
+            GREEN,
+        ),
+    ]
+    for card in capability_cards:
+        body.extend(paper_overview_capability_card(*card))
+    return body
+
+
+def paper_overview_footer() -> list[str]:
+    return [
+        text(
+            80,
+            874,
+            "Capability results do not estimate average gains on new repositories. H = original holdout; F = fresh sealed corpus.",
+            size=16,
+            fill=MUTED,
+        ),
+        text(
+            1520,
+            874,
+            "github.com/NeapolitanIcecream/loreley",
+            size=16,
+            fill=VIOLET,
+            weight=700,
+            anchor="end",
+        ),
+    ]
+
+
+def paper_overview() -> str:
+    """Render the arXiv launch card for the matched-policy paper."""
+
+    body = paper_overview_header()
+    body.extend(paper_overview_method())
+    body.extend(paper_overview_matched_header())
+    body.extend(paper_overview_policy_cards())
+    body.extend(paper_overview_outcomes())
+    body.extend(paper_overview_capabilities())
+    body.extend(paper_overview_footer())
+    return svg_document(body, title="Loreley paper overview")
+
+
 ASSETS = {
     "loreley-search-loop": search_loop,
     "loreley-three-case-evidence": three_case_evidence,
     "loreley-case-lineages": lineages,
     "loreley-zstd-identity-results": zstd_identity_results,
+    "loreley-paper-overview": paper_overview,
 }
 
 
