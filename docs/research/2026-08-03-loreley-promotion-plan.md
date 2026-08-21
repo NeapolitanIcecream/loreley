@@ -2,18 +2,18 @@
 
 Date: 2026-08-03
 
-Last updated: 2026-08-10
+Last updated: 2026-08-21
 
 Status: Internal working document, excluded from the MkDocs site. Update this file when publication decisions, literature findings, case-study evidence, or experiment designs change.
 
 ## Objectives
 
-The promotion and research work should produce:
+The promotion and research work maintains:
 
 1. an English technical article and a conservative Chinese translation;
-2. a research paper suitable for public submission to arXiv;
+2. the public preprint [arXiv:2608.19703](https://arxiv.org/abs/2608.19703), its source, and its machine-readable evidence;
 3. auditable accounts of the `markdown-it-py`, `python-pathspec`, and Zstandard case studies;
-4. a first public release consisting of the article, case-study evidence, and community posts, without waiting for paper-grade search controls;
+4. ready-to-publish Chinese and English community copy that distinguishes the matched policy experiment from the earlier capability campaigns;
 5. an intake path for teams that have automated evaluators, valuable optimization targets, and sufficient compute.
 
 A public runnable demo is not a prerequisite. The public evidence should instead expose candidate diffs, ancestry, evaluation protocols, aggregate results, resource accounting, and claim limits.
@@ -33,12 +33,21 @@ An English source and a Chinese publication may coexist. Supporting research and
 
 ## Current release assessment
 
-The existing evidence supports a first round of promotion. A larger Zstandard result, paper-grade search controls, and cross-architecture replication are not release blockers. The purpose of the first release is to explain what Loreley does, state what each case demonstrates, and find design partners willing to provide repositories, evaluators, and compute. It does not claim that quality-diversity search is better than every simpler search strategy.
+The paper and public evidence support a first round of external distribution. The package now contains both a matched policy experiment and capability evidence; a larger search budget, a second matched repository, component ablations, and cross-architecture replication remain follow-up work rather than promotion blockers.
+
+The public account must keep the two experiment groups separate:
+
+- a 1,008-job matched Zstandard experiment compares Loreley QD, Sequential Champion, and Independent Root over seven paired blocks and a 48-job endpoint;
+- three earlier capability campaigns total 348 jobs on `markdown-it-py`, `python-pathspec`, and a separate Zstandard revision.
+
+The matched study observed archive retention and later sampling, but it did not establish an endpoint advantage for QD over either control at 48 jobs. Sequential Champion had the highest observed endpoint mean and median. The capability campaigns produced generation-4, multi-file candidates that passed their evaluators, with their original selection qualifications retained. The promotion goal is to explain these results accurately and find design partners with repositories, evaluators, and sufficient compute.
 
 The release package is complete:
 
+- public paper: [arXiv:2608.19703](https://arxiv.org/abs/2608.19703);
+- paper source and machine-readable evidence: [`paper/README.md`](../../paper/README.md);
 - unified evidence report: [2026-08-07-loreley-case-study-evidence-report.md](2026-08-07-loreley-case-study-evidence-report.md);
-- Zstandard V19 report: [2026-08-07-zstandard-gpt-v19-case-study-report.md](2026-08-07-zstandard-gpt-v19-case-study-report.md);
+- earlier Zstandard capability report: [2026-08-07-zstandard-gpt-v19-case-study-report.md](2026-08-07-zstandard-gpt-v19-case-study-report.md);
 - Zstandard Top-10 validation, fresh-corpus, and holdout supplement: [2026-08-07-zstandard-gpt-v19-top10-validation-supplement.md](2026-08-07-zstandard-gpt-v19-top10-validation-supplement.md);
 - launch claim sheet: [2026-08-loreley-launch-claim-sheet.md](../marketing/2026-08-loreley-launch-claim-sheet.md);
 - English article: [2026-08-loreley-launch-article-en.md](../marketing/2026-08-loreley-launch-article-en.md);
@@ -47,16 +56,19 @@ The release package is complete:
 - partnership intake: [loreley-design-partner-brief.md](../marketing/loreley-design-partner-brief.md) and the public GitHub issue form;
 - four data-driven figures and their SVG sources: [marketing assets](../marketing/assets/loreley-search-loop.png).
 
-README, the documentation home page, and MkDocs navigation point to the three case studies and V19. V13 is retained only as historical evidence about infrastructure and binary equivalence.
+The public repository contains the submitted paper source, formal Zstandard records, evidence validators, capability evidence, and candidate patches. V13 is retained only as historical evidence about infrastructure and binary equivalence.
 
 ## Publication status and next work
 
-The GitHub and documentation-site material was published through [PR #54](https://github.com/NeapolitanIcecream/loreley/pull/54). The Pages build used source commit `018c144` and produced `gh-pages` commit `c66dc01`. The [deployment run](https://github.com/NeapolitanIcecream/loreley/actions/runs/31249188262) succeeded. The home page, both articles, the unified evidence report, the candidate-diff index, and the partnership page passed HTTP and title checks.
+The paper was submitted on 2026-08-20 and is public as [arXiv:2608.19703](https://arxiv.org/abs/2608.19703) in cs.SE, with cs.AI as a secondary category. The title is *Loreley: Repository-Scale Program Evolution with Quality-Diversity Search*.
+
+The GitHub and documentation-site material was originally published through [PR #54](https://github.com/NeapolitanIcecream/loreley/pull/54). The home page, both articles, the unified evidence report, the candidate-diff index, and the partnership page were deployed successfully. The fixed-Top-10 holdout evidence was merged through [PR #60](https://github.com/NeapolitanIcecream/loreley/pull/60) without changing the preregistered winner.
 
 The fixed-Top-10 holdout evidence was merged through [PR #60](https://github.com/NeapolitanIcecream/loreley/pull/60). It adds a post-selection comparison on the original holdout without changing the preregistered winner.
 
 Public pages:
 
+- paper: <https://arxiv.org/abs/2608.19703>
 - Chinese article: <https://neapolitanicecream.github.io/loreley/marketing/2026-08-loreley-launch-article-zh/>
 - English article: <https://neapolitanicecream.github.io/loreley/marketing/2026-08-loreley-launch-article-en/>
 - unified evidence report: <https://neapolitanicecream.github.io/loreley/research/2026-08-07-loreley-case-study-evidence-report/>
@@ -65,9 +77,11 @@ Public pages:
 
 Next actions:
 
-1. publish to Chinese channels, then distribute the Chinese short copy, English article, and English community posts;
-2. add an FAQ from reader questions and triage partnership submissions;
-3. continue the paper track with equal-budget quality-diversity, champion-sequential, and root-independent arms, independent search replicates, x86-64 reproduction, and studies of finalist selection under noisy objectives.
+1. add the canonical arXiv link and citation entry to every public project entry point;
+2. distribute the paper-first Chinese short and community copy, followed by the English short copy and technical-forum post;
+3. use the paper overview figure for the matched experiment and the existing three-case figures only for capability evidence;
+4. add an FAQ from reader questions and triage partnership submissions;
+5. plan a longer matched Zstandard curve, a second matched repository, and descriptor/archive component studies for a later paper revision.
 
 No external community post has been made from this repository workflow.
 
@@ -103,7 +117,22 @@ Report both units:
 
 Under the comparison used here, each candidate evaluation is close to a Loreley job, so the total is about 28,000 evaluations. A reference to tens of thousands of iterations is acceptable only when the unit is stated. Do not equate a cycle, a code candidate, a solver-instance evaluation, and a full benchmark round.
 
-## Case-study roles
+## Matched Zstandard policy experiment
+
+The paper compares Loreley QD, Sequential Champion, and Independent Root in seven paired blocks. Every policy received 48 attempted physical candidate jobs per block, for 336 jobs per policy and 1,008 total. The policies shared the frozen root, task, planning and coding routes, evaluator, and postsearch selection rule; each retained its native parent rule, online state, context, and concurrency. Validation selected a fixed winner, and an agent-hidden holdout measured the endpoint without changing selection.
+
+At the 48-job endpoint:
+
+- QD was 0.135% below Sequential Champion; the paired 95% BCa interval was -0.556% to +0.161%;
+- QD was 0.320% above Independent Root; the paired interval was -0.082% to +0.686%;
+- neither contrast established a QD advantage;
+- Sequential Champion had the highest observed endpoint mean and median.
+
+Archive engagement was observed separately from endpoint efficacy. Four of seven final QD winners had a retained non-incumbent in their primary-parent ancestry. Including inspiration-context edges raised the count to six, but an inspiration record establishes only that context was supplied, not that it caused an edit. These diagnostics support a mechanism-engagement statement; they do not override the matched endpoint result.
+
+The experiment scheduled 1,008 jobs, produced 948 successful candidates, and recorded $517.8877 in attributable generation and embedding costs. Equal physical jobs, not dollars, tokens, or wall time, was the frozen matching axis. The result is target-specific and does not establish equivalence among the three policies.
+
+## Earlier capability-case roles
 
 ### `markdown-it-py`
 
@@ -121,7 +150,7 @@ Under the comparison used here, each candidate evaluation is close to a Loreley 
 
 ### Zstandard
 
-- V19 ran 220 physical jobs: 8 manual seeds and 212 evolution jobs;
+- the earlier capability campaign ran 220 physical jobs: 8 manual seeds and 212 evolution jobs;
 - 211 successful jobs produced 167 distinct release binaries;
 - the preregistered winner improved single-threaded compression throughput by 1.019% on a sealed holdout, with a 95% confidence interval from +0.962% to +1.076%;
 - decompression was neutral, compressed size was unchanged, and peak RSS increased by 0.063 MiB;
@@ -133,7 +162,7 @@ Under the comparison used here, each candidate evaluation is close to a Loreley 
 
 Zstandard supplies evidence for a mature C system, binary-aware candidate identity, separated training, validation, and holdout data, statistical measurement of a small performance effect, and the effect of finalist breadth on noisy rankings.
 
-All three cases establish system behavior only on their frozen targets. They do not estimate Loreley's average effect on arbitrary repositories.
+The three capability campaigns total 348 jobs. All three reported candidates are generation-4 descendants rather than selected manual seeds. These cases establish system behavior only on their frozen targets. They do not estimate Loreley's average effect on arbitrary repositories or a causal advantage for QD.
 
 ## Unified metrics for the first two cases
 
@@ -425,7 +454,7 @@ The review must establish:
 | [Darwin Gödel Machine](https://arxiv.org/abs/2505.22954), ICLR 2026 | Coding agents modify their own system and maintain an archive of improvement paths | Supports studying stepping stones, but the search object is the agent itself |
 | [ShinkaEvolve](https://openreview.net/forum?id=lKEdGCoDNC), ICLR 2026 | Adaptively chooses parents, models, and prompts and rejects low-novelty proposals | Loreley must compare its fixed or learned diversity mechanisms with simpler adaptive sampling |
 | [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve) | Provides open-source islands, MAP-Elites, and multi-objective program evolution | Islands and MAP-Elites alone are not research contributions |
-| [GEAR](https://arxiv.org/abs/2605.13874), 2026-05 | Maintains a population of machine-learning research states and compares it with single-path AutoResearch under the same compute budget | Direct evidence for multi-state agent search in one experimental domain and a useful model for Loreley's future controlled comparison |
+| [GEAR](https://arxiv.org/abs/2605.13874), 2026-05 | Maintains a population of machine-learning research states and compares it with single-path AutoResearch under the same compute budget | Direct evidence for multi-state agent search in one experimental domain and a useful comparison for Loreley's matched policy design |
 | [Evolutionary Ensemble of Agents](https://arxiv.org/abs/2605.09018), 2026-05 | Co-evolves code solutions and agent guidance or skills | Distinguishes searching the target repository from searching the agent strategy; Loreley currently focuses on the former |
 
 ### Evaluators as validation pipelines
@@ -441,7 +470,7 @@ Loreley's Python interface is a scheduler boundary, not a language restriction. 
   which software evidence drives it. Use this taxonomy to distinguish
   repository-state search from agent, memory, tool, model, and collaboration
   evolution.
-- [Simple Baselines are Competitive with Code Evolution](https://arxiv.org/abs/2602.16805), 2026-02, reports that independent sampling and sequential rewriting can match or exceed more elaborate evolutionary systems on some tasks. Any Loreley claim about relative search efficiency therefore needs equal-budget root-independent and champion-sequential controls.
+- [Simple Baselines are Competitive with Code Evolution](https://arxiv.org/abs/2602.16805), 2026-02, reports that independent sampling and sequential rewriting can match or exceed more elaborate evolutionary systems on some tasks. Loreley's paper therefore uses matched Independent Root and Sequential Champion controls; its 48-job Zstandard result does not establish a QD advantage.
 - [What Do Evolutionary Coding Agents Evolve?](https://arxiv.org/abs/2605.20086), 2026-05, finds that gains can come from parameter tuning, recombination, overfitting, or reintroduction of existing code. Publish ancestry, edit taxonomy, replay, and holdout results rather than only a winner score.
 - [HORIZON](https://arxiv.org/abs/2606.28279) reports reward hacking and over-solving risks. Keep visible training feedback, hidden validation, and a sealed holdout separate.
 - [Barbarians at the Gate: How AI is Upending Systems Research](https://arxiv.org/abs/2510.06189), 2025-10, identifies automated performance verification as a condition for agent-driven search in systems research. This supports defining the user by evaluator readiness.
@@ -461,15 +490,13 @@ The paper studies a general-purpose quality-diversity search system for existing
 Loreley's paper contributions are:
 
 - a target-independent contract that connects an existing repository, a coding-agent backend, and an arbitrary external evaluator;
-- complete Git commits as candidate states, with recorded ancestry and cross-lineage inspiration;
-- separate source, tree, artifact, and evaluator identities for deduplication and measurement reuse;
-- repository-state behaviour descriptors, MAP-Elites cells, bounded Pareto fronts, and multiple islands;
-- asynchronous execution with recorded model, token, evaluation, device-hour, and wall-time usage; and
-- three fixed-repository studies covering Python libraries and a compiled C/C++ system.
+- a persistent repository-state QD runtime combining complete Git commits, isolated worktrees, external evaluation, recorded ancestry, and archive retention;
+- a matched Zstandard comparison of Loreley QD, Sequential Champion, and Independent Root under equal attempted candidate jobs; and
+- an empirical separation between archive engagement and endpoint efficacy, supported by lineage records, held-out paired endpoints, and three earlier capability campaigns.
 
-The paper should explain these contributions directly and give most of its space to the method, implementation, experiments, and observed search behavior. Related work should locate the closest comparisons once. Evidence qualifications belong with the affected result and in the limitations section instead of being repeated throughout the introduction and conclusion.
+The implementation also records source, tree, artifact, and evaluator identities for deduplication and measurement reuse, and uses learned repository descriptors, MAP-Elites cells, and bounded Pareto fronts. These components are part of the configured system rather than separate priority claims.
 
-An equal-budget advantage over independent or champion-sequential search remains a separate empirical claim.
+The matched study tested an equal-job advantage over Independent Root and Sequential Champion on one Zstandard target. It did not establish that advantage at 48 jobs. Longer horizons, another repository, and component controls remain separate empirical questions.
 
 ## Third-case selection and pilot record
 
@@ -565,26 +592,19 @@ Zstandard was selected because its high-precision evaluator was roughly 4 to 15 
 
 ## Controlled comparison track
 
-The first paper draft is a systems and empirical preprint based on the three completed case studies. It can describe Loreley's method, implementation, results, and cross-case findings without making a relative search-efficiency claim.
+The first matched comparison is complete and appears in [arXiv:2608.19703](https://arxiv.org/abs/2608.19703). It used seven paired Zstandard blocks, root-only initialization, and 48 attempted physical candidate jobs per policy and block. Loreley QD, Sequential Champion, and Independent Root shared the target, agent routes, evaluator, budget, and winner-selection pipeline while retaining their native online policies.
 
-A later comparative section can test whether Loreley quality-diversity search uses a fixed budget more effectively than:
+The 48-job endpoint did not establish a QD advantage. QD was 0.135% below Sequential Champion with a paired 95% BCa interval from -0.556% to +0.161%, and 0.320% above Independent Root with an interval from -0.082% to +0.686%. Archive retention and later sampling were observed, but these mechanism diagnostics did not establish an endpoint benefit.
 
-1. Loreley quality-diversity search;
-2. sequential editing of the current champion;
-3. independent best-of-N proposals from the root.
+The next comparative work should address what this experiment leaves unresolved:
 
-For every arm, freeze the target, model, visible training feedback, evaluator gates, budgets, seed policy, validation and holdout partitions, and winner rule. Report model requests, tokens, candidate evaluations, distinct evaluator identities, evaluator device-hours, and wall time.
+1. extend the matched Zstandard curve beyond 48 jobs without changing the endpoint or checkpoint rules after outcome inspection;
+2. repeat the same three-policy comparison on a second repository to separate target-specific behavior from a broader policy effect;
+3. compare the current learned repository descriptor with diff-restricted, structural, random, and fixed-basis alternatives;
+4. test archive and inspiration components under the same longer-horizon protocol;
+5. reproduce performance endpoints on a second architecture where the intended deployment claim requires it.
 
-V19 completed three-stage data separation, binary-aware archive admission, a distinct-binary endpoint, and binary-aware finalist freezing. It ran only the quality-diversity arm. Existing ancestry cannot substitute for the two controls or for cross-architecture replication.
-
-Further experiments can address four questions raised by V19:
-
-1. Across at least three independent searches, what are the discovery rate and time-to-first-useful-candidate distribution?
-2. How much does evolution contribute under no-seed, weak-seed, and current manual-seed conditions?
-3. Can Top-10 validation, an effect band, or adaptive racing avoid a Top-3 miss at acceptable cost?
-4. Should noisy-objective archive admission use incumbent/challenger remeasurement, confidence-bound dominance, or another rule?
-
-Tree identity and evaluator-state identity are now explicit system choices. Test phased measurement reuse and evaluator-defined identity on a second compiled or generated-artifact target instead of applying another post hoc collapse to V19.
+Future comparisons should continue to report physical jobs, successes, model requests, tokens, attributable model cost, evaluator executions, evaluator time, and elapsed time separately. Equal jobs was the frozen axis in the first study; later experiments may preregister a different primary resource axis, but must not select it after observing results.
 
 ## Publication material
 
@@ -598,7 +618,7 @@ English subtitle:
 
 > Results from 348 Loreley jobs on `markdown-it-py`, `python-pathspec`, and Zstandard
 
-The Chinese article uses a direct translation of this title and subtitle. Its source is [2026-08-loreley-launch-article-zh.md](../marketing/2026-08-loreley-launch-article-zh.md).
+The Chinese article uses a direct translation of this title and subtitle. Its source is [2026-08-loreley-launch-article-zh.md](../marketing/2026-08-loreley-launch-article-zh.md). These articles remain accounts of the three earlier capability campaigns. Paper-first distribution copy must link [arXiv:2608.19703](https://arxiv.org/abs/2608.19703) and summarize the 1,008-job matched experiment separately rather than implying that it is included in the 348-job article corpus.
 
 The final editorial rules apply to both languages:
 
@@ -625,7 +645,7 @@ The current article structure is:
 3. the three formal case sections;
 4. resource use and cost;
 5. FunSearch, AlphaEvolve, SATLUTION, ABCEvo, CodeEvolve, and HORIZON;
-6. evidence limits, equal-budget controls, and integration requirements.
+6. evidence limits and integration requirements.
 
 ### Evidence package
 
@@ -639,7 +659,7 @@ Each case should expose:
 - tokens, requests, cost, and wall time;
 - known limitations and prohibited claims.
 
-The [unified report](2026-08-07-loreley-case-study-evidence-report.md) supplies the text package. Four published figures cover the principal lineages and statistics. The [candidate-diff index](../marketing/candidates/README.md) stores canonical patches for `markdown-it-py`, `python-pathspec`, the Zstandard registered winner, and the evolved Zstandard follow-up.
+The [unified report](2026-08-07-loreley-case-study-evidence-report.md) supplies the capability-case text package. Four published capability figures cover the principal lineages and statistics. The paper's public evidence bundle adds the matched-study treatment, formal records, validators, and policy-comparison figures. The [candidate-diff index](../marketing/candidates/README.md) stores canonical patches for `markdown-it-py`, `python-pathspec`, the earlier Zstandard registered winner, and the evolved Zstandard follow-up.
 
 ### Paper
 
@@ -647,16 +667,17 @@ Paper title:
 
 > Loreley: Repository-Scale Program Evolution with Quality-Diversity Search
 
-The first public preprint is an English systems and empirical paper. Its main
+The English systems and empirical preprint is public at
+[arXiv:2608.19703](https://arxiv.org/abs/2608.19703). Its main
 sections cover Loreley's repository-level QD method and implementation, a
 matched Zstandard policy experiment, three earlier capability cases, related
 work, limitations, and reproducibility. The controlled experiment separates
 archive engagement from endpoint efficacy: retained alternatives were reused,
-but Loreley QD did not beat Sequential Champion at the tested 48-job horizon.
+but the 48-job endpoint did not establish a QD advantage over Sequential
+Champion or Independent Root. Sequential Champion had the highest observed
+endpoint mean and median.
 
-The related-work section should compare candidate scope, agent interface, archive design, evaluator generality, and experimental domain in about one page. It should not turn the introduction, result sections, or conclusion into a sequence of priority disclaimers. A future controlled comparison can strengthen the paper without blocking the first complete draft.
-
-The submitted source is available in [`paper/main.tex`](../../paper/main.tex),
+The v1 source is available in [`paper/main.tex`](../../paper/main.tex),
 with a checked-in bibliography, data-derived figures, public formal records,
 and build instructions in [`paper/README.md`](../../paper/README.md). The
 matched-study validator replays winner selection, endpoint mapping, primary
@@ -748,7 +769,7 @@ Internal reviews and submission bundles are retained as local archives under
 - Updated the articles, launch copy, figures, entry points, partnership material, handoff, release note, and claim boundaries to use the new evidence.
 - Reorganized the Zstandard section in both articles around the same sequence as the first two cases: search budget and result, candidate changes, selection protocol, and artifact identity. Removed the evidence-stage table from the article while retaining it in the formal reports.
 - Revised both Zstandard-facing figures to foreground the descriptive holdout leader, `5ee53426` at +1.228%, while retaining the 10/10 group result and post-selection boundary as secondary information.
-- Set paper v0.1 as an English systems and empirical preprint centered on method, implementation, and the three completed studies. Equal-budget search controls remain a later comparative track.
+- Set paper v0.1 as an English systems and empirical preprint centered on method, implementation, and the three completed studies. At that date, equal-budget search controls were assigned to a later comparative track.
 - Classified the closest full-repository AlphaEvolve descendants as domain-specific SAT, EDA, or hardware systems. Recorded Vesper as the closest coding-agent harness comparison and CodeEvolve as function- or block-level enterprise optimization.
 - Added Vesper and GEAR to the literature map and directed the paper to keep evidence qualifications with the affected result and in one limitations section.
 - Completed the first English paper draft under the provisional title
@@ -766,3 +787,21 @@ Internal reviews and submission bundles are retained as local archives under
   form.
 - Added `paper/review_notes.md` as the maintained record of paper status,
   contribution claims, changes, uncertainties, and requested review focus.
+
+### 2026-08-19
+
+- Completed the matched Zstandard method-efficacy experiment: seven paired blocks, three policies, and 48 physical candidate jobs per policy and block, for 1,008 total jobs.
+- Recorded the primary 48-job contrasts: QD versus Sequential Champion -0.135% (95% BCa -0.556% to +0.161%) and QD versus Independent Root +0.320% (-0.082% to +0.686%). Neither contrast established a QD advantage.
+- Separated mechanism engagement from endpoint efficacy. Four of seven QD winners had a retained non-incumbent in primary-parent ancestry; six did when inspiration-context edges were included.
+- Retained the three earlier campaigns as capability cases rather than additional policy comparisons.
+
+### 2026-08-20
+
+- Finalized the paper title as *Loreley: Repository-Scale Program Evolution with Quality-Diversity Search*.
+- Prepared and submitted the 15-page English preprint with public source, formal records, evidence validators, and data-derived figures.
+
+### 2026-08-21
+
+- Confirmed the public record at [arXiv:2608.19703](https://arxiv.org/abs/2608.19703), categorized under cs.SE with cs.AI as a secondary category.
+- Reopened the promotion track with paper-first Chinese and English copy.
+- Required all distribution material to distinguish the 1,008-job matched policy experiment from the 348-job capability campaigns and to report the negative primary comparison together with the archive-engagement evidence.

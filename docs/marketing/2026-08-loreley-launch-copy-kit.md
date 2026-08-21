@@ -2,146 +2,176 @@
 
 > 内部工作文件，不作为对外页面。下方引用块可直接用于发布。
 
-本文件中的数字受 [发布口径表](2026-08-loreley-launch-claim-sheet.md) 约束。发布时只替换链接和平台格式，不重新改写实验结论。
+本文件中的数字受 [发布口径表](2026-08-loreley-launch-claim-sheet.md) 约束。发布时只替换平台格式，不重新改写实验结论。
 
 ## 统一链接
 
+- 论文：<https://arxiv.org/abs/2608.19703>
 - 项目：<https://github.com/NeapolitanIcecream/loreley>
 - 中文长文：<https://neapolitanicecream.github.io/loreley/marketing/2026-08-loreley-launch-article-zh/>
 - 英文长文：<https://neapolitanicecream.github.io/loreley/marketing/2026-08-loreley-launch-article-en/>
 - 三案例证据：<https://neapolitanicecream.github.io/loreley/research/2026-08-07-loreley-case-study-evidence-report/>
-- Zstandard：<https://neapolitanicecream.github.io/loreley/research/2026-08-07-zstandard-gpt-v19-case-study-report/>
+- Zstandard 案例：<https://neapolitanicecream.github.io/loreley/research/2026-08-07-zstandard-gpt-v19-case-study-report/>
 - 候选源码 diff：<https://neapolitanicecream.github.io/loreley/marketing/candidates/>
 - 合作说明：<https://neapolitanicecream.github.io/loreley/marketing/loreley-design-partner-brief/>
 - 合作 intake：<https://github.com/NeapolitanIcecream/loreley/issues/new?template=design-partner.yml>
 
-外部平台统一使用以上绝对 URL。
+外部平台统一使用以上绝对 URL。论文标题统一写作 *Loreley: Repository-Scale Program Evolution with Quality-Diversity Search*，引用编号统一写作 `arXiv:2608.19703`。
 
 ## 中文标题
 
-首选：
+论文首发：
+
+> Loreley：在完整代码仓库上运行 Quality-Diversity 程序搜索
+
+技术文章：
 
 > 用编码智能体搜索真实代码仓库
 
 备选：
 
-- Loreley：完整 Git 代码仓库上的评估器驱动搜索
-- Loreley 的三个代码仓库实验
-- 代码仓库搜索中的提交、二进制文件与评估器
+- Loreley 的方法实验与三个代码仓库案例
+- Coding agent、Git 仓库与外部 evaluator
 
-不使用“首个仓库级演化系统”“自主重写任意项目”或“低成本自动优化所有代码库”。
+不使用“首个仓库级演化系统”“自主重写任意项目”“QD 已优于简单搜索”或“低成本自动优化所有代码库”。
 
-## 300–500 字摘要
+## 中文摘要
 
-Loreley 在完整 Git 代码仓库上运行评估器驱动的搜索。规划智能体和编码智能体修改隔离的 worktree；项目评估器负责构建、正确性检查和性能测量；通过检查的候选提交可以进入质量-多样性档案库。对于编译型项目，评估器可以使用二进制文件哈希定义接受测量的产物身份。
+> Loreley 在完整 Git 仓库上运行 Quality-Diversity 程序搜索。Coding agent 在隔离 worktree 中修改代码，项目提供的 evaluator 负责构建、正确性检查和数值评测；通过检查的 Git commit 可以进入 archive，供后续任务继续修改或作为参考上下文。
+>
+> 论文包含一项 Zstandard 策略实验：Loreley QD、Sequential Champion 和 Independent Root 各在 7 个配对 block 中运行 48 个 candidate jobs，共 1,008 jobs。48-job 终点上，QD 相对 Sequential Champion 为 -0.135%（95% BCa 区间 -0.556% 至 +0.161%），相对 Independent Root 为 +0.320%（-0.082% 至 +0.686%）。两项比较均未建立 QD 优势；Sequential Champion 的终点均值和中位数最高。实验观察到 archive retention 和后续采样，但没有建立相应的终点收益。
+>
+> 论文还报告三项较早的 capability campaigns，共 348 jobs。`markdown-it-py` 的冻结候选在独立语料上提高吞吐量 6.75%；`python-pathspec` 的四代候选提高 25.14%，但属于事后选择；Zstandard 的 validation-selected 四代候选在原 holdout 和新封存 corpus 上分别提高 1.173% 和 0.891%，两项测量各有明确的选择与数据协议限制。这三项案例说明 Loreley 能找到通过 evaluator 的多代、多文件改进，不构成跨仓库平均收益或搜索策略优势的估计。
+>
+> 论文：<https://arxiv.org/abs/2608.19703>  项目与证据：<https://github.com/NeapolitanIcecream/loreley>
 
-我们在三个固定代码仓库版本上完成了 348 个任务。`markdown-it-py` 的候选方案在验证前冻结，并在独立的 28 文档语料库上将吞吐量提高 6.75%。`python-pathspec` 的四代谱系在 5 个参考工作负载上提高 25.14%，但候选方案是在内存分配检查结果揭示后事后选择的。Zstandard 的第 4 代候选方案 `fe39bee8` 由扩展验证选出，在原留出集上提高压缩吞吐量 1.173%，在新封存语料上提高 0.891%。选择时还不知道它的留出集分数，但该留出集已用于另一候选；新语料的生成方案则在候选确定后选择。原预登记 Top-3 协议的获胜方案仍是人工种子。
+## 中文短帖
 
-完整报告包含候选选择过程、评估协议、谱系、失败记录和成本口径。项目正在寻找拥有自动评估器、真实代码仓库和相应计算预算的设计合作伙伴。
+> Loreley 论文已公开：<https://arxiv.org/abs/2608.19703>
+>
+> 我们在完整 Git 仓库上比较了 Loreley QD、Sequential Champion 和 Independent Root：7 个 Zstandard 配对 block、每种策略每个 block 48 jobs，共 1,008 jobs。QD archive 的非 incumbent 分支确实被保留并重新使用，但 48-job 终点没有建立 QD 相对两种 baseline 的优势，Sequential Champion 的观测均值和中位数最高。
+>
+> 论文同时报告三个较早的 capability cases（348 jobs），包括两个四代 Python 改进和一个四代 Zstandard 改进。代码与证据：<https://github.com/NeapolitanIcecream/loreley>
 
-完整文章与证据：<https://neapolitanicecream.github.io/loreley/marketing/2026-08-loreley-launch-article-zh/>
+## 中文极短帖
 
-## 短帖
-
-> Loreley 使用编码智能体和项目评估器搜索完整 Git 代码仓库。三个固定版本实验共运行 348 个任务：`markdown-it-py` 在独立语料库上 +6.75%；`python-pathspec` 在 5 个参考工作负载上 +25.14%，候选为事后选择；Zstandard 的第 4 代候选方案在原留出集和新封存语料上分别 +1.173% 和 +0.891%，两项测量各有明确的协议限制。报告包含选择过程、成本和限制：<https://neapolitanicecream.github.io/loreley/marketing/2026-08-loreley-launch-article-zh/>
-
-## 极短帖
-
-> Loreley 在三个真实代码仓库上完成了 348 个搜索任务。候选选择过程、失败记录、成本和源码 diff 均已公开：<https://neapolitanicecream.github.io/loreley/research/2026-08-07-loreley-case-study-evidence-report/>
+> Loreley 将 coding agent、完整 Git commit、外部 evaluator 和 Quality-Diversity archive 组成仓库级搜索系统。论文报告 1,008-job Zstandard 策略实验与三个较早的 capability cases：<https://arxiv.org/abs/2608.19703>
 
 ## 知乎或博客导语
 
-> Loreley 在完整 Git 代码仓库上运行评估器驱动的搜索。本文说明一次搜索任务如何产生并评估候选提交，并报告 `markdown-it-py`、`python-pathspec` 和 Zstandard 上共 348 个任务的结果。内容包括四代演化谱系、提交与二进制文件的身份差异、独立验证结果、资源使用和目前缺少的对照实验。
+> Loreley 把完整 Git 仓库作为候选状态，由 coding agent 修改、外部 evaluator 检查和评分，并用 Quality-Diversity archive 保留多条可继续搜索的分支。本文介绍系统设计、1,008-job Zstandard 策略实验，以及 `markdown-it-py`、`python-pathspec` 和另一版 Zstandard 上共 348 jobs 的 capability results。受控实验观察到了 archive retention 和后续采样，但没有在 48-job 终点建立 QD 对 Sequential Champion 或 Independent Root 的优势。
 
-## 技术社区帖
+## 中文技术社区帖
 
 标题：
 
-> Loreley：完整 Git 代码仓库上的质量-多样性搜索
+> Loreley：完整 Git 代码仓库上的 Quality-Diversity 搜索
 
 正文：
 
-> Loreley 使用 Git 提交记录候选方案的源码和祖先关系。外部编码智能体修改隔离的 worktree，项目评估器执行构建、测试和性能测量。通过检查的候选方案可以进入 MAP-Elites/Pareto 档案库。对于编译型项目，评估器可以另行提供二进制文件哈希作为测量身份。
+> Loreley 把每个候选源码状态和祖先关系记录为 Git commit。Coding agent 在隔离 worktree 中修改代码，项目 evaluator 执行构建、测试和数值评测；通过检查的候选可以进入 MAP-Elites/Pareto archive。Evaluator 是协议边界，可以调用任意语言的构建系统、容器、硬件测试台或远程服务。
 >
-> 三个固定代码仓库版本的结果如下：
+> 论文的受控实验在同一 Zstandard revision 上比较三种在线策略。7 个配对 block 中，Loreley QD、Sequential Champion 和 Independent Root 各运行 48 个 physical candidate jobs，总计 1,008 jobs；三种策略使用相同 root、agent routes、evaluator 和 post-search winner rule。Validation 冻结候选后，由 agent 不可见的 holdout 测量终点。
 >
-> - `markdown-it-py`：64 个任务；候选方案在验证前冻结，在独立的 28 文档语料库上将吞吐量提高 6.75%，28 份文档全部改善；
-> - `python-pathspec`：64 个任务；四代谱系在 5 个参考工作负载上提高 25.14%，候选方案为事后选择；
-> - Zstandard：220 个任务，产生 167 个不同的发布版二进制文件；第 4 代候选方案 `fe39bee8` 由扩展验证选出，在原留出集上 +1.173% (95% CI +1.102% 到 +1.245%)，在新封存语料上 +0.891% (95% CI +0.522% 到 +1.261%)。选择时不知道它的原留出集分数，但该留出集此前已打开；新语料生成方案在候选确定后选择。原预登记 Top-3 winner 仍是人工 seed。
+> 在 48-job 终点：
 >
-> 三项结果使用不同的工作负载和选择协议，不能横向平均。统一报告包含失败、token、成本口径和证据范围。后续实验将按相同预算比较质量-多样性、从根版本独立采样和沿当前最优候选连续修改三种策略。
+> - QD 相对 Sequential Champion 为 -0.135%，95% BCa 区间为 -0.556% 至 +0.161%；
+> - QD 相对 Independent Root 为 +0.320%，区间为 -0.082% 至 +0.686%；
+> - 两项比较均未建立 QD 优势；Sequential Champion 的观测终点均值和中位数最高。
 >
-> 文章与报告：<https://neapolitanicecream.github.io/loreley/marketing/2026-08-loreley-launch-article-zh/>
+> 实验记录到 archive engagement：7 个最终 QD winners 中，4 个的 primary-parent ancestry 包含被 archive 保留的非 incumbent 状态；计入 inspiration context 后为 6 个。后一个计数只表示上下文被提供给 agent，不表示它造成了具体 edit。这些记录满足论文定义的 mechanism-engagement condition，但没有建立 holdout endpoint benefit。
+>
+> 论文另行报告三个较早的 capability campaigns，共 348 jobs：
+>
+> - `markdown-it-py`：64 jobs；冻结候选在独立 28 文档语料上提高吞吐量 6.75%，28/28 文档改善；
+> - `python-pathspec`：64 jobs；四代候选在 5 个参考 workload 上提高 25.14%，候选为事后选择；
+> - Zstandard：220 jobs；validation-selected 四代候选 `fe39bee8` 在原 holdout 上 +1.173%，在新封存 corpus 上 +0.891%。前者不是未触碰的 study-level holdout，后者的 corpus recipe 在候选冻结后确定。
+>
+> 三个案例使用不同 workload 和选择协议，不能横向平均。它们说明系统找到了通过各自 evaluator 的多代、多文件改进，不估计新仓库的平均效果。
+>
+> 论文：<https://arxiv.org/abs/2608.19703>
+>
+> 项目与公开证据：<https://github.com/NeapolitanIcecream/loreley>
 
 ## 图片使用
 
 | 顺序 | 文件 | 用途 |
 | ---: | --- | --- |
-| 1 | [`loreley-three-case-evidence.png`](assets/loreley-three-case-evidence.png) | 长文结果总表之后；展示三项结果和选择状态 |
-| 2 | [`loreley-search-loop.png`](assets/loreley-search-loop.png) | 搜索模型与评估器部分；说明智能体、评估器和档案库的关系 |
-| 3 | [`loreley-case-lineages.png`](assets/loreley-case-lineages.png) | 两个 Python 案例；展示多代累积和档案库重新采样 |
-| 4 | [`loreley-zstd-identity-results.png`](assets/loreley-zstd-identity-results.png) | Zstandard 案例；展示二进制身份与置信区间 |
+| 1 | [`loreley-paper-overview.png`](assets/loreley-paper-overview.png) | arXiv 与社区首发主图；同时展示方法循环、1,008-job endpoint、mechanism activity 和 capability cases |
+| 2 | [`loreley-search-loop.png`](assets/loreley-search-loop.png) | 技术长文；说明 agent、evaluator 和 archive 的关系 |
+| 3 | [`loreley-three-case-evidence.png`](assets/loreley-three-case-evidence.png) | capability results；展示三项结果和选择状态 |
+| 4 | [`loreley-case-lineages.png`](assets/loreley-case-lineages.png) | 两个 Python 案例；展示多代累积和 archive 重新采样 |
+| 5 | [`loreley-zstd-identity-results.png`](assets/loreley-zstd-identity-results.png) | 较早的 Zstandard 案例；展示 binary identity 与 Top-10 holdout 结果 |
 
-图片均提供 SVG 和 1600×900 PNG。发布时保留卡片底部的 scope note，不单独截取百分比。
+现有宣传图均提供 SVG 和 1600×900 PNG。`loreley-paper-overview.png` 是论文首发默认图片；三案例总表与谱系图只用于解释 earlier capability campaigns。发布时保留 scope note，不单独截取百分比，也不把三案例图误标为 matched policy result。
 
 ## 发布顺序
 
-1. GitHub 和文档站先落地中英文长文、统一证据报告、设计合作伙伴说明与图片；
-2. 发布完整中文文章，以文章链接作为中文长文入口；
-3. 同日发布中文短帖和技术社区帖，只复用本文件中的结果句；
-4. 发布英文长文和英文技术社区帖；
-5. 收集问题并更新 FAQ，不直接改动已经发布的实验口径。
-
-英文稿是信息结构和结论口径的母稿。中文稿只做保守翻译和中文句法校订，不增加过渡、总结、强调、比喻或叙事框架。
+1. 确认 GitHub、文档站和合作说明均包含 arXiv 链接；
+2. 使用 `loreley-paper-overview.png` 发布中文短帖和中文技术社区帖；
+3. 使用同一主图发布英文短帖和 Show HN/英文技术社区帖；
+4. 在长文导语或置顶说明中补充论文与 1,008-job 受控实验入口；
+5. 收集问题并维护 FAQ，实验口径只通过口径表统一更新。
 
 ## 平台发布检查
 
 - 使用“统一链接”中的公开 URL；
-- 为每个平台上传原始 PNG，不依赖平台抓取本地相对路径；
-- 不在发布帖中承诺回复时限、实验成功率或固定美元报价。
+- 区分 1,008-job matched policy experiment 与 348-job capability campaigns，不相加为一项实验；
+- 同时报告 QD 与两个 baseline 的方向和不确定性，不只摘取 +0.320%；
+- 不把 archive engagement 写成 endpoint benefit；
+- 为每个平台上传原始图片，不依赖相对路径；
+- 不承诺实验成功率、回复时限或固定美元报价。
 
 ## English title
 
-Primary:
+Paper post:
+
+> Loreley: Repository-Scale Program Evolution with Quality-Diversity Search
+
+Technical article:
 
 > Searching Real Code Repositories with Coding Agents
 
-Alternate:
-
-- Loreley: Evaluator-Guided Search over Complete Git Repositories
-- Three Repository-Scale Studies of Loreley
-- Commits, Binaries, and Evaluators in Repository Search
-
 ## English summary
 
-Loreley performs evaluator-guided search over complete Git repositories. Planning and coding agents edit isolated worktrees; project evaluators build, test, and benchmark each candidate; passing commits may enter a quality-diversity archive. Compiled targets can use a binary hash as the artifact identity that consumes measurement budget.
-
-We completed 348 jobs on fixed revisions of three repositories. A `markdown-it-py` candidate frozen before validation improved throughput by 6.75% on a separate 28-document corpus. A four-generation `python-pathspec` candidate improved five reference workloads by 25.14%, but candidate selection was post-hoc after an allocation failure. Zstandard generation-4 candidate `fe39bee8` was selected on expanded validation and then measured +1.173% compression on the original holdout and +0.891% on a newly sealed corpus. Its own holdout score was unknown at selection, but that corpus had already been opened for another candidate; the new-corpus recipe was chosen after selection. The preregistered Top-3 result remains a manual seed.
-
-The reports include candidate selection, evaluation protocols, lineage, failures, and cost semantics. We are looking for design partners with automated evaluators, valuable optimization targets, and appropriate compute budgets.
-
-Article and evidence: <https://neapolitanicecream.github.io/loreley/marketing/2026-08-loreley-launch-article-en/>
+> Loreley performs Quality-Diversity program search over complete Git repositories. Coding agents edit isolated worktrees; a project-supplied evaluator builds, verifies, and scores each candidate; passing commits may enter an archive and remain available as parents or context for later jobs.
+>
+> The paper reports a matched Zstandard policy experiment with seven paired blocks and 48 physical candidate jobs per policy and block: 1,008 jobs across Loreley QD, Sequential Champion, and Independent Root. At the 48-job endpoint, QD was 0.135% below Sequential Champion (95% BCa interval -0.556% to +0.161%) and 0.320% above Independent Root (-0.082% to +0.686%). Neither contrast established a QD advantage; Sequential Champion had the highest observed endpoint mean and median. The QD archive did retain and later resample non-incumbent states, but that engagement did not produce an established endpoint benefit.
+>
+> Three separate earlier capability campaigns completed 348 jobs. A frozen `markdown-it-py` candidate improved throughput by 6.75% on a separate corpus. A generation-4 `python-pathspec` candidate improved five reference workloads by 25.14%, with post-hoc selection. A validation-selected generation-4 Zstandard candidate measured +1.173% on the original holdout and +0.891% on a newly sealed corpus, with a stated protocol limitation for each measurement. These cases show multi-generation, multi-file improvements that passed their evaluators; they do not estimate average performance on a new repository or comparative policy efficacy.
+>
+> Paper: <https://arxiv.org/abs/2608.19703>  Code and evidence: <https://github.com/NeapolitanIcecream/loreley>
 
 ## English short post
 
-> Loreley performs evaluator-guided search over complete Git repositories. Three fixed-revision studies completed 348 jobs: `markdown-it-py` +6.75% after candidate freeze; `python-pathspec` +25.14% with post-hoc selection; and a validation-selected generation-4 Zstandard candidate at +1.173% on the original holdout and +0.891% on a newly sealed corpus. The Zstandard measurements have different protocol limits, documented with the reports, source diffs, and costs: <https://neapolitanicecream.github.io/loreley/marketing/2026-08-loreley-launch-article-en/>
+> Loreley is now on arXiv: <https://arxiv.org/abs/2608.19703>
+>
+> We compared Loreley QD, Sequential Champion, and Independent Root on Zstandard in seven paired blocks, with 48 candidate jobs per policy and block (1,008 total). QD retained and reused non-incumbent repository states, but at 48 jobs it did not establish an endpoint advantage over either baseline; Sequential Champion had the highest observed mean and median.
+>
+> The paper also reports three earlier capability campaigns (348 jobs) that produced generation-4, multi-file improvements. Code and evidence: <https://github.com/NeapolitanIcecream/loreley>
 
 ## Hacker News or technical forum post
 
 Title:
 
-> Show HN: Loreley – evaluator-guided search over complete Git repositories
+> Show HN: Loreley – Quality-Diversity search over complete Git repositories
 
 Body:
 
-> Loreley records each candidate source state and ancestry as a Git commit. External coding agents modify isolated worktrees; a project-specific evaluator builds, tests, and measures the result; passing candidates may enter a MAP-Elites/Pareto archive. Compiled targets can provide a separate binary identity for measurement and caching.
+> Loreley records candidate source states and ancestry as Git commits. Coding agents modify isolated worktrees; a project evaluator builds, tests, and measures each candidate; passing commits may enter a MAP-Elites/Pareto archive and remain available as future parents or context. The evaluator is a protocol boundary and can invoke builds, containers, hardware benches, or remote services in any language.
 >
-> We completed three fixed-revision studies:
+> The paper includes a matched Zstandard experiment comparing Loreley QD, Sequential Champion, and Independent Root. We ran seven paired blocks with 48 physical candidate jobs per policy and block, for 1,008 jobs. The policies shared the frozen root, agent routes, evaluator, candidate budget, and post-search selection rule. Validation fixed each winner before an agent-hidden holdout measured it.
+>
+> At 48 jobs, QD was 0.135% below Sequential Champion (95% BCa interval -0.556% to +0.161%) and 0.320% above Independent Root (-0.082% to +0.686%). Neither contrast established a QD advantage. Sequential Champion had the highest observed endpoint mean and median.
+>
+> Archive engagement did occur. Four of seven final QD winners had a retained non-incumbent in their primary-parent ancestry; the count was six when inspiration-context edges were included. Inspiration records context supplied to the agent, not a demonstrated causal edit. These diagnostics show that the configured QD mechanism was active, while the endpoint comparison shows no established benefit at the tested horizon.
+>
+> The paper separately reports three earlier capability campaigns (348 jobs):
 >
 > - `markdown-it-py`: 64 jobs; a candidate frozen before validation was 6.75% faster on a separate 28-document corpus, with 28/28 documents improving.
-> - `python-pathspec`: 64 jobs; a four-generation lineage was 25.14% faster on five reference workloads. Candidate selection was post-hoc after the registered winner failed an allocation gate.
-> - Zstandard: 220 jobs and 167 distinct release binaries; generation-4 candidate `fe39bee8` was selected on expanded validation, then measured +1.173% compression on the original holdout (95% CI +1.102% to +1.245%) and +0.891% on a newly sealed corpus (95% CI +0.522% to +1.261%). Its holdout score was unknown at selection, but that corpus had been opened for another candidate; the new-corpus recipe was chosen after selection. The preregistered Top-3 winner remains a manual seed.
+> - `python-pathspec`: 64 jobs; a generation-4 candidate was 25.14% faster on five reference workloads. Selection was post-hoc after the registered candidate failed an allocation gate.
+> - Zstandard: 220 jobs; validation-selected generation-4 candidate `fe39bee8` measured +1.173% on the original holdout and +0.891% on a newly sealed corpus. The former was not an untouched study-level holdout; the latter corpus recipe was chosen after candidate fixation.
 >
-> The aggregate report includes failures, token records, cost semantics, and the scope of each result. The next controlled experiment will compare quality-diversity with same-budget root-independent and champion-sequential search.
+> Paper: <https://arxiv.org/abs/2608.19703>
 >
-> <https://neapolitanicecream.github.io/loreley/marketing/2026-08-loreley-launch-article-en/>
+> Code and evidence: <https://github.com/NeapolitanIcecream/loreley>

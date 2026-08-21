@@ -2,6 +2,11 @@
 
 *Results from 348 Loreley jobs on `markdown-it-py`, `python-pathspec`, and Zstandard*
 
+The accompanying paper, [*Loreley: Repository-Scale Program Evolution with
+Quality-Diversity Search*](https://arxiv.org/abs/2608.19703)
+([PDF](https://arxiv.org/pdf/2608.19703)), also reports a later 1,008-job
+controlled comparison of three search policies.
+
 Loreley performs evaluator-guided search over complete Git repositories. Planning and coding agents propose changes in isolated worktrees. A project-specific evaluator builds the result, applies correctness gates, and measures the configured objectives. Candidates that pass may enter a distributed quality-diversity archive and serve as parents or inspirations for later jobs.
 
 A Git commit records the source state and its ancestry. For compiled or generated projects, the evaluator can provide a separate artifact identity, such as a release-binary hash, so that equivalent artifacts do not consume additional measurement budget.
@@ -12,7 +17,7 @@ We evaluated Loreley on fixed revisions of three repositories. The studies compl
 | --- | ---: | ---: | --- | --- |
 | `markdown-it-py` | 64 jobs | 4.35 hours | throughput +6.75% | candidate frozen before validation |
 | `python-pathspec` | 64 jobs | 3.91 hours | throughput +25.14% | post-hoc selection after allocation failure |
-| Zstandard | 220 jobs | 5.31 runner-hours | fixed Top-10 holdout: 10/10 positive; median +1.116% | post-selection fixed-candidate comparison |
+| Zstandard | 220 jobs | 5.31 runner-hours | validation-selected generation-4 candidate: +1.173% on the original holdout; +0.891% on a newly sealed corpus | split-specific qualifications below |
 
 The studies used different workloads and selection protocols. Their percentage results should not be averaged or treated as estimates of performance on other repositories.
 
@@ -82,17 +87,13 @@ The experiment records the archive retaining the 0.9978× lineage and sampling i
 
 ## Case study 3: Zstandard
 
-The Zstandard study used 220 jobs: 8 human-written seeds and 212 evolution jobs. After the search, a [fixed-Top-10 comparison](../research/2026-08-07-zstandard-gpt-v19-top10-validation-supplement.md) tested the ten training finalists on the original holdout. All ten improved compression throughput. The median gain was 1.116%, point estimates ranged from +0.856% to +1.239%, and every lower 95% bound remained above the root.
+The Zstandard study used 220 jobs: 8 human-written seeds and 212 evolution jobs. Expanded validation of the fixed training Top 10 selected generation-4 candidate `fe39bee8`. It improved compression throughput by 1.234% on validation (95% CI +1.156% to +1.312%), by 1.173% on the original holdout (+1.102% to +1.245%), and by 0.891% on a newly generated and sealed corpus (+0.522% to +1.261%). Compressed size was unchanged on all four measured splits.
 
-The candidate identities and order were fixed before the nine new measurements. The holdout had already been opened for the preregistered winner, so this comparison is post-selection and does not support a new blinded winner.
+The four-generation lineage combined a zero-literal fast path, a compression hot-path change, and an eight-byte histogram update unroll. Its [source patch](candidates/zstandard-v19-evolved-followup.patch) changes three files, with 33 insertions and 16 deletions.
 
-Ranked by the compression lower bound, generation-3 candidate `5ee53426` was first at +1.228% (95% CI +1.125% to +1.330%), and generation-4 candidate `fe39bee8` was second at +1.173% (95% CI +1.102% to +1.245%). The intervals overlap, so the ranking is descriptive. The nine new measurements used 12 rounds each and passed the build, correctness, cross-decode, compressed-size, and RSS checks.
+The split history matters. The original protocol validated only the training Top 3 and selected manual seed `7b9aef38`, which later measured +1.019% on the then-sealed holdout. When expanded validation selected `fe39bee8`, its own original-holdout score was still unknown, but the corpus had already been opened at study level. The fresh-corpus recipe and seed were chosen after `fe39bee8` was fixed, and the resulting data were generated and sealed before measurement. The original-holdout result is therefore candidate-level out-of-selection evidence rather than an untouched study-level holdout; the fresh result uses sealed data whose construction was chosen after candidate fixation.
 
-`5ee53426` descends from the preregistered seed through two evolution steps: a compression hot-path change and a specialized level-1 fast-parser predicate. The four-generation `fe39bee8` lineage combined a zero-literal fast path, a compression hot-path change, and an eight-byte histogram update unroll. Its [source patch](candidates/zstandard-v19-evolved-followup.patch) changes three files, with 33 insertions and 16 deletions.
-
-The original protocol validated only the training Top 3 and selected manual seed `7b9aef38`. On the sealed holdout, it improved compression throughput by 1.019% (95% CI +0.962% to +1.076%). `7b9aef38` remains the preregistered winner.
-
-Validation was later expanded to the fixed training Top 10. Training rank 10, `fe39bee8`, became the validation winner at +1.234%, with a lower 95% bound of +1.156%. Its original-holdout score was still unknown at selection; when measured later it was +1.173% (95% CI +1.102% to +1.245%). That corpus had already been opened for the preregistered Top-3 winner. After `fe39bee8` was fixed, a new corpus recipe and seed were chosen, and the corpus was generated and sealed before measurement. On it, compression throughput improved by 0.891% (95% CI +0.522% to +1.261%). The two measurements have complementary limits: an older but opened corpus, and new sealed data whose construction was chosen after the candidate was known.
+A [fixed-Top-10 follow-up](../research/2026-08-07-zstandard-gpt-v19-top10-validation-supplement.md) provides a separate sensitivity check. Candidate identities and order were fixed before nine additional original-holdout measurements. All ten candidates were positive, with a median gain of 1.116% and point estimates from +0.856% to +1.239%. Generation-3 candidate `5ee53426` had the highest descriptive lower-bound ranking at +1.228% (95% CI +1.125% to +1.330%), while `fe39bee8` measured +1.173%. The intervals overlap; this post-selection ranking does not replace the validation-selected candidate.
 
 Of the 211 successful jobs, 167 produced distinct release binaries and 44 reproduced a binary that had already appeared. The evaluator used the release-binary SHA-256 for measurement identity, while Git commits retained source ancestry. After caching was enabled, 19 repeated binaries reused an accepted report; their median evaluator time was 21.6 seconds, compared with 186.7 seconds for jobs that ran the benchmark.
 
@@ -123,19 +124,34 @@ Repository-scale systems published in 2025 and 2026 include:
 
 Loreley uses complete Git commits for source and ancestry, evaluator-defined artifact identities for measurement, and a distributed quality-diversity archive for parent and inspiration selection. Loreley's three studies used 348 physical jobs. SATLUTION reports about 28,000 solver-instance executions; the units provide scale context but are not normalized candidate or compute budgets.
 
-## Evidence scope and next experiments
+## Evidence scope and the controlled comparison
 
 Across the three studies, Loreley generated and evaluated cross-file repository changes, and candidates passed independent performance evaluation. None of the studies compared quality-diversity search with simpler strategies under an equal budget.
 
 Recent work reports that [independent sampling or sequential rewriting can match more elaborate search](https://arxiv.org/abs/2602.16805) on some code-evolution tasks. A separate [analysis of evolution traces](https://arxiv.org/abs/2605.20086) attributes some reported improvements to parameter tuning, reintroduced code, or evaluator overfitting.
 
-A controlled comparison should hold the model, evaluator, and candidate-evaluation budget fixed across three strategies:
+A later matched experiment reported in the [Loreley
+paper](https://arxiv.org/abs/2608.19703) held the planning and coding GPT
+routes, evaluator, and attempted candidate-job budget fixed across three
+strategies:
 
 1. independent candidates sampled from the root;
 2. sequential edits to the current champion;
 3. Loreley's quality-diversity archive for parent and inspiration selection.
 
-Each strategy requires repeated runs. Further work also includes Zstandard replication on x86-64 and a preregistered finalist policy that covers Top 10, an effect band, or adaptive racing.
+The experiment used seven paired blocks and 48 physical candidate jobs per
+policy and block, for 1,008 jobs in total. At 48 jobs, QD was 0.135% below
+Sequential Champion (95% BCa interval −0.556% to +0.161%) and 0.320% above
+Independent Root (−0.082% to +0.686%). Neither contrast established a QD
+advantage. Archive retention and later sampling did occur: four of seven final
+QD winners had a non-incumbent state in their primary-parent ancestry under the
+paper's retrospective one-incumbent rule. Counting inspiration edges raised
+that number to six, without establishing that the supplied context caused an
+edit.
+
+Further work includes longer search horizons, Zstandard replication on x86-64,
+and a preregistered finalist policy that covers Top 10, an effect band, or
+adaptive racing.
 
 ## Integration requirements
 
