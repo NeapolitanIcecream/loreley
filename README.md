@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/NeapolitanIcecream/loreley/actions/workflows/ci.yml/badge.svg)](https://github.com/NeapolitanIcecream/loreley/actions/workflows/ci.yml)
 [![Documentation](https://img.shields.io/badge/docs-online-6563FF.svg)](https://neapolitanicecream.github.io/loreley/)
+[![Paper](https://img.shields.io/badge/arXiv-2608.19703-b31b1b.svg)](https://arxiv.org/abs/2608.19703)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB.svg)](https://www.python.org/)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](https://github.com/NeapolitanIcecream/loreley/blob/main/LICENSE)
 
@@ -19,10 +20,20 @@ benchmark run.
 
 [Results](#results-from-three-repository-searches) ·
 [How it works](#how-loreley-works) ·
+[Paper](https://arxiv.org/abs/2608.19703) ·
 [Documentation](https://neapolitanicecream.github.io/loreley/) ·
 [Design-partner intake](https://github.com/NeapolitanIcecream/loreley/issues/new?template=design-partner.yml)
 
-![Loreley searches repository states proposed by coding agents and accepted by an external evaluator](https://raw.githubusercontent.com/NeapolitanIcecream/loreley/main/docs/marketing/assets/loreley-search-loop.png)
+![Loreley paper overview: repository-scale Quality-Diversity search, matched Zstandard comparison, and capability campaigns](https://raw.githubusercontent.com/NeapolitanIcecream/loreley/main/docs/marketing/assets/loreley-paper-overview.png)
+
+The paper, [*Loreley: Repository-Scale Program Evolution with
+Quality-Diversity Search*](https://arxiv.org/abs/2608.19703), reports the system,
+three capability campaigns, and a matched Zstandard experiment comparing
+Loreley QD with Sequential Champion and Independent Root search. The controlled
+experiment used seven paired blocks and 48 physical candidate jobs per policy
+and block (1,008 total). At 48 jobs, neither comparison established a QD
+advantage. Read the [PDF](https://arxiv.org/pdf/2608.19703) or inspect the
+[public experiment evidence](paper/evidence/zstd_method_efficacy.json).
 
 ## Results from three repository searches
 
@@ -37,16 +48,18 @@ be averaged or treated as expected performance on another repository.
 | --- | --- | --- |
 | [`markdown-it-py`](https://neapolitanicecream.github.io/loreley/research/2026-08-02-markdown-it-py-deepseek-case-study/) | Throughput +6.75% on a separate 28-document corpus; 28/28 documents improved | Winner frozen before validation |
 | [`python-pathspec`](https://neapolitanicecream.github.io/loreley/research/2026-08-03-pathspec-deepseek-case-study/) | Throughput +25.14% across five reference workloads; 5/5 improved | Post-hoc selection after the registered candidate failed its allocation gate |
-| [Zstandard](https://neapolitanicecream.github.io/loreley/research/2026-08-07-zstandard-gpt-v19-top10-validation-supplement/) | Descriptive leader +1.228% compression throughput on the original holdout, with a 95% CI of +1.125% to +1.330%; 10/10 fixed finalists were positive | Post-selection comparison; the holdout had already been revealed |
+| [Zstandard](https://neapolitanicecream.github.io/loreley/research/2026-08-07-zstandard-gpt-v19-top10-validation-supplement/) | Validation-selected generation-4 candidate: compression throughput +1.173% on the original holdout and +0.891% on a newly sealed corpus | Original holdout previously opened at study level; fresh-corpus recipe chosen after candidate fixation |
 
-For Zstandard, the preregistered winner remains the manual seed `7b9aef38`, at
-+1.019% compression throughput on the sealed holdout. Generation-4 candidate
-`fe39bee8` later gained +0.891% on a newly generated and sealed corpus. The
+For Zstandard, expanded validation selected generation-4 candidate `fe39bee8`.
+Its own original-holdout score was unknown at selection; it later measured
++1.173% there and +0.891% on a newly generated and sealed corpus. The
 [aggregate evidence report](https://neapolitanicecream.github.io/loreley/research/2026-08-07-loreley-case-study-evidence-report/)
 contains the protocols, costs, failure counts, candidate selection records, and
 claim limits for all three studies.
 
 ## How Loreley works
+
+![Loreley searches repository states proposed by coding agents and accepted by an external evaluator](https://raw.githubusercontent.com/NeapolitanIcecream/loreley/main/docs/marketing/assets/loreley-search-loop.png)
 
 1. **Define a campaign.** Fix the root commit, optimization goal, protected
    scope, evaluator, objectives, and job budget.
@@ -77,10 +90,11 @@ candidates as inspirations. This keeps multiple valid branches available when
 they occupy different behavioural niches or represent different objective
 trade-offs.
 
-The current case studies show multi-generation lineages, archive retention, and
-later reuse of retained branches. They do not establish that Quality-Diversity
-outperforms root-independent sampling or sequential editing of a single
-champion under an equal budget.
+The three capability case studies show multi-generation lineages, archive
+retention, and later reuse of retained branches. The paper's separate matched
+experiment did not establish that Quality-Diversity outperforms
+root-independent sampling or sequential editing of a single champion at its
+48-job horizon.
 
 | Concern | Representation in Loreley |
 | --- | --- |
@@ -153,6 +167,7 @@ uv run loreley ui
 
 | Resource | Contents |
 | --- | --- |
+| [Paper: arXiv:2608.19703](https://arxiv.org/abs/2608.19703) ([PDF](https://arxiv.org/pdf/2608.19703)) | Method, matched 1,008-job experiment, capability studies, and limitations |
 | [Documentation home](https://neapolitanicecream.github.io/loreley/) | Architecture, configuration, CLI, and operations |
 | [Scheduler and worker guides](https://neapolitanicecream.github.io/loreley/script/run_scheduler/) | Campaign startup and worker operation |
 | [Three-case evidence report](https://neapolitanicecream.github.io/loreley/research/2026-08-07-loreley-case-study-evidence-report/) | Results, costs, failures, and evidence boundaries |
@@ -170,3 +185,19 @@ estimate Loreley's success rate or average effect on a new repository.
 
 Loreley is licensed under the
 [Apache License 2.0](https://github.com/NeapolitanIcecream/loreley/blob/main/LICENSE).
+
+## Citation
+
+```bibtex
+@misc{chen2026loreley,
+  title         = {Loreley: Repository-Scale Program Evolution with Quality-Diversity Search},
+  author        = {Mohan Chen},
+  year          = {2026},
+  eprint        = {2608.19703},
+  archiveprefix = {arXiv},
+  primaryclass  = {cs.SE},
+  url           = {https://arxiv.org/abs/2608.19703}
+}
+```
+
+Machine-readable metadata are available in [`CITATION.cff`](CITATION.cff).

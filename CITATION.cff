@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use Loreley, please cite the paper below."
+title: "Loreley"
+type: software
+authors:
+  - family-names: "Chen"
+    given-names: "Mohan"
+    orcid: "https://orcid.org/0009-0002-4540-3703"
+repository-code: "https://github.com/NeapolitanIcecream/loreley"
+url: "https://neapolitanicecream.github.io/loreley/"
+license: Apache-2.0
+preferred-citation:
+  type: article
+  title: "Loreley: Repository-Scale Program Evolution with Quality-Diversity Search"
+  authors:
+    - family-names: "Chen"
+      given-names: "Mohan"
+      orcid: "https://orcid.org/0009-0002-4540-3703"
+  year: 2026
+  month: 8
+  doi: "10.48550/arXiv.2608.19703"
+  url: "https://arxiv.org/abs/2608.19703"
+  license: CC-BY-4.0
+  notes: "arXiv:2608.19703 [cs.SE]"

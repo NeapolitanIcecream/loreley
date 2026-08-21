@@ -11,9 +11,25 @@ not require another benchmark.
 
 Use this page as a high-level overview and a navigation hub into the focused module guides under `loreley/` and `script/` (see the sidebar navigation).
 
+The paper, [*Loreley: Repository-Scale Program Evolution with
+Quality-Diversity Search*](https://arxiv.org/abs/2608.19703)
+([PDF](https://arxiv.org/pdf/2608.19703)), describes the method, a matched
+1,008-job Zstandard experiment, the three capability studies, and their
+limitations.
+
+![Loreley paper overview: repository-scale Quality-Diversity search, matched Zstandard comparison, and capability campaigns](marketing/assets/loreley-paper-overview.png)
+
 ---
 
 ## Evidence
+
+The matched experiment compared Loreley QD, Sequential Champion, and
+Independent Root search across seven paired blocks, with 48 physical candidate
+jobs per policy and block. At 48 jobs, QD was 0.135% below Sequential Champion
+(95% BCa interval −0.556% to +0.161%) and 0.320% above Independent Root
+(−0.082% to +0.686%). Neither contrast established a QD advantage. The paper
+and the checked-in [experiment record](https://github.com/NeapolitanIcecream/loreley/blob/main/paper/evidence/zstd_method_efficacy.json)
+provide the full protocol and results.
 
 [The three-case-study evidence report](research/2026-08-07-loreley-case-study-evidence-report.md)
 summarizes the selection status, measurements, costs, and limits. The fixed
@@ -25,12 +41,12 @@ repository studies are:
   four-generation archive lineage produced a qualifying 25.14% speedup. The
   candidate was selected post-hoc after the registered winner missed its
   allocation gate.
-- [Zstandard](research/2026-08-07-zstandard-gpt-v19-case-study-report.md): the
-  registered winner improved sealed-holdout compression by 1.019% with neutral
-  decompression. In a later fixed-Top-10 comparison, all ten candidates remained
-  positive on the original holdout, with a median gain of 1.116%; the comparison
-  is post-selection because that holdout had already been revealed. A
-  generation-4 candidate also gained 0.891% on a newly sealed corpus.
+- [Zstandard](research/2026-08-07-zstandard-gpt-v19-case-study-report.md):
+  expanded validation selected generation-4 candidate `fe39bee8`. Its
+  compression throughput later measured +1.173% on the original holdout and
+  +0.891% on a newly sealed corpus. The original holdout had previously been
+  opened at study level, while the fresh-corpus recipe was chosen after the
+  candidate was fixed.
 
 Read the project essay in [Chinese](marketing/2026-08-loreley-launch-article-zh.md)
 or [English](marketing/2026-08-loreley-launch-article-en.md). Teams with an

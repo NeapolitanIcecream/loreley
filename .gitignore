@@ -211,6 +211,12 @@ __marimo__/
 logs/
 /output/
 /tmp/
+# Local promotion planning and publication operations
+/docs/marketing/README.md
+/docs/marketing/2026-08-loreley-launch-claim-sheet.md
+/docs/marketing/2026-08-loreley-launch-copy-kit.md
+/docs/research/2026-08-03-loreley-promotion-plan.md
+/docs/research/2026-08-03-zstandard-third-case-study-handoff.md
 .DS_Store
 /paper/figures/*.png
 /paper/figures/zstd_top10.pdf

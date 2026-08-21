@@ -4,9 +4,35 @@ This directory contains the source and public evidence for the Loreley
 preprint, *Loreley: Repository-Scale Program Evolution with Quality-Diversity
 Search*.
 
+The public version is available as
+[arXiv:2608.19703](https://arxiv.org/abs/2608.19703), with direct links to the
+[PDF](https://arxiv.org/pdf/2608.19703) and
+[experimental HTML](https://arxiv.org/html/2608.19703). The arXiv v1 manuscript
+source matches repository commit
+[`d05392a4950fddee7a5719fa30f0a8db71e8fd4f`](https://github.com/NeapolitanIcecream/loreley/commit/d05392a4950fddee7a5719fa30f0a8db71e8fd4f).
+The [verification manifest](arxiv_v1_manifest.json) records the source hashes
+and the rendered equivalence of the figure PDF.
+
 The paper names Mohan Chen as the sole author, without an affiliation. It
 records no external funding, discloses the research and manuscript roles of
 generative AI tools, and is released under CC BY 4.0.
+
+## Citation
+
+```bibtex
+@misc{chen2026loreley,
+  title         = {Loreley: Repository-Scale Program Evolution with Quality-Diversity Search},
+  author        = {Mohan Chen},
+  year          = {2026},
+  eprint        = {2608.19703},
+  archiveprefix = {arXiv},
+  primaryclass  = {cs.SE},
+  url           = {https://arxiv.org/abs/2608.19703}
+}
+```
+
+The repository root also provides machine-readable
+[`CITATION.cff`](../CITATION.cff) metadata.
 
 ## Build
 
