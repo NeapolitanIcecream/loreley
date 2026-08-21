@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "paper": {
+    "title": "Loreley: Repository-Scale Program Evolution with Quality-Diversity Search",
+    "author": "Mohan Chen",
+    "arxiv_id": "2608.19703",
+    "version": "v1",
+    "submitted_at": "2026-08-20T07:04:24Z",
+    "abstract_url": "https://arxiv.org/abs/2608.19703",
+    "version_url": "https://arxiv.org/abs/2608.19703v1",
+    "pdf_url": "https://arxiv.org/pdf/2608.19703",
+    "license": "CC BY 4.0"
+  },
+  "repository_snapshot": {
+    "commit": "d05392a4950fddee7a5719fa30f0a8db71e8fd4f",
+    "commit_url": "https://github.com/NeapolitanIcecream/loreley/commit/d05392a4950fddee7a5719fa30f0a8db71e8fd4f",
+    "files": {
+      "paper/main.tex": "8a224f30b5d3de16d419e1417c5badb16f28babf2e0b38de17e2f47fd544261a",
+      "paper/references.bib": "c1aaaf8af966a1a3f95dce20a12e05e664012323e5a643b2bc0af0d8ff04984d",
+      "paper/figures/zstd_method_efficacy.pdf": "8049d62ccbfd4e397c5c27a8c89099e9bbba6553dc06ab95cb4926ac9d94b1d2",
+      "paper/figures/generate_figures.py": "b080d368fd8785cd1d917531038329cc910ea300e228399eb45cbcc3b2af3f2c"
+    }
+  },
+  "arxiv_v1_source": {
+    "verified_at": "2026-08-21",
+    "source_url": "https://arxiv.org/e-print/2608.19703",
+    "files": {
+      "main.tex": "8a224f30b5d3de16d419e1417c5badb16f28babf2e0b38de17e2f47fd544261a",
+      "references.bib": "c1aaaf8af966a1a3f95dce20a12e05e664012323e5a643b2bc0af0d8ff04984d",
+      "figures/zstd_method_efficacy.pdf": "0d8e2aad210d19b9ea4052312a1e63e4a37aa0a56082b889688848fa1779d30e",
+      "00README.json": "cd2bd43edaf492930332475bac1c881215e0a1ac432744be39734ba22116f391"
+    }
+  },
+  "equivalence": {
+    "text_sources": "The arXiv v1 main.tex and references.bib are byte-identical to the repository snapshot.",
+    "figure_pdf": "The repository figure removes the arXiv upload's CreationDate metadata. Both PDFs render to the same PNG bytes with Poppler at 150 dpi.",
+    "rendered_figure_sha256": "6a51bc457318fad1d37667fbd07e6a17cc551452201d2e9214bfbd714a5b4c10"
+  }
+}

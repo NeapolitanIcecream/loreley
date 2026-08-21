@@ -1,6 +1,11 @@
 # Paper evidence
 
-This directory contains the records used for the paper's numerical results.
+This directory contains the records used for
+[*Loreley: Repository-Scale Program Evolution with Quality-Diversity
+Search*](https://arxiv.org/abs/2608.19703). The arXiv v1 source snapshot and
+file hashes are recorded in
+[`../arxiv_v1_manifest.json`](../arxiv_v1_manifest.json).
+
 The matched Zstandard study is the only controlled policy comparison. The
 Python and earlier Zstandard files support capability cases with their own
 selection qualifications; their effects are not pooled with the matched study.
@@ -40,7 +45,7 @@ selection qualifications; their effects are not pooled with the matched study.
 Run the public validation with:
 
 ```bash
-python3 paper/evidence/validate_zstd_method_efficacy.py
+uv run python paper/evidence/validate_zstd_method_efficacy.py
 ```
 
 The original finalist-width history is relevant only because it changes the
