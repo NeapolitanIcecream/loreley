@@ -194,6 +194,35 @@ def test_import_reuses_only_manifest_compatible_valid_rows(
     assert inserted_payloads[0][0]["blob_sha"] == "sha1"
 
 
+def test_insert_cache_rows_counts_returned_inserts_instead_of_driver_rowcount() -> None:
+    class _ReturnedRows:
+        rowcount = 0
+
+        def scalars(self):  # noqa: ANN201
+            return self
+
+        def all(self) -> list[str]:
+            return ["sha1", "sha2"]
+
+    class _InsertSession:
+        statement = None
+
+        def execute(self, statement):  # noqa: ANN001, ANN201
+            self.statement = statement
+            return _ReturnedRows()
+
+    session = _InsertSession()
+
+    inserted = ecm._insert_cache_rows(  # noqa: SLF001
+        session,  # type: ignore[arg-type]
+        ({"blob_sha": "sha1"}, {"blob_sha": "sha2"}),
+    )
+
+    assert inserted == 2
+    assert session.statement is not None
+    assert session.statement._returning  # noqa: SLF001
+
+
 def test_import_rejects_bad_source_row_before_insert(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

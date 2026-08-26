@@ -4,6 +4,7 @@ import subprocess
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -26,6 +27,30 @@ from loreley.core.worker.repository import CheckoutContext
 from loreley.core.worker.scope_gate import ScopeGateResult
 from loreley.core.usage import LLMUsageEventPayload
 from loreley.db.models import CommitCard, EvaluationArtifactRecord, MapElitesArchiveCell, Metric
+
+
+def test_explicit_non_seed_root_job_remains_non_seed(settings: Settings) -> None:
+    settings.mapelites_experiment_root_commit = "root"
+
+    assert evolution_module._is_seed_job(  # type: ignore[attr-defined]
+        settings=settings,
+        job=SimpleNamespace(is_seed_job=False),
+        base_commit_hash="root",
+        inspirations=(),
+    ) is False
+
+
+def test_legacy_root_job_without_seed_attribute_uses_compatibility_inference(
+    settings: Settings,
+) -> None:
+    settings.mapelites_experiment_root_commit = "root"
+
+    assert evolution_module._is_seed_job(  # type: ignore[attr-defined]
+        settings=settings,
+        job=SimpleNamespace(),
+        base_commit_hash="root",
+        inspirations=(),
+    ) is True
 
 
 class _ResultList:
@@ -661,6 +686,211 @@ def _make_job_context() -> JobContext:
     )
 
 
+class _StageCapturingStore:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, str, int, dict[str, object]]] = []
+        self._next_by_stage: dict[str, int] = {}
+
+    def start_stage(self, **kwargs: Any) -> Any:
+        stage = str(kwargs["stage"])
+        ordinal = int(
+            kwargs.get("ordinal")
+            or self._next_by_stage.get(stage, 0) + 1
+        )
+        self._next_by_stage[stage] = ordinal
+        payload = dict(kwargs.get("payload") or {})
+        self.events.append((stage, "started", ordinal, payload))
+        return SimpleNamespace(
+            stage=stage,
+            ordinal=ordinal,
+            started_at=evolution_module.datetime.now(
+                evolution_module.timezone.utc
+            ),
+        )
+
+    def finish_stage(self, **kwargs: Any) -> None:
+        handle = kwargs["handle"]
+        payload = dict(kwargs.get("payload") or {})
+        if kwargs.get("failure_kind"):
+            payload["failure_kind"] = kwargs["failure_kind"]
+        self.events.append(
+            (
+                str(handle.stage),
+                str(kwargs["outcome"]),
+                int(handle.ordinal),
+                payload,
+            )
+        )
+
+
+def _prompt_context() -> Any:
+    return evolution_module.WorkerPromptContext(
+        base=evolution_module.CommitPlanningContext(
+            commit_hash="base",
+            subject="Base",
+            change_summary="baseline",
+        ),
+        inspirations=(),
+        iteration_context=evolution_module.IterationContext(),
+    )
+
+
+def test_agent_stage_boundaries_record_rework_ordinals(
+    tmp_path: Path,
+    settings: Settings,
+) -> None:
+    store = _StageCapturingStore()
+    worker = EvolutionWorker(
+        settings=settings,
+        repository=object(),  # type: ignore[arg-type]
+        planning_agent=_FakePlanningAgent(),  # type: ignore[arg-type]
+        coding_agent=_FakeCodingAgent(),  # type: ignore[arg-type]
+        evaluator=_FakeEvaluator(),  # type: ignore[arg-type]
+        job_store=store,  # type: ignore[arg-type]
+    )
+    job_ctx = _make_job_context()
+    checkout = CheckoutContext(
+        job_id=str(job_ctx.job_id),
+        branch_name="branch",
+        base_commit="base",
+        worktree=tmp_path,
+    )
+
+    plan = worker._run_planning(job_ctx, checkout, _prompt_context())
+    worker._run_coding(
+        job_ctx,
+        plan,
+        checkout,
+        _prompt_context(),
+        invocation_context=evolution_module._CodingInvocationContext(number=2),
+    )
+
+    assert store.events == [
+        ("planning", "started", 1, {}),
+        ("planning", "succeeded", 1, {}),
+        ("coding", "started", 2, {"rework": True}),
+        ("coding", "succeeded", 2, {"rework": True}),
+    ]
+
+
+def test_agent_stage_failures_close_with_bounded_classification(
+    tmp_path: Path,
+    settings: Settings,
+) -> None:
+    class BrokenPlanningAgent:
+        def plan(self, _request: Any, *, working_dir: Path) -> Any:
+            del working_dir
+            raise evolution_module.PlanningError("raw planning failure")
+
+    class BrokenCodingAgent:
+        def implement(self, _request: Any, *, working_dir: Path) -> Any:
+            del working_dir
+            raise evolution_module.CodingError("raw coding failure")
+
+    job_ctx = _make_job_context()
+    checkout = CheckoutContext(
+        job_id=str(job_ctx.job_id),
+        branch_name="branch",
+        base_commit="base",
+        worktree=tmp_path,
+    )
+    planning_store = _StageCapturingStore()
+    planning_worker = EvolutionWorker(
+        settings=settings,
+        repository=object(),  # type: ignore[arg-type]
+        planning_agent=BrokenPlanningAgent(),  # type: ignore[arg-type]
+        coding_agent=_FakeCodingAgent(),  # type: ignore[arg-type]
+        evaluator=_FakeEvaluator(),  # type: ignore[arg-type]
+        job_store=planning_store,  # type: ignore[arg-type]
+    )
+    with pytest.raises(evolution_module.EvolutionWorkerError):
+        planning_worker._run_planning(job_ctx, checkout, _prompt_context())
+
+    coding_store = _StageCapturingStore()
+    coding_worker = EvolutionWorker(
+        settings=settings,
+        repository=object(),  # type: ignore[arg-type]
+        planning_agent=_FakePlanningAgent(),  # type: ignore[arg-type]
+        coding_agent=BrokenCodingAgent(),  # type: ignore[arg-type]
+        evaluator=_FakeEvaluator(),  # type: ignore[arg-type]
+        job_store=coding_store,  # type: ignore[arg-type]
+    )
+    plan = _FakePlanningAgent().plan(object(), working_dir=tmp_path)
+    with pytest.raises(evolution_module.EvolutionWorkerError):
+        coding_worker._run_coding(
+            job_ctx,
+            plan,
+            checkout,
+            _prompt_context(),
+        )
+
+    assert planning_store.events == [
+        ("planning", "started", 1, {}),
+        (
+            "planning",
+            "failed",
+            1,
+            {"failure_kind": "planning_error"},
+        ),
+    ]
+    assert coding_store.events == [
+        ("coding", "started", 1, {"rework": False}),
+        (
+            "coding",
+            "failed",
+            1,
+            {"rework": False, "failure_kind": "coding_error"},
+        ),
+    ]
+
+
+def test_evaluator_interruption_retains_unmatched_invocation_start(
+    tmp_path: Path,
+    settings: Settings,
+) -> None:
+    class BrokenEvaluator:
+        def evaluate(self, _context: Any) -> EvaluationResult:
+            raise evolution_module.EvaluationError("interrupted")
+
+    store = _StageCapturingStore()
+    worker = EvolutionWorker(
+        settings=settings,
+        repository=object(),  # type: ignore[arg-type]
+        planning_agent=_FakePlanningAgent(),  # type: ignore[arg-type]
+        coding_agent=_FakeCodingAgent(),  # type: ignore[arg-type]
+        evaluator=BrokenEvaluator(),  # type: ignore[arg-type]
+        job_store=store,  # type: ignore[arg-type]
+    )
+    job_ctx = _make_job_context()
+    checkout = CheckoutContext(
+        job_id=str(job_ctx.job_id),
+        branch_name="branch",
+        base_commit="base",
+        worktree=tmp_path,
+    )
+
+    with pytest.raises(evolution_module.EvolutionWorkerError):
+        worker._run_evaluation(
+            job_ctx=job_ctx,
+            checkout=checkout,
+            plan=None,
+            candidate_commit="c" * 40,
+        )
+
+    assert store.events == [
+        (
+            "evaluation",
+            "started",
+            1,
+                {
+                    "evaluator_name": "BrokenEvaluator",
+                    "evaluator_version": None,
+                    "protocol": "one_shot",
+                },
+        )
+    ]
+
+
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
 
@@ -923,6 +1153,90 @@ def test_seed_job_prompt_context_suppresses_historical_evaluation_artifacts(
     assert prompt_context.base.evaluation_summary is None
     assert prompt_context.base.metrics == ()
     assert prompt_context.base.evaluation_artifacts == ()
+
+
+def test_portfolio_seed_prompt_context_retains_root_metrics_and_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    worker = EvolutionWorker(
+        settings=settings,
+        repository=object(),  # type: ignore[arg-type]
+        planning_agent=object(),  # type: ignore[arg-type]
+        coding_agent=object(),  # type: ignore[arg-type]
+        evaluator=object(),  # type: ignore[arg-type]
+        job_store=object(),  # type: ignore[arg-type]
+    )
+    card_id = uuid.uuid4()
+    card = type(
+        "Card",
+        (),
+        {
+            "id": card_id,
+            "commit_hash": "base",
+            "subject": "Base",
+            "change_summary": "root baseline",
+            "key_files": ["base.py"],
+            "highlights": ["root profile"],
+            "evaluation_summary": "root measured",
+        },
+    )()
+    metric = type(
+        "MetricRow",
+        (),
+        {
+            "name": "composite_score",
+            "value": 1.0,
+            "unit": None,
+            "higher_is_better": True,
+            "details": {},
+            "commit_card_id": card_id,
+        },
+    )()
+    artifact = type(
+        "ArtifactRow",
+        (),
+        {
+            "job_id": uuid.uuid4(),
+            "commit_hash": "base",
+            "key": "root_profile",
+            "kind": "profile",
+            "mime_type": "text/plain",
+            "label": None,
+            "summary": "root hotspot evidence",
+            "diagnostics": [],
+            "agent_projection": "summary",
+            "visibility": "agent_visible",
+            "size_bytes": 100,
+            "sha256": "b" * 64,
+            "storage_path": None,
+        },
+    )()
+    fake_session = _FakeSession(
+        cards={"base": card},
+        metrics={card_id: [metric]},
+        cells={},
+        artifacts={"base": [artifact]},
+    )
+
+    @contextmanager
+    def fake_session_scope() -> Any:
+        yield fake_session
+
+    monkeypatch.setattr(evolution_module, "session_scope", fake_session_scope)
+    job_ctx = _make_job_context()
+    job_ctx.is_seed_job = True
+    job_ctx.inspiration_commit_hashes = ()
+    job_ctx.seed_portfolio_hash = "a" * 64
+    job_ctx.seed_direction_id = "cache-layout"
+    job_ctx.seed_direction_payload = {"title": "Cache layout"}
+
+    prompt_context = worker._build_prompt_context(job_ctx)
+
+    assert prompt_context.base.evaluation_summary == "root measured"
+    assert [item.name for item in prompt_context.base.metrics] == ["composite_score"]
+    assert prompt_context.base.evaluation_artifacts[0].key == "root_profile"
+    assert prompt_context.iteration_context.seed_direction_id == "cache-layout"
 
 
 def test_start_job_requires_non_empty_base_commit_hash(settings: Settings) -> None:
@@ -1470,6 +1784,9 @@ unit: req/s
     job_ctx.campaign_program = program
     job_ctx.constraints = ("Correctness gate: pytest",)
     job_ctx.acceptance_criteria = ("Primary metric: throughput",)
+    job_ctx.seed_portfolio_hash = "a" * 64
+    job_ctx.seed_direction_id = "cache-layout"
+    job_ctx.seed_direction_payload = {"title": "Cache layout"}
     plan = PlanningAgentResponse(
         plan=PlanDocument(summary="plan", markdown="## Summary\n- plan\n"),
         raw_output="raw",
@@ -1499,5 +1816,8 @@ unit: req/s
     assert context.payload["campaign_program"]["snapshot"]["primary_metric"]["name"] == "throughput"
     assert context.payload["job"]["constraints"] == ["Correctness gate: pytest"]
     assert context.metadata["campaign_program_hash"] == program.raw_sha256
+    assert context.metadata["seed_portfolio_hash"] == "a" * 64
+    assert context.metadata["seed_direction_id"] == "cache-layout"
+    assert context.payload["seed_direction"]["brief"]["title"] == "Cache layout"
     assert context.metadata["runtime_profile"] == settings.profile
     assert len(context.metadata["effective_settings_fingerprint"]) == 64

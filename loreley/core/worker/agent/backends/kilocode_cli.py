@@ -57,6 +57,24 @@ _KILO_PROVIDER_VALUE_ENV_NAMES = frozenset(
         LORELEY_KILO_OPENAI_BASE_URL_ENV,
     }
 )
+_KILO_CHILD_AMBIENT_PROVIDER_ENV_NAMES = frozenset(
+    {
+        "DEEPSEEK_API_KEY",
+        "DEEPSEEK_BASE_URL",
+        "GLM_API_KEY",
+        "GLM_BASE_URL",
+        "KILO_OPENAI_API_KEY",
+        "KILO_OPENAI_BASE_URL",
+        "LLM_API_KEY",
+        "LLM_BASE_URL",
+        "LORELEY_LLM_API_KEY",
+        "LORELEY_LLM_BASE_URL",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "WORKER_KILOCODE_OPENAI_API_KEY",
+        "WORKER_KILOCODE_OPENAI_BASE_URL",
+    }
+)
 
 
 class KiloUsageUnavailableError(RuntimeError):
@@ -270,12 +288,13 @@ def _run_kilo_process(
     env: dict[str, str],
     timeout: float,
 ) -> subprocess.CompletedProcess[str]:
-    """Run Kilo in a process group so timeout cleanup reaches descendants."""
+    """Run Kilo headlessly and keep timeout cleanup scoped to its process group."""
 
     process = subprocess.Popen(
         command,
         cwd=cwd,
         env=env,
+        stdin=subprocess.DEVNULL,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -527,14 +546,21 @@ class KilocodeCliBackend:
         env = os.environ.copy()
         env.update(explicit_extra_env)
         env.update(self._isolated_state_env(task))
-        if _has_explicit_kilocode_api_key(explicit_extra_env):
-            return env
-        runtime_api_key_env = _runtime_api_key_env_name(explicit_extra_env)
-        if runtime_api_key_env is None:
-            return env
-        runtime_api_key = self._resolved_runtime_api_key()
-        if runtime_api_key:
-            env[runtime_api_key_env] = runtime_api_key
+        preserved_provider_names = set(explicit_extra_env)
+        routed_key_available = _has_explicit_kilocode_api_key(explicit_extra_env)
+        if not routed_key_available:
+            runtime_api_key_env = _runtime_api_key_env_name(explicit_extra_env)
+            if runtime_api_key_env is None:
+                return env
+            runtime_api_key = self._resolved_runtime_api_key()
+            if runtime_api_key:
+                env[runtime_api_key_env] = runtime_api_key
+                preserved_provider_names.add(runtime_api_key_env)
+                routed_key_available = True
+        if routed_key_available:
+            for name in _KILO_CHILD_AMBIENT_PROVIDER_ENV_NAMES:
+                if name not in preserved_provider_names:
+                    env.pop(name, None)
         return env
 
     def _isolated_state_env(self, task: AgentTask | None) -> dict[str, str]:
@@ -727,9 +753,18 @@ class KilocodeCliBackend:
         if not self.usage_tracking_enabled:
             return None
         phase = task.phase or task.name or ""
-        if task.job_id is None or task.run_token is None or not phase:
+        if not phase:
             return None
-        title = f"loreley:{task.job_id}:{task.run_token}:{phase}"
+        if task.job_id is None or task.run_token is None:
+            if phase != "seed_portfolio":
+                return None
+            settings = self.settings or get_settings()
+            experiment_id = str(settings.experiment_id or "").strip()
+            if not experiment_id:
+                return None
+            title = f"loreley:campaign:{experiment_id}:{phase}"
+        else:
+            title = f"loreley:{task.job_id}:{task.run_token}:{phase}"
         if task.invocation is not None:
             title = f"{title}:invocation:{max(1, int(task.invocation))}"
         if task.attempt is not None:
@@ -824,11 +859,19 @@ class KilocodeCliBackend:
             job_id=task.job_id, run_token=task.run_token, phase=task.phase
         )
 
-    @staticmethod
-    def _usage_external_id(task: AgentTask, *, phase: str) -> str:
-        if task.job_id is None or task.run_token is None or not phase:
+    def _usage_external_id(self, task: AgentTask, *, phase: str) -> str:
+        if not phase:
             return ""
-        external_id = f"kilo:{task.job_id}:{task.run_token}:{phase}"
+        if task.job_id is None or task.run_token is None:
+            if phase != "seed_portfolio":
+                return ""
+            settings = self.settings or get_settings()
+            experiment_id = str(settings.experiment_id or "").strip()
+            if not experiment_id:
+                return ""
+            external_id = f"kilo:campaign:{experiment_id}:{phase}"
+        else:
+            external_id = f"kilo:{task.job_id}:{task.run_token}:{phase}"
         if task.invocation is not None:
             external_id = f"{external_id}:invocation:{max(1, int(task.invocation))}"
         if task.attempt is not None:
@@ -1443,6 +1486,49 @@ def kilocode_planning_backend() -> KilocodeCliBackend:
         usage_db_path=settings.worker_kilocode_usage_db_path,
         state_root=settings.worker_kilocode_state_root,
     )
+
+
+def build_kilocode_seed_portfolio_backend(settings: Settings) -> KilocodeCliBackend:
+    """Build the dedicated repository-aware seed backend from explicit settings."""
+
+    from loreley.core.seed_portfolio import SeedPortfolioPlanningError
+
+    selected_model = str(settings.worker_seed_portfolio_model or "").strip() or None
+    extra_env = _build_kilocode_openai_env(
+        settings,
+        selected_model=selected_model,
+    )
+    model_value = _kilocode_backend_model(
+        settings,
+        extra_env,
+        selected_model=selected_model,
+    )
+    mode_value = getattr(settings, "worker_kilocode_mode", None)
+    agent_value = getattr(settings, "worker_kilocode_agent", None) or mode_value
+    return KilocodeCliBackend(
+        bin=str(settings.worker_kilocode_bin),
+        mode=str(mode_value) if mode_value else None,
+        agent=str(agent_value) if agent_value else None,
+        model=str(model_value) if model_value else None,
+        variant=str(settings.worker_seed_portfolio_reasoning_effort),
+        pure=bool(settings.worker_kilocode_pure),
+        timeout_seconds=int(settings.worker_seed_portfolio_timeout_seconds),
+        json_output=bool(settings.worker_kilocode_json_output),
+        extra_env=extra_env,
+        error_cls=SeedPortfolioPlanningError,
+        settings=settings,
+        usage_tracking_enabled=bool(settings.llm_usage_tracking_enabled),
+        usage_db_path=settings.worker_kilocode_usage_db_path,
+        # Portfolio planning is campaign-scoped rather than job-scoped, so it
+        # cannot use the per-job state directory contract.
+        state_root=None,
+    )
+
+
+def kilocode_seed_portfolio_backend() -> KilocodeCliBackend:
+    """Build the seed portfolio backend from process-global env settings."""
+
+    return build_kilocode_seed_portfolio_backend(get_settings())
 
 
 def kilocode_coding_backend() -> KilocodeCliBackend:

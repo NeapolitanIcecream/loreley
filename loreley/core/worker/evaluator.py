@@ -757,6 +757,7 @@ class EvaluationOutcome:
     evaluator_slot_released_at: datetime | None = None
     evaluator_slot_lease_id: str | None = None
     evaluator_slot_release_reason: str | None = None
+    invocation_ordinal: int | None = None
     persisted_attempt_id: str | None = None
     _runtime_leases: list[Any] = field(default_factory=list, repr=False)
 
@@ -812,6 +813,10 @@ class EvaluationOutcome:
             self.evaluator_slot_release_reason,
             64,
         )
+        if self.invocation_ordinal is not None:
+            self.invocation_ordinal = int(self.invocation_ordinal)
+            if self.invocation_ordinal <= 0:
+                raise ValueError("Evaluation invocation ordinal must be positive.")
         self.persisted_attempt_id = _optional_bounded_line(
             self.persisted_attempt_id, 64
         )

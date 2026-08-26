@@ -18,14 +18,34 @@ from rich.console import Console
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
-from loreley.config import Settings, resolve_default_island_id
+from loreley.config import (
+    Settings,
+    resolve_default_island_id,
+    resolve_objective_contract,
+)
 from loreley.core.contracts import clamp_text, normalize_single_line
+from loreley.core.evolution_events import (
+    ARCHIVE_CANDIDATE_CONSIDERED,
+    EvolutionStageHandle,
+    finish_evolution_stage,
+    record_evolution_event,
+    start_evolution_stage,
+)
 from loreley.core.git import RepositoryError as GitRepositoryError, require_commit
 from loreley.core.job_state import pending_ingestion_job_conditions
 from loreley.core.map_elites.manager import MapElitesManager
 from loreley.core.map_elites.types import CommitEmbeddingArtifacts, MapElitesInsertionResult
 from loreley.core.repo_lock import repo_lock
-from loreley.core.worker.evaluator import EvaluationContext, EvaluationError, EvaluationResult, Evaluator
+from loreley.core.seed_portfolio import (
+    SeedAdmissionDecision,
+    classify_seed_admission,
+)
+from loreley.core.worker.evaluator import (
+    EvaluationContext,
+    EvaluationError,
+    EvaluationResult,
+    Evaluator,
+)
 from loreley.core.worker.repository import RepositoryError, WorkerRepository
 from loreley.db.base import session_scope
 from loreley.db.models import (
@@ -57,6 +77,10 @@ class JobSnapshot:
     island_id: str | None
     result_commit_hash: str
     completed_at: datetime | None
+    is_seed_job: bool = False
+    seed_portfolio_hash: str | None = None
+    seed_direction_id: str | None = None
+    event_handle: EvolutionStageHandle | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -111,6 +135,16 @@ class MapElitesIngestion:
         init=False,
         repr=False,
     )
+    _active_ingestion_events: dict[UUID, EvolutionStageHandle] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _record_events_for_batch: bool = field(
+        default=False,
+        init=False,
+        repr=False,
+    )
 
     # Public API ------------------------------------------------------------
 
@@ -131,6 +165,7 @@ class MapElitesIngestion:
 
         self._prefetched_metrics_payload_by_commit = None
         self._prefetched_metrics_errors_by_commit = None
+        self._record_events_for_batch = True
         try:
             with session_scope() as prefetch_session:
                 (
@@ -144,7 +179,10 @@ class MapElitesIngestion:
             with session_scope() as batch_session:
                 for snapshot in snapshots:
                     try:
-                        if self._ingest_snapshot(snapshot, snapshot_session=batch_session):
+                        if self._ingest_snapshot(
+                            snapshot,
+                            snapshot_session=batch_session,
+                        ):
                             ingested += 1
                     except Exception as exc:
                         raw_reason = normalize_single_line(str(exc))
@@ -168,6 +206,7 @@ class MapElitesIngestion:
         finally:
             self._prefetched_metrics_payload_by_commit = None
             self._prefetched_metrics_errors_by_commit = None
+            self._record_events_for_batch = False
         return ingested
 
     def count_pending_ingestion_jobs(self) -> int:
@@ -394,6 +433,9 @@ class MapElitesIngestion:
             island_id=job.island_id,
             result_commit_hash=commit_hash,
             completed_at=job.completed_at,
+            is_seed_job=bool(getattr(job, "is_seed_job", False)),
+            seed_portfolio_hash=(str(getattr(job, "seed_portfolio_hash", "") or "").strip() or None),
+            seed_direction_id=(str(getattr(job, "seed_direction_id", "") or "").strip() or None),
         )
 
     def _should_backoff_failed_job(self, job: EvolutionJob, *, now: datetime) -> bool:
@@ -425,30 +467,52 @@ class MapElitesIngestion:
         *,
         snapshot_session: Session | None = None,
     ) -> bool:
+        handle = (
+            self._start_ingestion_attempt(snapshot)
+            if self._record_events_for_batch
+            else None
+        )
+        snapshot = replace(snapshot, event_handle=handle)
         commit_hashes = self._resolve_snapshot_commit(snapshot)
         if commit_hashes is None:
             return False
 
         raw_commit_hash, commit_hash = commit_hashes
-        duplicate_of = self._equivalent_ingested_candidate(
-            snapshot,
-            commit_hash=commit_hash,
-            session=snapshot_session,
-        )
-        if duplicate_of is not None:
-            insertion = self._duplicate_identity_result(duplicate_of)
-            self._log_ingestion_result(snapshot, commit_hash=commit_hash, insertion=insertion)
-            self._record_successful_ingestion(
-                snapshot,
-                insertion=insertion,
-                session=snapshot_session,
-            )
-            return False
         metrics_payload = self._metrics_payload_for_ingestion(
             commit_hash=commit_hash,
             raw_commit_hash=raw_commit_hash,
         )
         try:
+            admission = self._classify_portfolio_seed(
+                snapshot,
+                candidate_metrics=metrics_payload,
+                session=snapshot_session,
+            )
+            if admission is not None:
+                self._record_seed_admission(
+                    snapshot,
+                    commit_hash=commit_hash,
+                    decision=admission,
+                    session=snapshot_session,
+                )
+            duplicate_of = self._equivalent_ingested_candidate(
+                snapshot,
+                commit_hash=commit_hash,
+                session=snapshot_session,
+            )
+            if duplicate_of is not None:
+                insertion = self._duplicate_identity_result(duplicate_of)
+                self._log_ingestion_result(
+                    snapshot,
+                    commit_hash=commit_hash,
+                    insertion=insertion,
+                )
+                self._record_successful_ingestion(
+                    snapshot,
+                    insertion=insertion,
+                    session=snapshot_session,
+                )
+                return False
             insertion = self._ingest_with_manager(
                 snapshot,
                 commit_hash=commit_hash,
@@ -468,6 +532,101 @@ class MapElitesIngestion:
         if snapshot_session is None:
             self._record_successful_ingestion(snapshot, insertion=insertion)
         return bool(insertion.record)
+
+    def _classify_portfolio_seed(
+        self,
+        snapshot: JobSnapshot,
+        *,
+        candidate_metrics: Sequence[dict[str, Any]],
+        session: Session | None,
+    ) -> SeedAdmissionDecision | None:
+        if not (snapshot.is_seed_job and snapshot.seed_portfolio_hash and snapshot.seed_direction_id):
+            return None
+        if session is None:
+            with session_scope() as owned_session:
+                baseline_metrics = self._root_metrics_for_seed_admission(
+                    snapshot,
+                    session=owned_session,
+                )
+        else:
+            baseline_metrics = self._root_metrics_for_seed_admission(
+                snapshot,
+                session=session,
+            )
+        return classify_seed_admission(
+            objective_contract=resolve_objective_contract(self.settings),
+            baseline_metrics=baseline_metrics,
+            candidate_metrics=candidate_metrics,
+            immediate_min_improvement_fraction=float(self.settings.mapelites_seed_immediate_min_improvement_fraction),
+        )
+
+    @staticmethod
+    def _root_metrics_for_seed_admission(
+        snapshot: JobSnapshot,
+        *,
+        session: Session,
+    ) -> list[Metric]:
+        root_commit = str(snapshot.base_commit_hash or "").strip()
+        if not root_commit:
+            raise IngestionError("portfolio seed admission requires its root base commit")
+        rows = list(
+            session.scalars(
+                select(Metric)
+                .join(CommitCard, CommitCard.id == Metric.commit_card_id)
+                .where(CommitCard.commit_hash == root_commit)
+                .order_by(Metric.name.asc())
+            ).all()
+        )
+        if not rows:
+            raise IngestionError("portfolio seed admission requires persisted root metrics")
+        return rows
+
+    def _record_seed_admission(
+        self,
+        snapshot: JobSnapshot,
+        *,
+        commit_hash: str,
+        decision: SeedAdmissionDecision,
+        session: Session | None,
+    ) -> None:
+        if session is None:
+            with session_scope() as owned_session:
+                self._apply_seed_admission(
+                    snapshot,
+                    commit_hash=commit_hash,
+                    decision=decision,
+                    session=owned_session,
+                )
+            return
+        self._apply_seed_admission(
+            snapshot,
+            commit_hash=commit_hash,
+            decision=decision,
+            session=session,
+        )
+
+    @staticmethod
+    def _apply_seed_admission(
+        snapshot: JobSnapshot,
+        *,
+        commit_hash: str,
+        decision: SeedAdmissionDecision,
+        session: Session,
+    ) -> None:
+        job = session.get(EvolutionJob, snapshot.job_id)
+        if job is not None:
+            job.seed_admission_lane = decision.lane
+            job.seed_admission_reason = decision.reason
+        candidate = session.execute(
+            select(CandidateCommit).where(CandidateCommit.commit_hash == commit_hash)
+        ).scalar_one_or_none()
+        if candidate is not None:
+            candidate.seed_admission_lane = decision.lane
+            candidate.seed_admission_reason = decision.reason
+        card = session.execute(select(CommitCard).where(CommitCard.commit_hash == commit_hash)).scalar_one_or_none()
+        if card is not None:
+            card.seed_admission_lane = decision.lane
+            card.seed_admission_reason = decision.reason
 
     def _equivalent_ingested_candidate(
         self,
@@ -662,13 +821,40 @@ class MapElitesIngestion:
         metrics_payload: list[dict[str, Any]],
         snapshot_session: Session | None,
     ) -> Any:
+        handle = snapshot.event_handle
+        kwargs: dict[str, Any] = {
+            "commit_hash": commit_hash,
+            "metrics": metrics_payload,
+            "island_id": snapshot.island_id,
+            "repo_root": self.repo_root,
+            "snapshot_session": snapshot_session,
+        }
+        if handle is not None:
+            kwargs.update(
+                {
+                    "event_key_prefix": handle.event_key_prefix,
+                    "event_job_id": snapshot.job_id,
+                    "event_ordinal": handle.ordinal,
+                }
+            )
         return self.manager.ingest(
-            commit_hash=commit_hash,
-            metrics=metrics_payload,
-            island_id=snapshot.island_id,
-            repo_root=self.repo_root,
-            snapshot_session=snapshot_session,
+            **kwargs,
         )
+
+    def _start_ingestion_attempt(
+        self,
+        snapshot: JobSnapshot,
+    ) -> EvolutionStageHandle | None:
+        with session_scope() as event_session:
+            handle = start_evolution_stage(
+                event_session,
+                stage="ingestion",
+                job_id=snapshot.job_id,
+                island_id=snapshot.island_id,
+                commit_hash=snapshot.result_commit_hash,
+            )
+        self._active_ingestion_events[snapshot.job_id] = handle
+        return handle
 
     def _handle_manager_ingest_error(
         self,
@@ -937,9 +1123,10 @@ class MapElitesIngestion:
             payload=payload,
             attempts=attempts,
         )
+        finished_at = datetime.now(timezone.utc)
         job.ingestion_attempts = attempts
         job.ingestion_status = effective_payload.status
-        job.ingestion_last_attempt_at = datetime.now(timezone.utc)
+        job.ingestion_last_attempt_at = finished_at
         job.ingestion_reason = effective_payload.reason
         job.ingestion_delta = effective_payload.delta
         job.ingestion_status_code = effective_payload.status_code
@@ -954,6 +1141,64 @@ class MapElitesIngestion:
                 commit_hash=result_commit_hash,
                 payload=effective_payload,
             )
+        handle = snapshot.event_handle or self._active_ingestion_events.get(
+            snapshot.job_id
+        )
+        if handle is not None:
+            outcome, reason = self._ingestion_event_classification(
+                effective_payload
+            )
+            finish_evolution_stage(
+                session,
+                handle=handle,
+                outcome=outcome,
+                payload={
+                    "reason": reason,
+                    "status_code": effective_payload.status_code,
+                    "inserted": bool(effective_payload.record is not None),
+                },
+                occurred_at=finished_at,
+            )
+            if effective_payload.status in {"succeeded", "skipped"}:
+                record_evolution_event(
+                    session,
+                    event_type=ARCHIVE_CANDIDATE_CONSIDERED,
+                    job_id=snapshot.job_id,
+                    island_id=snapshot.island_id,
+                    commit_hash=str(result_commit_hash or "").strip() or None,
+                    occurred_at=finished_at,
+                    ordinal=handle.ordinal,
+                    payload={
+                        "outcome": outcome,
+                        "reason": reason,
+                        "cell_index": self._ingestion_record_cell_index(
+                            effective_payload.record
+                        ),
+                    },
+                    key_parts=(handle.event_key_prefix, "archive_considered"),
+                )
+            self._active_ingestion_events.pop(snapshot.job_id, None)
+
+    @staticmethod
+    def _ingestion_event_classification(
+        payload: _IngestionStatePayload,
+    ) -> tuple[str, str]:
+        message = " ".join(
+            str(payload.message or payload.reason or "").lower().split()
+        )
+        if payload.status == "failed":
+            return "failed", "ingestion_error"
+        if payload.status == "succeeded" and payload.record is not None:
+            return "admitted", "archive_member"
+        if "retry limit" in message:
+            return "not_admitted", "retry_exhausted"
+        if "warmup" in message or "projection is not ready" in message:
+            return "not_admitted", "projection_warmup"
+        if "duplicate" in message or "equivalent" in message:
+            return "not_admitted", "duplicate_identity"
+        if "dominated" in message or "crowding" in message:
+            return "not_admitted", "pareto_rejected"
+        return "not_admitted", "archive_unchanged"
 
     def _terminalize_failed_ingestion(
         self,

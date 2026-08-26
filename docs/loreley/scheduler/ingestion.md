@@ -35,6 +35,9 @@ from loreley.scheduler.ingestion import MapElitesIngestion
     not trigger a tight retry loop.
   - Builds a `JobSnapshot` for each remaining job and forwards it to
     `_ingest_snapshot(...)`.
+  - Commits `ingestion.started` before commit resolution, embedding, or archive
+    work. A crash therefore leaves censored start evidence; every retry gets a
+    new ordinal.
   - Returns the number of jobs whose commits actually updated the MAP-Elites
     archive.
 
@@ -58,6 +61,16 @@ Internally, `_ingest_snapshot(...)`:
    - `delta`, `status_code`, and `message` from the ingest result,
    - `cell_index` when the ingest produced a record,
    - retry bookkeeping (`attempts`, `last_attempt_at`, `reason`).
+7. Closes the ingestion event in the same transaction as job state and archive
+   snapshot changes, and records a bounded archive-consideration outcome such
+   as admission, duplicate identity, Pareto rejection, projection warmup, or
+   retry exhaustion.
+
+Atomic snapshot persistence compares archive membership before and after the
+update. It emits per-member admission, movement, and removal events plus a
+projection-rebuild summary when applicable. Local Pareto replacement,
+projection rebuild, and explicit clearing remain distinguishable without
+persisting a second full archive copy.
 
 This state allows ingestion to be retried safely (with backoff), audited later,
 and kept isolated per job so individual failures do not abort the scheduler loop.

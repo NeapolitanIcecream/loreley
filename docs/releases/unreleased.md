@@ -28,11 +28,26 @@ These notes cover changes merged after `v0.10.0-alpha`.
   output and persisted SQLite state.
 - Mask credential-bearing gateway URLs in safe configuration exports and make
   the worker contract explicit that campaigns use only preinstalled tools.
+- Align planning and coding context with the ordered archive objective contract,
+  make explicit non-seed semantics authoritative, and reject campaign/archive
+  primary-metric conflicts during preflight.
+- Add an opt-in, persisted GPT-5.6 Sol seed portfolio per campaign. Bound the
+  campaign slate independently of warmup/island count, cap unsuccessful
+  direction attempts, reuse successful directions fairly, preserve provenance
+  through evaluation/ingestion/lineage, and label evaluator-valid seeds as
+  immediate or exploratory before ordinary Pareto/QD admission without another
+  full evaluation.
 
 ## Compatibility
 
-- This work does not change the Loreley database schema or instance metadata
-  version.
+- Database schema version 23 adds the append-only `evolution_events` ledger and
+  records the current archive as an explicit migration-boundary observation.
+  Version 22 added `seed_portfolios`, `seed_directions`, and seed provenance;
+  existing version-21 or version-22 databases migrate with
+  `uv run loreley db migrate`.
+- Add deterministic, sanitized `loreley timeline export` JSON Lines output over
+  evolution events, evaluator attempts, and evaluator resource leases, with an
+  optional strict completeness check.
 - GitHub CI builds the source distribution and wheel, runs the test suite, and
   installs the wheel on Python 3.11, 3.12, and 3.13. Cremona must report no new
   structural regression before the next tag is created.

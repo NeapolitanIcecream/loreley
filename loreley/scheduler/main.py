@@ -23,6 +23,7 @@ from loreley.core.map_elites.manager import MapElitesManager
 from loreley.core.map_elites.sampler import MapElitesSampler
 from loreley.core.repo_lock import repo_lock
 from loreley.core.progress import CampaignProgress, load_campaign_progress
+from loreley.core.seed_portfolio import resolve_seed_portfolio_direction_count
 from loreley.db.base import ensure_database_schema, get_engine, session_scope
 from loreley.db.locks import (
     AdvisoryLock,
@@ -38,6 +39,10 @@ from loreley.scheduler.baselines import (
 from loreley.naming import resolve_experiment_namespace, resolve_experiment_uuid
 from loreley.scheduler.ingestion import MapElitesIngestion
 from loreley.scheduler.job_scheduler import JobScheduler
+from loreley.scheduler.seed_portfolios import (
+    SeedPortfolioCoordinator,
+    SeedPortfolioStateError,
+)
 from loreley.scheduler.startup_approval import (
     require_repo_writable,
     require_interactive_repo_state_root_approval,
@@ -211,6 +216,11 @@ class EvolutionScheduler:
             repo_root=self.repo_root,
             console=self.console,
         )
+        self.seed_portfolio_coordinator = SeedPortfolioCoordinator(
+            settings=self.settings,
+            repo_root=self.repo_root,
+        )
+        self._active_seed_portfolio = None
         self._stop_requested = False
 
         # Optionally initialise an explicit experiment root commit so that the
@@ -262,6 +272,12 @@ class EvolutionScheduler:
         if baseline is not None and not baseline.can_dispatch_or_schedule:
             return self._baseline_blocked_stats(stats=stats, baseline=baseline)
         stats["baseline_blocked"] = 0
+        if baseline is not None:
+            try:
+                self._ensure_seed_portfolio_ready(baseline=baseline)
+            except SeedPortfolioStateError as exc:
+                return self._seed_portfolio_blocked_stats(stats=stats, exc=exc)
+        stats["seed_portfolio_blocked"] = 0
         total_jobs_after = self._schedule_tick_jobs(stats)
         pending_ingestion = self._record_terminal_ingestion(
             stats=stats,
@@ -353,13 +369,31 @@ class EvolutionScheduler:
         )
         return stats
 
+    def _seed_portfolio_blocked_stats(
+        self,
+        *,
+        stats: dict[str, int],
+        exc: SeedPortfolioStateError,
+    ) -> dict[str, int]:
+        stats.update(
+            baseline_blocked=0,
+            seed_portfolio_blocked=1,
+            dispatched=0,
+            seed_scheduled=0,
+            scheduled=0,
+            unfinished=self.job_scheduler.count_unfinished_jobs(),
+        )
+        self.console.log(f"[bold yellow]Scheduler tick blocked by seed portfolio[/] reason={exc}")
+        return stats
+
     def _schedule_tick_jobs(self, stats: dict[str, int]) -> int:
         promote = getattr(self.job_scheduler, "promote_staged_jobs", None)
         stats["staged_promoted"] = int(promote() if callable(promote) else 0)
         stats["dispatched"] = self.job_scheduler.dispatch_pending_jobs()
         unfinished = self.job_scheduler.count_unfinished_jobs()
-        stats["seed_scheduled"] = self._maybe_schedule_seed_jobs(
-            unfinished_jobs=unfinished
+        stats["seed_scheduled"] = self._maybe_schedule_seed_jobs(unfinished_jobs=unfinished)
+        stats["seed_portfolio_exhausted"] = int(
+            bool(getattr(self.job_scheduler, "seed_portfolio_safe_stop_reason", None))
         )
         effective_unfinished = unfinished + stats["seed_scheduled"]
         total_jobs = self._get_total_jobs_count()
@@ -400,6 +434,7 @@ class EvolutionScheduler:
         self.console.log(
             "[bold magenta]Scheduler tick[/] ingested={ingested} reclaimed_pending={reclaimed_pending} "
             "reclaimed_failed={reclaimed_failed} dispatched={dispatched} seed_scheduled={seed_scheduled} "
+            "seed_portfolio_exhausted={seed_portfolio_exhausted} "
             "staged_promoted={staged_promoted} scheduled={scheduled} "
             "unfinished={unfinished} remaining_total={remaining}/{maximum}"
             "{pending_suffix}".format(
@@ -542,6 +577,44 @@ class EvolutionScheduler:
             root_commit_hash=root_hash,
             campaign_program=campaign_program,
         )
+
+    def _ensure_seed_portfolio_ready(
+        self,
+        *,
+        baseline: BaselineBootstrapResult,
+    ) -> None:
+        if not bool(self.settings.mapelites_seed_portfolio_enabled):
+            self._active_seed_portfolio = None
+            return
+        if not self._seed_portfolio_is_required():
+            return
+        coordinator = getattr(self, "seed_portfolio_coordinator", None)
+        if coordinator is None:
+            return
+        campaign_program = getattr(
+            self.job_scheduler,
+            "campaign_program_snapshot",
+            None,
+        )
+        self._active_seed_portfolio = coordinator.ensure_ready(
+            root_commit_hash=str(self._root_commit_hash or ""),
+            baseline_key_hash=baseline.baseline_key_hash,
+            direction_count=self._seed_portfolio_direction_count(),
+            campaign_program=campaign_program,
+        )
+
+    def _seed_portfolio_is_required(self) -> bool:
+        if not self._root_commit_hash or self._seed_population_target() <= 0:
+            return False
+        if self._get_total_jobs_count() >= self._max_total_jobs:
+            return False
+        manager = getattr(self, "manager", None)
+        if manager is None:
+            return False
+        return any(not manager.get_records(island_id) for island_id in tuple(self.settings.mapelites_islands))
+
+    def _seed_portfolio_direction_count(self) -> int:
+        return resolve_seed_portfolio_direction_count(self.settings)
 
     # DB coordination helpers ----------------------------------------------
 
@@ -947,6 +1020,13 @@ class EvolutionScheduler:
         budget: _SeedSchedulingBudget,
         allocations: tuple[_SeedIslandAllocation, ...],
     ) -> int:
+        active_portfolio = getattr(self, "_active_seed_portfolio", None)
+        if active_portfolio is not None:
+            return self._create_portfolio_seed_allocations(
+                budget,
+                allocations,
+                seed_portfolio=active_portfolio,
+            )
         created_total = 0
         for allocation in allocations:
             demand = allocation.demand
@@ -985,6 +1065,60 @@ class EvolutionScheduler:
                     demand.warmup_samples,
                     budget.target_samples,
                 )
+        return created_total
+
+    def _create_portfolio_seed_allocations(
+        self,
+        budget: _SeedSchedulingBudget,
+        allocations: tuple[_SeedIslandAllocation, ...],
+        *,
+        seed_portfolio: Any,
+    ) -> int:
+        """Distribute globally unique in-flight directions across islands by round."""
+
+        remaining = {allocation.demand.island_id: allocation.count for allocation in allocations}
+        created_by_island = {allocation.demand.island_id: 0 for allocation in allocations}
+        while any(count > 0 for count in remaining.values()):
+            made_progress = False
+            for allocation in allocations:
+                demand = allocation.demand
+                if remaining[demand.island_id] <= 0:
+                    continue
+                created = self.job_scheduler.create_seed_jobs(
+                    base_commit_hash=budget.root_commit_hash,
+                    count=1,
+                    island_id=demand.island_id,
+                    refresh_campaign_program=False,
+                    seed_portfolio=seed_portfolio,
+                )
+                if created <= 0:
+                    return sum(created_by_island.values())
+                created_by_island[demand.island_id] += created
+                remaining[demand.island_id] -= created
+                made_progress = True
+            if not made_progress:
+                break
+
+        created_total = sum(created_by_island.values())
+        for allocation in allocations:
+            demand = allocation.demand
+            created = created_by_island[demand.island_id]
+            if not created:
+                continue
+            seed_phase = "warmup" if demand.warmup_samples < budget.target_samples else "readiness"
+            self.console.log(
+                "[bold green]Scheduled seed jobs[/] "
+                f"count={created} root={budget.root_commit_hash} "
+                f"island={demand.island_id} phase={seed_phase} "
+                f"warmup_samples={demand.warmup_samples}/{budget.target_samples}",
+            )
+            log.info(
+                f"Scheduled {created} seed jobs from root {budget.root_commit_hash} "
+                f"on island {demand.island_id} (phase={seed_phase} "
+                f"unfinished_jobs={budget.unfinished_jobs} "
+                f"warmup_samples={demand.warmup_samples} "
+                f"target_samples={budget.target_samples})",
+            )
         return created_total
 
     def _count_seed_warmup_job_counts(self, *, island_id: str) -> _SeedWarmupJobCounts:

@@ -22,6 +22,7 @@ def resolve_effective_routes(settings: Settings) -> dict[str, dict[str, Any]]:
     """Return the routes runtime and operator diagnostics should agree on."""
 
     return {
+        "seed_portfolio": _seed_portfolio_route(settings),
         "planning": _agent_route(settings, "planning"),
         "coding": _agent_route(settings, "coding"),
         "trajectory_summary": _trajectory_route(settings),
@@ -32,6 +33,38 @@ def resolve_effective_routes(settings: Settings) -> dict[str, dict[str, Any]]:
             "source": "coding.report.summary",
             "fallback_source": "plan.summary",
         },
+    }
+
+
+def _seed_portfolio_route(settings: Settings) -> dict[str, Any]:
+    backend_ref = str(
+        getattr(settings, "worker_seed_portfolio_backend", "") or ""
+    ).strip()
+    model = _non_empty(getattr(settings, "worker_seed_portfolio_model", None))
+    reasoning = _non_empty(
+        getattr(settings, "worker_seed_portfolio_reasoning_effort", None)
+    )
+    if not _is_kilocode_backend(backend_ref):
+        return {
+            "backend": backend_ref or "backend_defined",
+            "provider_mode": "backend_defined",
+            "provider": "unknown",
+            "model": model,
+            "variant": reasoning,
+            "reasoning": reasoning or "backend_defined",
+            "api_surface": "backend_defined",
+            "base_url_host": None,
+        }
+    route = _resolve_kilo_route(settings, model)
+    return {
+        "backend": "kilo",
+        "provider_mode": route.mode,
+        "provider": route.provider,
+        "model": model,
+        "variant": reasoning,
+        "reasoning": reasoning or "provider_default",
+        "api_surface": route.api_spec if route.gateway else "kilo_native",
+        "base_url_host": _url_host(route.base_url) if route.gateway else None,
     }
 
 

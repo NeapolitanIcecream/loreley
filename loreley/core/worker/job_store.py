@@ -12,6 +12,17 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import SQLAlchemyError
 
 from loreley.core.contracts import clamp_text, normalize_single_line
+from loreley.core.evolution_events import (
+    EVALUATION_INVOCATION_STARTED,
+    EvolutionStageHandle,
+    JOB_FAILED,
+    JOB_RUN_STARTED,
+    JOB_SUCCEEDED,
+    finish_evolution_stage,
+    next_event_ordinal,
+    record_evolution_event,
+    start_evolution_stage,
+)
 from loreley.core.usage import persist_usage_events
 from loreley.core.worker.artifacts import (
     FailureJobArtifactWriteRequest,
@@ -141,6 +152,11 @@ class LockedJob:
     sampling_ordinal: int | None
     sampling_recipe_hash: str | None
     sampling_recipe_reused: bool
+    seed_portfolio_hash: str | None
+    seed_direction_id: str | None
+    seed_direction_payload: dict[str, Any]
+    seed_admission_lane: str | None
+    seed_admission_reason: str | None
 
 
 @dataclass(slots=True, frozen=True)
@@ -315,6 +331,21 @@ class EvolutionJobStore:
                 self._mark_job_row_running(
                     job, now=now, run_token=run_token, worker_id=worker_id
                 )
+                record_evolution_event(
+                    session,
+                    event_type=JOB_RUN_STARTED,
+                    job_id=job.id,
+                    run_token=run_token,
+                    island_id=getattr(job, "island_id", None),
+                    occurred_at=now,
+                    payload={
+                        "job_kind": job_kind,
+                        "recovery_count": int(
+                            getattr(job, "recovery_count", 0) or 0
+                        ),
+                    },
+                    key_parts=("worker_run",),
+                )
                 self._mark_repair_source_running(
                     session=session, job=job, job_kind=job_kind
                 )
@@ -383,6 +414,48 @@ class EvolutionJobStore:
         source = session.get(CandidateCommit, source_id)
         if source is not None:
             source.repair_state = "repairing"
+
+    def start_stage(
+        self,
+        *,
+        stage: str,
+        job_ctx: "JobContext",
+        ordinal: int | None = None,
+        commit_hash: str | None = None,
+        payload: dict[str, object] | None = None,
+    ) -> EvolutionStageHandle:
+        """Durably record a stage start before the worker enters it."""
+
+        with session_scope() as session:
+            return start_evolution_stage(
+                session,
+                stage=stage,
+                job_id=job_ctx.job_id,
+                run_token=job_ctx.run_token,
+                island_id=job_ctx.island_id,
+                commit_hash=commit_hash,
+                ordinal=ordinal,
+                payload=payload,
+            )
+
+    def finish_stage(
+        self,
+        *,
+        handle: EvolutionStageHandle,
+        outcome: str,
+        failure_kind: str | None = None,
+        payload: dict[str, object] | None = None,
+    ) -> None:
+        """Durably close a planning, coding, or ingestion stage."""
+
+        with session_scope() as session:
+            finish_evolution_stage(
+                session,
+                handle=handle,
+                outcome=outcome,
+                failure_kind=failure_kind,
+                payload=payload,
+            )
 
     def record_candidate_commit(
         self,
@@ -571,12 +644,13 @@ class EvolutionJobStore:
                 job_id=job_ctx.job_id,
                 run_token=job_ctx.run_token,
                 attempt_ordinal=self._next_evaluation_attempt_ordinal(
-                    session=session,
-                    job_id=job_ctx.job_id,
+                    session=session, job_id=job_ctx.job_id, outcome=outcome
                 ),
                 evaluator_name=outcome.evaluator_name,
                 evaluator_version=outcome.evaluator_version,
                 campaign_program_hash=job_ctx.campaign_program_hash,
+                seed_portfolio_hash=job_ctx.seed_portfolio_hash,
+                seed_direction_id=job_ctx.seed_direction_id,
                 candidate_identity=candidate_identity,
                 evaluation_identity_key=identity_key,
                 protocol=outcome.protocol,
@@ -675,6 +749,10 @@ class EvolutionJobStore:
             repair_source_candidate_id=getattr(job, "repair_source_candidate_id", None),
             repair_mode=getattr(job, "repair_mode", None),
             campaign_program_hash=getattr(job, "campaign_program_hash", None),
+            seed_portfolio_hash=getattr(job, "seed_portfolio_hash", None),
+            seed_direction_id=getattr(job, "seed_direction_id", None),
+            seed_admission_lane=getattr(job, "seed_admission_lane", None),
+            seed_admission_reason=getattr(job, "seed_admission_reason", None),
             source_tree_hash=request.source_tree_hash,
             candidate_branch_name=request.branch_name,
             candidate_published_at=published_at,
@@ -723,6 +801,18 @@ class EvolutionJobStore:
         row.campaign_program_hash = row.campaign_program_hash or getattr(
             job, "campaign_program_hash", None
         )
+        row.seed_portfolio_hash = getattr(row, "seed_portfolio_hash", None) or getattr(
+            job, "seed_portfolio_hash", None
+        )
+        row.seed_direction_id = getattr(row, "seed_direction_id", None) or getattr(
+            job, "seed_direction_id", None
+        )
+        row.seed_admission_lane = getattr(row, "seed_admission_lane", None) or getattr(
+            job, "seed_admission_lane", None
+        )
+        row.seed_admission_reason = getattr(row, "seed_admission_reason", None) or getattr(
+            job, "seed_admission_reason", None
+        )
         row.source_tree_hash = row.source_tree_hash or request.source_tree_hash
         row.candidate_branch_name = request.branch_name
         row.publication_status = request.publication_status
@@ -759,10 +849,23 @@ class EvolutionJobStore:
                     action="persisting success",
                 )
                 payload = self._build_success_payload(request)
+                completed_at = _utc_now()
                 self._mark_job_row_succeeded(
                     job,
                     plan=request.plan,
                     commit_hash=request.commit_hash,
+                    completed_at=completed_at,
+                )
+                record_evolution_event(
+                    session,
+                    event_type=JOB_SUCCEEDED,
+                    job_id=request.job_ctx.job_id,
+                    run_token=request.job_ctx.run_token,
+                    island_id=request.job_ctx.island_id,
+                    commit_hash=request.commit_hash,
+                    occurred_at=completed_at,
+                    payload={"outcome": "succeeded"},
+                    key_parts=("terminal",),
                 )
                 card = self._add_commit_card(
                     session=session,
@@ -875,9 +978,10 @@ class EvolutionJobStore:
         *,
         plan: PlanningAgentResponse | None,
         commit_hash: str,
+        completed_at: datetime,
     ) -> None:
         job.status = JobStatus.SUCCEEDED
-        job.completed_at = _utc_now()
+        job.completed_at = completed_at
         job.heartbeat_at = None
         job.lease_expires_at = None
         job.run_token = None
@@ -926,6 +1030,10 @@ class EvolutionJobStore:
             key_files=payload.key_files,
             highlights=payload.highlights,
             job_id=job_ctx.job_id,
+            seed_portfolio_hash=job_ctx.seed_portfolio_hash,
+            seed_direction_id=job_ctx.seed_direction_id,
+            seed_admission_lane=job_ctx.seed_admission_lane,
+            seed_admission_reason=job_ctx.seed_admission_reason,
         )
         session.add(card)
         return card
@@ -1093,7 +1201,17 @@ class EvolutionJobStore:
             session.add(record)
 
     @staticmethod
-    def _next_evaluation_attempt_ordinal(*, session: Any, job_id: UUID) -> int:
+    def _next_evaluation_attempt_ordinal(
+        *,
+        session: Any,
+        job_id: UUID,
+        outcome: EvaluationOutcome | None = None,
+    ) -> int:
+        invocation_ordinal = int(
+            getattr(outcome, "invocation_ordinal", 0) or 0
+        )
+        if invocation_ordinal > 0:
+            return invocation_ordinal
         result = session.execute(
             select(
                 func.coalesce(func.max(EvaluationAttempt.attempt_ordinal), 0) + 1
@@ -1102,7 +1220,13 @@ class EvolutionJobStore:
         scalar_one = getattr(result, "scalar_one", None)
         if not callable(scalar_one):  # pragma: no cover - simplified unit-test sessions
             return 1
-        return int(scalar_one())
+        attempt_ordinal = int(scalar_one())
+        invocation_ordinal = next_event_ordinal(
+            session,
+            event_type=EVALUATION_INVOCATION_STARTED,
+            job_id=job_id,
+        )
+        return max(attempt_ordinal, invocation_ordinal)
 
     def _record_success_evaluation(
         self,
@@ -1154,10 +1278,13 @@ class EvolutionJobStore:
                 attempt_ordinal=self._next_evaluation_attempt_ordinal(
                     session=request.session,
                     job_id=request.job_ctx.job_id,
+                    outcome=effective_outcome,
                 ),
                 evaluator_name=effective_outcome.evaluator_name,
                 evaluator_version=effective_outcome.evaluator_version,
                 campaign_program_hash=request.job_ctx.campaign_program_hash,
+                seed_portfolio_hash=request.job_ctx.seed_portfolio_hash,
+                seed_direction_id=request.job_ctx.seed_direction_id,
                 candidate_identity=candidate_identity,
                 evaluation_identity_key=identity_key,
                 protocol=effective_outcome.protocol,
@@ -1354,11 +1481,31 @@ class EvolutionJobStore:
                     coding=request.coding,
                 )
                 failure = request.outcome.failure
+                completed_at = _utc_now()
                 self._mark_job_row_failed(
                     job=job,
                     message=request.message,
                     failure_stage=failure.failure_stage if failure else "evaluation",
                     failure_kind=failure.failure_kind if failure else "unknown",
+                    completed_at=completed_at,
+                )
+                record_evolution_event(
+                    session,
+                    event_type=JOB_FAILED,
+                    job_id=request.job_ctx.job_id,
+                    run_token=request.job_ctx.run_token,
+                    island_id=request.job_ctx.island_id,
+                    commit_hash=commit_hash or None,
+                    occurred_at=completed_at,
+                    payload={
+                        "failure_stage": (
+                            failure.failure_stage if failure else "evaluation"
+                        ),
+                        "failure_kind": (
+                            failure.failure_kind if failure else "unknown"
+                        ),
+                    },
+                    key_parts=("terminal",),
                 )
                 self._update_candidate_after_failure(
                     _FailedCandidateUpdateInput(
@@ -1566,8 +1713,7 @@ class EvolutionJobStore:
             attempt = _new_failure_attempt(
                 request=request,
                 attempt_ordinal=self._next_evaluation_attempt_ordinal(
-                    session=session,
-                    job_id=job_ctx.job_id,
+                    session=session, job_id=job_ctx.job_id, outcome=outcome
                 ),
             )
             session.add(attempt)
@@ -1588,9 +1734,10 @@ class EvolutionJobStore:
         message: str,
         failure_stage: str | None = None,
         failure_kind: str | None = None,
+        completed_at: datetime,
     ) -> None:
         job.status = JobStatus.FAILED
-        job.completed_at = _utc_now()
+        job.completed_at = completed_at
         job.heartbeat_at = None
         job.lease_expires_at = None
         job.run_token = None
@@ -1856,11 +2003,31 @@ class EvolutionJobStore:
                         JobStatus.CANCELLED,
                     }:
                         return False
+                effective_run_token = run_token or getattr(job, "run_token", None)
+                completed_at = _utc_now()
                 self._mark_job_row_failed(
                     job=job,
                     message=message,
                     failure_stage=failure_stage,
                     failure_kind=failure_kind,
+                    completed_at=completed_at,
+                )
+                record_evolution_event(
+                    session,
+                    event_type=JOB_FAILED,
+                    job_id=job_id,
+                    run_token=effective_run_token,
+                    island_id=getattr(job, "island_id", None),
+                    commit_hash=(
+                        str(getattr(job, "candidate_commit_hash", "") or "").strip()
+                        or None
+                    ),
+                    occurred_at=completed_at,
+                    payload={
+                        "failure_stage": failure_stage or "unknown",
+                        "failure_kind": failure_kind or "unknown",
+                    },
+                    key_parts=("terminal",),
                 )
                 self._update_repair_source_after_terminal_failure(
                     session=session, job=job
@@ -2000,6 +2167,21 @@ def _locked_job_from_row(
         sampling_ordinal=getattr(job, "sampling_ordinal", None),
         sampling_recipe_hash=getattr(job, "sampling_recipe_hash", None),
         sampling_recipe_reused=bool(getattr(job, "sampling_recipe_reused", False)),
+        seed_portfolio_hash=(
+            str(getattr(job, "seed_portfolio_hash", "") or "").strip() or None
+        ),
+        seed_direction_id=(
+            str(getattr(job, "seed_direction_id", "") or "").strip() or None
+        ),
+        seed_direction_payload=dict(
+            getattr(job, "seed_direction_payload", {}) or {}
+        ),
+        seed_admission_lane=(
+            str(getattr(job, "seed_admission_lane", "") or "").strip() or None
+        ),
+        seed_admission_reason=(
+            str(getattr(job, "seed_admission_reason", "") or "").strip() or None
+        ),
     )
 
 
@@ -2133,6 +2315,8 @@ def _new_failure_attempt(
         evaluator_name=outcome.evaluator_name,
         evaluator_version=outcome.evaluator_version,
         campaign_program_hash=request.job_ctx.campaign_program_hash,
+        seed_portfolio_hash=request.job_ctx.seed_portfolio_hash,
+        seed_direction_id=request.job_ctx.seed_direction_id,
         candidate_identity=request.candidate_identity,
         evaluation_identity_key=request.identity_key,
         protocol=outcome.protocol,

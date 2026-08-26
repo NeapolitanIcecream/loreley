@@ -29,6 +29,10 @@ class CommitNode:
     top_evaluation_diagnosis: str | None
     candidate_fate_label: str | None
     candidate_fate_reason: str | None
+    seed_portfolio_hash: str | None
+    seed_direction_id: str | None
+    seed_admission_lane: str | None
+    seed_admission_reason: str | None
     extra: dict[str, Any]
 
 
@@ -118,6 +122,10 @@ def build_commit_lineage_graph(
                 ),
                 candidate_fate_label=fate.label if fate is not None else None,
                 candidate_fate_reason=fate.reason if fate is not None else None,
+                seed_portfolio_hash=getattr(c, "seed_portfolio_hash", None),
+                seed_direction_id=getattr(c, "seed_direction_id", None),
+                seed_admission_lane=getattr(c, "seed_admission_lane", None),
+                seed_admission_reason=getattr(c, "seed_admission_reason", None),
                 extra={},
             )
         )

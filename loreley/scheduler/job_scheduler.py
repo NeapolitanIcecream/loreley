@@ -28,6 +28,15 @@ from loreley.core.campaign_program import (
     load_campaign_program_snapshot_by_hash,
     persist_campaign_program,
 )
+from loreley.core.evolution_events import (
+    JOB_CANCELLED,
+    JOB_DISPATCHED,
+    JOB_FAILED,
+    JOB_RECLAIMED,
+    JOB_RECOVERY_EXHAUSTED,
+    next_event_ordinal,
+    record_evolution_event,
+)
 from loreley.core.map_elites.sampler import (
     MapElitesSampler,
     SamplingSnapshot,
@@ -35,6 +44,7 @@ from loreley.core.map_elites.sampler import (
     ScheduledSamplerJob,
     sampling_recipe_hash,
 )
+from loreley.core.seed_portfolio import SeedDirection, SeedPortfolioArtifact
 from loreley.core.worker.repair import (
     REPAIR_MODE_REBASE_FROM_NEAREST_VIABLE,
     repair_failure_kind_allowlist,
@@ -100,6 +110,15 @@ class ScheduledRepairJob:
     job_id: UUID
     repair_source_candidate_id: UUID
     base_commit_hash: str
+
+
+@dataclass(frozen=True, slots=True)
+class SeedDirectionAssignmentPlan:
+    """Restart-stable direction assignments and any scheduler stop reason."""
+
+    assignments: tuple[SeedDirection, ...]
+    safe_stop_reason: str | None = None
+    unavailable_reason: str | None = None
 
 
 class FailedCandidateRepairSampler:
@@ -374,6 +393,11 @@ class JobScheduler:
     )
     _reported_campaign_program_hashes: set[str] = field(default_factory=set, init=False, repr=False)
     _repair_pool_deprecation_logged: bool = field(default=False, init=False, repr=False)
+    _seed_portfolio_safe_stop_reason: str | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
         # Build a sender-only actor that targets the experiment-scoped queue.
@@ -386,6 +410,10 @@ class JobScheduler:
             self._log_repair_pool_deprecated()
 
     # Measuring -------------------------------------------------------------
+
+    @property
+    def seed_portfolio_safe_stop_reason(self) -> str | None:
+        return self._seed_portfolio_safe_stop_reason
 
     def count_unfinished_jobs(self) -> int:
         """Return the number of jobs that are not yet finished."""
@@ -496,6 +524,7 @@ class JobScheduler:
             for job in session.execute(stmt).scalars():
                 attempts = int(getattr(job, "recovery_count", 0) or 0)
                 next_attempt = attempts + 1
+                old_run_token = getattr(job, "run_token", None)
                 missing_lease = (
                     getattr(job, "run_token", None) is None
                     or getattr(job, "worker_id", None) is None
@@ -519,6 +548,53 @@ class JobScheduler:
                     job.completed_at = current_time
                     job.failure_stage = "infrastructure"
                     job.failure_kind = "job_lease_exhausted"
+                    record_evolution_event(
+                        session,
+                        event_type=JOB_RECLAIMED,
+                        job_id=job.id,
+                        run_token=old_run_token,
+                        island_id=getattr(job, "island_id", None),
+                        commit_hash=getattr(job, "candidate_commit_hash", None),
+                        occurred_at=current_time,
+                        ordinal=next_attempt,
+                        payload={
+                            "reason": (
+                                "missing_lease" if missing_lease else "lease_expired"
+                            ),
+                            "outcome": "failed",
+                            "recovery_count": next_attempt,
+                        },
+                        key_parts=("reclaim",),
+                    )
+                    record_evolution_event(
+                        session,
+                        event_type=JOB_RECOVERY_EXHAUSTED,
+                        job_id=job.id,
+                        run_token=old_run_token,
+                        island_id=getattr(job, "island_id", None),
+                        commit_hash=getattr(job, "candidate_commit_hash", None),
+                        occurred_at=current_time,
+                        ordinal=next_attempt,
+                        payload={
+                            "failure_kind": "job_lease_exhausted",
+                            "recovery_count": next_attempt,
+                        },
+                        key_parts=("terminal",),
+                    )
+                    record_evolution_event(
+                        session,
+                        event_type=JOB_FAILED,
+                        job_id=job.id,
+                        run_token=old_run_token,
+                        island_id=getattr(job, "island_id", None),
+                        commit_hash=getattr(job, "candidate_commit_hash", None),
+                        occurred_at=current_time,
+                        payload={
+                            "failure_stage": "infrastructure",
+                            "failure_kind": "job_lease_exhausted",
+                        },
+                        key_parts=("terminal",),
+                    )
                     self._update_repair_source_after_terminal_failure(session=session, job=job)
                     failed += 1
                     self.console.log(
@@ -534,6 +610,24 @@ class JobScheduler:
                 job.started_at = None
                 job.completed_at = None
                 job.scheduled_at = current_time
+                record_evolution_event(
+                    session,
+                    event_type=JOB_RECLAIMED,
+                    job_id=job.id,
+                    run_token=old_run_token,
+                    island_id=getattr(job, "island_id", None),
+                    commit_hash=getattr(job, "candidate_commit_hash", None),
+                    occurred_at=current_time,
+                    ordinal=next_attempt,
+                    payload={
+                        "reason": (
+                            "missing_lease" if missing_lease else "lease_expired"
+                        ),
+                        "outcome": "requeued",
+                        "recovery_count": next_attempt,
+                    },
+                    key_parts=("reclaim",),
+                )
                 requeued += 1
                 self.console.log(
                     f"[yellow]Requeued stale running job[/] id={job.id} recovery_count={job.recovery_count}",
@@ -558,11 +652,26 @@ class JobScheduler:
                 ).scalars()
             )
             for job in rows:
+                previous_status = str(
+                    getattr(job.status, "value", job.status)
+                ).lower()
                 job.status = JobStatus.CANCELLED
                 job.completed_at = current_time
                 job.last_error = "Unique evaluation identity endpoint reached before dispatch."
                 job.failure_stage = None
                 job.failure_kind = None
+                record_evolution_event(
+                    session,
+                    event_type=JOB_CANCELLED,
+                    job_id=job.id,
+                    island_id=getattr(job, "island_id", None),
+                    occurred_at=current_time,
+                    payload={
+                        "reason": "identity_endpoint",
+                        "previous_status": previous_status,
+                    },
+                    key_parts=("terminal",),
+                )
             return len(rows)
 
     def _update_repair_source_after_terminal_failure(
@@ -931,6 +1040,7 @@ class JobScheduler:
         count: int,
         island_id: str | None = None,
         refresh_campaign_program: bool = True,
+        seed_portfolio: SeedPortfolioArtifact | None = None,
     ) -> int:
         """Create and enqueue cold-start seed jobs from the root commit.
 
@@ -965,7 +1075,19 @@ class JobScheduler:
             return 0
 
         with session_scope() as session:
-            for _ in range(count):
+            assignment_plan = self._seed_direction_assignment_plan(
+                session=session,
+                seed_portfolio=seed_portfolio,
+                count=count,
+                max_unsuccessful_attempts=int(
+                    self.settings.mapelites_seed_direction_max_unsuccessful_attempts
+                ),
+            )
+            assignments = assignment_plan.assignments
+            self._seed_portfolio_safe_stop_reason = assignment_plan.safe_stop_reason
+            create_count = len(assignments) if seed_portfolio is not None else count
+            for index in range(create_count):
+                direction = assignments[index] if assignments else None
                 job = EvolutionJob(
                     status=JobStatus.PENDING,
                     base_commit_hash=base_commit_hash,
@@ -974,12 +1096,9 @@ class JobScheduler:
                     goal=goal,
                     constraints=projection.constraints,
                     acceptance_criteria=projection.acceptance_criteria,
-                    notes=projection.notes,
+                    notes=list(projection.notes),
                     tags=[],
-                    iteration_hint=(
-                        "Cold-start seed job: design diverse initial directions "
-                        "from the root baseline."
-                    ),
+                    iteration_hint=self._seed_iteration_hint(direction),
                     job_kind="seed",
                     campaign_program_hash=(
                         self._campaign_program_snapshot.raw_sha256
@@ -991,6 +1110,19 @@ class JobScheduler:
                     sampling_radius_used=None,
                     sampling_fallback_inspirations=None,
                     is_seed_job=True,
+                    seed_portfolio_hash=(
+                        seed_portfolio.portfolio_hash
+                        if seed_portfolio is not None
+                        else None
+                    ),
+                    seed_direction_id=(
+                        direction.direction_id if direction is not None else None
+                    ),
+                    seed_direction_payload=(
+                        direction.model_dump(mode="json")
+                        if direction is not None
+                        else {}
+                    ),
                     priority=self.settings.mapelites_sampler_default_priority,
                     scheduled_at=now,
                 )
@@ -1000,6 +1132,18 @@ class JobScheduler:
             job_ids = [job.id for job in jobs]
 
         if not job_ids:
+            if assignment_plan.safe_stop_reason:
+                self.console.log(
+                    "[bold yellow]Seed portfolio safe stop[/] "
+                    f"reason={assignment_plan.safe_stop_reason}"
+                )
+                log.warning(
+                    f"Seed portfolio automatic scheduling safe-stopped: {assignment_plan.safe_stop_reason}",
+                )
+            elif assignment_plan.unavailable_reason:
+                log.info(
+                    f"Seed portfolio has no direction available this tick: {assignment_plan.unavailable_reason}",
+                )
             return 0
 
         self.console.log(
@@ -1018,6 +1162,157 @@ class JobScheduler:
 
         self._enqueue_jobs(job_ids)
         return len(job_ids)
+
+    @staticmethod
+    def _seed_iteration_hint(direction: SeedDirection | None) -> str:
+        if direction is None:
+            return (
+                "Cold-start seed job: design diverse initial directions from "
+                "the root baseline."
+            )
+        return (
+            f"Seed portfolio direction {direction.direction_id}: {direction.title}"
+        )[:256]
+
+    @staticmethod
+    def _seed_direction_assignments(
+        *,
+        session: Any,
+        seed_portfolio: SeedPortfolioArtifact | None,
+        count: int,
+        max_unsuccessful_attempts: int = 2,
+    ) -> tuple[SeedDirection, ...]:
+        return JobScheduler._seed_direction_assignment_plan(
+            session=session,
+            seed_portfolio=seed_portfolio,
+            count=count,
+            max_unsuccessful_attempts=max_unsuccessful_attempts,
+        ).assignments
+
+    @staticmethod
+    def _seed_direction_assignment_plan(
+        *,
+        session: Any,
+        seed_portfolio: SeedPortfolioArtifact | None,
+        count: int,
+        max_unsuccessful_attempts: int,
+    ) -> SeedDirectionAssignmentPlan:
+        if seed_portfolio is None or count <= 0:
+            return SeedDirectionAssignmentPlan(assignments=())
+        rows = session.execute(
+            select(
+                EvolutionJob.seed_direction_id,
+                EvolutionJob.status,
+            ).where(
+                EvolutionJob.seed_portfolio_hash == seed_portfolio.portfolio_hash,
+                EvolutionJob.is_seed_job.is_(True),
+            )
+        ).all()
+        cap = max(1, min(2, int(max_unsuccessful_attempts)))
+        attempts = {direction.direction_id: 0 for direction in seed_portfolio.directions}
+        unfinished = {direction.direction_id: 0 for direction in seed_portfolio.directions}
+        successes = {direction.direction_id: 0 for direction in seed_portfolio.directions}
+        unsuccessful = {direction.direction_id: 0 for direction in seed_portfolio.directions}
+        unfinished_statuses = {
+            JobStatus.STAGED,
+            JobStatus.PENDING,
+            JobStatus.QUEUED,
+            JobStatus.RUNNING,
+        }
+        unsuccessful_statuses = {JobStatus.FAILED, JobStatus.CANCELLED}
+        for direction_id, status in rows:
+            key = str(direction_id or "")
+            if key not in attempts:
+                continue
+            try:
+                normalized_status = (
+                    status
+                    if isinstance(status, JobStatus)
+                    else JobStatus(str(status).strip().lower())
+                )
+            except ValueError:
+                normalized_status = None
+            attempts[key] += 1
+            if normalized_status == JobStatus.SUCCEEDED:
+                successes[key] += 1
+            elif normalized_status in unfinished_statuses:
+                unfinished[key] += 1
+            elif normalized_status in unsuccessful_statuses:
+                unsuccessful[key] += 1
+        ordinal = {direction.direction_id: index for index, direction in enumerate(seed_portfolio.directions)}
+        by_id = {direction.direction_id: direction for direction in seed_portfolio.directions}
+        selected: list[SeedDirection] = []
+        selected_ids: set[str] = set()
+
+        def _select(direction_ids: Sequence[str]) -> None:
+            for direction_id in direction_ids:
+                if len(selected) >= count:
+                    return
+                if direction_id in selected_ids:
+                    continue
+                selected.append(by_id[direction_id])
+                selected_ids.add(direction_id)
+
+        # Cover the campaign-level slate before spending budget on retries or reuse.
+        _select(
+            tuple(
+                direction_id
+                for direction_id in sorted(ordinal, key=ordinal.__getitem__)
+                if attempts[direction_id] == 0
+            )
+        )
+        # A failed direction receives at most one retry, and only after its prior
+        # attempt has reached an unsuccessful terminal state.
+        _select(
+            tuple(
+                direction_id
+                for direction_id in sorted(
+                    ordinal,
+                    key=lambda key: (unsuccessful[key], ordinal[key]),
+                )
+                if successes[direction_id] == 0
+                and unfinished[direction_id] == 0
+                and 0 < unsuccessful[direction_id] < cap
+            )
+        )
+        # Successful hypotheses can support a larger warmup population. Balance by
+        # campaign-wide assignment count and never duplicate an unfinished attempt.
+        _select(
+            tuple(
+                direction_id
+                for direction_id in sorted(
+                    ordinal,
+                    key=lambda key: (attempts[key], ordinal[key]),
+                )
+                if successes[direction_id] > 0 and unfinished[direction_id] == 0
+            )
+        )
+
+        all_exhausted_without_success = bool(attempts) and all(
+            successes[direction_id] == 0
+            and unfinished[direction_id] == 0
+            and unsuccessful[direction_id] >= cap
+            for direction_id in attempts
+        )
+        safe_stop_reason = None
+        if not selected and all_exhausted_without_success:
+            safe_stop_reason = (
+                f"all {len(attempts)} portfolio directions exhausted after {cap} "
+                "unsuccessful terminal attempt(s) each; no direction succeeded, so "
+                "automatic seed scheduling will not spend further job or model budget"
+            )
+        unavailable_reason = None
+        if not selected and safe_stop_reason is None:
+            unavailable_reason = (
+                "every non-exhausted direction already has an unfinished attempt"
+                if any(unfinished.values())
+                else "no direction is eligible under the bounded retry policy"
+            )
+        return SeedDirectionAssignmentPlan(
+            assignments=tuple(selected),
+            safe_stop_reason=safe_stop_reason,
+            unavailable_reason=unavailable_reason,
+        )
 
     def _schedule_single_job(
         self,
@@ -1188,13 +1483,50 @@ class JobScheduler:
                 .with_for_update(skip_locked=True)
             )
             for job in session.execute(stmt).scalars():
+                previous_status = job.status
+                dispatch_ordinal = next_event_ordinal(
+                    session,
+                    event_type=JOB_DISPATCHED,
+                    job_id=job.id,
+                )
                 if job.status == JobStatus.PENDING:
                     job.status = JobStatus.QUEUED
                     job.scheduled_at = job.scheduled_at or now
                 elif job.status == JobStatus.QUEUED:
                     job.scheduled_at = now
-                else:
+                elif job.status == JobStatus.STAGED:
                     continue
+                # A fast worker may consume the send-first message and advance
+                # the row before this transaction locks it.  The broker send
+                # still happened, so terminal/RUNNING rows retain its event
+                # even though no QUEUED projection remains to update.
+                dispatch_kind = (
+                    "redispatch"
+                    if (
+                        previous_status == JobStatus.QUEUED
+                        or int(getattr(job, "recovery_count", 0) or 0) > 0
+                        or dispatch_ordinal > 1
+                    )
+                    else "dispatch"
+                )
+                record_evolution_event(
+                    session,
+                    event_type=JOB_DISPATCHED,
+                    job_id=job.id,
+                    island_id=getattr(job, "island_id", None),
+                    occurred_at=now,
+                    ordinal=dispatch_ordinal,
+                    payload={
+                        "dispatch_kind": dispatch_kind,
+                        "previous_status": str(
+                            getattr(previous_status, "value", previous_status)
+                        ).lower(),
+                        "recovery_count": int(
+                            getattr(job, "recovery_count", 0) or 0
+                        ),
+                    },
+                    key_parts=("dispatch",),
+                )
                 ready.append(job.id)
         return ready
 

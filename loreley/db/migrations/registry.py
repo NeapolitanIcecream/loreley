@@ -40,6 +40,8 @@ def _load_migrations() -> tuple[SchemaMigration, ...]:
         v0019_evaluation_runtime,
         v0020_supplied_candidates,
         v0021_append_only_evaluation_evidence,
+        v0022_seed_portfolios,
+        v0023_evolution_events,
     )
 
     return (
@@ -59,6 +61,8 @@ def _load_migrations() -> tuple[SchemaMigration, ...]:
         v0019_evaluation_runtime.MIGRATION,
         v0020_supplied_candidates.MIGRATION,
         v0021_append_only_evaluation_evidence.MIGRATION,
+        v0022_seed_portfolios.MIGRATION,
+        v0023_evolution_events.MIGRATION,
     )
 
 

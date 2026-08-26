@@ -16,6 +16,7 @@ from uuid import UUID
 import numpy as np
 from loguru import logger
 from rich.console import Console
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from loreley.config import Settings, get_settings, resolve_default_island_id
@@ -25,7 +26,7 @@ from loreley.core.campaign_program import (
     apply_campaign_program_projection,
 )
 from loreley.db.base import session_scope
-from loreley.db.models import EvolutionJob, JobStatus
+from loreley.db.models import CommitCard, EvolutionJob, JobStatus
 
 console = Console()
 log = logger.bind(module="map_elites.sampler")
@@ -769,6 +770,7 @@ class MapElitesSampler:
             return None
         try:
             with session_scope() as session:
+                self._inherit_seed_provenance(session=session, job=job)
                 session.add(job)
                 session.flush()
         except SQLAlchemyError as exc:
@@ -779,6 +781,30 @@ class MapElitesSampler:
             )
             return None
         return job
+
+    @staticmethod
+    def _inherit_seed_provenance(*, session: Any, job: EvolutionJob) -> None:
+        if not job.base_commit_hash or not hasattr(session, "execute"):
+            return
+        card = session.execute(
+            select(CommitCard).where(
+                CommitCard.commit_hash == job.base_commit_hash
+            )
+        ).scalar_one_or_none()
+        if card is None:
+            return
+        job.seed_portfolio_hash = getattr(card, "seed_portfolio_hash", None)
+        job.seed_direction_id = getattr(card, "seed_direction_id", None)
+        job.seed_admission_lane = getattr(card, "seed_admission_lane", None)
+        job.seed_admission_reason = getattr(card, "seed_admission_reason", None)
+        source_job_id = getattr(card, "job_id", None)
+        if source_job_id is None or not hasattr(session, "get"):
+            return
+        source_job = session.get(EvolutionJob, source_job_id)
+        if source_job is not None:
+            job.seed_direction_payload = dict(
+                getattr(source_job, "seed_direction_payload", {}) or {}
+            )
 
     @staticmethod
     def _resolve_persist_request(

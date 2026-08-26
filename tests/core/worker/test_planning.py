@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from loreley.config import Settings
+from loreley.core.map_elites.objectives import ObjectiveSpec
 from loreley.core.worker.agent import AgentInvocation
 from loreley.core.worker.planning import (
     CommitEvaluationArtifactFeedback,
@@ -83,7 +84,7 @@ def test_coerce_plan_from_invocation_extracts_summary(settings: Settings) -> Non
         "no_git_commits",
         "distinct_candidate_tree",
     )
-    assert plan.focus_metrics == ("quality", "runtime_ms")
+    assert plan.focus_metrics == ("composite_score",)
 
 
 def test_coerce_plan_from_invocation_unwraps_json_stdout(settings: Settings) -> None:
@@ -204,7 +205,13 @@ def test_planning_prompt_projects_bounded_constraints_and_acceptance_criteria(
     assert "Acceptance Criteria:\n- Primary metric: throughput (higher is better)" in prompt
 
 
-def test_planning_prompt_formats_inspirations_as_transfer_cards(settings: Settings) -> None:
+def test_planning_prompt_formats_inspirations_as_transfer_cards(
+    settings: Settings,
+) -> None:
+    settings.mapelites_objectives = (
+        ObjectiveSpec(name="quality", direction="max"),
+        ObjectiveSpec(name="runtime_ms", direction="min"),
+    )
     agent = PlanningAgent(settings=settings, backend=_DummyBackend())
     base = _make_base()
     inspiration = CommitPlanningContext(
@@ -244,7 +251,223 @@ def test_planning_prompt_formats_inspirations_as_transfer_cards(settings: Settin
     assert "No highlights available." not in prompt
 
 
-def test_planning_prompt_projects_only_agent_visible_evaluation_evidence(settings: Settings) -> None:
+def test_prompt_renders_ordered_objective_contract_and_objective_first_metrics(
+    settings: Settings,
+) -> None:
+    settings.mapelites_objectives = (
+        ObjectiveSpec(name="compression_lower_95", direction="max"),
+        ObjectiveSpec(name="decompression_lower_95", direction="max"),
+        ObjectiveSpec(name="worst_cell_speedup", direction="max"),
+    )
+    agent = PlanningAgent(settings=settings, backend=_DummyBackend())
+    request = PlanningAgentRequest(
+        base=CommitPlanningContext(
+            commit_hash="base",
+            subject="Base",
+            change_summary="baseline",
+            metrics=(
+                CommitMetric(name="peak_rss_delta_mib", value=-2.0, unit="MiB"),
+                CommitMetric(name="worst_cell_speedup", value=1.01, higher_is_better=True),
+                CommitMetric(name="throughput_geomean", value=1.02, higher_is_better=True),
+                CommitMetric(
+                    name="decompression_lower_95",
+                    value=1.03,
+                    higher_is_better=True,
+                ),
+                CommitMetric(
+                    name="compression_lower_95",
+                    value=1.04,
+                    higher_is_better=True,
+                ),
+            ),
+        ),
+        inspirations=(),
+        goal="Improve Zstandard",
+    )
+
+    prompt = agent._render_prompt(request)  # type: ignore[attr-defined]
+
+    first = prompt.index("`compression_lower_95`")
+    second = prompt.index("`decompression_lower_95`")
+    third = prompt.index("`worst_cell_speedup`")
+    assert first < second < third
+    objective_block = prompt.split("Optimization Objectives (ordered):", 1)[1].split("Worker Contract:", 1)[0]
+    assert "maximize (primary objective)" in objective_block
+    base_block = prompt.split("Base Commit Context:", 1)[1].split("Inspiration Commits:", 1)[0]
+    assert "objective_metrics:" in base_block
+    assert "additional_metrics:" in base_block
+    assert "guardrail_metrics:" not in base_block
+    assert base_block.index("`compression_lower_95`") < base_block.index("`decompression_lower_95`")
+    assert "`peak_rss_delta_mib`" in base_block
+    assert "`throughput_geomean`" not in base_block
+
+
+def test_inspiration_reason_never_ranks_raw_deltas_across_units(
+    settings: Settings,
+) -> None:
+    settings.mapelites_objectives = (ObjectiveSpec(name="compression_lower_95", direction="max"),)
+    agent = PlanningAgent(settings=settings, backend=_DummyBackend())
+    base = CommitPlanningContext(
+        commit_hash="base",
+        subject="Base",
+        change_summary="baseline",
+        metrics=(
+            CommitMetric(
+                name="compression_lower_95",
+                value=1.010,
+                higher_is_better=True,
+            ),
+            CommitMetric(
+                name="peak_rss_delta_mib",
+                value=0.0,
+                unit="MiB",
+                higher_is_better=False,
+            ),
+        ),
+    )
+    inspiration = CommitPlanningContext(
+        commit_hash="inspiration",
+        subject="Inspiration",
+        change_summary="improved candidate",
+        metrics=(
+            CommitMetric(
+                name="peak_rss_delta_mib",
+                value=-2.0,
+                unit="MiB",
+                higher_is_better=False,
+            ),
+            CommitMetric(
+                name="compression_lower_95",
+                value=1.012,
+                higher_is_better=True,
+            ),
+        ),
+    )
+    request = PlanningAgentRequest(
+        base=base,
+        inspirations=(inspiration,),
+        goal="Improve Zstandard",
+    )
+
+    prompt = agent._render_prompt(request)  # type: ignore[attr-defined]
+    why = prompt.split("why_it_matters:", 1)[1].splitlines()[0]
+
+    assert "compression_lower_95" in why
+    assert "peak_rss_delta_mib" not in why
+
+
+def test_nonobjective_inspiration_reason_uses_additional_metric_terminology(
+    settings: Settings,
+) -> None:
+    settings.mapelites_objectives = (
+        ObjectiveSpec(name="compression_lower_95", direction="max"),
+    )
+    agent = PlanningAgent(settings=settings, backend=_DummyBackend())
+    base = CommitPlanningContext(
+        commit_hash="base",
+        subject="Base",
+        change_summary="baseline",
+        metrics=(
+            CommitMetric(
+                name="compression_lower_95",
+                value=1.01,
+                higher_is_better=True,
+            ),
+            CommitMetric(
+                name="peak_rss_delta_mib",
+                value=0.0,
+                unit="MiB",
+                higher_is_better=False,
+            ),
+        ),
+    )
+    inspiration = CommitPlanningContext(
+        commit_hash="inspiration",
+        subject="Inspiration",
+        change_summary="lower memory",
+        metrics=(
+            CommitMetric(
+                name="compression_lower_95",
+                value=1.01,
+                higher_is_better=True,
+            ),
+            CommitMetric(
+                name="peak_rss_delta_mib",
+                value=-2.0,
+                unit="MiB",
+                higher_is_better=False,
+            ),
+        ),
+    )
+
+    prompt = agent._render_prompt(  # type: ignore[attr-defined]
+        PlanningAgentRequest(
+            base=base,
+            inspirations=(inspiration,),
+            goal="Improve Zstandard",
+        )
+    )
+    reason = prompt.split("why_it_matters:", 1)[1].splitlines()[0].strip()
+
+    assert reason.startswith("Additional metric evidence:")
+    assert "guardrail" not in reason
+
+
+def test_seed_direction_briefs_make_prompts_distinct_with_same_objective_contract(
+    settings: Settings,
+) -> None:
+    settings.mapelites_objectives = (ObjectiveSpec(name="quality", direction="max"),)
+    agent = PlanningAgent(settings=settings, backend=_DummyBackend())
+    common = {
+        "base": _make_base(),
+        "inspirations": (),
+        "goal": "Improve the implementation",
+    }
+    first = PlanningAgentRequest(
+        **common,
+        iteration_context=IterationContext(
+            seed_job=True,
+            seed_portfolio_hash="a" * 64,
+            seed_direction_id="cache-layout",
+            seed_direction={
+                "title": "Cache layout",
+                "bottleneck": "Repeated decoding work dominates the hot path.",
+                "causal_mechanism": "Reuse decoded state through a compact cache.",
+                "first_implementation": "Add the smallest bounded cache representation.",
+                "roadmap": ["Measure reuse.", "Specialize stable entries."],
+            },
+        ),
+    )
+    second = PlanningAgentRequest(
+        **common,
+        iteration_context=IterationContext(
+            seed_job=True,
+            seed_portfolio_hash="a" * 64,
+            seed_direction_id="branch-shaping",
+            seed_direction={
+                "title": "Branch shaping",
+                "bottleneck": "Unpredictable branching dominates the hot path.",
+                "causal_mechanism": "Separate common cases to improve control flow.",
+                "first_implementation": "Split one common case into a focused path.",
+                "roadmap": ["Measure branch behavior.", "Extend specialization."],
+            },
+        ),
+    )
+
+    first_prompt = agent._render_prompt(first)  # type: ignore[attr-defined]
+    second_prompt = agent._render_prompt(second)  # type: ignore[attr-defined]
+
+    assert first_prompt != second_prompt
+    assert "direction_id: cache-layout" in first_prompt
+    assert "direction_id: branch-shaping" in second_prompt
+    objective_block = "1. `quality`: maximize (primary objective)"
+    assert objective_block in first_prompt
+    assert objective_block in second_prompt
+
+
+def test_planning_prompt_projects_only_agent_visible_evaluation_evidence(
+    settings: Settings,
+) -> None:
     agent = PlanningAgent(settings=settings, backend=_DummyBackend())
     base = CommitPlanningContext(
         commit_hash="base",

@@ -306,6 +306,65 @@ def test_mark_jobs_queued_refreshes_stale_queued_redispatch_timestamp_pr24(
     assert job_row.scheduled_at == db_now
 
 
+def test_mark_jobs_queued_keeps_dispatch_evidence_when_worker_wins_race(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    """Send-first dispatch remains observable after a fast worker starts."""
+
+    sender = DummySenderActor()
+    monkeypatch.setattr(
+        job_scheduler,
+        "build_evolution_job_sender_actor",
+        lambda **_kwargs: sender,
+    )
+    scheduler = cast(Any, JobScheduler)(
+        settings=settings,
+        console=Console(record=True),
+        sampler=cast(MapElitesSampler, object()),
+    )
+    db_now = datetime(2026, 8, 25, 8, 30, tzinfo=timezone.utc)
+    scheduled_at = db_now - timedelta(seconds=1)
+    job_row = SimpleNamespace(
+        id=uuid.uuid4(),
+        status=JobStatus.RUNNING,
+        scheduled_at=scheduled_at,
+        recovery_count=0,
+        island_id="main",
+    )
+
+    class DummyExecuteResult:
+        def scalars(self) -> list[object]:
+            return [job_row]
+
+    class DummySession:
+        def execute(self, _stmt: Any) -> DummyExecuteResult:
+            return DummyExecuteResult()
+
+    @contextmanager
+    def fake_scope() -> Any:
+        yield DummySession()
+
+    recorded: list[dict[str, Any]] = []
+    monkeypatch.setattr(job_scheduler, "session_scope", fake_scope)
+    monkeypatch.setattr(job_scheduler, "_db_utc_now", lambda _session: db_now)
+    monkeypatch.setattr(job_scheduler, "next_event_ordinal", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(
+        job_scheduler,
+        "record_evolution_event",
+        lambda _session, **kwargs: recorded.append(kwargs),
+    )
+
+    marked = scheduler._mark_jobs_queued([job_row.id])
+
+    assert marked == [job_row.id]
+    assert job_row.status is JobStatus.RUNNING
+    assert job_row.scheduled_at == scheduled_at
+    assert recorded[0]["event_type"] == "job.dispatched"
+    assert recorded[0]["payload"]["dispatch_kind"] == "dispatch"
+    assert recorded[0]["payload"]["previous_status"] == "running"
+
+
 def test_schedule_jobs_reuses_single_sampling_snapshot_and_avoids_duplicate_bases(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,

@@ -216,6 +216,7 @@ class CommitCard(TimestampMixin, Base):
         Index("ix_commit_cards_island_id", "island_id"),
         Index("ix_commit_cards_parent_hash", "parent_commit_hash"),
         Index("ix_commit_cards_created_at", "created_at"),
+        Index("ix_commit_cards_seed_direction", "seed_portfolio_hash", "seed_direction_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -235,6 +236,10 @@ class CommitCard(TimestampMixin, Base):
         nullable=True,
         index=True,
     )
+    seed_portfolio_hash: Mapped[str | None] = mapped_column(String(64))
+    seed_direction_id: Mapped[str | None] = mapped_column(String(64))
+    seed_admission_lane: Mapped[str | None] = mapped_column(String(64))
+    seed_admission_reason: Mapped[str | None] = mapped_column(Text)
 
     author: Mapped[str | None] = mapped_column(String(128))
     subject: Mapped[str] = mapped_column(String(72), nullable=False)
@@ -418,6 +423,106 @@ class CampaignBaseline(TimestampMixin, Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class SeedPortfolio(TimestampMixin, Base):
+    """Content-addressed campaign-level seed portfolio artifact."""
+
+    __tablename__ = "seed_portfolios"
+    __table_args__ = (
+        UniqueConstraint(
+            "request_fingerprint",
+            name="uq_seed_portfolios_request_fingerprint",
+        ),
+        UniqueConstraint("portfolio_hash", name="uq_seed_portfolios_portfolio_hash"),
+        Index("ix_seed_portfolios_status", "status"),
+        Index("ix_seed_portfolios_root_commit", "root_commit_hash"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    portfolio_hash: Mapped[str | None] = mapped_column(String(64))
+    schema_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    root_commit_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    campaign_program_hash: Mapped[str | None] = mapped_column(String(64))
+    baseline_key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    objective_contract_fingerprint: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+    )
+    input_evidence_fingerprints: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JSONB),
+        default=dict,
+        nullable=False,
+    )
+    model_backend: Mapped[str] = mapped_column(String(128), nullable=False)
+    model_provider: Mapped[str] = mapped_column(String(128), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    reasoning_effort: Mapped[str] = mapped_column(String(32), nullable=False)
+    direction_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JSONB),
+        default=dict,
+        nullable=False,
+    )
+    planner_prompt_sha256: Mapped[str | None] = mapped_column(String(64))
+    planner_output_sha256: Mapped[str | None] = mapped_column(String(64))
+    planner_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    planner_duration_seconds: Mapped[float | None] = mapped_column(Float)
+    error_summary: Mapped[str | None] = mapped_column(Text)
+    planning_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class SeedDirection(TimestampMixin, Base):
+    """One selected, implementation-ready direction within a seed portfolio."""
+
+    __tablename__ = "seed_directions"
+    __table_args__ = (
+        UniqueConstraint(
+            "portfolio_id",
+            "direction_id",
+            name="uq_seed_directions_portfolio_direction",
+        ),
+        UniqueConstraint(
+            "portfolio_id",
+            "ordinal",
+            name="uq_seed_directions_portfolio_ordinal",
+        ),
+        UniqueConstraint(
+            "portfolio_id",
+            "content_hash",
+            name="uq_seed_directions_portfolio_content",
+        ),
+        Index("ix_seed_directions_portfolio", "portfolio_id", "ordinal"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    portfolio_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("seed_portfolios.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    direction_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    causal_mechanism: Mapped[str] = mapped_column(Text, nullable=False)
+    admission_intent: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JSONB),
+        default=dict,
+        nullable=False,
+    )
+
+
 class CandidateCommit(TimestampMixin, Base):
     """Durable ledger row for a worker-produced candidate commit."""
 
@@ -437,6 +542,11 @@ class CandidateCommit(TimestampMixin, Base):
         Index("ix_candidate_commits_nearest_viable_ancestor", "nearest_viable_ancestor_hash"),
         Index("ix_candidate_commits_campaign_program_hash", "campaign_program_hash"),
         Index("ix_candidate_commits_evaluation_identity_key", "evaluation_identity_key"),
+        Index(
+            "ix_candidate_commits_seed_direction",
+            "seed_portfolio_hash",
+            "seed_direction_id",
+        ),
         Index(
             "ix_candidate_commits_source_tree_contract",
             "source_tree_hash",
@@ -469,6 +579,10 @@ class CandidateCommit(TimestampMixin, Base):
     )
     repair_mode: Mapped[str | None] = mapped_column(String(32))
     campaign_program_hash: Mapped[str | None] = mapped_column(String(64))
+    seed_portfolio_hash: Mapped[str | None] = mapped_column(String(64))
+    seed_direction_id: Mapped[str | None] = mapped_column(String(64))
+    seed_admission_lane: Mapped[str | None] = mapped_column(String(64))
+    seed_admission_reason: Mapped[str | None] = mapped_column(Text)
 
     candidate_branch_name: Mapped[str | None] = mapped_column(String(255))
     candidate_published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -607,6 +721,11 @@ class EvaluationAttempt(TimestampMixin, Base):
         Index("ix_evaluation_attempts_identity_key", "evaluation_identity_key"),
         Index("ix_evaluation_attempts_measurement_id", "measurement_id"),
         Index("ix_evaluation_attempts_reused_from", "reused_from_attempt_id"),
+        Index(
+            "ix_evaluation_attempts_seed_direction",
+            "seed_portfolio_hash",
+            "seed_direction_id",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -634,6 +753,8 @@ class EvaluationAttempt(TimestampMixin, Base):
     evaluator_name: Mapped[str | None] = mapped_column(String(128))
     evaluator_version: Mapped[str | None] = mapped_column(String(128))
     campaign_program_hash: Mapped[str | None] = mapped_column(String(64))
+    seed_portfolio_hash: Mapped[str | None] = mapped_column(String(64))
+    seed_direction_id: Mapped[str | None] = mapped_column(String(64))
     candidate_identity: Mapped[str | None] = mapped_column(String(512))
     evaluation_identity_key: Mapped[str | None] = mapped_column(String(64))
     protocol: Mapped[str] = mapped_column(String(32), default="one_shot", nullable=False)
@@ -823,6 +944,11 @@ class EvolutionJob(TimestampMixin, Base):
         Index("ix_evolution_jobs_repair_source_status", "repair_source_candidate_id", "status"),
         Index("ix_evolution_jobs_campaign_program_hash", "campaign_program_hash"),
         Index(
+            "ix_evolution_jobs_seed_direction",
+            "seed_portfolio_hash",
+            "seed_direction_id",
+        ),
+        Index(
             "ix_evolution_jobs_island_recipe_created",
             "island_id",
             "sampling_recipe_hash",
@@ -918,6 +1044,15 @@ class EvolutionJob(TimestampMixin, Base):
     sampling_recipe_hash: Mapped[str | None] = mapped_column(String(64))
     sampling_recipe_reused: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_seed_job: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    seed_portfolio_hash: Mapped[str | None] = mapped_column(String(64))
+    seed_direction_id: Mapped[str | None] = mapped_column(String(64))
+    seed_direction_payload: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JSONB),
+        default=dict,
+        nullable=False,
+    )
+    seed_admission_lane: Mapped[str | None] = mapped_column(String(64))
+    seed_admission_reason: Mapped[str | None] = mapped_column(Text)
     job_kind: Mapped[str] = mapped_column(String(32), default="evolution", nullable=False)
     execution_mode: Mapped[str] = mapped_column(String(32), default="agent", nullable=False)
     input_candidate_commit_hash: Mapped[str | None] = mapped_column(String(64))
@@ -971,6 +1106,73 @@ class EvolutionJob(TimestampMixin, Base):
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return f"<EvolutionJob id={self.id} status={self.status}>"
+
+
+class EvolutionEvent(Base):
+    """Append-only lifecycle and archive fact owned by Loreley."""
+
+    __tablename__ = "evolution_events"
+    __table_args__ = (
+        UniqueConstraint("event_key", name="uq_evolution_events_event_key"),
+        Index(
+            "ix_evolution_events_order",
+            "occurred_at",
+            "id",
+        ),
+        Index(
+            "ix_evolution_events_job_timeline",
+            "job_id",
+            "occurred_at",
+            "id",
+        ),
+        Index(
+            "ix_evolution_events_type_timeline",
+            "event_type",
+            "occurred_at",
+            "id",
+        ),
+        CheckConstraint(
+            "ordinal IS NULL OR ordinal > 0",
+            name="ck_evolution_events_positive_ordinal",
+        ),
+        CheckConstraint(
+            "duration_seconds IS NULL OR duration_seconds >= 0",
+            name="ck_evolution_events_nonnegative_duration",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    event_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("evolution_jobs.id", ondelete="SET NULL"),
+    )
+    run_token: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    island_id: Mapped[str | None] = mapped_column(String(64))
+    commit_hash: Mapped[str | None] = mapped_column(String(64))
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    ordinal: Mapped[int | None] = mapped_column(Integer)
+    duration_seconds: Mapped[float | None] = mapped_column(Float)
+    payload: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JSONB),
+        default=dict,
+        nullable=False,
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return (
+            f"<EvolutionEvent id={self.id!r} type={self.event_type!r} "
+            f"job_id={self.job_id!r}>"
+        )
 
 
 class JobArtifacts(TimestampMixin, Base):

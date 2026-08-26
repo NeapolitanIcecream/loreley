@@ -34,6 +34,12 @@ ORM models and enums for single-tenant experiment databases.
   - Unique constraint on `baseline_key_hash`, which covers the root commit, campaign program hash, evaluator identity, primary metric contract, runtime profile, and effective settings fingerprint.
   - Stores the root commit hash, optional `campaign_program_hash`, evaluator name/version, primary metric name and direction, runtime profile, settings fingerprint, baseline status (`valid`, `failed`, or `degraded`), metric value/unit when valid, and failure details when invalid.
   - Optionally links to the root `CommitCard` and `Metric` rows used for compatibility projections, but archive/status baseline reads should key off `campaign_baselines`.
+- **`SeedPortfolio`** (`seed_portfolios` table): staged and then content-addressed campaign-level seed-planning artifact.
+  - A unique request fingerprint covers the pinned model route/reasoning setting, root commit, campaign program, ordered objective contract, root evidence fingerprints, configured and effective bounded direction counts, and overlap policy.
+  - Stores planner hashes/timing, status, complete selected/rejected portfolio payload, and a unique final portfolio hash. Persisted `planning` or `failed` rows block automatic replay so scheduler restarts cannot silently issue a duplicate model call.
+- **`SeedDirection`** (`seed_directions` table): one implementation-ready selected brief.
+  - Unique portfolio-local direction ID, ordinal, and content hash preserve the causal mechanism, first implementation, signals, neutral-result interpretation, roadmap, risks, local checks, admission intent, and selection rationale.
+  - Automatic scheduling derives campaign-global attempt state from direction-linked jobs: no concurrent duplicate, at most two unsuccessful terminal attempts, and deterministic balanced reuse after a direction succeeds.
 - **`CandidateCommit`** (`candidate_commits` table): durable ledger row for a worker-produced candidate commit.
   - Primary key: `id` (UUID).
   - Stores the candidate commit hash, exact source-tree hash, parent hash, nearest viable ancestor, produced job, run token, job kind, repair lineage, campaign program hash, publication state, evaluation state, archive state, lifecycle state, repair-pool counters, and optional evaluator-scoped candidate identity.
@@ -82,6 +88,17 @@ ORM models and enums for single-tenant experiment databases.
     idempotency key, sanitized provenance, and archive-ingestion policy for
     first-class manual seeds.
   - Stores result/ingestion indexing fields (`result_commit_hash`, ingestion status/attempts/delta/cell index) without embedding large JSON payloads.
+  - Stores seed portfolio hash, stable direction ID and brief snapshot, plus the measured seed admission lane/reason. Descendant jobs inherit this origin provenance from their base commit.
+- **`EvolutionEvent`** (`evolution_events` table): append-only history for
+  scheduler, worker, ingestion, and archive facts that mutable current-state
+  rows cannot retain.
+  - A unique deterministic `event_key` makes duplicate delivery harmless.
+  - Stores a bounded string `event_type`, optional job/run/island/commit
+    identity, an aware occurrence timestamp, optional invocation ordinal and
+    monotonic duration, and a small allowlisted JSON payload.
+  - Indexes `(occurred_at, id)`, the per-job timeline, and event type over time.
+    Payloads never contain prompts, model output, credentials, evaluator logs,
+    or cold-path artifacts.
 - **`JobArtifacts`** (`job_artifacts` table): filesystem references for cold-path artifacts produced by the worker.
   - Stores paths to planning/coding/evaluation prompts, raw outputs, and logs.
 - **`EvaluationArtifactRecord`** (`evaluation_artifacts` table): evaluator-declared diagnostic artifact metadata materialized by a job.
@@ -100,10 +117,13 @@ ORM models and enums for single-tenant experiment databases.
   - Archive cells and PCA history are stored incrementally in separate tables and reconstructed on load by
     `loreley.core.map_elites.snapshot.DatabaseSnapshotStore`.
   - The `snapshot` JSON must not embed `archive` or `history`. If your local database contains unsupported payloads, reset it: `uv run loreley reset-db --yes`.
-- **`MapElitesArchiveCell`** (`map_elites_archive_cells` table): one row per occupied MAP-Elites archive cell.
-  - Primary key: `(island_id, cell_index)`.
-  - Stores the cell's `commit_hash`, `objective`, behaviour `measures`, stored `solution` vector, and `timestamp`.
-  - Enables cheap per-cell upserts when a commit improves a specific cell.
+- **`MapElitesArchiveCell`** (`map_elites_archive_cells` table): one row per
+  retained member of a bounded per-cell Pareto front.
+  - Primary key: `(island_id, cell_index, commit_hash)` with island-local commit
+    uniqueness.
+  - Stores ordered objective values, behaviour measures, and the archive
+    timestamp. Atomic front/archive replacement also emits membership deltas to
+    `evolution_events`.
 - **`MapElitesPcaHistory`** (`map_elites_pca_history` table): incremental PCA history entries used to restore dimensionality reduction state.
   - Primary key: `(island_id, commit_hash)`.
   - Stores the commit embedding `vector` plus the `embedding_model` name and a `last_seen_at` marker used

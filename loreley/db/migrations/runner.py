@@ -46,6 +46,8 @@ _LORELEY_TABLES = (
     "evaluation_measurements",
     "evaluation_concurrency_contracts",
     "evaluation_resource_leases",
+    "seed_portfolios",
+    "seed_directions",
 )
 _CURRENT_SCHEMA_TABLES = (*_LORELEY_TABLES, _AUDIT_TABLE)
 _CURRENT_SCHEMA_INDEXES = (
@@ -80,6 +82,13 @@ _CURRENT_SCHEMA_INDEXES = (
     "ix_llm_usage_events_phase_created",
     "ix_llm_usage_events_model_created",
     "uq_llm_usage_events_external_usage_id",
+    "ix_seed_portfolios_status",
+    "ix_seed_portfolios_root_commit",
+    "ix_seed_directions_portfolio",
+    "ix_evolution_jobs_seed_direction",
+    "ix_commit_cards_seed_direction",
+    "ix_candidate_commits_seed_direction",
+    "ix_evaluation_attempts_seed_direction",
 )
 _CURRENT_SCHEMA_CONSTRAINTS = (
     ("evolution_jobs", "ck_evolution_jobs_execution_input"),
@@ -89,6 +98,11 @@ _CURRENT_SCHEMA_CONSTRAINTS = (
     ("embedding_cache_manifests", "uq_embedding_cache_manifests_cache_kind"),
     ("map_elites_archive_cells", "uq_map_elites_archive_island_commit"),
     ("evaluation_measurements", "uq_evaluation_measurements_cache_key"),
+    ("seed_portfolios", "uq_seed_portfolios_request_fingerprint"),
+    ("seed_portfolios", "uq_seed_portfolios_portfolio_hash"),
+    ("seed_directions", "uq_seed_directions_portfolio_direction"),
+    ("seed_directions", "uq_seed_directions_portfolio_ordinal"),
+    ("seed_directions", "uq_seed_directions_portfolio_content"),
 )
 
 log = logger.bind(module="db.migrations")

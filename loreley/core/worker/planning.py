@@ -11,7 +11,7 @@ from uuid import UUID
 from loguru import logger
 from rich.console import Console
 
-from loreley.config import Settings, get_settings
+from loreley.config import Settings, get_settings, resolve_objective_contract
 from loreley.core.contracts import clamp_text, normalize_single_line
 from loreley.core.usage import LLMUsageEventPayload
 from loreley.core.worker.agent import (
@@ -161,11 +161,17 @@ class IterationContext:
     sampling_strategy: str | None = None
     facts: Sequence[str] = field(default_factory=tuple)
     repair_context: str | None = None
+    seed_portfolio_hash: str | None = None
+    seed_direction_id: str | None = None
+    seed_direction: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         self.sampling_strategy = (self.sampling_strategy or "").strip() or None
         self.facts = tuple(str(item).strip() for item in (self.facts or ()) if str(item).strip())
         self.repair_context = (self.repair_context or "").strip() or None
+        self.seed_portfolio_hash = str(self.seed_portfolio_hash or "").strip() or None
+        self.seed_direction_id = str(self.seed_direction_id or "").strip() or None
+        self.seed_direction = dict(self.seed_direction or {}) or None
 
 
 @dataclass(slots=True)
@@ -587,6 +593,8 @@ class _PromptPacketBlocks:
     goal: str
     constraints: str
     acceptance_criteria: str
+    optimization_objectives: str
+    seed_direction: str
     iteration_context: str
     base_commit: str
     inspirations: str
@@ -615,6 +623,8 @@ class _PromptPacketRenderer(TruncationMixin):
             goal=_prompt_goal(request.goal),
             constraints=self._format_bullets(request.constraints),
             acceptance_criteria=self._format_bullets(request.acceptance_criteria),
+            optimization_objectives=self._format_optimization_objectives(),
+            seed_direction=self._format_seed_direction(request.iteration_context),
             iteration_context=self._format_iteration_context(request.iteration_context),
             base_commit=self._format_base_commit_block(request.base),
             inspirations=self._format_inspiration_blocks(
@@ -635,6 +645,12 @@ Constraints:
 
 Acceptance Criteria:
 {blocks.acceptance_criteria}
+
+Optimization Objectives (ordered):
+{blocks.optimization_objectives}
+
+Assigned Seed Direction:
+{blocks.seed_direction or "None"}
 
 Worker Contract:
 {self._format_worker_contract()}
@@ -662,6 +678,55 @@ Inspiration Commits:
 
     def _format_worker_contract(self) -> str:
         return "\n".join(f"- {line}" for line in WORKER_CONTRACT_LINES)
+
+    def _format_optimization_objectives(self) -> str:
+        contract = resolve_objective_contract(self._settings)
+        lines: list[str] = []
+        for index, objective in enumerate(contract.specs, start=1):
+            role = "primary" if index == 1 else "secondary"
+            direction = "maximize" if objective.higher_is_better else "minimize"
+            lines.append(f"{index}. `{objective.name}`: {direction} ({role} objective)")
+        return "\n".join(lines)
+
+    def _format_seed_direction(self, context: IterationContext | None) -> str:
+        if context is None or not context.seed_direction_id:
+            return ""
+        payload = dict(context.seed_direction or {})
+        lines = [
+            f"- portfolio_hash: {context.seed_portfolio_hash or 'unknown'}",
+            f"- direction_id: {context.seed_direction_id}",
+        ]
+        scalar_fields = (
+            ("title", "title"),
+            ("admission_intent", "admission_intent"),
+            ("bottleneck", "bottleneck"),
+            ("causal_mechanism", "causal_mechanism"),
+            ("first_implementation", "smallest_first_implementation"),
+            ("selection_reason", "selection_reason"),
+        )
+        for key, label in scalar_fields:
+            value = normalize_single_line(str(payload.get(key) or ""))
+            if value:
+                lines.append(f"- {label}: {self._truncate(value, limit=1200)}")
+        list_fields = (
+            ("likely_files", "likely_files_or_subsystems"),
+            ("expected_immediate_signals", "expected_immediate_signals"),
+            ("acceptable_neutral_results", "acceptable_neutral_results"),
+            ("roadmap", "longer_term_roadmap"),
+            ("risks", "correctness_and_regression_risks"),
+            ("local_checks", "local_checks"),
+        )
+        for key, label in list_fields:
+            values = tuple(payload.get(key) or ())
+            if not values:
+                continue
+            lines.append(f"- {label}:")
+            lines.extend(
+                f"  - {self._truncate(normalize_single_line(str(value)), limit=400)}"
+                for value in values
+                if normalize_single_line(str(value))
+            )
+        return "\n".join(lines)
 
     def _format_bullets(self, values: Sequence[str]) -> str:
         lines = [
@@ -692,13 +757,8 @@ Inspiration Commits:
             f"- change_summary: {self._truncate(context.change_summary, limit=512)}",
         ]
         if context.evaluation_summary:
-            lines.append(
-                f"- evaluation_summary: {self._truncate(context.evaluation_summary, limit=512)}"
-            )
-        metrics_block = self._format_metrics_block(context.metrics)
-        if metrics_block:
-            lines.append("- selected_metrics:")
-            lines.extend(metrics_block)
+            lines.append(f"- evaluation_summary: {self._truncate(context.evaluation_summary, limit=512)}")
+        lines.extend(self._format_metrics_blocks(context.metrics))
         evidence_block = self._format_evaluation_evidence_block(context.evaluation_artifacts)
         if evidence_block:
             lines.append(evidence_block)
@@ -725,13 +785,8 @@ Inspiration Commits:
             lines.append("- distinctive_changes_vs_base:")
             lines.extend(f"  - {self._truncate(change, limit=240)}" for change in distinctive_changes)
         if context.evaluation_summary:
-            lines.append(
-                f"- evaluation_summary: {self._truncate(context.evaluation_summary, limit=512)}"
-            )
-        metrics_block = self._format_metrics_block(context.metrics)
-        if metrics_block:
-            lines.append("- selected_metrics:")
-            lines.extend(metrics_block)
+            lines.append(f"- evaluation_summary: {self._truncate(context.evaluation_summary, limit=512)}")
+        lines.extend(self._format_metrics_blocks(context.metrics))
         evidence_block = self._format_evaluation_evidence_block(context.evaluation_artifacts)
         if evidence_block:
             lines.append(evidence_block)
@@ -741,10 +796,36 @@ Inspiration Commits:
             lines.extend(key_files_block)
         return "\n".join(lines)
 
-    def _format_metrics_block(self, metrics: Sequence[CommitMetric]) -> list[str]:
-        sliced = tuple(metrics)[: self._max_metrics]
+    def _format_metrics_blocks(self, metrics: Sequence[CommitMetric]) -> list[str]:
+        objective_metrics, additional_metrics = self._ordered_metrics(metrics)
         lines: list[str] = []
-        for metric in sliced:
+        if objective_metrics:
+            lines.append("- objective_metrics:")
+            lines.extend(self._format_metrics_block(objective_metrics))
+        if additional_metrics:
+            lines.append("- additional_metrics:")
+            lines.extend(self._format_metrics_block(additional_metrics))
+        return lines
+
+    def _ordered_metrics(
+        self,
+        metrics: Sequence[CommitMetric],
+    ) -> tuple[tuple[CommitMetric, ...], tuple[CommitMetric, ...]]:
+        contract = resolve_objective_contract(self._settings)
+        by_name = {metric.name: metric for metric in metrics if str(metric.name or "").strip()}
+        objective_metrics = tuple(by_name[name] for name in contract.names if name in by_name)
+        additional_budget = max(0, self._max_metrics - len(objective_metrics))
+        additional_metrics = tuple(
+            sorted(
+                (metric for name, metric in by_name.items() if name not in contract.names),
+                key=lambda metric: metric.name,
+            )
+        )[:additional_budget]
+        return objective_metrics, additional_metrics
+
+    def _format_metrics_block(self, metrics: Sequence[CommitMetric]) -> list[str]:
+        lines: list[str] = []
+        for metric in metrics:
             detail = f"{metric.value:g}"
             if metric.unit:
                 detail = f"{detail}{metric.unit}"
@@ -795,33 +876,57 @@ Inspiration Commits:
             for metric in base.metrics
             if metric.name and metric.higher_is_better is not None
         }
-        improvements: list[tuple[float, str]] = []
-        for metric in inspiration.metrics:
+        inspiration_by_name = {metric.name: metric for metric in inspiration.metrics if metric.name}
+        contract = resolve_objective_contract(self._settings)
+        objective_improvements: list[str] = []
+        for objective in contract.specs:
+            metric = inspiration_by_name.get(objective.name)
+            if metric is None:
+                continue
             base_metric = base_by_name.get(metric.name)
             if (
                 base_metric is None
                 or metric.higher_is_better is None
-                or base_metric.higher_is_better != metric.higher_is_better
+                or metric.higher_is_better != objective.higher_is_better
+                or base_metric.higher_is_better != objective.higher_is_better
             ):
                 continue
             delta = float(metric.value) - float(base_metric.value)
-            better = delta > 0 if metric.higher_is_better else delta < 0
+            better = delta > 0 if objective.higher_is_better else delta < 0
             if not better:
                 continue
-            magnitude = abs(delta)
-            improvements.append(
-                (
-                    magnitude,
-                    f"`{metric.name}` ({base_metric.value:g} -> {metric.value:g})",
-                )
+            objective_improvements.append(f"`{metric.name}` ({base_metric.value:g} -> {metric.value:g})")
+        if objective_improvements:
+            return self._format_improvement_reason(
+                objective_improvements[:2],
+                prefix="Improves",
             )
-        if not improvements:
+
+        additional_improvements: list[str] = []
+        for name in sorted(set(base_by_name) & set(inspiration_by_name)):
+            if name in contract.names:
+                continue
+            metric = inspiration_by_name[name]
+            base_metric = base_by_name[name]
+            if metric.higher_is_better is None or base_metric.higher_is_better != metric.higher_is_better:
+                continue
+            delta = float(metric.value) - float(base_metric.value)
+            better = delta > 0 if metric.higher_is_better else delta < 0
+            if better:
+                additional_improvements.append(f"`{metric.name}` ({base_metric.value:g} -> {metric.value:g})")
+        if not additional_improvements:
             return None
-        improvements.sort(key=lambda item: item[0], reverse=True)
-        top = [text for _, text in improvements[:2]]
+        return self._format_improvement_reason(
+            additional_improvements[:2],
+            prefix="Additional metric evidence:",
+        )
+
+    @staticmethod
+    def _format_improvement_reason(values: Sequence[str], *, prefix: str) -> str:
+        top = list(values)
         if len(top) == 1:
-            return f"Improves {top[0]} versus base."
-        return f"Improves {top[0]} and {top[1]} versus base."
+            return f"{prefix} {top[0]} versus base."
+        return f"{prefix} {top[0]} and {top[1]} versus base."
 
     def _extract_distinctive_changes(self, trajectory: Sequence[str]) -> tuple[str, ...]:
         buckets: dict[str, list[str]] = {
@@ -1059,7 +1164,7 @@ Return:
         summary = self._extract_summary(markdown) or (request.goal or "").strip() or "N/A"
         summary = self._truncate(summary, limit=512)
 
-        focus_metrics = tuple(metric.name for metric in request.base.metrics)[:4]
+        focus_metrics = resolve_objective_contract(self.settings).names
         guardrails = WORKER_CONTRACT_GUARDRAILS
 
         if not markdown:

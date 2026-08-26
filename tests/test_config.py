@@ -74,6 +74,19 @@ def test_migration_interval_accepts_zero_as_disabled() -> None:
         TestSettings(MAPELITES_MIGRATION_INTERVAL_JOBS=-1)
 
 
+def test_seed_portfolio_is_opt_in_and_direction_policy_is_hard_bounded() -> None:
+    settings = TestSettings()
+
+    assert settings.mapelites_seed_portfolio_enabled is False
+    assert settings.mapelites_seed_portfolio_direction_count == 8
+    assert settings.mapelites_seed_direction_max_unsuccessful_attempts == 2
+
+    with pytest.raises(ValidationError):
+        TestSettings(MAPELITES_SEED_PORTFOLIO_DIRECTION_COUNT=17)
+    with pytest.raises(ValidationError):
+        TestSettings(MAPELITES_SEED_DIRECTION_MAX_UNSUCCESSFUL_ATTEMPTS=3)
+
+
 def test_randomized_worker_repositories_include_the_process_id(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,

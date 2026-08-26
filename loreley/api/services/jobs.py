@@ -111,6 +111,8 @@ def get_latest_evaluation_attempt_payload(*, job_id: UUID) -> dict[str, object] 
             "evaluator_name": attempt.evaluator_name,
             "evaluator_version": attempt.evaluator_version,
             "campaign_program_hash": attempt.campaign_program_hash,
+            "seed_portfolio_hash": attempt.seed_portfolio_hash,
+            "seed_direction_id": attempt.seed_direction_id,
             "candidate_identity": attempt.candidate_identity,
             "evaluation_identity_key": attempt.evaluation_identity_key,
             "measurement_cache_key": attempt.measurement_cache_key,
@@ -553,6 +555,7 @@ def retry_job_by_id(
             job=job,
             reason=str(reason or "").strip() or "manual retry requested via UI API",
             now=now,
+            session=session,
         )
 
 

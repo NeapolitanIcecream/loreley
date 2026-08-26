@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 import hashlib
 import json
+import uuid
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
-import uuid
 
 from loguru import logger
 from sqlalchemy import create_engine, func, select, text
@@ -612,10 +612,10 @@ def _insert_cache_rows(session: Session, values: Sequence[Mapping[str, object]])
     if not payload:
         return 0
     stmt = pg_insert(MapElitesFileEmbeddingCache).values(payload)
-    stmt = stmt.on_conflict_do_nothing(index_elements=["blob_sha"])
-    result = session.execute(stmt)
-    rowcount = int(getattr(result, "rowcount", 0) or 0)
-    return max(rowcount, 0)
+    stmt = stmt.on_conflict_do_nothing(index_elements=["blob_sha"]).returning(
+        MapElitesFileEmbeddingCache.blob_sha
+    )
+    return len(session.execute(stmt).scalars().all())
 
 
 def _expected_stored_model(payload: Mapping[str, Any]) -> str:

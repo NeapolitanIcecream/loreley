@@ -18,6 +18,8 @@ Large, audit/debug oriented payloads (prompts, raw outputs, logs) are written to
 - **`EvolutionJobStore`**: database-facing adapter that encapsulates the lifecycle of an evolution job.
   - Constructed with `Settings` to attach worker/application metadata when persisting results.
   - Uses `session_scope()` and the ORM models from `loreley.db.models` (`EvolutionJob`, `CommitCard`, `JobArtifacts`, `EvaluationArtifactRecord`, `Metric`, `CandidateCommit`, `EvaluationAttempt`, `DiagnosticCapsule`, `JobStatus`) to modify rows transactionally.
+  - Writes run starts and terminal outcomes to `EvolutionEvent` in the same
+    transaction as the corresponding mutable job-state projection.
 
 ### Job lifecycle methods
 
@@ -25,6 +27,8 @@ Large, audit/debug oriented payloads (prompts, raw outputs, logs) are written to
   - Acquires a row-level lock on the `EvolutionJob` using `SELECT ... FOR UPDATE NOWAIT`.
   - Validates that the job exists, that `base_commit_hash` is present, and that the current `status` is in `{PENDING, QUEUED}`.
   - Marks the job as `RUNNING`, records `started_at`, initial `heartbeat_at`, `lease_expires_at`, generates a fresh `run_token`, records a bounded `worker_id`, clears any `last_error`, resets stale candidate metadata from prior attempts, and returns a `LockedJob` snapshot.
+  - Inserts an idempotent `job.run.started` event with that run token before the
+    transaction commits.
   - Raises `EvolutionWorkerError` when `base_commit_hash` is missing, and wraps SQL errors into `JobLockConflict` when they indicate a lock-not-available condition, or `EvolutionWorkerError` otherwise.
 
 - **`record_candidate_commit(CandidateCommitRecord(...))`**:
@@ -52,6 +56,12 @@ Large, audit/debug oriented payloads (prompts, raw outputs, logs) are written to
     capacity wait/slot telemetry. Each attempt also receives a stable per-job
     ordinal, run token, and its own fixed-artifact links.
 
+- **`start_stage(...)` / `finish_stage(...)`**:
+  - Commit stage starts in their own transaction before external work begins.
+  - Close planning, coding, and ingestion stages with monotonic duration and an
+    allowlisted outcome. Evaluation closes through `EvaluationAttempt` instead
+    of duplicating its authoritative outcome.
+
 - **`renew_job_lease(job_id, run_token)`**:
   - Extends `heartbeat_at` and `lease_expires_at` for the active `RUNNING` row owned by `run_token`.
   - Raises `JobLeaseLost` when the row is no longer `RUNNING` or the `run_token` no longer matches, which fences stale workers after scheduler reclaim.
@@ -59,6 +69,8 @@ Large, audit/debug oriented payloads (prompts, raw outputs, logs) are written to
 - **`persist_success(job_ctx, plan, coding, evaluation, commit_hash, commit_message)`**:
   - Locks the active job row with the same `run_token` used at start-up so stale attempts cannot persist over a newer run.
   - Updates the `EvolutionJob` row to `SUCCEEDED`, sets `completed_at`, stores `plan_summary`, sets `result_commit_hash`, clears `last_error`, clears active lease fields, and resets ingestion tracking fields.
+  - Inserts `job.succeeded` in the same terminal transaction using the run token
+    from `JobContext`, even though the mutable row clears its active lease.
   - Preserves the already-recorded candidate metadata so successful jobs still retain an auditable publication pointer.
   - Inserts a new `CommitCard` row representing the produced commit, with bounded `subject`, `change_summary`, `key_files`, `highlights`, and optional `evaluation_summary`.
   - Inserts one `Metric` row per evaluation metric for the new commit, copying numeric `value`, `unit`, `higher_is_better`, and any structured `details`.
@@ -78,6 +90,8 @@ Large, audit/debug oriented payloads (prompts, raw outputs, logs) are written to
   - Accepts an optional `run_token`; when provided, failure persistence becomes a no-op if the lease was already lost to a newer attempt.
   - If the job no longer exists or has already reached `SUCCEEDED` or `CANCELLED`, the call becomes a no-op.
   - Otherwise sets `status` to `FAILED`, stamps `completed_at`, clears active lease fields, stores the latest `last_error` message, and intentionally leaves any previously recorded candidate metadata intact for debugging/recovery.
+  - Inserts a bounded `job.failed` event in the same transaction; arbitrary
+    exception text remains only in the existing current-state/error channels.
   - Swallows and logs any SQL errors rather than propagating them, to avoid masking the original worker exception.
 
 ## Lock conflict detection

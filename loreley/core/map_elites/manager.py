@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import time
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence, cast
+from uuid import UUID
 
 import numpy as np
 from loguru import logger
@@ -160,6 +161,9 @@ class MapElitesManager:
         island_id: str | None = None,
         repo_root: Path | None = None,
         snapshot_session: Session | None = None,
+        event_key_prefix: str | None = None,
+        event_job_id: UUID | None = None,
+        event_ordinal: int | None = None,
     ) -> MapElitesInsertionResult:
         """Process a commit and attempt to insert it into the archive."""
         effective_island = island_id or self._default_island
@@ -210,6 +214,9 @@ class MapElitesManager:
             update = self._build_ingest_snapshot_update(
                 state=state,
                 final_embedding=final_embedding,
+                event_key_prefix=event_key_prefix,
+                event_job_id=event_job_id,
+                event_ordinal=event_ordinal,
             )
             artifacts = self._build_artifacts(
                 repo_state.stats,
@@ -567,6 +574,9 @@ class MapElitesManager:
         *,
         state: IslandState,
         final_embedding: FinalEmbedding | None,
+        event_key_prefix: str | None = None,
+        event_job_id: UUID | None = None,
+        event_ordinal: int | None = None,
     ) -> SnapshotUpdate:
         return SnapshotUpdate(
             objective_contract=self._objective_contract,
@@ -577,6 +587,9 @@ class MapElitesManager:
             history_upsert=final_embedding.history_entry if final_embedding else None,
             history_seen_at=time.time(),
             samples_since_fit=state.samples_since_fit,
+            event_key_prefix=event_key_prefix,
+            event_job_id=event_job_id,
+            event_ordinal=event_ordinal,
         )
 
     def _skip_ingest_result(
@@ -819,6 +832,21 @@ class MapElitesManager:
     ) -> None:
         snapshot_apply_started_at = time.perf_counter()
         try:
+            if update is not None:
+                update.archive_change_reason = (
+                    "projection_rebuild"
+                    if stage_metrics.did_refit
+                    else (
+                        "projection_initial_fit"
+                        if stage_metrics.did_initial_fit
+                        else "local_pareto_update"
+                    )
+                )
+                update.projection_epoch = (
+                    int(state.projection.epoch)
+                    if state.projection is not None
+                    else None
+                )
             if update is not None and archive_replace_needed and update.archive_replace is None:
                 update.archive_replace = self._build_archive_replace_payload(
                     state=state,

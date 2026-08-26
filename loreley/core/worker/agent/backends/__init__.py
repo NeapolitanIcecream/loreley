@@ -14,9 +14,11 @@ from loreley.core.worker.agent.backends.cursor_cli import (
 )
 from loreley.core.worker.agent.backends.kilocode_cli import (
     KilocodeCliBackend,
+    build_kilocode_seed_portfolio_backend,
     kilocode_backend,
     kilocode_coding_backend,
     kilocode_planning_backend,
+    kilocode_seed_portfolio_backend,
 )
 
 __all__ = [
@@ -24,6 +26,7 @@ __all__ = [
     "CursorCliBackend",
     "DEFAULT_CURSOR_MODEL",
     "KilocodeCliBackend",
+    "build_kilocode_seed_portfolio_backend",
     "codex_coding_backend",
     "codex_planning_backend",
     "cursor_backend",
@@ -32,4 +35,5 @@ __all__ = [
     "kilocode_backend",
     "kilocode_coding_backend",
     "kilocode_planning_backend",
+    "kilocode_seed_portfolio_backend",
 ]

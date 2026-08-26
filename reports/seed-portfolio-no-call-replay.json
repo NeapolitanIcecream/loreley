@@ -1,0 +1,44 @@
+{
+  "admission_lanes": {
+    "immediate": "immediate_evidence",
+    "neutral": "exploratory_stepping_stone",
+    "pareto_tradeoff": "immediate_evidence"
+  },
+  "checks": {
+    "complete_model_objective_root_evidence_provenance": true,
+    "configured_direction_count_fingerprinted": true,
+    "immediate_lane_exercised": true,
+    "large_warmup_direction_count_bounded": true,
+    "lower_confidence_objectives_rendered": true,
+    "memory_not_promoted_by_raw_unit_scale": true,
+    "neutral_is_valid_exploratory_lane": true,
+    "no_model_or_evaluator_calls": true,
+    "objective_contract_ordered": true,
+    "overlapping_brief_rejected": true,
+    "pareto_tradeoff_reaches_qd_admission": true,
+    "portfolio_hash_restart_stable": true,
+    "seed_prompts_distinct": true
+  },
+  "objective_contract": [
+    {
+      "direction": "max",
+      "name": "compression_lower_95"
+    },
+    {
+      "direction": "max",
+      "name": "decompression_lower_95"
+    },
+    {
+      "direction": "max",
+      "name": "worst_cell_speedup"
+    }
+  ],
+  "portfolio_hash": "7cbbb75c8e0201231907e036c62ce35d7607363f31c9058d58818f4fd8dd4643",
+  "prompt_sha256": [
+    "2b853085feac35cfd402be757c727446942a96a4232dad8f641203731cbb059a",
+    "20e49fc232211437f456ad06fbc04ea73f34677537b613fd6e28076bb220171b"
+  ],
+  "request_fingerprint": "924511149adb05037347bac5d64f856f9635cff0ef1a91de54b5110351a5cef4",
+  "schema_version": 1,
+  "why_it_matters": "Improves `compression_lower_95` (1.01 -> 1.012) versus base."
+}

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import time
 from typing import Any, Mapping, Sequence
+from uuid import UUID
 
 import numpy as np
 from loguru import logger
@@ -14,6 +16,13 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from loreley.core.map_elites.objectives import ObjectiveContract
+from loreley.core.evolution_events import (
+    ARCHIVE_MEMBER_ADMITTED,
+    ARCHIVE_MEMBER_MOVED,
+    ARCHIVE_MEMBER_REMOVED,
+    ARCHIVE_REBUILD_COMPLETED,
+    record_evolution_event,
+)
 from loreley.db.base import session_scope
 from loreley.db.models import MapElitesArchiveCell, MapElitesPcaHistory, MapElitesState
 
@@ -95,6 +104,12 @@ class SnapshotUpdate:
     front_replace: Sequence[SnapshotElite] | None = None
     archive_replace: Sequence[SnapshotElite] | None = None
     clear: bool = False
+    event_key_prefix: str | None = None
+    event_job_id: UUID | None = None
+    event_run_token: UUID | None = None
+    event_ordinal: int | None = None
+    archive_change_reason: str | None = None
+    projection_epoch: int | None = None
 
 
 class DatabaseSnapshotStore:
@@ -252,8 +267,15 @@ class DatabaseSnapshotStore:
         now: float,
     ) -> None:
         existing = session.execute(
-            select(MapElitesState).where(MapElitesState.island_id == island_id)
+            select(MapElitesState)
+            .where(MapElitesState.island_id == island_id)
+            .with_for_update()
         ).scalar_one_or_none()
+        before_membership = self._membership_before_update(
+            session,
+            island_id=island_id,
+            update=update,
+        )
         meta = dict(existing.snapshot or {}) if existing else {}
         ensure_supported_snapshot_meta(meta, island_id=island_id)
         self._apply_contract_meta(
@@ -286,6 +308,14 @@ class DatabaseSnapshotStore:
                     MapElitesPcaHistory.island_id == island_id
                 )
             )
+            self._record_archive_membership_delta(
+                session,
+                island_id=island_id,
+                update=update,
+                before=before_membership,
+                after={},
+                now=now,
+            )
             return
 
         if update.archive_replace is not None:
@@ -301,6 +331,19 @@ class DatabaseSnapshotStore:
                 elites=update.front_replace,
             )
 
+        after_membership = self._membership_after_update(
+            before=before_membership,
+            update=update,
+        )
+        self._record_archive_membership_delta(
+            session,
+            island_id=island_id,
+            update=update,
+            before=before_membership,
+            after=after_membership,
+            now=now,
+        )
+
         if update.history_upsert is not None:
             self._upsert_history(
                 session,
@@ -312,6 +355,164 @@ class DatabaseSnapshotStore:
                 session,
                 island_id=island_id,
                 history_limit=update.history_limit,
+            )
+
+    @staticmethod
+    def _membership_before_update(
+        session: Session,
+        *,
+        island_id: str,
+        update: SnapshotUpdate,
+    ) -> dict[str, int]:
+        if not (
+            update.clear
+            or update.archive_replace is not None
+            or update.front_replace is not None
+        ):
+            return {}
+        statement = select(
+            MapElitesArchiveCell.commit_hash,
+            MapElitesArchiveCell.cell_index,
+        ).where(MapElitesArchiveCell.island_id == island_id)
+        front = tuple(update.front_replace or ())
+        if front and update.archive_replace is None and not update.clear:
+            # Local Pareto updates replace exactly one front.  Restrict the
+            # delta read to that indexed cell instead of scanning the island.
+            statement = statement.where(
+                MapElitesArchiveCell.cell_index == int(front[0].cell_index)
+            )
+        rows = session.execute(statement).all()
+        return {
+            str(commit_hash): int(cell_index)
+            for commit_hash, cell_index in rows
+        }
+
+    @staticmethod
+    def _membership_after_update(
+        *,
+        before: Mapping[str, int],
+        update: SnapshotUpdate,
+    ) -> dict[str, int]:
+        if update.clear:
+            return {}
+        if update.archive_replace is not None:
+            return {
+                str(elite.commit_hash): int(elite.cell_index)
+                for elite in update.archive_replace
+            }
+        after = dict(before)
+        front = tuple(update.front_replace or ())
+        if front:
+            target_cell = int(front[0].cell_index)
+            after = {
+                commit_hash: cell_index
+                for commit_hash, cell_index in after.items()
+                if cell_index != target_cell
+            }
+            after.update(
+                {
+                    str(elite.commit_hash): int(elite.cell_index)
+                    for elite in front
+                }
+            )
+        return after
+
+    @staticmethod
+    def _record_archive_membership_delta(
+        session: Session,
+        *,
+        island_id: str,
+        update: SnapshotUpdate,
+        before: Mapping[str, int],
+        after: Mapping[str, int],
+        now: float,
+    ) -> None:
+        if before == after:
+            return
+        occurred_at = datetime.fromtimestamp(float(now), tz=timezone.utc)
+        reason = str(update.archive_change_reason or "").strip() or (
+            "explicit_clear"
+            if update.clear
+            else (
+                "archive_replace"
+                if update.archive_replace is not None
+                else "local_pareto_update"
+            )
+        )
+        prefix = str(update.event_key_prefix or "").strip() or (
+            f"snapshot:{island_id}:{float(now):.9f}"
+        )
+        before_keys = set(before)
+        after_keys = set(after)
+        admitted = sorted(after_keys - before_keys)
+        removed = sorted(before_keys - after_keys)
+        moved = sorted(
+            commit_hash
+            for commit_hash in before_keys & after_keys
+            if int(before[commit_hash]) != int(after[commit_hash])
+        )
+        for commit_hash in admitted:
+            record_evolution_event(
+                session,
+                event_type=ARCHIVE_MEMBER_ADMITTED,
+                job_id=update.event_job_id,
+                run_token=update.event_run_token,
+                island_id=island_id,
+                commit_hash=commit_hash,
+                occurred_at=occurred_at,
+                ordinal=update.event_ordinal,
+                payload={"to_cell": int(after[commit_hash]), "reason": reason},
+                key_parts=(prefix, "admitted", commit_hash),
+            )
+        for commit_hash in moved:
+            record_evolution_event(
+                session,
+                event_type=ARCHIVE_MEMBER_MOVED,
+                job_id=update.event_job_id,
+                run_token=update.event_run_token,
+                island_id=island_id,
+                commit_hash=commit_hash,
+                occurred_at=occurred_at,
+                ordinal=update.event_ordinal,
+                payload={
+                    "from_cell": int(before[commit_hash]),
+                    "to_cell": int(after[commit_hash]),
+                    "reason": reason,
+                },
+                key_parts=(prefix, "moved", commit_hash),
+            )
+        for commit_hash in removed:
+            record_evolution_event(
+                session,
+                event_type=ARCHIVE_MEMBER_REMOVED,
+                job_id=update.event_job_id,
+                run_token=update.event_run_token,
+                island_id=island_id,
+                commit_hash=commit_hash,
+                occurred_at=occurred_at,
+                ordinal=update.event_ordinal,
+                payload={"from_cell": int(before[commit_hash]), "reason": reason},
+                key_parts=(prefix, "removed", commit_hash),
+            )
+        if reason in {"projection_initial_fit", "projection_rebuild"}:
+            record_evolution_event(
+                session,
+                event_type=ARCHIVE_REBUILD_COMPLETED,
+                job_id=update.event_job_id,
+                run_token=update.event_run_token,
+                island_id=island_id,
+                occurred_at=occurred_at,
+                ordinal=update.event_ordinal,
+                payload={
+                    "reason": reason,
+                    "before_count": len(before),
+                    "after_count": len(after),
+                    "admitted_count": len(admitted),
+                    "moved_count": len(moved),
+                    "removed_count": len(removed),
+                    "projection_epoch": update.projection_epoch,
+                },
+                key_parts=(prefix, "rebuild"),
             )
 
     @staticmethod

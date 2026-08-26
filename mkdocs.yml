@@ -7,6 +7,7 @@ exclude_docs: |
   marketing/2026-08-loreley-launch-copy-kit.md
   research/2026-08-03-loreley-promotion-plan.md
   research/2026-08-03-zstandard-third-case-study-handoff.md
+  research/2026-08-24-seed-portfolio-hardening-handoff.md
 
 theme:
   name: material
@@ -86,6 +87,7 @@ nav:
       - Database schema commands: script/db.md
       - Managing jobs: script/jobs.md
       - Job lease recovery: script/job_leases.md
+      - Evolution timeline export: script/timeline.md
       - Archive stats: script/archive_stats.md
       - Config dump: script/config_dump.md
       - Benchmarking: script/benchmarks.md

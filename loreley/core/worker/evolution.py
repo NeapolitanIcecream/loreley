@@ -14,6 +14,7 @@ from rich.console import Console
 from sqlalchemy import select
 
 from loreley.config import Settings, get_settings
+from loreley.core.evolution_events import bounded_failure_kind
 from loreley.core.campaign_program import (
     CampaignProgramSnapshot,
     campaign_program_evaluator_payload,
@@ -134,6 +135,11 @@ class JobContext:
     sampling_ordinal: int | None = None
     sampling_recipe_hash: str | None = None
     sampling_recipe_reused: bool = False
+    seed_portfolio_hash: str | None = None
+    seed_direction_id: str | None = None
+    seed_direction_payload: dict[str, Any] = field(default_factory=dict)
+    seed_admission_lane: str | None = None
+    seed_admission_reason: str | None = None
 
 
 @dataclass(slots=True)
@@ -229,6 +235,11 @@ class _StartedJobFields:
     campaign_program_hash: str | None
     job_kind: str
     execution: _JobExecutionFields
+    seed_portfolio_hash: str | None
+    seed_direction_id: str | None
+    seed_direction_payload: dict[str, Any]
+    seed_admission_lane: str | None
+    seed_admission_reason: str | None
 
 
 @dataclass(slots=True)
@@ -401,6 +412,46 @@ class EvolutionWorker:
         self.evaluator = evaluator or Evaluator(self.settings)
         self.job_store = job_store or EvolutionJobStore(settings=self.settings)
         self.evaluation_runtime = EvaluationRuntimeCoordinator(self.settings)
+
+    def _start_observed_stage(
+        self,
+        *,
+        stage: str,
+        job_ctx: JobContext,
+        ordinal: int | None = None,
+        commit_hash: str | None = None,
+        payload: dict[str, object] | None = None,
+    ) -> Any | None:
+        recorder = getattr(self.job_store, "start_stage", None)
+        if not callable(recorder):  # compatibility for narrow test doubles
+            return None
+        return recorder(
+            stage=stage,
+            job_ctx=job_ctx,
+            ordinal=ordinal,
+            commit_hash=commit_hash,
+            payload=payload,
+        )
+
+    def _finish_observed_stage(
+        self,
+        handle: Any | None,
+        *,
+        outcome: str,
+        failure_kind: str | None = None,
+        payload: dict[str, object] | None = None,
+    ) -> None:
+        if handle is None:
+            return
+        recorder = getattr(self.job_store, "finish_stage", None)
+        if not callable(recorder):  # compatibility for narrow test doubles
+            return
+        recorder(
+            handle=handle,
+            outcome=outcome,
+            failure_kind=failure_kind,
+            payload=payload,
+        )
 
     def run(self, job_id: str | UUID) -> EvolutionWorkerResult:
         """Execute the full evolution loop for the requested job."""
@@ -1085,7 +1136,7 @@ class EvolutionWorker:
                         ctx.trajectory_meta = {"error": str(exc)}
         inspirations = tuple(inspiration_contexts)
 
-        if job_ctx.is_seed_job:
+        if job_ctx.is_seed_job and not job_ctx.seed_direction_id:
             # For seed jobs, hide historical metrics/evaluation details so the
             # worker starts from the global objective and sampling context alone.
             base_context = CommitPlanningContext(
@@ -1099,6 +1150,10 @@ class EvolutionWorker:
                 evaluation_summary=None,
                 metrics=(),
             )
+            inspirations = ()
+        elif job_ctx.is_seed_job:
+            # Portfolio seeds retain the measured root evidence that informed
+            # their assigned direction, but still have no archive inspirations.
             inspirations = ()
 
         return WorkerPromptContext(
@@ -1177,7 +1232,11 @@ class EvolutionWorker:
         checkout: CheckoutContext,
         prompt_context: WorkerPromptContext,
     ) -> PlanningAgentResponse:
-
+        stage = self._start_observed_stage(
+            stage="planning",
+            job_ctx=job_ctx,
+            ordinal=1,
+        )
         request = PlanningAgentRequest(
             base=prompt_context.base,
             inspirations=prompt_context.inspirations,
@@ -1194,8 +1253,16 @@ class EvolutionWorker:
                 run_token=job_ctx.run_token,
                 phase="planning",
             ):
-                return self.planning_agent.plan(request, working_dir=checkout.worktree)
+                response = self.planning_agent.plan(
+                    request,
+                    working_dir=checkout.worktree,
+                )
         except PlanningError as exc:
+            self._finish_observed_stage(
+                stage,
+                outcome="failed",
+                failure_kind="planning_error",
+            )
             self._persist_agent_usage_events_best_effort(
                 job_ctx=job_ctx,
                 events=self._usage_events_from_exception(exc),
@@ -1203,6 +1270,19 @@ class EvolutionWorker:
             raise EvolutionWorkerError(
                 f"Planning agent failed for job {job_ctx.job_id}: {exc}"
             ) from exc
+        except Exception as exc:
+            self._finish_observed_stage(
+                stage,
+                outcome="failed",
+                failure_kind=bounded_failure_kind(
+                    exc,
+                    fallback="planning_failed",
+                ),
+            )
+            raise
+        else:
+            self._finish_observed_stage(stage, outcome="succeeded")
+            return response
 
     def _run_coding(
         self,
@@ -1214,6 +1294,13 @@ class EvolutionWorker:
         invocation_context: _CodingInvocationContext | None = None,
     ) -> CodingAgentResponse:
         invocation_context = invocation_context or _CodingInvocationContext()
+        rework = int(invocation_context.number) > 1
+        stage = self._start_observed_stage(
+            stage="coding",
+            job_ctx=job_ctx,
+            ordinal=max(1, int(invocation_context.number)),
+            payload={"rework": rework},
+        )
         request = self._build_coding_request(
             job_ctx=job_ctx,
             plan=plan,
@@ -1226,10 +1313,16 @@ class EvolutionWorker:
                 run_token=job_ctx.run_token,
                 phase="coding",
             ):
-                return self.coding_agent.implement(
+                response = self.coding_agent.implement(
                     request, working_dir=checkout.worktree
                 )
         except CodingError as exc:
+            self._finish_observed_stage(
+                stage,
+                outcome="failed",
+                failure_kind="coding_error",
+                payload={"rework": rework},
+            )
             self._persist_agent_usage_events_best_effort(
                 job_ctx=job_ctx,
                 events=(*plan.usage_events, *self._usage_events_from_exception(exc)),
@@ -1237,6 +1330,24 @@ class EvolutionWorker:
             raise EvolutionWorkerError(
                 f"Coding agent failed for job {job_ctx.job_id}: {exc}"
             ) from exc
+        except Exception as exc:
+            self._finish_observed_stage(
+                stage,
+                outcome="failed",
+                failure_kind=bounded_failure_kind(
+                    exc,
+                    fallback="coding_failed",
+                ),
+                payload={"rework": rework},
+            )
+            raise
+        else:
+            self._finish_observed_stage(
+                stage,
+                outcome="succeeded",
+                payload={"rework": rework},
+            )
+            return response
 
     def _build_coding_request(
         self,
@@ -1330,6 +1441,23 @@ class EvolutionWorker:
         plan: PlanningAgentResponse | None,
         candidate_commit: str,
     ) -> EvaluationOutcome:
+        evaluator_name, evaluator_version = self._evaluator_contract()
+        supports_phased = getattr(self.evaluator, "supports_phased_evaluation", None)
+        protocol = (
+            "phased-v1"
+            if callable(supports_phased) and bool(supports_phased())
+            else "one_shot"
+        )
+        invocation = self._start_observed_stage(
+            stage="evaluation",
+            job_ctx=job_ctx,
+            commit_hash=candidate_commit,
+            payload={
+                "evaluator_name": evaluator_name,
+                "evaluator_version": evaluator_version,
+                "protocol": protocol,
+            },
+        )
         supplied_summary = str(job_ctx.input_candidate_summary or "").strip() or None
         plan_payload = (
             {
@@ -1353,6 +1481,7 @@ class EvolutionWorker:
             "campaign_program": campaign_program_evaluator_payload(
                 job_ctx.campaign_program
             ),
+            "seed_direction": self._seed_direction_evaluation_payload(job_ctx),
             "plan": plan_payload,
             "supplied_candidate_summary": supplied_summary,
         }
@@ -1370,6 +1499,8 @@ class EvolutionWorker:
                 metadata={
                     "is_seed_job": bool(job_ctx.is_seed_job),
                     "campaign_program_hash": job_ctx.campaign_program_hash,
+                    "seed_portfolio_hash": job_ctx.seed_portfolio_hash,
+                    "seed_direction_id": job_ctx.seed_direction_id,
                     "runtime_profile": str(
                         getattr(self.settings, "profile", "default")
                     ),
@@ -1389,30 +1520,64 @@ class EvolutionWorker:
                 self.evaluator, "supports_phased_evaluation", None
             )
             if callable(supports_phased) and bool(supports_phased()):
-                return self._run_phased_evaluation(
-                    job_ctx=job_ctx,
-                    context=context,
+                return self._annotate_evaluation_invocation(
+                    self._run_phased_evaluation(
+                        job_ctx=job_ctx,
+                        context=context,
+                    ),
+                    invocation,
                 )
             evaluate_outcome = getattr(self.evaluator, "evaluate_outcome", None)
             if callable(evaluate_outcome):
-                return self._run_one_shot_evaluation(
-                    job_ctx=job_ctx,
-                    context=context,
-                    evaluate_outcome=evaluate_outcome,
+                return self._annotate_evaluation_invocation(
+                    self._run_one_shot_evaluation(
+                        job_ctx=job_ctx,
+                        context=context,
+                        evaluate_outcome=evaluate_outcome,
+                    ),
+                    invocation,
                 )
             result = self.evaluator.evaluate(context)
-            evaluator_name, evaluator_version = self._evaluator_contract()
-            return EvaluationOutcome(
-                evaluator_name=evaluator_name,
-                evaluator_version=evaluator_version,
-                candidate_commit_hash=candidate_commit,
-                outcome_kind="passed",
-                result=result,
+            return self._annotate_evaluation_invocation(
+                EvaluationOutcome(
+                    evaluator_name=evaluator_name,
+                    evaluator_version=evaluator_version,
+                    candidate_commit_hash=candidate_commit,
+                    outcome_kind="passed",
+                    result=result,
+                ),
+                invocation,
             )
         except (EvaluationError, EvaluationRuntimeError) as exc:
             raise EvolutionWorkerError(
                 f"Evaluator failed for job {job_ctx.job_id}: {exc}"
             ) from exc
+
+    @staticmethod
+    def _annotate_evaluation_invocation(
+        outcome: EvaluationOutcome,
+        invocation: Any | None,
+    ) -> EvaluationOutcome:
+        if invocation is None:
+            return outcome
+        outcome.invocation_ordinal = int(invocation.ordinal)
+        outcome.started_at = outcome.started_at or invocation.started_at
+        outcome.finished_at = outcome.finished_at or datetime.now(timezone.utc)
+        return outcome
+
+    @staticmethod
+    def _seed_direction_evaluation_payload(
+        job_ctx: JobContext,
+    ) -> dict[str, Any] | None:
+        if not job_ctx.seed_direction_id:
+            return None
+        return {
+            "portfolio_hash": job_ctx.seed_portfolio_hash,
+            "direction_id": job_ctx.seed_direction_id,
+            "brief": dict(job_ctx.seed_direction_payload or {}),
+            "admission_lane": job_ctx.seed_admission_lane,
+            "admission_reason": job_ctx.seed_admission_reason,
+        }
 
     def _run_one_shot_evaluation(
         self,
@@ -2263,7 +2428,9 @@ class EvolutionWorker:
         if not card_ids:
             return metrics_by_card_id
         metric_rows = session.scalars(
-            select(Metric).where(Metric.commit_card_id.in_(card_ids))
+            select(Metric)
+            .where(Metric.commit_card_id.in_(card_ids))
+            .order_by(Metric.commit_card_id.asc(), Metric.name.asc())
         ).all()
         for row in metric_rows:
             metrics_by_card_id.setdefault(row.commit_card_id, []).append(row)
@@ -2445,6 +2612,9 @@ class EvolutionWorker:
             sampling_strategy=sampling_strategy,
             facts=tuple(facts),
             repair_context=repair_block,
+            seed_portfolio_hash=job_ctx.seed_portfolio_hash,
+            seed_direction_id=job_ctx.seed_direction_id,
+            seed_direction=dict(job_ctx.seed_direction_payload or {}),
         )
 
     def _coerce_uuid(self, value: str | UUID) -> UUID:
@@ -2490,8 +2660,10 @@ def _is_seed_job(
     base_commit_hash: str,
     inspirations: tuple[str, ...],
 ) -> bool:
-    if bool(getattr(job, "is_seed_job", False)):
-        return True
+    missing = object()
+    persisted = getattr(job, "is_seed_job", missing)
+    if persisted is not missing:
+        return bool(persisted)
     root_hash = str(settings.mapelites_experiment_root_commit or "").strip()
     return bool(root_hash and base_commit_hash == root_hash and not inspirations)
 
@@ -2572,6 +2744,21 @@ def _resolve_started_job_fields(*, settings: Settings, job: Any) -> _StartedJobF
         ),
         job_kind=job_kind,
         execution=execution,
+        seed_portfolio_hash=(
+            str(getattr(job, "seed_portfolio_hash", "") or "").strip() or None
+        ),
+        seed_direction_id=(
+            str(getattr(job, "seed_direction_id", "") or "").strip() or None
+        ),
+        seed_direction_payload=dict(
+            getattr(job, "seed_direction_payload", {}) or {}
+        ),
+        seed_admission_lane=(
+            str(getattr(job, "seed_admission_lane", "") or "").strip() or None
+        ),
+        seed_admission_reason=(
+            str(getattr(job, "seed_admission_reason", "") or "").strip() or None
+        ),
     )
 
 
@@ -2614,6 +2801,11 @@ def _job_context_from_started_fields(
         sampling_ordinal=getattr(job, "sampling_ordinal", None),
         sampling_recipe_hash=getattr(job, "sampling_recipe_hash", None),
         sampling_recipe_reused=bool(getattr(job, "sampling_recipe_reused", False)),
+        seed_portfolio_hash=fields.seed_portfolio_hash,
+        seed_direction_id=fields.seed_direction_id,
+        seed_direction_payload=dict(fields.seed_direction_payload),
+        seed_admission_lane=fields.seed_admission_lane,
+        seed_admission_reason=fields.seed_admission_reason,
     )
 
 

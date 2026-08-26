@@ -98,11 +98,19 @@ def failed_stale_job_conditions(
     )
 
 
-def retry_job_row(*, job: Any, reason: str, now: datetime) -> dict[str, object]:
+def retry_job_row(
+    *,
+    job: Any,
+    reason: str,
+    now: datetime,
+    session: Any | None = None,
+) -> dict[str, object]:
     """Reset a retryable job row to PENDING and return the mutation payload."""
 
     previous_status = job_status_value(getattr(job, "status", None))
     previous_recovery_count = int(getattr(job, "recovery_count", 0) or 0)
+    previous_run_token = getattr(job, "run_token", None)
+    previous_candidate_commit = getattr(job, "candidate_commit_hash", None)
     from loreley.db.models import JobStatus
 
     job.status = JobStatus.PENDING
@@ -121,6 +129,35 @@ def retry_job_row(*, job: Any, reason: str, now: datetime) -> dict[str, object]:
     job.last_error = str(reason or "").strip() or "manual retry requested"
     job.failure_stage = None
     job.failure_kind = None
+    if session is not None:
+        from loreley.core.evolution_events import (
+            JOB_REQUEUED,
+            next_event_ordinal,
+            record_evolution_event,
+        )
+
+        ordinal = next_event_ordinal(
+            session,
+            event_type=JOB_REQUEUED,
+            job_id=getattr(job, "id", None),
+        )
+        record_evolution_event(
+            session,
+            event_type=JOB_REQUEUED,
+            job_id=getattr(job, "id", None),
+            run_token=previous_run_token,
+            island_id=getattr(job, "island_id", None),
+            commit_hash=previous_candidate_commit,
+            occurred_at=now,
+            ordinal=ordinal,
+            payload={
+                "reason": "manual_retry",
+                "previous_status": previous_status,
+                "recovery_count": previous_recovery_count,
+                "manual": True,
+            },
+            key_parts=("manual_retry",),
+        )
     return {
         "job_id": str(getattr(job, "id", "")),
         "previous_status": previous_status,
@@ -147,7 +184,10 @@ def retry_failed_stale_jobs_payload(
         retry_all=retry_all,
         limit=limit,
     )
-    retried_jobs = [retry_job_row(job=row, reason=reason, now=now) for row in rows]
+    retried_jobs = [
+        retry_job_row(job=row, reason=reason, now=now, session=session)
+        for row in rows
+    ]
     return {
         "filters": {
             "failed_stale": True,

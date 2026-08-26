@@ -75,6 +75,8 @@ embedding_cache_app = typer.Typer(
 app.add_typer(embedding_cache_app, name="embedding-cache")
 seeds_app = typer.Typer(help="Import and inspect user-supplied seed candidates.")
 app.add_typer(seeds_app, name="seeds")
+timeline_app = typer.Typer(help="Export append-only evolution timelines.")
+app.add_typer(timeline_app, name="timeline")
 
 
 class DoctorRole(str, Enum):
@@ -605,11 +607,18 @@ def _job_retry_state(*, job: Any, now: datetime) -> tuple[bool, str | None]:
     return job_retry_state(job=job, now=now)
 
 
-def _retry_job_row(*, job: Any, reason: str, now: datetime) -> dict[str, object]:
+def _retry_job_row(
+    *,
+    job: Any,
+    reason: str,
+    now: datetime,
+    session: Any | None = None,
+) -> dict[str, object]:
     return retry_job_row(
         job=job,
         reason=str(reason or "").strip() or "manual retry requested via CLI",
         now=now,
+        session=session,
     )
 
 
@@ -1680,7 +1689,12 @@ def retry_job(
                         f"id={job_uuid} status={job.status} lease_state={lease_state or 'n/a'}",
                     )
                     raise typer.Exit(code=1)
-                payload = _retry_job_row(job=job, reason=reason, now=now)
+                payload = _retry_job_row(
+                    job=job,
+                    reason=reason,
+                    now=now,
+                    session=session,
+                )
             else:
                 now = _db_utc_now(session)
                 payload = _retry_failed_stale_jobs_payload(
@@ -1899,6 +1913,75 @@ def list_jobs(
             str(job["completed_at"] or "n/a"),
         )
     console.print(table)
+
+
+@timeline_app.command("export")
+def timeline_export(
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Write JSON Lines to this path; defaults to stdout.",
+        show_default=False,
+    ),
+    strict: bool = typer.Option(
+        False,
+        "--strict",
+        help="Fail when lifecycle or archive evidence is incomplete.",
+        show_default=True,
+    ),
+) -> None:
+    """Export a deterministic, sanitized evolution timeline as JSON Lines."""
+
+    from loreley.core.evolution_timeline import (
+        TimelineCompletenessError,
+        export_evolution_timeline,
+    )
+    from loreley.db.base import ensure_database_schema, session_scope
+
+    try:
+        # Keep settings/schema diagnostics away from the machine-readable stream.
+        with redirect_stdout(sys.stderr):
+            settings = _load_settings_or_exit()
+            ensure_database_schema(settings=settings)
+            with session_scope() as session:
+                exported = export_evolution_timeline(
+                    session,
+                    strict=bool(strict),
+                )
+        payload = exported.to_jsonl()
+    except TimelineCompletenessError as exc:
+        typer.echo(
+            json.dumps(
+                {
+                    "error": "timeline_incomplete",
+                    "issues": [issue.as_dict() for issue in exc.issues],
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+    except typer.Exit:
+        raise
+    except Exception as exc:  # pragma: no cover - defensive CLI boundary
+        typer.echo(
+            json.dumps(
+                {"error": "timeline_export_failed", "reason": str(exc)},
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+
+    if output is None:
+        typer.echo(payload, nl=False)
+        return
+    output_path = output.expanduser().resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(payload, encoding="utf-8")
 
 
 @archive_app.command("stats")

@@ -33,6 +33,7 @@ from loreley.core.worker.agent.backends import (
     kilocode_backend,
     kilocode_coding_backend,
     kilocode_planning_backend,
+    kilocode_seed_portfolio_backend,
 )
 from loreley.core.worker.agent.backends import codex_cli, cursor_cli, kilocode_cli
 
@@ -1595,6 +1596,47 @@ def test_kilocode_cli_backend_raises_on_timeout(tmp_path: Path, monkeypatch) -> 
         backend.run(task, working_dir=repo_dir)
 
 
+def test_kilocode_process_closes_inherited_stdin(tmp_path: Path) -> None:
+    """A headless Kilo child must not wait for its caller's open stdin pipe."""
+
+    child_code = "import sys; print(f'eof:{len(sys.stdin.read())}')"
+    runner_code = (
+        "import os,sys; "
+        "from loreley.core.worker.agent.backends import kilocode_cli; "
+        "result=kilocode_cli._run_kilo_process("
+        f"[sys.executable,'-c',{child_code!r}],"
+        f"cwd={str(tmp_path)!r},env=os.environ.copy(),timeout=1.0); "
+        "sys.stdout.write(result.stdout); "
+        "sys.stderr.write(result.stderr); "
+        "raise SystemExit(result.returncode)"
+    )
+    repo_root = Path(__file__).resolve().parents[3]
+    runner = subprocess.Popen(
+        [sys.executable, "-c", runner_code],
+        cwd=repo_root,
+        env=os.environ.copy(),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert runner.stdin is not None
+    assert runner.stdout is not None
+    assert runner.stderr is not None
+    try:
+        returncode = runner.wait(timeout=5.0)
+        stdout = runner.stdout.read()
+        stderr = runner.stderr.read()
+    finally:
+        runner.stdin.close()
+        if runner.poll() is None:
+            runner.kill()
+            runner.wait(timeout=5.0)
+
+    assert returncode == 0, stderr
+    assert stdout == "eof:0\n"
+
+
 @pytest.mark.skipif(os.name != "posix", reason="POSIX process-group regression")
 def test_kilocode_process_timeout_terminates_descendants(tmp_path: Path) -> None:
     """A timed-out Kilo process must not leave API-using descendants alive."""
@@ -1756,6 +1798,116 @@ def test_kilocode_phase_backend_factories_support_distinct_native_openai_models(
         )
 
     get_settings.cache_clear()
+
+
+def test_kilocode_seed_portfolio_backend_pins_sol_and_reasoning_variant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from loreley.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("WORKER_KILOCODE_PROVIDER_CONFIG_MODE", "none")
+    monkeypatch.setenv("WORKER_SEED_PORTFOLIO_MODEL", "openai/gpt-5.6-sol")
+    monkeypatch.setenv("WORKER_SEED_PORTFOLIO_REASONING_EFFORT", "xhigh")
+    monkeypatch.setenv("WORKER_SEED_PORTFOLIO_TIMEOUT_SECONDS", "2345")
+    get_settings.cache_clear()
+
+    backend = kilocode_seed_portfolio_backend()
+
+    assert backend.model == "openai/gpt-5.6-sol"
+    assert backend.variant == "xhigh"
+    assert backend.timeout_seconds == 2345
+    assert backend.state_root is None
+
+    get_settings.cache_clear()
+
+
+def test_kilocode_seed_portfolio_usage_has_campaign_scoped_identity(settings) -> None:
+    settings.experiment_id = "seed-portfolio-campaign"
+    backend = KilocodeCliBackend(
+        bin="kilo",
+        timeout_seconds=30,
+        extra_env={},
+        error_cls=RuntimeError,
+        settings=settings,
+    )
+    task = AgentTask(
+        name="seed-portfolio",
+        prompt="plan directions",
+        phase="seed_portfolio",
+        attempt=2,
+    )
+
+    assert backend._usage_title(task) == (  # noqa: SLF001
+        "loreley:campaign:seed-portfolio-campaign:seed_portfolio:attempt:2"
+    )
+    assert backend._usage_external_id(task, phase="seed_portfolio") == (  # noqa: SLF001
+        "kilo:campaign:seed-portfolio-campaign:seed_portfolio:attempt:2"
+    )
+
+
+def test_kilocode_explicit_route_strips_ambient_provider_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "embedding-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setenv("LLM_API_KEY", "ambient-generation-key")
+    monkeypatch.setenv("LLM_BASE_URL", "https://ambient.invalid/v1")
+    backend = KilocodeCliBackend(
+        bin="kilo",
+        timeout_seconds=30,
+        extra_env={
+            "KILO_CONFIG_CONTENT": (
+                '{"provider":{"openai":{"options":{"apiKey":'
+                '"{env:LORELEY_KILO_OPENAI_API_KEY}"}}}}'
+            ),
+            "LORELEY_KILO_OPENAI_API_KEY": "explicit-generation-key",
+            "LORELEY_KILO_OPENAI_BASE_URL": "https://generation.invalid/v1",
+        },
+        error_cls=RuntimeError,
+    )
+
+    environment = backend._build_env()  # noqa: SLF001
+
+    assert environment["LORELEY_KILO_OPENAI_API_KEY"] == "explicit-generation-key"
+    assert environment["LORELEY_KILO_OPENAI_BASE_URL"] == (
+        "https://generation.invalid/v1"
+    )
+    assert "OPENAI_API_KEY" not in environment
+    assert "OPENAI_BASE_URL" not in environment
+    assert "LLM_API_KEY" not in environment
+    assert "LLM_BASE_URL" not in environment
+
+
+def test_kilocode_runtime_route_strips_ambient_provider_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "embedding-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setattr(
+        kilocode_cli,
+        "get_agent_openai_api_key",
+        lambda _settings: "runtime-generation-key",
+    )
+    backend = KilocodeCliBackend(
+        bin="kilo",
+        timeout_seconds=30,
+        extra_env={
+            "KILO_CONFIG_CONTENT": (
+                '{"provider":{"openai":{"options":{"apiKey":'
+                '"{env:LORELEY_KILO_OPENAI_API_KEY}"}}}}'
+            ),
+            "LORELEY_KILO_OPENAI_BASE_URL": "https://generation.invalid/v1",
+        },
+        settings=Settings.model_validate({}),
+        error_cls=RuntimeError,
+    )
+
+    environment = backend._build_env()  # noqa: SLF001
+
+    assert environment["LORELEY_KILO_OPENAI_API_KEY"] == "runtime-generation-key"
+    assert "OPENAI_API_KEY" not in environment
+    assert "OPENAI_BASE_URL" not in environment
 
 
 def test_kilocode_native_deepseek_override_preserves_catalog_provider(

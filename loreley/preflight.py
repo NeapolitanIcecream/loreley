@@ -23,11 +23,15 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
-from loreley.config import Settings
+from loreley.config import Settings, resolve_objective_contract
 from loreley.core.openai_auth import (
     DynamicOpenAIKeyConfigurationError,
     dynamic_openai_auth_enabled,
     validate_dynamic_openai_auth_settings,
+)
+from loreley.core.seed_portfolio import (
+    MAX_SEED_PORTFOLIO_DIRECTIONS,
+    resolve_seed_portfolio_direction_count,
 )
 
 log = logger.bind(module="preflight")
@@ -332,12 +336,90 @@ def check_campaign_program(settings: Settings) -> CheckResult:
             "not found; campaign_program_hash will be null",
         )
     snapshot = loaded.snapshot
+    primary_metric = snapshot.primary_metric
+    if primary_metric is not None:
+        objective = resolve_objective_contract(settings).primary
+        expected_direction = (
+            "higher_is_better" if objective.higher_is_better else "lower_is_better"
+        )
+        if (
+            primary_metric.name != objective.name
+            or primary_metric.direction != expected_direction
+        ):
+            return CheckResult(
+                "campaign_program",
+                "fail",
+                "campaign primary metric conflicts with MAPELITES_OBJECTIVES "
+                "(campaign={!r}/{} archive={!r}/{})".format(
+                    primary_metric.name,
+                    primary_metric.direction or "unknown",
+                    objective.name,
+                    expected_direction,
+                ),
+            )
     details = (
         f"found hash={snapshot.raw_sha256[:12]} "
         f"recognized_sections={list(snapshot.recognized_sections)} "
         f"warnings={len(snapshot.parse_warnings)}"
     )
     return CheckResult("campaign_program", "ok", details)
+
+
+def check_seed_portfolio_planner(settings: Settings) -> list[CheckResult]:
+    """Validate the dedicated scheduler-side portfolio model contract."""
+
+    configured_count = int(settings.mapelites_seed_portfolio_direction_count)
+    effective_count = resolve_seed_portfolio_direction_count(settings)
+    count_details = (
+        f"directions={configured_count} effective={effective_count} "
+        f"hard_max={MAX_SEED_PORTFOLIO_DIRECTIONS} "
+        "max_unsuccessful_attempts="
+        f"{settings.mapelites_seed_direction_max_unsuccessful_attempts}"
+    )
+    if not bool(settings.mapelites_seed_portfolio_enabled):
+        return [
+            CheckResult(
+                "seed_portfolio_planner",
+                "ok",
+                f"disabled (opt-in); {count_details}",
+            )
+        ]
+    backend_ref = str(settings.worker_seed_portfolio_backend or "").strip()
+    model = str(settings.worker_seed_portfolio_model or "").strip()
+    if not backend_ref:
+        return [
+            CheckResult(
+                "seed_portfolio_planner",
+                "fail",
+                "WORKER_SEED_PORTFOLIO_BACKEND must be configured",
+            )
+        ]
+    if model.rsplit("/", 1)[-1] != "gpt-5.6-sol":
+        return [
+            CheckResult(
+                "seed_portfolio_planner",
+                "fail",
+                "initial seed portfolio contract is pinned to gpt-5.6-sol "
+                f"(configured={model!r})",
+            )
+        ]
+    results = [
+        CheckResult(
+            "seed_portfolio_planner",
+            "ok",
+            f"backend={backend_ref} model={model} "
+            f"reasoning={settings.worker_seed_portfolio_reasoning_effort}; "
+            f"{count_details}",
+        )
+    ]
+    if "kilocode" in backend_ref.lower():
+        results.append(
+            check_binary(
+                settings.worker_kilocode_bin or "kilo",
+                label="seed_portfolio_agent_bin",
+            )
+        )
+    return results
 
 
 def check_instance_marker(
@@ -641,7 +723,14 @@ def check_effective_model_routes(settings: Settings) -> list[CheckResult]:
 
     routes = resolve_effective_routes(settings)
     results: list[CheckResult] = []
-    for name in ("planning", "coding", "trajectory_summary", "embedding", "commit_summary"):
+    for name in (
+        "seed_portfolio",
+        "planning",
+        "coding",
+        "trajectory_summary",
+        "embedding",
+        "commit_summary",
+    ):
         route = routes[name]
         details = " ".join(
             f"{key}={value}"
@@ -1136,6 +1225,7 @@ def preflight_scheduler(settings: Settings, *, timeout_seconds: float = 2.0) -> 
     results.append(check_embedding_dimensions(settings))
     results.append(check_embedding_route(settings))
     results.extend(check_effective_model_routes(settings))
+    results.extend(check_seed_portfolio_planner(settings))
     results.append(check_scheduler_max_total_jobs(settings))
     results.append(check_unique_identity_endpoint(settings))
     results.append(check_campaign_program(settings))

@@ -450,6 +450,8 @@ def test_v5_fixture_migrates_to_current_preserves_rows_and_backfills_candidates(
         19,
         20,
         21,
+        22,
+        23,
     )
     validate_database_schema(
         engine=postgres_engine,
@@ -521,6 +523,14 @@ def test_v5_fixture_migrates_to_current_preserves_rows_and_backfills_candidates(
                 """
             )
         ).scalar_one()
+        evolution_event_types = list(
+            conn.execute(
+                text(
+                    "SELECT event_type FROM evolution_events "
+                    "ORDER BY occurred_at, id"
+                )
+            ).scalars()
+        )
 
     assert job_kinds[str(ids["seed_job"])] == "seed"
     assert job_kinds[str(ids["evolution_job"])] == "evolution"
@@ -556,8 +566,11 @@ def test_v5_fixture_migrates_to_current_preserves_rows_and_backfills_candidates(
         19,
         20,
         21,
+        22,
+        23,
     ]
     assert change_summary_limit == 800
+    assert evolution_event_types == ["timeline.history_boundary"]
 
 
 def test_migration_is_idempotent_after_v5_upgrade(

@@ -27,6 +27,10 @@ class JobOut(OrmOutModel):
     last_error: str | None
 
     is_seed_job: bool = False
+    seed_portfolio_hash: str | None = None
+    seed_direction_id: str | None = None
+    seed_admission_lane: str | None = None
+    seed_admission_reason: str | None = None
     job_kind: str = "evolution"
     execution_mode: str = "agent"
     input_candidate_commit_hash: str | None = None
@@ -66,6 +70,7 @@ class JobDetailOut(JobOut):
     notes: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     iteration_hint: str | None = None
+    seed_direction_payload: dict[str, object] = Field(default_factory=dict)
 
     sampling_strategy: str | None = None
     sampling_initial_radius: int | None = None
@@ -100,6 +105,8 @@ class EvaluationAttemptOut(OrmOutModel):
     evaluator_name: str | None = None
     evaluator_version: str | None = None
     campaign_program_hash: str | None = None
+    seed_portfolio_hash: str | None = None
+    seed_direction_id: str | None = None
     candidate_identity: str | None = None
     evaluation_identity_key: str | None = None
     measurement_cache_key: str | None = None

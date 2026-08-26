@@ -25,6 +25,10 @@ class CommitGraphNodeOut(OrmOutModel):
     top_evaluation_diagnosis: str | None = None
     candidate_fate_label: str | None = None
     candidate_fate_reason: str | None = None
+    seed_portfolio_hash: str | None = None
+    seed_direction_id: str | None = None
+    seed_admission_lane: str | None = None
+    seed_admission_reason: str | None = None
     extra: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("extra", mode="before")

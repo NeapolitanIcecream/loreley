@@ -415,6 +415,31 @@ class Settings(BaseSettings):
         default_factory=dict,
         alias="WORKER_PLANNING_EXTRA_ENV",
     )
+    worker_seed_portfolio_backend: str = Field(
+        default=(
+            "loreley.core.worker.agent.backends.kilocode_cli:"
+            "kilocode_seed_portfolio_backend"
+        ),
+        alias="WORKER_SEED_PORTFOLIO_BACKEND",
+    )
+    worker_seed_portfolio_model: str = Field(
+        default="openai/gpt-5.6-sol",
+        alias="WORKER_SEED_PORTFOLIO_MODEL",
+    )
+    worker_seed_portfolio_reasoning_effort: Literal[
+        "low", "medium", "high", "xhigh", "max"
+    ] = Field(
+        default="high",
+        alias="WORKER_SEED_PORTFOLIO_REASONING_EFFORT",
+    )
+    worker_seed_portfolio_max_attempts: PositiveInt = Field(
+        default=2,
+        alias="WORKER_SEED_PORTFOLIO_MAX_ATTEMPTS",
+    )
+    worker_seed_portfolio_timeout_seconds: PositiveInt = Field(
+        default=1800,
+        alias="WORKER_SEED_PORTFOLIO_TIMEOUT_SECONDS",
+    )
     worker_coding_codex_bin: str = Field(
         default="codex",
         alias="WORKER_CODING_CODEX_BIN",
@@ -952,6 +977,33 @@ class Settings(BaseSettings):
         default=16,
         alias="MAPELITES_SEED_POPULATION_SIZE",
     )
+    mapelites_seed_portfolio_enabled: bool = Field(
+        default=False,
+        alias="MAPELITES_SEED_PORTFOLIO_ENABLED",
+    )
+    mapelites_seed_portfolio_direction_count: int = Field(
+        default=8,
+        ge=1,
+        le=16,
+        alias="MAPELITES_SEED_PORTFOLIO_DIRECTION_COUNT",
+    )
+    mapelites_seed_portfolio_max_pairwise_overlap: float = Field(
+        default=0.65,
+        ge=0.0,
+        le=1.0,
+        alias="MAPELITES_SEED_PORTFOLIO_MAX_PAIRWISE_OVERLAP",
+    )
+    mapelites_seed_direction_max_unsuccessful_attempts: int = Field(
+        default=2,
+        ge=1,
+        le=2,
+        alias="MAPELITES_SEED_DIRECTION_MAX_UNSUCCESSFUL_ATTEMPTS",
+    )
+    mapelites_seed_immediate_min_improvement_fraction: float = Field(
+        default=0.0,
+        ge=0.0,
+        alias="MAPELITES_SEED_IMMEDIATE_MIN_IMPROVEMENT_FRACTION",
+    )
 
     def model_post_init(self, __context: Any) -> None:
         """Apply derived defaults that depend on other fields."""
@@ -1120,6 +1172,17 @@ def _safe_export_worker_payload(settings: Settings, *, mask_secrets: bool) -> di
         "worker_planning_codex_model": settings.worker_planning_codex_model,
         "worker_planning_max_attempts": settings.worker_planning_max_attempts,
         "worker_planning_timeout_seconds": settings.worker_planning_timeout_seconds,
+        "worker_seed_portfolio_backend": settings.worker_seed_portfolio_backend,
+        "worker_seed_portfolio_model": settings.worker_seed_portfolio_model,
+        "worker_seed_portfolio_reasoning_effort": (
+            settings.worker_seed_portfolio_reasoning_effort
+        ),
+        "worker_seed_portfolio_max_attempts": (
+            settings.worker_seed_portfolio_max_attempts
+        ),
+        "worker_seed_portfolio_timeout_seconds": (
+            settings.worker_seed_portfolio_timeout_seconds
+        ),
         "worker_coding_backend": settings.worker_coding_backend,
         "worker_coding_codex_model": settings.worker_coding_codex_model,
         "worker_coding_max_attempts": settings.worker_coding_max_attempts,
@@ -1240,6 +1303,19 @@ def _safe_export_search_payload(settings: Settings) -> dict[str, Any]:
         ),
         "mapelites_sampler_default_priority": settings.mapelites_sampler_default_priority,
         "mapelites_seed_population_size": settings.mapelites_seed_population_size,
+        "mapelites_seed_portfolio_enabled": settings.mapelites_seed_portfolio_enabled,
+        "mapelites_seed_portfolio_direction_count": (
+            settings.mapelites_seed_portfolio_direction_count
+        ),
+        "mapelites_seed_portfolio_max_pairwise_overlap": (
+            settings.mapelites_seed_portfolio_max_pairwise_overlap
+        ),
+        "mapelites_seed_direction_max_unsuccessful_attempts": (
+            settings.mapelites_seed_direction_max_unsuccessful_attempts
+        ),
+        "mapelites_seed_immediate_min_improvement_fraction": (
+            settings.mapelites_seed_immediate_min_improvement_fraction
+        ),
     }
 
 

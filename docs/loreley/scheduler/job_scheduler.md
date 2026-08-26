@@ -50,6 +50,9 @@ from loreley.scheduler.job_scheduler import JobScheduler
     `SCHEDULER_STALE_RUNNING_MAX_RECOVERY_ATTEMPTS`.
   - Returns a `JobLeaseReclaimResult` with separate `requeued` and `failed`
     counters for tick-level observability.
+  - Records the old run token in `job.reclaimed`; a later worker start receives
+    a new token. Recovery exhaustion also emits bounded recovery-exhausted and
+    terminal-failure events in the reclaim transaction.
 
 ### Scheduling new jobs
 
@@ -92,6 +95,10 @@ are touched in the database.
     a row was marked queued but no worker ever started it.
   - Sends each selected job id to the Dramatiq `run_evolution_job` actor, then
     marks successfully submitted `PENDING` rows as `QUEUED` and stamps `scheduled_at`.
+  - Records every successful broker send as `job.dispatched`, including stale
+    `QUEUED` redispatch. If a fast worker advances the row before the
+    send-first follow-up transaction locks it, the dispatch event is still
+    retained even though no `QUEUED` projection remains to update.
   - Returns the number of jobs successfully dispatched this tick.
 
 Any failures while enqueuing individual jobs are logged with Loguru and
@@ -106,6 +113,9 @@ dispatched.
 - It does not cancel `QUEUED` or `RUNNING` work and does not alter terminal
   evidence. The main scheduler waits for those jobs and pending ingestion to
   drain.
+- Pre-run cancellation emits an explicit `job.cancelled` event with its prior
+  status, so strict timeline checks do not confuse a deliberate undispatched
+  cancellation with a missing worker-run start.
 - `SCHEDULER_MAX_TOTAL_JOBS` remains an independent physical safety ceiling.
 
 ## Interaction with EvolutionScheduler
