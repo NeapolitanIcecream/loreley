@@ -478,6 +478,24 @@ class MapElitesIngestion:
             return False
 
         raw_commit_hash, commit_hash = commit_hashes
+        duplicate_of = self._equivalent_ingested_candidate(
+            snapshot,
+            commit_hash=commit_hash,
+            session=snapshot_session,
+        )
+        if duplicate_of is not None:
+            insertion = self._duplicate_identity_result(duplicate_of)
+            self._log_ingestion_result(
+                snapshot,
+                commit_hash=commit_hash,
+                insertion=insertion,
+            )
+            self._record_successful_ingestion(
+                snapshot,
+                insertion=insertion,
+                session=snapshot_session,
+            )
+            return False
         metrics_payload = self._metrics_payload_for_ingestion(
             commit_hash=commit_hash,
             raw_commit_hash=raw_commit_hash,
@@ -495,24 +513,6 @@ class MapElitesIngestion:
                     decision=admission,
                     session=snapshot_session,
                 )
-            duplicate_of = self._equivalent_ingested_candidate(
-                snapshot,
-                commit_hash=commit_hash,
-                session=snapshot_session,
-            )
-            if duplicate_of is not None:
-                insertion = self._duplicate_identity_result(duplicate_of)
-                self._log_ingestion_result(
-                    snapshot,
-                    commit_hash=commit_hash,
-                    insertion=insertion,
-                )
-                self._record_successful_ingestion(
-                    snapshot,
-                    insertion=insertion,
-                    session=snapshot_session,
-                )
-                return False
             insertion = self._ingest_with_manager(
                 snapshot,
                 commit_hash=commit_hash,

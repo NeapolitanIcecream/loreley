@@ -597,6 +597,15 @@ def test_ingest_snapshot_skips_evaluator_equivalent_ingested_candidate(
         lambda _self, commit_hash: commit_hash,
     )
 
+    def fail_metric_loading(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("duplicate candidates must bypass metric loading")
+
+    monkeypatch.setattr(
+        ingestion_mod.MapElitesIngestion,
+        "_metrics_payload_for_ingestion",
+        fail_metric_loading,
+    )
+
     class _ScalarResult:
         def __init__(self, value: Any) -> None:
             self.value = value
