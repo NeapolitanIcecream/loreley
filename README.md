@@ -19,6 +19,7 @@ such as a release-binary hash, so equivalent artifacts do not consume another
 benchmark run.
 
 [Results](#results-from-three-repository-searches) ·
+[Evolution dynamics](#evolution-dynamics-research) ·
 [How it works](#how-loreley-works) ·
 [Paper](https://arxiv.org/abs/2608.19703) ·
 [Documentation](https://neapolitanicecream.github.io/loreley/) ·
@@ -34,6 +35,23 @@ experiment used seven paired blocks and 48 physical candidate jobs per policy
 and block (1,008 total). At 48 jobs, neither comparison established a QD
 advantage. Read the [PDF](https://arxiv.org/pdf/2608.19703) or inspect the
 [public experiment evidence](paper/evidence/zstd_method_efficacy.json).
+
+## Evolution dynamics research
+
+The four-page technical report follows candidate quality over wall-clock time
+and successive generations. It compares the lineages of Independent Root,
+Loreley QD, and Sequential Champion, then examines late-stage improvement and
+reuse of retained branches.
+
+Sequential Champion took **2.78× as long** as QD to finish 48 jobs (paired
+geometric mean). At QD's completion time, QD led in all seven paired blocks.
+QD's mean holdout gain also grew from **+0.47% at job 24 to +0.82% at job 48**;
+the longer runs show retained branches producing later descendants.
+
+[English report (PDF)](technical_report/loreley-evolution-dynamics-en.pdf) ·
+[中文报告 (PDF)](technical_report/loreley-evolution-dynamics-zh.pdf) ·
+[LaTeX and build instructions](technical_report/README.md) ·
+[Timing data and validation](technical_report/evidence/README.md)
 
 ## Results from three repository searches
 
@@ -167,6 +185,7 @@ uv run loreley ui
 
 | Resource | Contents |
 | --- | --- |
+| [Evolution dynamics research](technical_report/README.md) ([English PDF](technical_report/loreley-evolution-dynamics-en.pdf), [中文 PDF](technical_report/loreley-evolution-dynamics-zh.pdf)) | Four-page reports on wall-clock time, late-stage gains, and branch reuse, with reproducible figures and timing data |
 | [Paper: arXiv:2608.19703](https://arxiv.org/abs/2608.19703) ([PDF](https://arxiv.org/pdf/2608.19703)) | Method, matched 1,008-job experiment, capability studies, and limitations |
 | [Documentation home](https://neapolitanicecream.github.io/loreley/) | Architecture, configuration, CLI, and operations |
 | [Scheduler and worker guides](https://neapolitanicecream.github.io/loreley/script/run_scheduler/) | Campaign startup and worker operation |

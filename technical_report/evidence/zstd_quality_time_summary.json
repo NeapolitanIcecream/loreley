@@ -1,0 +1,570 @@
+{
+  "arm_checkpoints": [
+    {
+      "arm": "qd",
+      "checkpoint": 8,
+      "elapsed_hours": {
+        "maximum": 2.0472268044444446,
+        "mean": 0.7383048747619048,
+        "median": 0.5273317186111112,
+        "minimum": 0.4774406013888889
+      },
+      "heldout_performance_ratio": {
+        "maximum": 1.0123907644490977,
+        "mean": 1.0060682821499987,
+        "median": 1.0068090559447396,
+        "minimum": 1.000350531555003
+      },
+      "useful_blocks_at_1_005": 4
+    },
+    {
+      "arm": "sequential-champion",
+      "checkpoint": 8,
+      "elapsed_hours": {
+        "maximum": 4.443539492222222,
+        "mean": 2.3843961901984128,
+        "median": 1.9017256905555557,
+        "minimum": 1.6183064502777778
+      },
+      "heldout_performance_ratio": {
+        "maximum": 1.0082340532214666,
+        "mean": 1.0015019924128858,
+        "median": 1.0027243831802903,
+        "minimum": 0.9943932234001789
+      },
+      "useful_blocks_at_1_005": 1
+    },
+    {
+      "arm": "independent-root",
+      "checkpoint": 8,
+      "elapsed_hours": {
+        "maximum": 1.7828090472222222,
+        "mean": 0.8723072087698414,
+        "median": 0.562544385,
+        "minimum": 0.46650104
+      },
+      "heldout_performance_ratio": {
+        "maximum": 1.008953378294454,
+        "mean": 1.0034333021174533,
+        "median": 1.001509017230678,
+        "minimum": 0.9996183803854994
+      },
+      "useful_blocks_at_1_005": 2
+    },
+    {
+      "arm": "qd",
+      "checkpoint": 16,
+      "elapsed_hours": {
+        "maximum": 3.8406224900000003,
+        "mean": 1.544017401309524,
+        "median": 1.0422829494444443,
+        "minimum": 0.9969886069444445
+      },
+      "heldout_performance_ratio": {
+        "maximum": 1.0123907644490977,
+        "mean": 1.0061089382745836,
+        "median": 1.0068090559447396,
+        "minimum": 1.000350531555003
+      },
+      "useful_blocks_at_1_005": 4
+    },
+    {
+      "arm": "sequential-champion",
+      "checkpoint": 16,
+      "elapsed_hours": {
+        "maximum": 6.640268058055556,
+        "mean": 4.494416064166667,
+        "median": 3.667981566111111,
+        "minimum": 3.402452727777778
+      },
+      "heldout_performance_ratio": {
+        "maximum": 1.0099597088736494,
+        "mean": 1.003154277148877,
+        "median": 1.0022164694356963,
+        "minimum": 0.9987347625360361
+      },
+      "useful_blocks_at_1_005": 2
+    },
+    {
+      "arm": "independent-root",
+      "checkpoint": 16,
+      "elapsed_hours": {
+        "maximum": 3.0146631041666665,
+        "mean": 1.4806075722619048,
+        "median": 1.022899193888889,
+        "minimum": 0.9773122386111112
+      },
+      "heldout_performance_ratio": {
+        "maximum": 1.008953378294454,
+        "mean": 1.0044364908509018,
+        "median": 1.0041152819447994,
+        "minimum": 0.9982370097413995
+      },
+      "useful_blocks_at_1_005": 3
+    },
+    {
+      "arm": "qd",
+      "checkpoint": 24,
+      "elapsed_hours": {
+        "maximum": 4.407101616388888,
+        "mean": 2.1791308379761904,
+        "median": 1.5712092158333333,
+        "minimum": 1.4852811969444444
+      },
+      "heldout_performance_ratio": {
+        "maximum": 1.0123907644490977,
+        "mean": 1.0047013720125628,
+        "median": 1.0046190456357877,
+        "minimum": 0.9972674330574873
+      },
+      "useful_blocks_at_1_005": 3
+    },
+    {
+      "arm": "sequential-champion",
+      "checkpoint": 24,
+      "elapsed_hours": {
+        "maximum": 8.799445499722221,
+        "mean": 6.421236033333334,
+        "median": 5.889600114444444,
+        "minimum": 5.123157519166667
+      },
+      "heldout_performance_ratio": {
+        "maximum": 1.0101567089446253,
+        "mean": 1.005288252174828,
+        "median": 1.0068994990212752,
+        "minimum": 0.9996377093359919
+      },
+      "useful_blocks_at_1_005": 4
+    },
+    {
+      "arm": "independent-root",
+      "checkpoint": 24,
+      "elapsed_hours": {
+        "maximum": 3.537771706111111,
+        "mean": 2.0229334770238094,
+        "median": 1.5667589130555555,
+        "minimum": 1.4982966252777778
+      },
+      "heldout_performance_ratio": {
+        "maximum": 1.0133047975910054,
+        "mean": 1.0067925265160165,
+        "median": 1.0054764678812746,
+        "minimum": 1.0023867418844963
+      },
+      "useful_blocks_at_1_005": 4
+    },
+    {
+      "arm": "qd",
+      "checkpoint": 32,
+      "elapsed_hours": {
+        "maximum": 4.9175527402777774,
+        "mean": 3.010165326031746,
+        "median": 2.3878719280555556,
+        "minimum": 1.9440788269444444
+      },
+      "heldout_performance_ratio": {
+        "maximum": 1.0123907644490977,
+        "mean": 1.0067302454979221,
+        "median": 1.0071203968916327,
+        "minimum": 1.000620184512775
+      },
+      "useful_blocks_at_1_005": 5
+    },
+    {
+      "arm": "sequential-champion",
+      "checkpoint": 32,
+      "elapsed_hours": {
+        "maximum": 11.39799213361111,
+        "mean": 8.6474855025,
+        "median": 8.036965570555555,
+        "minimum": 6.7806379125
+      },
+      "heldout_performance_ratio": {
+        "maximum": 1.0099597088736494,
+        "mean": 1.0053249372534083,
+        "median": 1.0068994990212752,
+        "minimum": 0.9996377093359919
+      },
+      "useful_blocks_at_1_005": 4
+    },
+    {
+      "arm": "independent-root",
+      "checkpoint": 32,
+      "elapsed_hours": {
+        "maximum": 4.034336376111111,
+        "mean": 2.865413510238095,
+        "median": 2.3227801869444447,
+        "minimum": 2.029874485277778
+      },
+      "heldout_performance_ratio": {
+        "maximum": 1.0133047975910054,
+        "mean": 1.0070889248102957,
+        "median": 1.0054764678812746,
+        "minimum": 1.003485541591557
+      },
+      "useful_blocks_at_1_005": 4
+    },
+    {
+      "arm": "qd",
+      "checkpoint": 40,
+      "elapsed_hours": {
+        "maximum": 5.963870506111111,
+        "mean": 3.946777580436508,
+        "median": 3.049661646388889,
+        "minimum": 2.5036195583333334
+      },
+      "heldout_performance_ratio": {
+        "maximum": 1.0139039324687833,
+        "mean": 1.0066345209119376,
+        "median": 1.0068090559447396,
+        "minimum": 1.000620184512775
+      },
+      "useful_blocks_at_1_005": 4
+    },
+    {
+      "arm": "sequential-champion",
+      "checkpoint": 40,
+      "elapsed_hours": {
+        "maximum": 14.03320565111111,
+        "mean": 10.610337459325397,
+        "median": 9.907153218333333,
+        "minimum": 8.474424847777778
+      },
+      "heldout_performance_ratio": {
+        "maximum": 1.0178913672352106,
+        "mean": 1.0088149408456544,
+        "median": 1.0081907030095558,
+        "minimum": 0.9996377093359919
+      },
+      "useful_blocks_at_1_005": 6
+    },
+    {
+      "arm": "independent-root",
+      "checkpoint": 40,
+      "elapsed_hours": {
+        "maximum": 5.345496087222222,
+        "mean": 3.5086390831746033,
+        "median": 2.9989632319444444,
+        "minimum": 2.4974900791666665
+      },
+      "heldout_performance_ratio": {
+        "maximum": 1.0133047975910054,
+        "mean": 1.005963911700662,
+        "median": 1.0044615299444497,
+        "minimum": 1.0019503846570943
+      },
+      "useful_blocks_at_1_005": 3
+    },
+    {
+      "arm": "qd",
+      "checkpoint": 48,
+      "elapsed_hours": {
+        "maximum": 7.006210034444445,
+        "mean": 4.700251435912699,
+        "median": 3.7451082141666667,
+        "minimum": 2.999015867222222
+      },
+      "heldout_performance_ratio": {
+        "maximum": 1.0139039324687833,
+        "mean": 1.0082429977290148,
+        "median": 1.0073941184402648,
+        "minimum": 1.000620184512775
+      },
+      "useful_blocks_at_1_005": 6
+    },
+    {
+      "arm": "sequential-champion",
+      "checkpoint": 48,
+      "elapsed_hours": {
+        "maximum": 15.880970488055555,
+        "mean": 12.338900441984126,
+        "median": 11.651838674722223,
+        "minimum": 10.133871323888888
+      },
+      "heldout_performance_ratio": {
+        "maximum": 1.0178913672352106,
+        "mean": 1.0096016187510142,
+        "median": 1.0081907030095558,
+        "minimum": 1.0051444546735113
+      },
+      "useful_blocks_at_1_005": 7
+    },
+    {
+      "arm": "independent-root",
+      "checkpoint": 48,
+      "elapsed_hours": {
+        "maximum": 5.902110443888889,
+        "mean": 4.23480917218254,
+        "median": 3.6573239836111116,
+        "minimum": 2.971073601111111
+      },
+      "heldout_performance_ratio": {
+        "maximum": 1.0133047975910054,
+        "mean": 1.0050209524416727,
+        "median": 1.0041152819447994,
+        "minimum": 1.0019503846570943
+      },
+      "useful_blocks_at_1_005": 2
+    }
+  ],
+  "checks": {
+    "all_blocks_have_a_sequential_checkpoint_by_qd_completion": true,
+    "all_blocks_have_qd_and_sequential_final_timing": true,
+    "expected_joined_record_count": 126
+  },
+  "failure_and_parallelism": {
+    "arms": [
+      {
+        "active_seconds": {
+          "all": {
+            "maximum": 5579.230717,
+            "mean": 999.4470227440477,
+            "median": 818.688502,
+            "minimum": 233.602051,
+            "p95": 1302.29556275
+          },
+          "failed": {
+            "maximum": 5579.230717,
+            "mean": 2867.5545344782613,
+            "median": 3600.737957,
+            "minimum": 233.602051,
+            "p95": 5572.1339353
+          },
+          "succeeded": {
+            "maximum": 3026.66178,
+            "mean": 862.1739468019169,
+            "median": 816.725512,
+            "minimum": 695.400047,
+            "p95": 1106.8289789999997
+          }
+        },
+        "arm": "qd",
+        "effective_parallelism_by_block": {
+          "maximum": 3.552961661361564,
+          "mean": 3.0297312932089624,
+          "median": 3.3654327311347507,
+          "minimum": 2.3043667663028193,
+          "values": [
+            2.6151875589668534,
+            2.3238964192577485,
+            2.3043667663028193,
+            3.552961661361564,
+            3.520092552145407,
+            3.526181363293594,
+            3.3654327311347507
+          ]
+        },
+        "failed_active_seconds_fraction": 0.19639953987446343,
+        "failure_categories": {
+          "coding_agent": 7,
+          "evaluator_precision": 2,
+          "evaluator_size_limit": 1,
+          "evaluator_validation": 3,
+          "planning_agent": 10
+        },
+        "jobs": 336,
+        "median_parallel_efficiency": 0.8413581827836877,
+        "native_width": 4,
+        "nonterminal_ingestion_failures": 0,
+        "terminal_failed_jobs": 23
+      },
+      {
+        "active_seconds": {
+          "all": {
+            "maximum": 5577.821065,
+            "mean": 912.1405178154762,
+            "median": 807.7269014999999,
+            "minimum": 59.428146,
+            "p95": 1200.2755005
+          },
+          "failed": {
+            "maximum": 5577.821065,
+            "mean": 2029.005321764706,
+            "median": 381.523026,
+            "minimum": 59.428146,
+            "p95": 5562.9684834
+          },
+          "succeeded": {
+            "maximum": 3167.092424,
+            "mean": 852.6210768526646,
+            "median": 808.423707,
+            "minimum": 685.301794,
+            "p95": 1158.5022557
+          }
+        },
+        "arm": "sequential-champion",
+        "effective_parallelism_by_block": {
+          "maximum": 0.9882107462004619,
+          "mean": 0.9855595554612765,
+          "median": 0.9854923030731815,
+          "minimum": 0.9838594830729357,
+          "values": [
+            0.9882107462004619,
+            0.9841268335270343,
+            0.9838594830729357,
+            0.9862443202404139,
+            0.9864639557169584,
+            0.9854923030731815,
+            0.9845192463979503
+          ]
+        },
+        "failed_active_seconds_fraction": 0.11254626381146897,
+        "failure_categories": {
+          "coding_agent": 8,
+          "evaluator_precision": 1,
+          "evaluator_validation": 1,
+          "planning_agent": 7
+        },
+        "jobs": 336,
+        "median_parallel_efficiency": 0.9854923030731815,
+        "native_width": 1,
+        "nonterminal_ingestion_failures": 0,
+        "terminal_failed_jobs": 17
+      },
+      {
+        "active_seconds": {
+          "all": {
+            "maximum": 5656.92969,
+            "mean": 982.5246400446429,
+            "median": 830.8478620000001,
+            "minimum": 156.221377,
+            "p95": 1220.38770525
+          },
+          "failed": {
+            "maximum": 5656.92969,
+            "mean": 2979.55749525,
+            "median": 3600.563324,
+            "minimum": 156.221377,
+            "p95": 5505.1704485
+          },
+          "succeeded": {
+            "maximum": 1354.223258,
+            "mean": 856.1301555379747,
+            "median": 828.230825,
+            "minimum": 693.412632,
+            "p95": 1094.598744
+          }
+        },
+        "arm": "independent-root",
+        "effective_parallelism_by_block": {
+          "maximum": 3.593613947948119,
+          "mean": 3.199023802960282,
+          "median": 3.4629081422928283,
+          "minimum": 2.6085305913092096,
+          "values": [
+            2.909931476385822,
+            2.7923852649349974,
+            2.6085305913092096,
+            3.593613947948119,
+            3.5239361135288023,
+            3.501861084322194,
+            3.4629081422928283
+          ]
+        },
+        "failed_active_seconds_fraction": 0.18050907385329445,
+        "failure_categories": {
+          "coding_agent": 6,
+          "evaluator_precision": 1,
+          "evaluator_validation": 2,
+          "planning_agent": 11
+        },
+        "jobs": 336,
+        "median_parallel_efficiency": 0.8657270355732071,
+        "native_width": 4,
+        "nonterminal_ingestion_failures": 0,
+        "terminal_failed_jobs": 20
+      }
+    ],
+    "definition": "effective parallelism is summed candidate active time divided by search makespan within each block; it is descriptive, not provider service time"
+  },
+  "final_sequential_over_qd_time_ratio": {
+    "geometric_mean": 2.7797608563003613,
+    "maximum": 3.8713167436965072,
+    "mean": 2.878469617653363,
+    "median": 3.1219086734101906,
+    "minimum": 1.7923512513687598,
+    "pairs": [
+      2.4405341217366177,
+      1.7923512513687598,
+      2.064430009472972,
+      3.8713167436965072,
+      3.1219086734101906,
+      3.528708775673664,
+      3.33003774821483
+    ]
+  },
+  "inferential_status": "post-hoc exploratory analysis; not evidence of quality equivalence or a confirmatory time advantage",
+  "kind": "posthoc_formal_quality_time_summary",
+  "posthoc_qd_completion_deadline_comparison": {
+    "deadline_definition": "each block's QD 48-job search completion; policy-dependent and post-hoc",
+    "qd_higher_quality_blocks": 7,
+    "rows": [
+      {
+        "block": 1,
+        "qd_checkpoint": 48,
+        "qd_deadline_hours": 6.5071700275,
+        "qd_heldout_performance_ratio": 1.0139039324687833,
+        "qd_over_sequential_percent": 1.0354654973701027,
+        "sequential_checkpoint_reached": 16,
+        "sequential_heldout_performance_ratio": 1.003512902600696
+      },
+      {
+        "block": 2,
+        "qd_checkpoint": 48,
+        "qd_deadline_hours": 6.500867877222222,
+        "qd_heldout_performance_ratio": 1.0073941184402648,
+        "qd_over_sequential_percent": 0.033865008617195436,
+        "sequential_checkpoint_reached": 24,
+        "sequential_heldout_performance_ratio": 1.0070530798280013
+      },
+      {
+        "block": 3,
+        "qd_checkpoint": 48,
+        "qd_deadline_hours": 7.006210034444445,
+        "qd_heldout_performance_ratio": 1.000620184512775,
+        "qd_over_sequential_percent": 0.08166818685571009,
+        "sequential_checkpoint_reached": 16,
+        "sequential_heldout_performance_ratio": 0.9998036629890948
+      },
+      {
+        "block": 4,
+        "qd_checkpoint": 48,
+        "qd_deadline_hours": 2.999015867222222,
+        "qd_heldout_performance_ratio": 1.0094625313958105,
+        "qd_over_sequential_percent": 0.6466843226722085,
+        "sequential_checkpoint_reached": 8,
+        "sequential_heldout_performance_ratio": 1.0029764399982461
+      },
+      {
+        "block": 5,
+        "qd_checkpoint": 48,
+        "qd_deadline_hours": 3.7451082141666667,
+        "qd_heldout_performance_ratio": 1.0123907644490977,
+        "qd_over_sequential_percent": 0.41227641680516847,
+        "sequential_checkpoint_reached": 8,
+        "sequential_heldout_performance_ratio": 1.0082340532214666
+      },
+      {
+        "block": 6,
+        "qd_checkpoint": 48,
+        "qd_deadline_hours": 3.1002179258333333,
+        "qd_heldout_performance_ratio": 1.0071203968916327,
+        "qd_over_sequential_percent": 0.4384069825249304,
+        "sequential_checkpoint_reached": 8,
+        "sequential_heldout_performance_ratio": 1.0027243831802903
+      },
+      {
+        "block": 7,
+        "qd_checkpoint": 48,
+        "qd_deadline_hours": 3.043170105,
+        "qd_heldout_performance_ratio": 1.0068090559447396,
+        "qd_over_sequential_percent": 1.248583784803614,
+        "sequential_checkpoint_reached": 8,
+        "sequential_heldout_performance_ratio": 0.9943932234001789
+      }
+    ]
+  },
+  "schema_version": 1,
+  "scope": "formal-method-efficacy-c092b3d285ee",
+  "target": "Zstandard"
+}

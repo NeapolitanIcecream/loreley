@@ -1,0 +1,8 @@
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
+*.synctex.gz
+# Optional vector previews; reports embed the portable 300 dpi PNGs.
+/figures/*.pdf
