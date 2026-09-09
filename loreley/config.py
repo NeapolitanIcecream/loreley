@@ -925,6 +925,12 @@ class Settings(BaseSettings):
         default=1.0e-9,
         alias="MAPELITES_PARETO_EPSILON",
     )
+    mapelites_admission_policy: Literal["pareto", "fresh_comparison"] = Field(
+        default="pareto", alias="MAPELITES_ADMISSION_POLICY",
+    )
+    mapelites_comparison_confidence: float = Field(
+        default=0.95, ge=0.5, lt=1.0, alias="MAPELITES_COMPARISON_CONFIDENCE",
+    )
     mapelites_migration_interval_jobs: int = Field(
         default=50,
         ge=0,
@@ -1067,6 +1073,15 @@ def _validate_map_elites_contract(settings: Settings) -> None:
     pareto_epsilon = float(settings.mapelites_pareto_epsilon)
     if not 0.0 <= pareto_epsilon < float("inf"):
         raise ValueError("MAPELITES_PARETO_EPSILON must be finite and non-negative.")
+    if settings.mapelites_admission_policy == "fresh_comparison":
+        if len(settings.mapelites_objectives) != 1 or len(island_ids) != 1:
+            raise ValueError("fresh_comparison requires one objective and one shared island.")
+        if settings.mapelites_dimensionality_refit_interval != 0:
+            raise ValueError("fresh_comparison requires MAPELITES_DIMENSION_REDUCTION_REFIT_INTERVAL=0.")
+        if settings.mapelites_migration_interval_jobs != 0:
+            raise ValueError("fresh_comparison requires MAPELITES_MIGRATION_INTERVAL_JOBS=0.")
+        if settings.worker_evaluator_max_concurrency != 1:
+            raise ValueError("fresh_comparison requires WORKER_EVALUATOR_MAX_CONCURRENCY=1.")
 
 
 def _randomize_worker_repo_worktree(settings: Settings) -> None:
@@ -1285,6 +1300,8 @@ def _safe_export_search_payload(settings: Settings) -> dict[str, Any]:
         "mapelites_objectives": resolve_objective_contract(settings).as_payload(),
         "mapelites_pareto_front_max_size": settings.mapelites_pareto_front_max_size,
         "mapelites_pareto_epsilon": settings.mapelites_pareto_epsilon,
+        "mapelites_admission_policy": settings.mapelites_admission_policy,
+        "mapelites_comparison_confidence": settings.mapelites_comparison_confidence,
         "mapelites_migration_interval_jobs": settings.mapelites_migration_interval_jobs,
         "mapelites_sampler_inspiration_count": settings.mapelites_sampler_inspiration_count,
         "mapelites_sampler_seed": settings.mapelites_sampler_seed,

@@ -20,6 +20,12 @@ These notes cover changes merged after `v0.10.0-alpha`.
 
 ## Runtime and operator safety
 
+- Add opt-in fresh candidate/incumbent comparison admission for a single
+  positive objective and a frozen shared archive. Bind evidence to the measured
+  worker attempt and current cell, bypass historical score dominance only on
+  a valid positive confidence bound, and retain valid rejected metrics.
+  See [ADR 0054](../adr/0054-fresh-elite-comparison.md).
+
 - Add OpenRouter embedding-provider controls for provider selection,
   fallbacks, parameter support, and data-collection policy. Preserve
   provider-reported embedding cost when it is available.

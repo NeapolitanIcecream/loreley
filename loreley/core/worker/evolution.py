@@ -896,6 +896,12 @@ class EvolutionWorker:
         candidate_commit: str,
         source_tree_hash: str,
     ) -> EvaluationOutcome:
+        from loreley.core.fresh_comparison import enabled as comparison_enabled
+        if comparison_enabled(self.settings, is_seed_job=job_ctx.is_seed_job):
+            return self._run_evaluation(
+                job_ctx=job_ctx, checkout=checkout, plan=plan,
+                candidate_commit=candidate_commit,
+            )
         supports_phased = getattr(self.evaluator, "supports_phased_evaluation", None)
         if callable(supports_phased) and bool(supports_phased()):
             return self._run_evaluation(
@@ -1528,6 +1534,9 @@ class EvolutionWorker:
                     invocation,
                 )
             evaluate_outcome = getattr(self.evaluator, "evaluate_outcome", None)
+            from loreley.core.fresh_comparison import enabled as comparison_enabled
+            if comparison_enabled(self.settings, is_seed_job=job_ctx.is_seed_job):
+                raise EvaluationRuntimeError("fresh_comparison requires a phased-v1 evaluator.")
             if callable(evaluate_outcome):
                 return self._annotate_evaluation_invocation(
                     self._run_one_shot_evaluation(
@@ -1685,6 +1694,10 @@ class EvolutionWorker:
         state: _PhasedEvaluationState,
         job_ctx: JobContext,
     ) -> None:
+        from loreley.core.fresh_comparison import enabled, wait_for_bootstrap
+        if enabled(self.settings, is_seed_job=job_ctx.is_seed_job):
+            wait_for_bootstrap(job_id=job_ctx.job_id, run_token=job_ctx.run_token,
+                               deadline=state.deadline)
         state.slot_lease = self.evaluation_runtime.acquire_evaluator_slot(
             contract_key=state.contract_key,
             job_id=job_ctx.job_id,
@@ -1710,6 +1723,11 @@ class EvolutionWorker:
             evaluator_version=state.evaluator_version,
             campaign_program_hash=state.campaign_hash,
         )
+        from loreley.core.fresh_comparison import enabled as comparison_enabled
+        if comparison_enabled(self.settings, is_seed_job=job_ctx.is_seed_job):
+            # A different incumbent is a different comparison, even when C's
+            # executable identity was measured before. Never reuse that score.
+            return None
         state.measurement_lease = self.evaluation_runtime.acquire_measurement_lock(
             cache_key=state.cache_key,
             contract_key=state.contract_key,
@@ -1758,8 +1776,9 @@ class EvolutionWorker:
     ) -> EvaluationOutcome:
         if state.scope == "measurement":
             self._acquire_phased_slot(state, job_ctx)
-        state.measurement_executed = True
         preparation = _required(state.preparation, "phased preparation")
+        self._prepare_fresh_comparison(state, job_ctx, context)
+        state.measurement_executed = True
         result = state.evaluator.measure_phase(
             context,
             preparation,
@@ -1768,10 +1787,42 @@ class EvolutionWorker:
         if isinstance(result, EvaluationOutcome):
             return self._finish_failed_phased_measurement(state, result)
         state.measured = result
+        if context.comparison is not None:
+            result.cacheable = False
         self._release_measurement_scope_slot(state)
         outcome = self._finalize_fresh_phased_measurement(state, context)
+        if context.comparison is not None and outcome.outcome_kind == "passed":
+            from loreley.core.fresh_comparison import record_measurement
+            try:
+                record_measurement(settings=self.settings, job_id=job_ctx.job_id,
+                                   run_token=job_ctx.run_token, context=context.comparison,
+                                   result=outcome.result)
+            except ValueError as exc:
+                raise EvaluationRuntimeError(str(exc)) from exc
         self._retain_or_release_measurement_lease(state, outcome)
         return self._finish_phased_state(state, outcome)
+
+    def _prepare_fresh_comparison(
+        self, state: _PhasedEvaluationState, job_ctx: JobContext,
+        context: EvaluationContext,
+    ) -> None:
+        from loreley.core.fresh_comparison import enabled, prepare_context
+        if not enabled(self.settings, is_seed_job=job_ctx.is_seed_job):
+            return
+        preparation = _required(state.preparation, "phased preparation")
+        try:
+            context.comparison = prepare_context(
+                settings=self.settings, job_id=job_ctx.job_id, run_token=job_ctx.run_token,
+                commit_hash=str(context.candidate_commit_hash), island_id=job_ctx.island_id,
+                repo_root=context.worktree, evaluator_name=state.evaluator_name,
+                evaluator_version=state.evaluator_version,
+                campaign_program_hash=state.campaign_hash,
+                candidate_identity=preparation.candidate_identity,
+                measurement_contract_fingerprint=preparation.measurement_contract_fingerprint,
+                deadline=state.deadline,
+            )
+        except ValueError as exc:
+            raise EvaluationRuntimeError(str(exc)) from exc
 
     def _finish_failed_phased_measurement(
         self,
