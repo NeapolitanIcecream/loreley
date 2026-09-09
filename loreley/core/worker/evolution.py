@@ -1806,19 +1806,22 @@ class EvolutionWorker:
         self, state: _PhasedEvaluationState, job_ctx: JobContext,
         context: EvaluationContext,
     ) -> None:
-        from loreley.core.fresh_comparison import enabled, prepare_context
+        from loreley.core.fresh_comparison import ComparisonRequest, enabled, prepare_context
         if not enabled(self.settings, is_seed_job=job_ctx.is_seed_job):
             return
         preparation = _required(state.preparation, "phased preparation")
         try:
             context.comparison = prepare_context(
-                settings=self.settings, job_id=job_ctx.job_id, run_token=job_ctx.run_token,
-                commit_hash=str(context.candidate_commit_hash), island_id=job_ctx.island_id,
-                repo_root=context.worktree, evaluator_name=state.evaluator_name,
-                evaluator_version=state.evaluator_version,
-                campaign_program_hash=state.campaign_hash,
-                candidate_identity=preparation.candidate_identity,
-                measurement_contract_fingerprint=preparation.measurement_contract_fingerprint,
+                settings=self.settings,
+                request=ComparisonRequest(
+                    job_id=job_ctx.job_id, run_token=job_ctx.run_token,
+                    commit_hash=str(context.candidate_commit_hash), island_id=job_ctx.island_id,
+                    repo_root=context.worktree, evaluator_name=state.evaluator_name,
+                    evaluator_version=state.evaluator_version,
+                    campaign_program_hash=state.campaign_hash,
+                    candidate_identity=preparation.candidate_identity,
+                    measurement_contract_fingerprint=preparation.measurement_contract_fingerprint,
+                ),
                 deadline=state.deadline,
             )
         except ValueError as exc:

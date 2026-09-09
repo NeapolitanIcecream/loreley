@@ -85,6 +85,18 @@ def validate_comparison_result(
     """
 
     minimum = _confidence(minimum_confidence, "minimum_confidence")
+    context_id, objective, direction, incumbent = _context_header(context)
+    evidence = _completed_evidence(payload, context_id)
+    candidate = _candidate_value(metrics, objective, direction)
+    _validate_repeated_candidate(evidence, candidate)
+    if incumbent is None:
+        return _empty_cell_decision(context_id, candidate, evidence)
+    return _occupied_cell_decision(context_id, candidate, direction, evidence, minimum)
+
+
+def _context_header(context: Mapping[str, Any]) -> tuple[str, str, bool, str | None]:
+    """Read the identity and single-objective contract issued by core."""
+
     if not isinstance(context, Mapping):
         raise ComparisonContractError("Comparison context must be an object.")
     context_id = _nonempty_string(context.get("context_id"), "context.context_id")
@@ -99,6 +111,13 @@ def validate_comparison_result(
     incumbent = context["incumbent_commit_hash"]
     if incumbent is not None:
         _nonempty_string(incumbent, "context.incumbent_commit_hash")
+    return context_id, objective, direction, incumbent
+
+
+def _completed_evidence(
+    payload: Mapping[str, Any] | None, context_id: str
+) -> dict[str, Any]:
+    """Copy strict JSON evidence and bind its completion to the issued context."""
 
     if not isinstance(payload, Mapping):
         raise ComparisonContractError("fresh_comparison must be an object.")
@@ -113,8 +132,12 @@ def validate_comparison_result(
         raise ComparisonContractError("fresh_comparison context_id does not match.")
     if evidence.get("complete") is not True:
         raise ComparisonContractError("fresh_comparison complete must be true.")
+    return evidence
 
-    candidate = _candidate_value(metrics, objective, direction)
+
+def _validate_repeated_candidate(evidence: Mapping[str, Any], candidate: float) -> None:
+    """A repeated value is corroboration, never a replacement for the metric."""
+
     if "candidate_value" in evidence:
         repeated = _positive(evidence["candidate_value"], "candidate_value")
         if repeated != candidate:
@@ -122,30 +145,45 @@ def validate_comparison_result(
                 "candidate_value does not match the configured objective metric."
             )
 
-    if incumbent is None:
-        forbidden = {
-            "incumbent_value",
-            "improvement_lower_bound",
-            "confidence_level",
-            "sample_count",
-        }.intersection(evidence)
-        if forbidden:
-            raise ComparisonContractError(
-                "Empty-cell evidence must not contain comparison field(s): "
-                + ", ".join(sorted(forbidden))
-                + "."
-            )
-        return FreshComparisonDecision(
-            allowed=True,
-            context_id=context_id,
-            candidate_value=candidate,
-            incumbent_value=None,
-            point_gain=None,
-            improvement_lower_bound=None,
-            confidence_level=None,
-            sample_count=None,
-            evidence=evidence,
+
+def _empty_cell_decision(
+    context_id: str, candidate: float, evidence: Mapping[str, Any]
+) -> FreshComparisonDecision:
+    """Admit coverage without inventing an incumbent or comparison statistics."""
+
+    forbidden = {
+        "incumbent_value",
+        "improvement_lower_bound",
+        "confidence_level",
+        "sample_count",
+    }.intersection(evidence)
+    if forbidden:
+        raise ComparisonContractError(
+            "Empty-cell evidence must not contain comparison field(s): "
+            + ", ".join(sorted(forbidden))
+            + "."
         )
+    return FreshComparisonDecision(
+        allowed=True,
+        context_id=context_id,
+        candidate_value=candidate,
+        incumbent_value=None,
+        point_gain=None,
+        improvement_lower_bound=None,
+        confidence_level=None,
+        sample_count=None,
+        evidence=evidence,
+    )
+
+
+def _occupied_cell_decision(
+    context_id: str,
+    candidate: float,
+    direction: bool,
+    evidence: Mapping[str, Any],
+    minimum: float,
+) -> FreshComparisonDecision:
+    """Validate the interval summary and authorize only a positive lower bound."""
 
     incumbent_value = _positive(evidence.get("incumbent_value"), "incumbent_value")
     lower = _number(evidence.get("improvement_lower_bound"), "improvement_lower_bound")
@@ -158,19 +196,7 @@ def validate_comparison_result(
     if isinstance(count, bool) or not isinstance(count, int) or count < 2:
         raise ComparisonContractError("sample_count must be an integer of at least 2.")
 
-    numerator, denominator = (
-        (candidate, incumbent_value)
-        if direction
-        else (incumbent_value, candidate)
-    )
-    ratio = numerator / denominator
-    # Avoid overflow/underflow in a ratio of individually valid finite metrics.
-    log_ratio = (
-        math.log(ratio)
-        if 0 < ratio < math.inf
-        else math.log(numerator) - math.log(denominator)
-    )
-    point_gain = 100 * log_ratio
+    point_gain = _oriented_log_gain(candidate, incumbent_value, direction)
     if lower > point_gain:
         raise ComparisonContractError(
             "improvement_lower_bound exceeds the measured oriented log gain."
@@ -187,6 +213,20 @@ def validate_comparison_result(
         sample_count=count,
         evidence=evidence,
     )
+
+
+def _oriented_log_gain(candidate: float, incumbent: float, direction: bool) -> float:
+    numerator, denominator = (
+        (candidate, incumbent) if direction else (incumbent, candidate)
+    )
+    ratio = numerator / denominator
+    # Avoid overflow/underflow in a ratio of individually valid finite metrics.
+    log_ratio = (
+        math.log(ratio)
+        if 0 < ratio < math.inf
+        else math.log(numerator) - math.log(denominator)
+    )
+    return 100 * log_ratio
 
 
 def _candidate_value(

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -13,6 +14,16 @@ from loreley.config import Settings
 
 from .snapshot import serialize_projection
 from .types import IslandState
+
+
+@dataclass(frozen=True, slots=True)
+class ComparisonAdmission:
+    """One candidate's metrics and the fresh comparison authorizing its fate."""
+
+    commit_hash: str
+    metrics: Sequence[Mapping[str, Any]] | Mapping[str, Any] | None
+    comparison_context: Mapping[str, Any]
+    replacement_allowed: bool
 
 
 class ComparisonContextError(ValueError):
@@ -46,6 +57,13 @@ def validate_comparison_context(
     Additional evaluator-protocol fields may be retained by the caller; this
     validates the archive-owned fields only.
     """
+    _validate_identity(expected, current)
+    _validate_target(expected, current)
+    _validate_measures(expected, current)
+
+
+def _validate_identity(expected: Mapping[str, Any], current: Mapping[str, Any]) -> None:
+    """Keep candidate identity and metric interpretation bound to the run."""
     for key in ("candidate_commit_hash", "island_id", "objective_name", "projection_fingerprint"):
         value = expected.get(key)
         if not isinstance(value, str) or not value or value != current[key]:
@@ -54,6 +72,10 @@ def validate_comparison_context(
         raise ComparisonContextError("Comparison metric direction must be boolean.")
     if expected["higher_is_better"] != current["higher_is_better"]:
         raise ComparisonContextError("Comparison metric direction changed.")
+
+
+def _validate_target(expected: Mapping[str, Any], current: Mapping[str, Any]) -> None:
+    """Require the same cell and the same currently retained competitor."""
     cell = expected.get("cell_index")
     if type(cell) is not int or cell != current["cell_index"]:
         raise StaleComparisonError("Candidate no longer belongs to the compared cell.")
@@ -64,6 +86,10 @@ def validate_comparison_context(
         raise ComparisonContextError("Comparison incumbent must be a commit hash or null.")
     if incumbent != current["incumbent_commit_hash"]:
         raise StaleComparisonError("Compared incumbent is no longer current.")
+
+
+def _validate_measures(expected: Mapping[str, Any], current: Mapping[str, Any]) -> None:
+    """Reject descriptor drift even when both vectors map to the same cell."""
     try:
         measures = np.asarray(expected.get("measures"), dtype=np.float64)
         current_measures = np.asarray(current["measures"], dtype=np.float64)

@@ -92,8 +92,8 @@ def test_fresh_admission_bypasses_historical_equivalent_identity(ingestion_harne
     names = [name for name, value in h.calls]
     assert names == ["fresh", "ack", "success"]
     kwargs = h.calls[0][1]
-    assert kwargs["replacement_allowed"] is True
-    assert kwargs["comparison_context"] is h.context
+    assert kwargs["request"].replacement_allowed is True
+    assert kwargs["request"].comparison_context is h.context
     assert kwargs["snapshot_session"] is h.session
     assert h.calls[-1][1].comparison_required is True
 

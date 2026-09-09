@@ -7,6 +7,7 @@ job is ingested, even though the worker releases its live evaluator slot first.
 from __future__ import annotations
 
 import hashlib
+from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic, sleep
 from typing import Any, Mapping, Sequence
@@ -25,6 +26,21 @@ from loreley.core.map_elites.manager import MapElitesManager
 from loreley.core.worker.evaluation_runtime import EvaluationRuntimeError
 from loreley.db.base import session_scope
 from loreley.db.models import EvaluationAttempt, EvolutionEvent, EvolutionJob, JobStatus
+
+
+@dataclass(frozen=True, slots=True)
+class ComparisonRequest:
+    """Provenance for one prepared executable and the worker that owns it."""
+    job_id: UUID
+    run_token: UUID
+    commit_hash: str
+    island_id: str
+    repo_root: Path
+    evaluator_name: str
+    evaluator_version: str
+    campaign_program_hash: str
+    candidate_identity: str
+    measurement_contract_fingerprint: str
 
 
 def enabled(settings: Settings, *, is_seed_job: bool = False) -> bool:
@@ -114,32 +130,29 @@ def _write_event(session: Session, *, event_type: str, job_id: UUID,
             raise EvaluationRuntimeError("Conflicting replay of a fresh comparison event.")
 
 
-def prepare_context(*, settings: Settings, job_id: UUID, run_token: UUID,
-                    commit_hash: str, island_id: str, repo_root: Path,
-                    evaluator_name: str, evaluator_version: str,
-                    campaign_program_hash: str, candidate_identity: str,
-                    measurement_contract_fingerprint: str, deadline: float) -> dict[str, Any]:
-    manager = MapElitesManager(settings=settings, repo_root=repo_root)
+def prepare_context(*, settings: Settings, request: ComparisonRequest,
+                    deadline: float) -> dict[str, Any]:
+    manager = MapElitesManager(settings=settings, repo_root=request.repo_root)
     while monotonic() < deadline:
         with session_scope() as session:
             lock_comparison(session, settings)
-            _active_job(session, job_id, run_token)
+            _active_job(session, request.job_id, request.run_token)
             if _pending_bootstrap(session):
                 raise EvaluationRuntimeError("Seed bootstrap changed before fresh measurement.")
-            if not _pending_cycle(session, job_id):
+            if not _pending_cycle(session, request.job_id):
                 context = manager.prepare_comparison(
-                    commit_hash=commit_hash, island_id=island_id,
-                    repo_root=repo_root, snapshot_session=session,
+                    commit_hash=request.commit_hash, island_id=request.island_id,
+                    repo_root=request.repo_root, snapshot_session=session,
                 )
                 context.update(
-                    context_id=str(uuid4()), evaluator_name=evaluator_name,
-                    evaluator_version=evaluator_version,
-                    campaign_program_hash=campaign_program_hash,
-                    candidate_identity_sha256=hashlib.sha256(candidate_identity.encode()).hexdigest(),
-                    contract_sha256=hashlib.sha256(measurement_contract_fingerprint.encode()).hexdigest(),
+                    context_id=str(uuid4()), evaluator_name=request.evaluator_name,
+                    evaluator_version=request.evaluator_version,
+                    campaign_program_hash=request.campaign_program_hash,
+                    candidate_identity_sha256=hashlib.sha256(request.candidate_identity.encode()).hexdigest(),
+                    contract_sha256=hashlib.sha256(request.measurement_contract_fingerprint.encode()).hexdigest(),
                 )
-                _write_event(session, event_type=COMPARISON_PREPARED, job_id=job_id,
-                             run_token=run_token, context=context, payload=context)
+                _write_event(session, event_type=COMPARISON_PREPARED, job_id=request.job_id,
+                             run_token=request.run_token, context=context, payload=context)
                 return context
         sleep(min(.5, max(0., deadline - monotonic())))
     raise EvaluationRuntimeError("Previous fresh comparison has not completed ingestion.")

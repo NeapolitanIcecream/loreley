@@ -207,17 +207,21 @@ class MapElitesIngestion:
         except Exception:
             # A savepoint can succeed and the surrounding batch commit still
             # fail. Restore every possibly advanced cache from durable state.
-            for island in {s.island_id or resolve_default_island_id(self.settings)
-                           for s in snapshots}:
-                invalidate = getattr(self.manager, "invalidate_island", None)
-                if callable(invalidate):
-                    invalidate(island)
+            self._invalidate_batch_caches(snapshots)
             raise
         finally:
             self._prefetched_metrics_payload_by_commit = None
             self._prefetched_metrics_errors_by_commit = None
             self._record_events_for_batch = False
         return ingested
+
+    def _invalidate_batch_caches(self, snapshots: Sequence[JobSnapshot]) -> None:
+        invalidate = getattr(self.manager, "invalidate_island", None)
+        if not callable(invalidate):
+            return
+        islands = {s.island_id or resolve_default_island_id(self.settings) for s in snapshots}
+        for island in islands:
+            invalidate(island)
 
     def count_pending_ingestion_jobs(self) -> int:
         """Return succeeded jobs whose result ingestion is not terminal."""
@@ -868,9 +872,18 @@ class MapElitesIngestion:
                 session=snapshot_session, settings=self.settings, job_id=snapshot.job_id,
                 commit_hash=commit_hash, metrics=metrics_payload,
             )
+            kwargs.pop("repo_root")
+            event_context = {key: kwargs.pop(key) for key in (
+                "event_key_prefix", "event_job_id", "event_ordinal",
+            ) if key in kwargs}
+            from loreley.core.map_elites.comparison import ComparisonAdmission
+            request = ComparisonAdmission(
+                commit_hash=kwargs.pop("commit_hash"), metrics=kwargs.pop("metrics"),
+                comparison_context=context, replacement_allowed=decision["allowed"],
+            )
             insertion = self.manager.ingest_comparison(
-                **kwargs, comparison_context=context,
-                replacement_allowed=decision["allowed"],
+                request=request, **kwargs,
+                event_context=event_context,
             )
             acknowledge(snapshot_session, job_id=snapshot.job_id, context=context,
                         allowed=decision["allowed"])

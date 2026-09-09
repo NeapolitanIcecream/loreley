@@ -8,7 +8,9 @@ import pytest
 
 from loreley.config import resolve_objective_contract
 from loreley.core.map_elites.code_embedding import CommitCodeEmbedding
-from loreley.core.map_elites.comparison import ComparisonContextError, StaleComparisonError
+from loreley.core.map_elites.comparison import (
+    ComparisonAdmission, ComparisonContextError, StaleComparisonError,
+)
 from loreley.core.map_elites.dimension_reduction import PCAProjection
 from loreley.core.map_elites.manager import MapElitesManager
 from loreley.core.map_elites.objectives import ObjectiveSpec
@@ -173,10 +175,12 @@ def comparison_manager(settings, monkeypatch):
 
 def _ingest(manager, context, *, allow=True, **kwargs):
     return manager.ingest_comparison(
-        commit_hash="candidate",
-        metrics=[{"name": "score", "value": 1.0, "higher_is_better": True}],
-        comparison_context=context,
-        replacement_allowed=allow,
+        ComparisonAdmission(
+            commit_hash="candidate",
+            metrics=[{"name": "score", "value": 1.0, "higher_is_better": True}],
+            comparison_context=context,
+            replacement_allowed=allow,
+        ),
         **kwargs,
     )
 

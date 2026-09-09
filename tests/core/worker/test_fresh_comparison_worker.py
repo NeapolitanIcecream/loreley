@@ -181,11 +181,11 @@ def test_fresh_context_issued_after_preparation_and_capacity_slot(worker_harness
     assert h.plugin.contexts["prepare"] is None
     assert h.plugin.contexts["measure"] == h.issued
     assert h.plugin.contexts["finalize"] == h.issued
-    kwargs = h.prepared_calls[0]
-    assert kwargs["candidate_identity"] == "binary:abc"
-    assert kwargs["measurement_contract_fingerprint"] == "benchmark-v1"
-    assert kwargs["job_id"] == h.job.job_id
-    assert kwargs["run_token"] == h.job.run_token
+    request = h.prepared_calls[0]["request"]
+    assert request.candidate_identity == "binary:abc"
+    assert request.measurement_contract_fingerprint == "benchmark-v1"
+    assert request.job_id == h.job.job_id
+    assert request.run_token == h.job.run_token
     assert len(h.recorded) == 1
 
 

@@ -140,16 +140,18 @@ def _job(store, *, status=JobStatus.RUNNING, run_token=None, ingestion_status=No
 def _prepare(store, job_id, token, *, deadline=None):
     return comparison.prepare_context(
         settings=store.settings,
-        job_id=job_id,
-        run_token=token,
-        commit_hash=COMMIT,
-        island_id="main",
-        repo_root=Path("."),
-        evaluator_name="paired",
-        evaluator_version="1",
-        campaign_program_hash=CAMPAIGN,
-        candidate_identity="binary-v1",
-        measurement_contract_fingerprint="benchmark-v1",
+        request=comparison.ComparisonRequest(
+            job_id=job_id,
+            run_token=token,
+            commit_hash=COMMIT,
+            island_id="main",
+            repo_root=Path("."),
+            evaluator_name="paired",
+            evaluator_version="1",
+            campaign_program_hash=CAMPAIGN,
+            candidate_identity="binary-v1",
+            measurement_contract_fingerprint="benchmark-v1",
+        ),
         deadline=deadline if deadline is not None else monotonic() + 2,
     )
 
