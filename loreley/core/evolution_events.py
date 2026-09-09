@@ -44,6 +44,9 @@ ARCHIVE_MEMBER_ADMITTED = "archive.member.admitted"
 ARCHIVE_MEMBER_MOVED = "archive.member.moved"
 ARCHIVE_MEMBER_REMOVED = "archive.member.removed"
 ARCHIVE_REBUILD_COMPLETED = "archive.rebuild.completed"
+COMPARISON_PREPARED = "comparison.prepared"
+COMPARISON_MEASURED = "comparison.measured"
+COMPARISON_DECIDED = "comparison.decided"
 
 _EVENT_TYPE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
 _PAYLOAD_MAX_BYTES = 4096
@@ -51,6 +54,17 @@ _PAYLOAD_STRING_MAX_CHARS = 256
 _PAYLOAD_SEQUENCE_MAX_ITEMS = 32
 
 _EVENT_PAYLOAD_FIELDS: dict[str, frozenset[str]] = {
+    COMPARISON_PREPARED: frozenset({
+        "context_id", "candidate_commit_hash", "island_id", "cell_index",
+        "measures", "projection_fingerprint", "incumbent_commit_hash",
+        "objective_name", "higher_is_better", "evaluator_name", "evaluator_version",
+        "campaign_program_hash", "candidate_identity_sha256", "contract_sha256",
+    }),
+    COMPARISON_MEASURED: frozenset({
+        "context_id", "candidate_value", "incumbent_value", "point_gain",
+        "improvement_lower_bound", "confidence_level", "sample_count", "allowed",
+    }),
+    COMPARISON_DECIDED: frozenset({"context_id", "allowed", "cell_index"}),
     TIMELINE_HISTORY_BOUNDARY: frozenset({"reason", "schema_from", "schema_to"}),
     JOB_DISPATCHED: frozenset({"dispatch_kind", "previous_status", "recovery_count"}),
     JOB_RUN_STARTED: frozenset({"job_kind", "recovery_count"}),

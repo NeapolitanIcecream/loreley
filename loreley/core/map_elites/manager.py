@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import copy, deepcopy
 from dataclasses import dataclass
 import time
 from pathlib import Path
@@ -28,8 +29,16 @@ from .archive_ops import (
     clip_vector as archive_clip_vector,
     record_from_candidate as archive_record_from_candidate,
     records_from_archive as archive_records_from_archive,
+    sync_archive_indexes,
 )
 from .code_embedding import CommitCodeEmbedding
+from .comparison import (
+    ComparisonAdmission,
+    ComparisonContextError,
+    StaleComparisonError,
+    projection_fingerprint,
+    validate_comparison_context,
+)
 from .db_ops import (
     iter_query_batches as db_iter_query_batches,
     load_commit_objectives as db_load_commit_objectives,
@@ -44,6 +53,7 @@ from .dimension_reduction import (
 )
 from .preprocess import PreprocessedFile
 from .objectives import ObjectiveContractError, ResolvedObjectives
+from .pareto_archive import ParetoAddOutcome, ParetoCandidate
 from .rebuild import (
     pad_or_trim as rebuild_pad_or_trim,
     recompute_final_embedding as rebuild_recompute_final_embedding,
@@ -293,6 +303,202 @@ class MapElitesManager:
                 stage_metrics=stage_metrics,
             )
 
+    def prepare_comparison(
+        self,
+        *,
+        commit_hash: str,
+        island_id: str | None = None,
+        repo_root: Path | None = None,
+        snapshot_session: Session | None = None,
+    ) -> dict[str, Any]:
+        """Describe the candidate's current competitor without advancing PCA.
+
+        The context is JSON-compatible and must be persisted by the caller before
+        evaluation. It is an identity guard, not authorization from an evaluator.
+        """
+        context, _, _ = self._prepare_comparison(
+            commit_hash=commit_hash,
+            island_id=island_id or self._default_island,
+            repo_root=repo_root,
+            snapshot_session=snapshot_session,
+        )
+        return context
+
+    def _prepare_comparison(
+        self,
+        *,
+        commit_hash: str,
+        island_id: str,
+        repo_root: Path | None,
+        snapshot_session: Session | None,
+    ) -> tuple[dict[str, Any], IslandState, CommitEmbeddingArtifacts]:
+        if len(self._objective_contract.specs) != 1:
+            raise ComparisonContextError("Fresh comparison requires exactly one objective.")
+        if self.settings.mapelites_dimensionality_refit_interval != 0:
+            raise ComparisonContextError("Fresh comparison requires frozen PCA (refit interval 0).")
+        if not isinstance(commit_hash, str) or not commit_hash.strip():
+            raise ComparisonContextError("Comparison candidate commit hash cannot be empty.")
+        self.reload_island(island_id, snapshot_session=snapshot_session)
+        state = self._ensure_island(island_id, snapshot_session=snapshot_session)
+        if state.projection is None:
+            raise ComparisonContextError("Fit and freeze PCA before preparing fresh comparisons.")
+        if commit_hash in state.commit_to_index:
+            raise StaleComparisonError("Comparison candidate is already retained in the archive.")
+        repo_state = self._embed_repo_state_for_ingest(
+            commit_hash=commit_hash,
+            working_dir=Path(repo_root or self.repo_root).resolve(),
+            session=snapshot_session,
+            stage_metrics=_IngestStageMetrics(started_at=time.perf_counter()),
+        )
+        reducer = self._ensure_reducer(island_id, state)
+        entry = reducer.build_history_entry(
+            commit_hash=commit_hash,
+            code_embedding=repo_state.code_embedding,
+        )
+        if entry is None:
+            raise ComparisonContextError("No eligible repository files produced an embedding.")
+        vector = self._pad_or_trim(state.projection.transform(entry.vector))
+        final_embedding = FinalEmbedding(
+            commit_hash=commit_hash,
+            vector=vector,
+            dimensions=len(vector),
+            history_entry=entry,
+            projection=state.projection,
+        )
+        measures = self._clip_vector(vector, state)
+        cell_index = int(state.archive.index_of(measures)[0])
+        front = state.archive.front(cell_index)
+        if len(front) > 1:
+            raise ComparisonContextError("Fresh comparison cannot replace a multi-member front.")
+        primary = self._objective_contract.primary
+        context = {
+            "candidate_commit_hash": commit_hash,
+            "island_id": island_id,
+            "cell_index": cell_index,
+            "measures": measures.tolist(),
+            "projection_fingerprint": projection_fingerprint(state, self.settings),
+            "incumbent_commit_hash": front[0].commit_hash if front else None,
+            "objective_name": primary.name,
+            "higher_is_better": primary.higher_is_better,
+        }
+        artifacts = self._build_artifacts(
+            repo_state.stats, (), repo_state.code_embedding, final_embedding,
+        )
+        return context, state, artifacts
+
+    def ingest_comparison(
+        self,
+        request: ComparisonAdmission,
+        *,
+        island_id: str | None = None,
+        snapshot_session: Session | None = None,
+        event_context: Mapping[str, Any] | None = None,
+    ) -> MapElitesInsertionResult:
+        """Conditionally replace one elite using a validated fresh comparison.
+
+        The caller owns the admission fence and, when supplying a session, the
+        transaction. It must reload this manager after an outer rollback. Neither
+        incumbent metrics nor PCA history are refreshed by this operation.
+        Event context uses the existing ``event_key_prefix``, ``event_job_id``
+        and ``event_ordinal`` snapshot fields.
+        """
+        if type(request.replacement_allowed) is not bool:
+            raise ComparisonContextError("Comparison replacement decision must be boolean.")
+        if not isinstance(request.comparison_context, Mapping):
+            raise ComparisonContextError("Comparison context must be a mapping.")
+        effective_island = island_id or self._default_island
+        current, state, artifacts = self._prepare_comparison(
+            commit_hash=request.commit_hash,
+            island_id=effective_island,
+            repo_root=None,
+            snapshot_session=snapshot_session,
+        )
+        validate_comparison_context(request.comparison_context, current)
+        objectives = self._objective_contract.resolve(request.metrics)
+        if not request.replacement_allowed:
+            return MapElitesInsertionResult(
+                status=0,
+                delta=0.0,
+                record=None,
+                artifacts=artifacts,
+                message="Fresh comparison did not authorize archive replacement.",
+            )
+
+        replacement, outcome, record = self._comparison_replacement(
+            state=state, context=current, objectives=objectives,
+        )
+        self._persist_comparison_replacement(
+            state=replacement, record=record, session=snapshot_session,
+            event_context=event_context or {},
+        )
+        self._archives[effective_island] = replacement
+        return MapElitesInsertionResult(
+            status=outcome.status,
+            delta=float(len(outcome.removed_commit_hashes)),
+            record=record,
+            artifacts=artifacts,
+        )
+
+    @staticmethod
+    def _comparison_replacement(
+        *,
+        state: IslandState,
+        context: Mapping[str, Any],
+        objectives: ResolvedObjectives,
+    ) -> tuple[IslandState, ParetoAddOutcome, MapElitesRecord]:
+        """Build the proposed front without advancing the manager's cache."""
+        replacement = copy(state)
+        replacement.archive = deepcopy(state.archive)
+        candidate = ParetoCandidate(
+            commit_hash=context["candidate_commit_hash"],
+            objective_values=objectives.values,
+            objective_scores=objectives.scores,
+            measures=tuple(context["measures"]),
+            timestamp=time.time(),
+        )
+        outcome = replacement.archive.replace_if_current(
+            candidate,
+            expected_cell_index=context["cell_index"],
+            incumbent_commit_hash=context["incumbent_commit_hash"],
+        )
+        sync_archive_indexes(replacement)
+        record = archive_record_from_candidate(
+            candidate=candidate,
+            island_id=context["island_id"],
+            cell_index=outcome.cell_index,
+        )
+        return replacement, outcome, record
+
+    def _persist_comparison_replacement(
+        self,
+        *,
+        state: IslandState,
+        record: MapElitesRecord,
+        session: Session | None,
+        event_context: Mapping[str, Any],
+    ) -> None:
+        """Persist one changed front, without incumbent or PCA history writes."""
+        update = self._build_ingest_snapshot_update(
+            state=state,
+            final_embedding=None,
+            event_key_prefix=event_context.get("event_key_prefix"),
+            event_job_id=event_context.get("event_job_id"),
+            event_ordinal=event_context.get("event_ordinal"),
+        )
+        update.archive_change_reason = "fresh_comparison"
+        update.projection_epoch = int(state.projection.epoch)
+        self._record_snapshot_front_replace(
+            update=update,
+            state=state,
+            island_id=record.island_id,
+            record=record,
+            replacing_existing=False,
+            archive_replace_needed=False,
+        )
+        self._persist_island_state(
+            record.island_id, state, update=update, session=session,
+        )
+
     def get_records(
         self,
         island_id: str | None = None,
@@ -320,12 +526,16 @@ class MapElitesManager:
         """Discard possibly mutated cache state and restore the durable snapshot."""
 
         effective_island = island_id or self._default_island
-        self._archives.pop(effective_island, None)
-        self._reducers.pop(effective_island, None)
+        self.invalidate_island(effective_island)
         self._ensure_island(
             effective_island,
             snapshot_session=snapshot_session,
         )
+
+    def invalidate_island(self, island_id: str) -> None:
+        """Drop uncommitted cached state without requiring a healthy database."""
+        self._archives.pop(island_id, None)
+        self._reducers.pop(island_id, None)
 
     def count_pca_history_samples(self, island_id: str | None = None) -> int:
         """Return the number of non-empty PCA history samples for an island."""

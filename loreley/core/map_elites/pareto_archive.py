@@ -201,6 +201,46 @@ class ParetoGridArchive:
     def add(self, candidate: ParetoCandidate) -> ParetoAddOutcome:
         return self.add_many((candidate,))[0]
 
+    def replace_if_current(
+        self,
+        candidate: ParetoCandidate,
+        *,
+        expected_cell_index: int,
+        incumbent_commit_hash: str | None,
+    ) -> ParetoAddOutcome:
+        """Apply an externally validated, fresh single-objective comparison.
+
+        Historical point scores deliberately do not participate in this path.
+        Callers must serialize validation and persistence of the resulting front.
+        Every precondition is checked before either archive index is modified.
+        """
+        if self.objective_count != 1:
+            raise ValueError("Fresh comparison requires exactly one objective.")
+        if type(expected_cell_index) is not int:
+            raise ValueError("Expected comparison cell index must be an integer.")
+        self._validate_candidate(candidate)
+        actual_cell = self._candidate_cell_indices((candidate,))[0]
+        if actual_cell != expected_cell_index:
+            raise ValueError("Candidate no longer belongs to the compared cell.")
+        if candidate.commit_hash in self._commit_to_cell:
+            raise ValueError("Comparison candidate is already retained in the archive.")
+        front = self.front(actual_cell)
+        if len(front) > 1:
+            raise ValueError("Fresh comparison cannot replace a multi-member front.")
+        actual_incumbent = front[0].commit_hash if front else None
+        if actual_incumbent != incumbent_commit_hash:
+            raise ValueError("Compared incumbent is no longer current.")
+
+        self._fronts[actual_cell] = (candidate,)
+        if actual_incumbent is not None:
+            del self._commit_to_cell[actual_incumbent]
+        self._commit_to_cell[candidate.commit_hash] = actual_cell
+        return ParetoAddOutcome(
+            cell_index=actual_cell,
+            retained=True,
+            removed_commit_hashes=(actual_incumbent,) if actual_incumbent else (),
+        )
+
     def add_many(
         self,
         candidates: Sequence[ParetoCandidate],

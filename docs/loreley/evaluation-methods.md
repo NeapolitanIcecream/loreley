@@ -1,5 +1,9 @@
 # Reliable evaluation methods
 
+For confidence evidence that controls actual elite replacement, see
+[fresh-comparison admission](../adr/0054-fresh-elite-comparison.md). Statistical
+helpers alone do not change the default point-score archive policy.
+
 `loreley.core.evaluation` provides project-neutral statistical building blocks
 for evaluator authors. It handles finite observations, confidence intervals,
 predeclared strata, bounded adaptive budgets, and canonical measurement

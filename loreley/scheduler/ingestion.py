@@ -81,6 +81,7 @@ class JobSnapshot:
     seed_portfolio_hash: str | None = None
     seed_direction_id: str | None = None
     event_handle: EvolutionStageHandle | None = None
+    comparison_required: bool = False
 
 
 @dataclass(slots=True, frozen=True)
@@ -203,11 +204,24 @@ class MapElitesIngestion:
                             reason=reason_display,
                             session=batch_session,
                         )
+        except Exception:
+            # A savepoint can succeed and the surrounding batch commit still
+            # fail. Restore every possibly advanced cache from durable state.
+            self._invalidate_batch_caches(snapshots)
+            raise
         finally:
             self._prefetched_metrics_payload_by_commit = None
             self._prefetched_metrics_errors_by_commit = None
             self._record_events_for_batch = False
         return ingested
+
+    def _invalidate_batch_caches(self, snapshots: Sequence[JobSnapshot]) -> None:
+        invalidate = getattr(self.manager, "invalidate_island", None)
+        if not callable(invalidate):
+            return
+        islands = {s.island_id or resolve_default_island_id(self.settings) for s in snapshots}
+        for island in islands:
+            invalidate(island)
 
     def count_pending_ingestion_jobs(self) -> int:
         """Return succeeded jobs whose result ingestion is not terminal."""
@@ -478,7 +492,14 @@ class MapElitesIngestion:
             return False
 
         raw_commit_hash, commit_hash = commit_hashes
-        duplicate_of = self._equivalent_ingested_candidate(
+        from loreley.core.fresh_comparison import enabled, requires_fresh_admission
+        comparison_required = (
+            enabled(self.settings, is_seed_job=snapshot.is_seed_job)
+            or requires_fresh_admission(snapshot_session, snapshot.job_id)
+        )
+        if comparison_required:
+            snapshot = replace(snapshot, comparison_required=True)
+        duplicate_of = None if comparison_required else self._equivalent_ingested_candidate(
             snapshot,
             commit_hash=commit_hash,
             session=snapshot_session,
@@ -837,6 +858,36 @@ class MapElitesIngestion:
                     "event_ordinal": handle.ordinal,
                 }
             )
+        from loreley.core.fresh_comparison import (
+            enabled, load_handoff, acknowledge, requires_fresh_admission,
+        )
+        if ((snapshot.comparison_required
+             or requires_fresh_admission(snapshot_session, snapshot.job_id))
+                and not enabled(self.settings, is_seed_job=snapshot.is_seed_job)):
+            raise IngestionError("Worker comparison evidence requires fresh_comparison admission policy.")
+        if enabled(self.settings, is_seed_job=snapshot.is_seed_job):
+            if snapshot_session is None:
+                raise IngestionError("Fresh comparison ingestion requires a database transaction.")
+            context, decision = load_handoff(
+                session=snapshot_session, settings=self.settings, job_id=snapshot.job_id,
+                commit_hash=commit_hash, metrics=metrics_payload,
+            )
+            kwargs.pop("repo_root")
+            event_context = {key: kwargs.pop(key) for key in (
+                "event_key_prefix", "event_job_id", "event_ordinal",
+            ) if key in kwargs}
+            from loreley.core.map_elites.comparison import ComparisonAdmission
+            request = ComparisonAdmission(
+                commit_hash=kwargs.pop("commit_hash"), metrics=kwargs.pop("metrics"),
+                comparison_context=context, replacement_allowed=decision["allowed"],
+            )
+            insertion = self.manager.ingest_comparison(
+                request=request, **kwargs,
+                event_context=event_context,
+            )
+            acknowledge(snapshot_session, job_id=snapshot.job_id, context=context,
+                        allowed=decision["allowed"])
+            return insertion
         return self.manager.ingest(
             **kwargs,
         )
@@ -1117,6 +1168,9 @@ class MapElitesIngestion:
         job = session.get(EvolutionJob, snapshot.job_id)
         if not job:
             return
+        from loreley.core.fresh_comparison import requires_fresh_admission
+        if requires_fresh_admission(session, snapshot.job_id):
+            snapshot = replace(snapshot, comparison_required=True)
         attempts = int(getattr(job, "ingestion_attempts", 0) or 0) + 1
         effective_payload = self._terminalize_failed_ingestion(
             snapshot,
@@ -1207,6 +1261,11 @@ class MapElitesIngestion:
         payload: _IngestionStatePayload,
         attempts: int,
     ) -> _IngestionStatePayload:
+        from loreley.core.fresh_comparison import enabled
+        if snapshot.comparison_required or enabled(self.settings, is_seed_job=snapshot.is_seed_job):
+            # A stale or incomplete comparison is not a measured rejection.
+            # Keep it visible and block the next cycle until repaired.
+            return payload
         if (
             payload.status != "failed"
             or attempts < _INGESTION_MAX_FAILED_ATTEMPTS

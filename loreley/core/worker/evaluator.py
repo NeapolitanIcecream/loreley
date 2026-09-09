@@ -385,6 +385,10 @@ class EvaluationContext:
     plan_summary: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    # Issued by Loreley after preparation and before fresh measurement. The
+    # evaluator returns only evidence referring to this context, never a write.
+    comparison: dict[str, Any] | None = None
+
     def __post_init__(self) -> None:
         self.worktree = Path(self.worktree).expanduser().resolve()
         self.payload = dict(self.payload or {})
