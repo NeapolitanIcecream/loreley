@@ -23,17 +23,6 @@ benchmark run.
 [Documentation](https://neapolitanicecream.github.io/loreley/) ·
 [Design-partner intake](https://github.com/NeapolitanIcecream/loreley/issues/new?template=design-partner.yml)
 
-![Loreley paper overview: repository-scale Quality-Diversity search, matched Zstandard comparison, and capability campaigns](https://raw.githubusercontent.com/NeapolitanIcecream/loreley/main/docs/marketing/assets/loreley-paper-overview.png)
-
-The paper, *Loreley: Repository-Scale Program Evolution with
-Quality-Diversity Search*, reports the system,
-three capability campaigns, and a matched Zstandard experiment comparing
-Loreley QD with Sequential Champion and Independent Root search. The controlled
-experiment used seven paired blocks and 48 physical candidate jobs per policy
-and block (1,008 total). At 48 jobs, neither comparison established a QD
-advantage. Inspect the
-[public experiment evidence](paper/evidence/zstd_method_efficacy.json).
-
 ## Evolution dynamics research
 
 The four-page technical report follows candidate quality over wall-clock time
@@ -107,10 +96,7 @@ they occupy different behavioural niches or represent different objective
 trade-offs.
 
 The three capability case studies show multi-generation lineages, archive
-retention, and later reuse of retained branches. The paper's separate matched
-experiment did not establish that Quality-Diversity outperforms
-root-independent sampling or sequential editing of a single champion at its
-48-job horizon.
+retention, and later reuse of retained branches.
 
 | Concern | Representation in Loreley |
 | --- | --- |
