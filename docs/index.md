@@ -13,19 +13,18 @@ such as a release-binary hash, so equivalent artifacts do not consume another
 benchmark run.
 
 [Evidence](#evidence) · [How it works](#how-loreley-works) ·
-[Paper](https://arxiv.org/abs/2608.19703) ·
 [Run Loreley](#run-loreley) ·
 [Design partners](marketing/loreley-design-partner-brief.md)
 
 ![Loreley paper overview: repository-scale Quality-Diversity search, matched Zstandard comparison, and capability campaigns](marketing/assets/loreley-paper-overview.png)
 
-The paper, [*Loreley: Repository-Scale Program Evolution with
-Quality-Diversity Search*](https://arxiv.org/abs/2608.19703), reports the system,
+The paper, *Loreley: Repository-Scale Program Evolution with
+Quality-Diversity Search*, reports the system,
 three capability campaigns, and a matched Zstandard experiment comparing
 Loreley QD with Sequential Champion and Independent Root search. The controlled
 experiment used seven paired blocks and 48 physical candidate jobs per policy
 and block, for 1,008 jobs in total. At 48 jobs, neither comparison established
-a QD advantage. Read the [PDF](https://arxiv.org/pdf/2608.19703) or inspect the
+a QD advantage. Inspect the
 [public experiment record](https://github.com/NeapolitanIcecream/loreley/blob/main/paper/evidence/zstd_method_efficacy.json).
 
 ## Evidence
@@ -168,7 +167,6 @@ uv run loreley ui
 
 | Resource | Contents |
 | --- | --- |
-| [Paper: arXiv:2608.19703](https://arxiv.org/abs/2608.19703) ([PDF](https://arxiv.org/pdf/2608.19703)) | Method, matched 1,008-job experiment, capability studies, and limitations |
 | [Configuration](loreley/config.md) | Campaign, evaluator, model, archive, and runtime settings |
 | [Scheduler](script/run_scheduler.md) and [worker](script/run_worker.md) guides | Starting and operating a campaign |
 | [Three-case evidence report](research/2026-08-07-loreley-case-study-evidence-report.md) | Results, costs, failures, and evidence boundaries |
@@ -193,13 +191,10 @@ Loreley is licensed under the
 
 ```bibtex
 @misc{chen2026loreley,
-  title         = {Loreley: Repository-Scale Program Evolution with Quality-Diversity Search},
+  title         = {Loreley},
   author        = {Mohan Chen},
   year          = {2026},
-  eprint        = {2608.19703},
-  archiveprefix = {arXiv},
-  primaryclass  = {cs.SE},
-  url           = {https://arxiv.org/abs/2608.19703}
+  url           = {https://github.com/NeapolitanIcecream/loreley}
 }
 ```
 

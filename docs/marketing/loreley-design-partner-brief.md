@@ -4,7 +4,7 @@ Loreley 正在寻找有真实代码库、自动 evaluator 和明确改进价值�
 
 合作以无人值守的 evaluator 为起点。Evaluator 把 correctness gates 和目标指标转成结构化结果，双方据此冻结实验协议和预算。
 
-方法、受控实验和三个 capability cases 见 [arXiv:2608.19703](https://arxiv.org/abs/2608.19703)。论文在 Zstandard 上用 1,008 个 physical candidate jobs 比较 Loreley QD、Sequential Champion 和 Independent Root：archive retention 和后续采样实际发生，但 48-job endpoint 没有建立 QD 相对两种 baseline 的优势。合作协议不会预设 QD 必然胜出。
+方法、受控实验和三个 capability cases 见配套论文。论文在 Zstandard 上用 1,008 个 physical candidate jobs 比较 Loreley QD、Sequential Champion 和 Independent Root：archive retention 和后续采样实际发生，但 48-job endpoint 没有建立 QD 相对两种 baseline 的优势。合作协议不会预设 QD 必然胜出。
 
 ## 适合的场景
 
@@ -102,7 +102,6 @@ Loreley 项目方提供：
 
 ## 现有证据
 
-- [论文：方法、1,008-job matched policy experiment 与三个 capability cases](https://arxiv.org/abs/2608.19703)
 - Matched Zstandard experiment：7 个配对 block，每个 policy/block 48 jobs；QD 相对 Sequential Champion 为 -0.135%（95% BCa 区间 -0.556% 至 +0.161%），相对 Independent Root 为 +0.320%（-0.082% 至 +0.686%）；两项比较均未建立 QD 优势
 - Archive engagement：4/7 个最终 QD winners 的 primary-parent ancestry 包含 retained non-incumbent；计入 inspiration context 后为 6/7，但后一个计数不证明 context 造成了 edit
 - [三案例统一证据报告](../research/2026-08-07-loreley-case-study-evidence-report.md)

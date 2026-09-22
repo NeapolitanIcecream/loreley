@@ -2,9 +2,8 @@
 
 *Results from 348 Loreley jobs on `markdown-it-py`, `python-pathspec`, and Zstandard*
 
-The accompanying paper, [*Loreley: Repository-Scale Program Evolution with
-Quality-Diversity Search*](https://arxiv.org/abs/2608.19703)
-([PDF](https://arxiv.org/pdf/2608.19703)), also reports a later 1,008-job
+The accompanying paper, *Loreley: Repository-Scale Program Evolution with
+Quality-Diversity Search*, also reports a later 1,008-job
 controlled comparison of three search policies.
 
 Loreley performs evaluator-guided search over complete Git repositories. Planning and coding agents propose changes in isolated worktrees. A project-specific evaluator builds the result, applies correctness gates, and measures the configured objectives. Candidates that pass may enter a distributed quality-diversity archive and serve as parents or inspirations for later jobs.
@@ -130,8 +129,8 @@ Across the three studies, Loreley generated and evaluated cross-file repository 
 
 Recent work reports that [independent sampling or sequential rewriting can match more elaborate search](https://arxiv.org/abs/2602.16805) on some code-evolution tasks. A separate [analysis of evolution traces](https://arxiv.org/abs/2605.20086) attributes some reported improvements to parameter tuning, reintroduced code, or evaluator overfitting.
 
-A later matched experiment reported in the [Loreley
-paper](https://arxiv.org/abs/2608.19703) held the planning and coding GPT
+A later matched experiment reported in the Loreley
+paper held the planning and coding GPT
 routes, evaluator, and attempted candidate-job budget fixed across three
 strategies:
 

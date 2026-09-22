@@ -2,9 +2,8 @@
 
 *Loreley 在 `markdown-it-py`、`python-pathspec` 和 Zstandard 上运行 348 个任务的结果*
 
-配套论文 [*Loreley: Repository-Scale Program Evolution with Quality-Diversity
-Search*](https://arxiv.org/abs/2608.19703)
-（[PDF](https://arxiv.org/pdf/2608.19703)）还报告了随后进行的一项 1,008 个任务、
+配套论文 *Loreley: Repository-Scale Program Evolution with Quality-Diversity
+Search* 还报告了随后进行的一项 1,008 个任务、
 三种搜索策略的受控对照实验。
 
 Loreley 在完整 Git 代码仓库上运行评估器驱动的搜索。规划智能体和编码智能体在隔离的 worktree 中提出修改。项目评估器负责构建修改后的代码、执行正确性检查，并测量实验指定的目标。通过检查的候选方案可以进入分布式质量-多样性档案库，成为后续任务的父代或灵感来源。
@@ -130,8 +129,8 @@ Loreley 使用完整 Git 提交记录源码和祖先关系，由评估器定义�
 
 近期研究发现，在一些代码演化任务上，[独立采样或顺序重写可以达到与更复杂搜索方法相当的效果](https://arxiv.org/abs/2602.16805)。另一项[演化轨迹分析](https://arxiv.org/abs/2605.20086)将部分已报告改进归因于参数调优、重新引入旧代码或对评估器的过拟合。
 
-随后进行的受控实验已在 [Loreley
-论文](https://arxiv.org/abs/2608.19703)中报告。三种策略的规划和编码过程使用
+随后进行的受控实验已在 Loreley
+论文中报告。三种策略的规划和编码过程使用
 相同的两条 GPT 模型路由，并固定了评估器和尝试的候选任务预算：
 
 1. 从根版本独立采样候选方案；

@@ -6,7 +6,7 @@ These notes cover changes merged after `v0.10.0-alpha`.
 
 - Publish the first Loreley preprint, *Loreley: Repository-Scale Program
   Evolution with Quality-Diversity Search*, as
-  [arXiv:2608.19703](https://arxiv.org/abs/2608.19703). The paper reports a
+  arXiv:2608.19703. The paper reports a
   1,008-job matched Zstandard comparison of Loreley QD, Sequential Champion,
   and Independent Root search, alongside three earlier capability campaigns.
 - Check in the paper source, bibliography, deterministic figure generator,
